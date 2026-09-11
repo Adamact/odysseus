@@ -370,7 +370,8 @@ def test_prewarm_account_chooser_rejects_disabled_or_empty_authoritative_invento
 
     ensure_accounts = _function_source("_ensureEmailAccountsForPrewarm")
     assert "if (!accountId) return null;" in ensure_accounts
-    assert ensure_accounts.index("if (!accountId) return null;") < ensure_accounts.index("_publishActiveAccount();")
+    assert "state._libAccountId = accountId" not in ensure_accounts
+    assert "_publishActiveAccount();" not in ensure_accounts
 
 
 def test_prewarm_is_bounded_to_the_interactive_initial_page_size():

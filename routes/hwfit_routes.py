@@ -16,6 +16,24 @@ from routes._validators import validate_remote_host, validate_ssh_port
 # "metal" routes through the Apple-Silicon path (GGUF-only, llama.cpp/Ollama),
 # the CPU backends through the RAM/offload path, cuda/rocm through vLLM.
 _MANUAL_BACKENDS = {"cuda", "rocm", "metal", "cpu_x86", "cpu_arm"}
+_OFFICIAL_NAMESPACES = {
+    "apple", "allenai", "black-forest-labs", "cohere", "deepseek-ai",
+    "google", "ibm", "lightricks", "meta-llama", "microsoft", "mistralai",
+    "nvidia", "openai", "qwen", "stabilityai", "tencent", "tiiuae",
+    "upstage", "zai-org", "runwayml",
+}
+
+
+def _is_official_model(model: dict) -> bool:
+    """Recognize first-party namespaces without maintaining model-name lists."""
+    # Image rows expose a friendly `name` without its namespace, while regular
+    # rows may use `name`. Prefer whichever field still contains `owner/repo`.
+    model_id = str(model.get("id") or model.get("name") or "")
+    namespace = model_id.split("/", 1)[0].strip().lower() if "/" in model_id else ""
+    # `provider` is a display label for image rows (for example, "Stability AI")
+    # and is not a stable repository namespace. The model id is the canonical
+    # source for this filter, so a recognized namespace is sufficient.
+    return namespace in _OFFICIAL_NAMESPACES
 
 
 def _validate_detection_target(host: str = "", ssh_port: str = "") -> tuple[str, str]:
@@ -191,7 +209,7 @@ def setup_hwfit_routes():
         return detect_system(host=host, ssh_port=ssh_port, platform=platform, fresh=fresh)
 
     @router.get("/models")
-    def get_models(use_case: str = "", sort: str = "newest", limit: int = 50, search: str = "", host: str = "", quant: str = "", ctx: str = "", gpu_count: str = "", gpu_group: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False, refresh_catalog: bool = False, manual_mode: str = "", manual_gpu_count: str = "", manual_vram_gb: str = "", manual_ram_gb: str = "", manual_backend: str = "", ignore_detected_gpu: bool = False, ignore_detected_ram: bool = False, fit_only: bool = False):
+    def get_models(use_case: str = "", sort: str = "newest", limit: int = 50, search: str = "", host: str = "", quant: str = "", ctx: str = "", gpu_count: str = "", gpu_group: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False, refresh_catalog: bool = False, manual_mode: str = "", manual_gpu_count: str = "", manual_vram_gb: str = "", manual_ram_gb: str = "", manual_backend: str = "", ignore_detected_gpu: bool = False, ignore_detected_ram: bool = False, fit_only: bool = False, official_only: bool = False):
         """Rank LLM models against detected hardware and return scored results.
         gpu_count: override GPU count (0 = CPU only, 1-N = simulate N GPUs of the
             active group). gpu_group: index into system.gpu_groups (the homogeneous
@@ -310,6 +328,8 @@ def setup_hwfit_routes():
             rank_kwargs.pop("target_context", None)
             rank_kwargs.pop("fit_only", None)
         results = rank_models(system, **rank_kwargs)
+        if official_only:
+            results = [m for m in results if _is_official_model(m)]
         payload = {"system": system, "models": results}
         if catalog_refresh is not None:
             payload["catalog_refresh"] = catalog_refresh
@@ -410,7 +430,7 @@ def setup_hwfit_routes():
         }
 
     @router.get("/image-models")
-    def get_image_models(sort: str = "fit", search: str = "", host: str = "", gpu_count: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False, manual_mode: str = "", manual_gpu_count: str = "", manual_vram_gb: str = "", manual_ram_gb: str = "", manual_backend: str = "", ignore_detected_gpu: bool = False, ignore_detected_ram: bool = False):
+    def get_image_models(sort: str = "fit", search: str = "", host: str = "", gpu_count: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False, manual_mode: str = "", manual_gpu_count: str = "", manual_vram_gb: str = "", manual_ram_gb: str = "", manual_backend: str = "", ignore_detected_gpu: bool = False, ignore_detected_ram: bool = False, official_only: bool = False):
         """Rank image generation models against detected hardware."""
         from services.hwfit.hardware import detect_system
         from services.hwfit.image_models import rank_image_models
@@ -451,6 +471,8 @@ def setup_hwfit_routes():
             system["gpu_count"] = 1 if single_vram > 0 else 0
             system["gpu_only"] = True if single_vram > 0 else False
         results = rank_image_models(system, search=search or None, sort=sort)
+        if official_only:
+            results = [m for m in results if _is_official_model(m)]
         return {"system": system, "models": results}
 
     return router

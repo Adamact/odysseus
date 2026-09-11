@@ -132,10 +132,20 @@ async def _drain(session_id: str, run: _Run, agen: AsyncGenerator[str, None],
     try:
         if prev_task is not None and not prev_task.done():
             await asyncio.wait({prev_task})
+        terminal_event: Optional[str] = None
         async for ev in agen:
+            # A client treats [DONE] as permission to submit the next turn.
+            # Do not expose it until the wrapped generator has fully unwound;
+            # chat persistence and active-run cleanup can occur after the
+            # generator yields its terminal SSE event.
+            if str(ev).strip() == "data: [DONE]":
+                terminal_event = ev
+                continue
             _publish(run, ev)
         if run.status == "running":
             run.status = "done"
+        if terminal_event is not None:
+            _publish(run, terminal_event)
     except asyncio.CancelledError:
         run.status = "stopped"
         # Let the wrapped generator's own CancelledError handler run (it saves

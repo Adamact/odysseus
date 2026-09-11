@@ -150,6 +150,12 @@ class SessionManager:
             history=[],
             owner=getattr(db_session, "owner", None),
             is_important=getattr(db_session, "is_important", False) or False,
+            memory_extraction_enabled=getattr(db_session, "memory_extraction_enabled", True) is not False,
+            skill_injection_enabled=getattr(db_session, "skill_injection_enabled", True) is not False,
+            thinking_mode=getattr(db_session, "thinking_mode", "") or "off",
+            temperature_override=getattr(db_session, "temperature_override", None),
+            max_tokens_override=getattr(db_session, "max_tokens_override", None),
+            cwd=getattr(db_session, "cwd", None) or None,
         )
         session.message_count = getattr(db_session, "message_count", 0) or 0
         return session
@@ -208,6 +214,12 @@ class SessionManager:
             history=history,
             owner=getattr(db_session, 'owner', None),
             is_important=getattr(db_session, 'is_important', False) or False,
+            memory_extraction_enabled=getattr(db_session, 'memory_extraction_enabled', True) is not False,
+            skill_injection_enabled=getattr(db_session, 'skill_injection_enabled', True) is not False,
+            thinking_mode=getattr(db_session, "thinking_mode", "") or "off",
+            temperature_override=getattr(db_session, "temperature_override", None),
+            max_tokens_override=getattr(db_session, "max_tokens_override", None),
+            cwd=getattr(db_session, "cwd", None) or None,
         )
 
         # The rows just loaded are the whole transcript, so they — not the
@@ -485,6 +497,7 @@ class SessionManager:
             session.archived = db_session.archived
             session.owner = getattr(db_session, "owner", None)
             session.is_important = getattr(db_session, "is_important", False) or False
+            session.cwd = getattr(db_session, "cwd", None) or None
             session.message_count = (
                 db.query(DbChatMessage)
                 .filter(DbChatMessage.session_id == session_id)
@@ -545,9 +558,12 @@ class SessionManager:
         endpoint_url: str,
         model: str,
         rag: bool = False,
-        owner: str = None
+        owner: str = None,
+        cwd: str = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> Session:
         """Create a new session and save to database."""
+        session_headers = dict(headers or {})
         db = SessionLocal()
         try:
             db_session = DbSession(
@@ -556,8 +572,9 @@ class SessionManager:
                 endpoint_url=endpoint_url,
                 model=model,
                 rag=rag,
-                headers={},
+                headers=session_headers,
                 owner=owner,
+                cwd=cwd or None,
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc)
             )
@@ -570,8 +587,9 @@ class SessionManager:
                 endpoint_url=endpoint_url,
                 model=model,
                 rag=rag,
-                headers={},
+                headers=session_headers,
                 owner=owner,
+                cwd=cwd or None,
             )
 
             self.sessions[session_id] = session

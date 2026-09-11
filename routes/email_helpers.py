@@ -886,10 +886,16 @@ def _init_scheduled_db():
             size INTEGER DEFAULT 0,
             flags TEXT DEFAULT '',
             has_attachments INTEGER DEFAULT 0,
+            attachment_names TEXT DEFAULT '',
             updated_at TEXT NOT NULL,
             PRIMARY KEY (owner, account_key, folder, uid)
         )
     """)
+    _message_index_cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(email_message_index)").fetchall()
+    }
+    if "attachment_names" not in _message_index_cols:
+        conn.execute("ALTER TABLE email_message_index ADD COLUMN attachment_names TEXT DEFAULT ''")
     conn.execute("""
         CREATE INDEX IF NOT EXISTS ix_email_message_index_folder_date
         ON email_message_index(owner, account_key, folder, date_epoch DESC)
@@ -1667,7 +1673,15 @@ def _extract_text(msg):
         payload = msg.get_payload(decode=True)
         if payload:
             charset = msg.get_content_charset() or "utf-8"
-            return payload.decode(charset, errors="replace")
+            text = payload.decode(charset, errors="replace")
+            if msg.get_content_type() == "text/html":
+                text = re.sub(r"<br\s*/?>", "\n", text, flags=re.I)
+                text = re.sub(r"</(?:p|div|li|tr|h[1-6])\s*>", "\n", text, flags=re.I)
+                text = re.sub(r"<[^>]+>", "", text)
+                text = html.unescape(text)
+                text = re.sub(r"[ \t]+\n", "\n", text)
+                text = re.sub(r"\n{3,}", "\n\n", text)
+            return text.strip()
     return ""
 
 
@@ -1998,6 +2012,9 @@ class SendEmailRequest(BaseModel):
     # answered after successful delivery so it leaves undone/reply-soon views.
     source_uid: Optional[str] = None
     source_folder: Optional[str] = None
+    # Exact IMAP draft to remove after successful delivery.
+    draft_uid: Optional[str] = None
+    draft_folder: Optional[str] = None
     # Internal marker for Odysseus-generated mail (e.g. reminder, scheduled).
     odysseus_kind: Optional[str] = None
     # If true, /send waits for SMTP + Sent append and returns the sent UID.

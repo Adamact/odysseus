@@ -7,6 +7,7 @@ Consolidates the 4+ copies of normalize_base / resolve_endpoint logic into one p
 import json
 import ipaddress
 import logging
+import os
 import socket
 import subprocess
 from typing import Optional, Tuple, Dict
@@ -63,6 +64,30 @@ def endpoint_cost_tracked(url: str, endpoint_kind: Optional[str] = None) -> bool
     if "." not in host:
         return False
     return True
+
+
+def _running_in_container() -> bool:
+    if os.path.exists("/.dockerenv"):
+        return True
+    try:
+        with open("/proc/1/cgroup", encoding="utf-8") as fh:
+            return any(
+                marker in fh.read()
+                for marker in ("docker", "containerd", "kubepods")
+            )
+    except OSError:
+        return False
+
+
+def _rewrite_docker_host_for_native_runtime(base: str) -> str:
+    """Make Docker-saved host endpoints usable by a native backend process."""
+    if _running_in_container():
+        return base
+    parsed = urlparse(base)
+    if (parsed.hostname or "").lower() != "host.docker.internal":
+        return base
+    netloc = "127.0.0.1" + (f":{parsed.port}" if parsed.port else "")
+    return urlunparse(parsed._replace(netloc=netloc))
 
 
 def _first_chat_model(models) -> Optional[str]:
@@ -150,14 +175,18 @@ def resolve_endpoint_runtime(ep, owner: Optional[str] = None) -> Tuple[str, Opti
     store refreshable credentials in ProviderAuthSession and must resolve a
     current access token at call time.
     """
-    base = normalize_base(getattr(ep, "base_url", "") or "")
+    base = _rewrite_docker_host_for_native_runtime(
+        normalize_base(getattr(ep, "base_url", "") or "")
+    )
     api_key = getattr(ep, "api_key", None)
     auth_id = getattr(ep, "provider_auth_id", None)
     if auth_id:
         from src.chatgpt_subscription import resolve_runtime_credentials
 
         creds = resolve_runtime_credentials(auth_id, owner=owner)
-        base = normalize_base(creds.get("base_url") or base)
+        base = _rewrite_docker_host_for_native_runtime(
+            normalize_base(creds.get("base_url") or base)
+        )
         api_key = creds.get("api_key")
     return base, api_key
 

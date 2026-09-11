@@ -14,11 +14,14 @@
  *   Ctrl+Alt+T     start free transform
  *   Ctrl+Alt+I     invert wand / lasso selection
  *   Ctrl+Alt+J     new empty layer
+ *   Ctrl/Cmd+J     duplicate the active layer
+ *   Ctrl+Alt+G     create/release clipping mask
  *   Ctrl+Alt+A     select all canvas (lasso polygon = full bounds)
  *   Ctrl+C/X       copy / cut wand or lasso selection (image clipboard
  *                  + internal clipboard)
  *   Ctrl+V         (handled by the paste event listener)
  *   Tool keys (V, B, E, L, …) → toolbar click
+ *   Hold Space     temporarily pan without changing the active tool
  *   [ / ]          shrink / grow brush size proportionally
  *   D, C, M (when lasso has 3+ points) → delete / copy / convert mask
  *   Delete / Backspace (wand or lasso) → delete pixels
@@ -33,6 +36,7 @@
  *   toggleShortcuts:        (show?: boolean) => void,
  *   confirmTransform:       () => void,
  *   cancelTransform:        () => void,
+ *   nudgeTransform:         (dx: number, dy: number) => boolean,
  *   startTransform:         () => void,
  *   resizeCustomPrompt:     () => void,
  *   addEmptyLayer:          () => void,
@@ -46,27 +50,83 @@
  *   buildLassoMask:         (w: number, h: number, offX: number, offY: number, feather: number, grow: number) => HTMLCanvasElement,
  *   drawLassoOverlay:       () => void,
  *   activeLayer:            () => object | null,
+ *   deleteSelectedLayers:   () => boolean | Promise<boolean>,
+ *   duplicateActiveLayer:   () => boolean,
  *   uiModule:               object,
  * }} deps
  */
 import { state } from './state.js';
 import { isAltGrEvent } from '../platform.js';
+import { createMarqueeMask, selectionMaskForLayer } from './selection-mask.js';
 
 export function wireKeyboardShortcuts(deps) {
   const {
     toolbar, toolKeyMap,
     composite, saveState, undo, redo,
-    toggleShortcuts, confirmTransform, cancelTransform, startTransform,
+    toggleShortcuts, confirmTransform, cancelTransform, startTransform, nudgeTransform,
     resizeCustomPrompt, addEmptyLayer, brushSizeSync,
     invertSelection,
     wandDeleteSelection, wandCopyToNewLayer,
     lassoDeleteSelection, lassoCopyToLayer, lassoToMask,
     buildLassoMask, drawLassoOverlay,
-    activeLayer, uiModule,
+    activeLayer, deleteSelectedLayers, duplicateActiveLayer, uiModule,
+    setTemporaryPan,
+    nudgeActiveLayer, endLayerNudge,
+    toggleQuickMask, nudgeSelection,
+    deselectSelection,
   } = deps;
+
+  const isTypingTarget = (target) => target && (
+    target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable
+  );
+
+  const releaseTemporaryPan = () => setTemporaryPan?.(false);
+  document.addEventListener('keyup', (e) => {
+    if (e.code === 'Space') releaseTemporaryPan();
+    if (e.key.startsWith('Arrow')) endLayerNudge?.();
+  });
+  window.addEventListener('blur', releaseTemporaryPan);
 
   document.addEventListener('keydown', (e) => {
     if (!state.editorOpen) return;
+    if (e.code === 'Space' && !isTypingTarget(e.target)) {
+      e.preventDefault();
+      setTemporaryPan?.(true);
+      return;
+    }
+    if (!isTypingTarget(e.target) && state.tool === 'marquee' && e.key.startsWith('Arrow')) {
+      const amount = e.shiftKey ? 10 : 1;
+      const delta = {
+        ArrowLeft: [-amount, 0], ArrowRight: [amount, 0],
+        ArrowUp: [0, -amount], ArrowDown: [0, amount],
+      }[e.key];
+      if (delta && nudgeSelection?.(...delta)) {
+        e.preventDefault();
+        return;
+      }
+    }
+    if (!isTypingTarget(e.target) && state.transformActive && e.key.startsWith('Arrow')) {
+      const amount = e.shiftKey ? 10 : 1;
+      const delta = {
+        ArrowLeft: [-amount, 0], ArrowRight: [amount, 0],
+        ArrowUp: [0, -amount], ArrowDown: [0, amount],
+      }[e.key];
+      if (delta && nudgeTransform?.(...delta)) {
+        e.preventDefault();
+        return;
+      }
+    }
+    if (!isTypingTarget(e.target) && ['move', 'transform'].includes(state.tool) && e.key.startsWith('Arrow')) {
+      const amount = e.shiftKey ? 10 : 1;
+      const delta = {
+        ArrowLeft: [-amount, 0], ArrowRight: [amount, 0],
+        ArrowUp: [0, -amount], ArrowDown: [0, amount],
+      }[e.key];
+      if (delta && nudgeActiveLayer?.(...delta)) {
+        e.preventDefault();
+        return;
+      }
+    }
     // `?` toggles the cheatsheet. Don't fire while typing in a text
     // field — the user might be typing a prompt with a `?`.
     if (e.key === '?' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
@@ -91,17 +151,7 @@ export function wireKeyboardShortcuts(deps) {
       if (e.shiftKey && (e.key === 'D' || e.key === 'd')) {
         if (state.wandMask || state.lassoPoints.length) {
           e.preventDefault();
-          if (state.wandMask) {
-            saveState();
-            state.wandMask = null;
-            state.wandLayerId = null;
-            state.wandLastSeed = null;
-          }
-          if (state.lassoPoints.length) {
-            state.lassoPoints = [];
-            state.lassoActive = false;
-          }
-          composite();
+          deselectSelection?.();
         }
       }
       // Save shortcuts — match the hints shown in the Save dropdown.
@@ -126,6 +176,25 @@ export function wireKeyboardShortcuts(deps) {
         e.stopPropagation();
         addEmptyLayer();
       }
+      // Ctrl/Cmd+J duplicates the active layer through the layer panel's
+      // existing implementation, which preserves masks and effects.
+      if (!e.altKey && e.code === 'KeyJ') {
+        e.preventDefault();
+        e.stopPropagation();
+        duplicateActiveLayer?.();
+        return;
+      }
+      // Ctrl+Alt+G — Photoshop-compatible clipping mask shortcut.
+      if (e.altKey && e.code === 'KeyG') {
+        const row = [...document.querySelectorAll('.ge-layer-item[data-layer-id]')]
+          .find(item => item.dataset.layerId === state.activeLayerId);
+        const button = row?.querySelector('.ge-layer-clip-btn');
+        if (button && !button.disabled) {
+          e.preventDefault();
+          e.stopPropagation();
+          button.click();
+        }
+      }
       // Wand selection: Delete = erase pixels. Ctrl+X = cut to
       // clipboard + new layer + erase. Ctrl+C = copy.
       // (Legacy `&& !_wandActive` clause referenced an undeclared
@@ -140,7 +209,7 @@ export function wireKeyboardShortcuts(deps) {
         if ((e.ctrlKey || e.metaKey) && (e.key === 'x' || e.key === 'c')) {
           e.preventDefault();
           const isCut = e.key === 'x';
-          const src = state.layers.find(l => l.id === state.wandLayerId);
+          const src = activeLayer();
           if (!src) return;
           // Clip source by wand mask into a temp canvas.
           const w = src.canvas.width, h = src.canvas.height;
@@ -149,7 +218,14 @@ export function wireKeyboardShortcuts(deps) {
           const tCtx = tmp.getContext('2d');
           tCtx.drawImage(src.canvas, 0, 0);
           tCtx.globalCompositeOperation = 'destination-in';
-          tCtx.drawImage(state.wandMask, 0, 0);
+          const off = state.layerOffsets.get(src.id) || { x: 0, y: 0 };
+          tCtx.drawImage(selectionMaskForLayer(
+            state.wandMask,
+            state.wandMaskSpace || 'layer',
+            off,
+            w,
+            h,
+          ), 0, 0);
           state.internalClipboard = tmp;
           tmp.toBlob(blob => {
             if (blob && navigator.clipboard?.write) {
@@ -159,9 +235,17 @@ export function wireKeyboardShortcuts(deps) {
             }
           }, 'image/png');
           if (isCut) {
-            // Cut also moves the selection to a new layer + erases source.
-            wandCopyToNewLayer();
-            wandDeleteSelection();
+            // Cut is one user action: make one history checkpoint, then move
+            // the selected pixels and erase the source without nested saves.
+            saveState('Cut selection');
+            const cutLayer = wandCopyToNewLayer({ saveHistory: false, activate: false, announce: false });
+            wandDeleteSelection({ saveHistory: false, message: 'Selection cut' });
+            if (cutLayer) {
+              state.activeLayerId = cutLayer.id;
+              document.querySelectorAll('.ge-layer-item[data-layer-id]').forEach(row => {
+                row.classList.toggle('active', row.dataset.layerId === cutLayer.id);
+              });
+            }
           }
           return;
         }
@@ -232,13 +316,19 @@ export function wireKeyboardShortcuts(deps) {
       // Ctrl+Alt+A = select all canvas.
       if (e.altKey && e.key === 'a' && state.imgWidth > 0 && state.imgHeight > 0) {
         e.preventDefault();
-        state.lassoPoints = [
-          { x: 0, y: 0 }, { x: state.imgWidth, y: 0 },
-          { x: state.imgWidth, y: state.imgHeight }, { x: 0, y: state.imgHeight },
-        ];
-        state.lassoActive = false;
+        saveState('Select all');
+        state.wandMask = createMarqueeMask(
+          state.imgWidth,
+          state.imgHeight,
+          { x: 0, y: 0, w: state.imgWidth, h: state.imgHeight },
+          'rectangle',
+        );
+        state.wandLayerId = state.activeLayerId;
+        state.wandMaskSpace = 'document';
+        state.selectionSource = 'marquee';
+        state.wandLastSeed = null;
+        state.lassoPoints = [];
         composite();
-        drawLassoOverlay();
         uiModule.showToast('All selected — Ctrl+C to copy, Del to delete');
       }
       // Ctrl+V handled by the paste event listener.
@@ -246,7 +336,43 @@ export function wireKeyboardShortcuts(deps) {
       return;
     }
     // Tool shortcuts (only when not typing in an input).
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (isTypingTarget(e.target)) return;
+
+    // Delete pixels for a selection, otherwise delete the selected layer(s).
+    // Clipboard shortcuts above retain ownership of Ctrl/Cmd+X and C.
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (state.wandMask) {
+        e.preventDefault();
+        wandDeleteSelection();
+        return;
+      }
+      if (state.lassoPoints.length >= 3) {
+        e.preventDefault();
+        lassoDeleteSelection();
+        return;
+      }
+      const layer = activeLayer?.();
+      const activeMask = layer?.activeMaskId &&
+        layer.masks?.some(mask => mask.id === layer.activeMaskId);
+      const group = state.activeGroupId &&
+        state.layerGroups?.find(item => item.id === state.activeGroupId);
+      const activeGroupMask = group?.activeMaskId &&
+        group.masks?.some(mask => mask.id === group.activeMaskId);
+      if (state.transformActive || state.cropping || state.cropMoving ||
+          state.marqueeActive || state.selectionMoving || state.lassoActive ||
+          activeMask || activeGroupMask || state.maskInspectMode) return;
+      if (deleteSelectedLayers) {
+        e.preventDefault();
+        deleteSelectedLayers();
+        return;
+      }
+    }
+
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'q') {
+      e.preventDefault();
+      toggleQuickMask?.();
+      return;
+    }
     const toolId = toolKeyMap[e.key.toLowerCase()];
     if (toolId) {
       const toolBtn = toolbar.querySelector(`[data-tool="${toolId}"]`);

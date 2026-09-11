@@ -34,3 +34,19 @@ def test_unknown_toggle_still_rejected():
 def test_existing_toggle_still_works():
     r = asyncio.run(do_ui_control("toggle web on"))
     assert r.get("toggle_name") == "web" and r.get("state") is True
+
+
+def test_open_calendar_panel_is_accepted():
+    r = asyncio.run(do_ui_control("open_panel calendar"))
+    assert r.get("ui_event") == "open_panel"
+    assert r.get("panel") == "calendar"
+    assert "error" not in r
+
+
+def test_open_calendar_panel_accepts_view_and_target_date():
+    r = asyncio.run(do_ui_control("open_panel calendar month 2026-09"))
+    assert r.get("ui_event") == "open_panel"
+    assert r.get("panel") == "calendar"
+    assert r.get("view") == "month"
+    assert r.get("target_date") == "2026-09"
+    assert "error" not in r

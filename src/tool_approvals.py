@@ -162,6 +162,9 @@ class PendingToolApproval:
     # exposed in the browser payload.
     selected_tools: tuple[str, ...] = ()
     continuation_query: str = ""
+    # The originating user request is internal continuation context only; it
+    # is never displayed or treated as authorization for the sealed action.
+    request_text: str = ""
 
     def public_payload(self, *, reason: str | None = None) -> dict[str, Any]:
         return {
@@ -352,6 +355,7 @@ class ToolApprovalStore:
         continuation_query: Any = None,
         external_untrusted_context_seen: bool,
         capabilities: ToolCapabilities,
+        request_text: Any = "",
     ) -> PendingToolApproval:
         now = time.time()
         effects = tuple(sorted(effect.value for effect in capabilities.effects))
@@ -393,6 +397,7 @@ class ToolApprovalStore:
             expires_at=now + self._ttl_seconds,
             selected_tools=tuple(payload["selected_tools"]),
             continuation_query=payload["continuation_query"],
+            request_text=str(request_text or ""),
         )
         with self._lock:
             self._purge_expired_locked(now)

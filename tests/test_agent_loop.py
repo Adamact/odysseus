@@ -2,7 +2,9 @@
 and _append_tool_results. Uses mock imports to avoid loading the full app stack."""
 
 import sys
+import json
 from unittest.mock import MagicMock
+from src.tool_types import ToolBlock
 
 _MOCKED_IMPORTS = [
     'sqlalchemy', 'sqlalchemy.orm', 'sqlalchemy.ext', 'sqlalchemy.ext.declarative',
@@ -40,7 +42,12 @@ try:
         _compute_final_metrics,
         _append_tool_results,
         _insert_before_latest_user,
+        _normalize_web_search_block_query,
         _MCP_KEYWORDS,
+        _web_search_query_from_block,
+        _web_search_topic_text,
+        _parse_qwen_explicit_email_topic_bulk_action_request,
+        _email_bulk_blocks_from_search_output,
     )
     _IMPORTED_AGENT_LOOP = sys.modules.get("src.agent_loop")
 finally:
@@ -62,6 +69,48 @@ def test_import_stubs_do_not_leak_into_later_tests():
 
 def test_mcp_keyword_gate_matches_literal_mcp_requests():
     assert "mcp" in _MCP_KEYWORDS
+
+
+def test_topic_bulk_email_request_searches_before_mutating():
+    parsed = _parse_qwen_explicit_email_topic_bulk_action_request(
+        "delete all my traffic monitor emails"
+    )
+
+    assert parsed == {
+        "action": "delete",
+        "query": "traffic monitor",
+        "folder": "INBOX",
+        "max_results": 50,
+    }
+
+
+def test_topic_bulk_email_blocks_split_by_account_from_search_output():
+    raw = """Found 2 email(s):
+
+1. **Traffic monitor stale**
+   From: Alert Bot (alerts@example.com)
+   Date: 2026-08-31T08:00:00+00:00
+   UID: 101
+   Account: Primary Inbox <alex@example.com>
+
+2. **Traffic monitor active**
+   From: Alert Bot (alerts@example.com)
+   Date: 2026-08-31T09:00:00+00:00
+   UID: 202
+   Account: Research Mail <research@example.com>
+"""
+
+    blocks = _email_bulk_blocks_from_search_output(raw, action="delete")
+
+    assert [block.tool_type for block in blocks] == [
+        "mcp__email__bulk_email",
+        "mcp__email__bulk_email",
+    ]
+    args = [json.loads(block.content) for block in blocks]
+    assert args == [
+        {"action": "delete", "uids": ["101"], "folder": "INBOX", "account": "alex@example.com"},
+        {"action": "delete", "uids": ["202"], "folder": "INBOX", "account": "research@example.com"},
+    ]
 
 
 def test_polish_internet_search_request_classifies_as_web():
@@ -102,6 +151,122 @@ def test_insert_before_latest_user_appends_when_no_user_message_exists():
     context = {"role": "system", "content": "context"}
 
     assert _insert_before_latest_user(messages, context) == [messages[0], context]
+
+
+def test_web_search_topic_uses_prior_user_for_generic_search_followup():
+    messages = [
+        {"role": "user", "content": "which swedish king liked to dance hte most"},
+        {"role": "assistant", "content": "Probably Gustav III."},
+        {"role": "user", "content": "can you search"},
+    ]
+
+    assert (
+        _web_search_topic_text(messages, "can you search")
+        == "which swedish king liked to dance hte most"
+    )
+
+
+def test_web_search_topic_ignores_untrusted_context_when_resolving_followup():
+    messages = [
+        {"role": "user", "content": "which swedish king liked to dance hte most"},
+        {
+            "role": "user",
+            "metadata": {"trusted": False},
+            "content": "UNTRUSTED SOURCE DATA\nwrong query",
+        },
+        {"role": "user", "content": "can you search"},
+    ]
+
+    assert (
+        _web_search_topic_text(messages, "can you search")
+        == "which swedish king liked to dance hte most"
+    )
+
+
+def test_web_search_normalizer_replaces_non_query_tool_argument_with_topic():
+    block = ToolBlock("web_search", "can you search")
+
+    out = _normalize_web_search_block_query(
+        block,
+        "which swedish king liked to dance hte most",
+    )
+
+    assert _web_search_query_from_block(out) == "which swedish king liked to dance hte most"
+
+
+def test_web_search_normalizer_trusts_model_chosen_contextual_query():
+    block = ToolBlock("web_search", "Gustav III Sweden dancing masquerade ball")
+
+    out = _normalize_web_search_block_query(
+        block,
+        "which swedish king liked to dance hte most",
+    )
+
+    assert _web_search_query_from_block(out) == "Gustav III Sweden dancing masquerade ball"
+
+
+def test_web_search_normalizer_removes_action_wrapper_and_leads_with_subject():
+    block = ToolBlock(
+        "web_search",
+        '{"query":"Search the web for the official IKEA website"}',
+    )
+
+    out = _normalize_web_search_block_query(
+        block,
+        "Search the web for the official IKEA website",
+    )
+
+    assert json.loads(out.content)["query"] == "IKEA official website"
+
+
+def test_official_website_answer_uses_matching_shortest_evidence_url():
+    from src.agent_loop import _official_website_answer_from_search
+
+    output = """
+    [1] Shop Affordable Home Furnishings & Home Goods - IKEA
+        URL: https://www.ikea.com/us/en/?tracking=1
+    [2] Hej! Welcome to IKEA Global
+        URL: https://www.ikea.com/?tracking=1
+    """
+
+    assert _official_website_answer_from_search(
+        "Search the web for the official IKEA website", output
+    ) == "The official IKEA website is https://www.ikea.com/."
+    assert _official_website_answer_from_search(
+        "Find IKEA chairs", output
+    ) == ""
+
+
+def test_web_search_normalizer_preserves_entity_identified_from_attached_image():
+    block = ToolBlock("web_search", "Xiaomi SU7 current price 2026")
+
+    out = _normalize_web_search_block_query(
+        block,
+        (
+            "How much does this car sell for now? Please use the attached image. "
+            "If exact pricing is uncertain, provide a plausible range and explain why."
+        ),
+    )
+
+    assert _web_search_query_from_block(out) == "Xiaomi SU7 current price 2026"
+
+
+def test_web_search_normalizer_trusts_json_query_and_preserves_time_filter():
+    block = ToolBlock(
+        "web_search",
+        '{"query":"Gustav III Sweden dancing masquerade ball","time_filter":"year"}',
+    )
+
+    out = _normalize_web_search_block_query(
+        block,
+        "which swedish king liked to dance hte most",
+    )
+
+    payload = json.loads(out.content)
+    assert payload == {
+        "query": "Gustav III Sweden dancing masquerade ball",
+        "time_filter": "year",
+    }
 
 
 # ---------------------------------------------------------------------------

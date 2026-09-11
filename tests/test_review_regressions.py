@@ -285,7 +285,7 @@ def test_preset_manager_default_custom_preset_starts_disabled(tmp_path):
     assert custom["enabled"] is False
     assert custom["system_prompt"] == ""
     assert custom["temperature"] == 1.0
-    assert custom["max_tokens"] == 0
+    assert custom["max_tokens"] == 32768
 
 
 def test_preset_manager_migrates_legacy_default_custom_preset_disabled(tmp_path):
@@ -308,7 +308,7 @@ def test_preset_manager_migrates_legacy_default_custom_preset_disabled(tmp_path)
     assert custom["enabled"] is False
     assert custom["system_prompt"] == ""
     assert custom["temperature"] == 1.0
-    assert custom["max_tokens"] == 0
+    assert custom["max_tokens"] == 32768
 
 
 def test_normalize_thinking_handles_lowercase_thinking_process(monkeypatch):
@@ -344,7 +344,7 @@ def test_normalize_thinking_handles_lowercase_thinking_process(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_build_chat_context_incognito_does_not_duplicate_current_user_message(monkeypatch):
+async def test_build_chat_context_incognito_disables_skills_and_does_not_duplicate_user_message(monkeypatch):
     for mod_name in [
         "starlette.middleware",
         "starlette.middleware.base",
@@ -407,9 +407,13 @@ async def test_build_chat_context_incognito_does_not_duplicate_current_user_mess
     )
     request = SimpleNamespace()
     chat_handler = SimpleNamespace()
-    chat_processor = SimpleNamespace(
-        build_context_preface=lambda **kwargs: ([], [], []),
-    )
+    preface_options = {}
+
+    def fake_build_context_preface(**kwargs):
+        preface_options.update(kwargs)
+        return [], [], []
+
+    chat_processor = SimpleNamespace(build_context_preface=fake_build_context_preface)
 
     ctx = await chat_helpers.build_chat_context(
         sess=sess,
@@ -423,6 +427,7 @@ async def test_build_chat_context_incognito_does_not_duplicate_current_user_mess
 
     user_messages = [m for m in ctx.messages if m.get("role") == "user" and m.get("content") == "hello"]
     assert len(user_messages) == 1
+    assert preface_options["use_skills"] is False
 
 
 @pytest.mark.asyncio
@@ -510,6 +515,188 @@ async def test_admin_agent_tools_require_admin(monkeypatch):
         assert desc == f"{tool_name}: BLOCKED"
         assert result["exit_code"] == 1
         assert "requires an admin" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_host_shell_uses_tui_bridge_context(monkeypatch):
+    auth_mod = _install_core_auth_stub(monkeypatch)
+    from src.tool_execution import execute_tool_block
+    import src.agent_tools.subprocess_tools as subprocess_tools
+
+    class FakeAuth:
+        is_configured = True
+
+        def is_admin(self, username):
+            return True
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"stdout": "ajax 192.168.1.42", "stderr": "", "exit_code": 0}
+
+    calls = []
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            calls.append(("init", args, kwargs))
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, url, **kwargs):
+            calls.append(("post", url, kwargs))
+            return FakeResponse()
+
+    monkeypatch.setattr(auth_mod, "AuthManager", lambda: FakeAuth())
+    monkeypatch.setattr(subprocess_tools.httpx, "AsyncClient", FakeAsyncClient)
+
+    desc, result = await _execute_without_run_context(
+        execute_tool_block,
+        SimpleNamespace(
+            tool_type="host_shell",
+            content=json.dumps({"command": "ip neigh", "timeout": 12}),
+        ),
+        owner="admin",
+        client_runtime_context={
+            "host_shell_bridge": {
+                "url": "http://host.docker.internal:17654/run",
+                "token": "bridge-token",
+            }
+        },
+    )
+
+    assert desc.startswith("host_shell:")
+    assert result["exit_code"] == 0
+    assert result["output"] == "ajax 192.168.1.42"
+    assert calls[1][1] == "http://host.docker.internal:17654/run"
+    bridge_payload = calls[1][2]["json"]
+    assert bridge_payload["command"] == "ip neigh"
+    assert bridge_payload["timeout"] == 12
+    assert isinstance(bridge_payload["request_id"], str)
+    assert bridge_payload["request_id"]
+    assert calls[1][2]["headers"]["X-Odysseus-TUI-Bridge-Token"] == "bridge-token"
+
+
+@pytest.mark.asyncio
+async def test_host_shell_forwards_detach_and_job_polling(monkeypatch):
+    auth_mod = _install_core_auth_stub(monkeypatch)
+    from src.tool_execution import execute_tool_block
+    import src.agent_tools.subprocess_tools as subprocess_tools
+
+    class FakeAuth:
+        is_configured = True
+
+        def is_admin(self, username):
+            return True
+
+    responses = iter([
+        {"stdout": "started", "stderr": "", "exit_code": 0, "detached": True, "job_id": "job-1"},
+        {"stdout": "still running", "stderr": "", "exit_code": 0, "status": "running", "job_id": "job-1"},
+    ])
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return next(responses)
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, url, **kwargs):
+            calls.append(kwargs["json"])
+            return FakeResponse()
+
+    monkeypatch.setattr(auth_mod, "AuthManager", lambda: FakeAuth())
+    monkeypatch.setattr(subprocess_tools.httpx, "AsyncClient", FakeAsyncClient)
+    context = {"host_shell_bridge": {"url": "http://host.docker.internal:17654/run", "token": "bridge-token"}}
+
+    _, started = await _execute_without_run_context(
+        execute_tool_block,
+        SimpleNamespace(tool_type="host_shell", content=json.dumps({"command": "sleep 5", "detach": True})),
+        owner="admin", client_runtime_context=context,
+    )
+    _, running = await _execute_without_run_context(
+        execute_tool_block,
+        SimpleNamespace(tool_type="host_shell", content=json.dumps({"job_id": "job-1"})),
+        owner="admin", client_runtime_context=context,
+    )
+
+    assert started["detached"] is True
+    assert started["job_id"] == "job-1"
+    assert running["status"] == "running"
+    assert calls == [
+        {"command": "sleep 5", "timeout": 30, "detach": True},
+        {"job_id": "job-1", "timeout": 30},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_host_shell_rejects_non_local_bridge_url_before_http(monkeypatch):
+    auth_mod = _install_core_auth_stub(monkeypatch)
+    from src.tool_execution import execute_tool_block
+    import src.agent_tools.subprocess_tools as subprocess_tools
+
+    class FakeAuth:
+        is_configured = True
+
+        def is_admin(self, username):
+            return True
+
+    class UnexpectedAsyncClient:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("host_shell should reject unsafe bridge URL before HTTP")
+
+    monkeypatch.setattr(auth_mod, "AuthManager", lambda: FakeAuth())
+    monkeypatch.setattr(subprocess_tools.httpx, "AsyncClient", UnexpectedAsyncClient)
+
+    desc, result = await _execute_without_run_context(
+        execute_tool_block,
+        SimpleNamespace(
+            tool_type="host_shell",
+            content=json.dumps({"command": "ip neigh", "timeout": 12}),
+        ),
+        owner="admin",
+        client_runtime_context={
+            "host_shell_bridge": {
+                "url": "http://169.254.169.254/run",
+                "token": "bridge-token",
+            }
+        },
+    )
+
+    assert desc.startswith("host_shell:")
+    assert result["exit_code"] == 1
+    assert result["error"] == "host_shell: invalid bridge URL"
+
+
+def test_host_shell_bridge_allows_backend_default_gateway(monkeypatch):
+    import src.agent_tools.subprocess_tools as subprocess_tools
+
+    monkeypatch.setattr(
+        subprocess_tools,
+        "_docker_default_gateway_ips",
+        lambda: {"172.18.0.1"},
+    )
+
+    assert subprocess_tools.is_host_shell_bridge_url_allowed(
+        "http://172.18.0.1:17654/run"
+    )
+    assert not subprocess_tools.is_host_shell_bridge_url_allowed(
+        "http://172.18.0.2:17654/run"
+    )
 
 
 @pytest.mark.asyncio
@@ -990,6 +1177,26 @@ async def test_write_file_inline_json_args(monkeypatch):
     assert captured.get("path") == "/tmp/wf.txt", (
         f"write_file did not decode inline JSON args; got path {captured.get('path')!r}"
     )
+
+
+@pytest.mark.asyncio
+async def test_write_file_rejects_missing_content_in_legacy_native_shape(monkeypatch):
+    """A native call missing schema-required content must not create 0-byte artifacts."""
+    import src.tool_execution as tool_execution
+    from src.agent_tools.filesystem_tools import WriteFileTool
+
+    touched = []
+
+    def fake_resolve(path):
+        touched.append(path)
+        return "/tmp/should-not-be-written.html"
+
+    monkeypatch.setattr(tool_execution, "_resolve_tool_path", fake_resolve)
+    result = await WriteFileTool().execute("/workspace/output.html\n", {})
+
+    assert result["exit_code"] == 1
+    assert "content required" in result["error"]
+    assert touched == ["/workspace/output.html"]
 
 
 @pytest.mark.asyncio

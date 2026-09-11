@@ -25,6 +25,7 @@
  *   renderLayerPanel:    () => void,
  *   spinnerModule:       object,
  *   uiModule:            object,
+ *   openAdjustmentLayer: (type: string, anchor: HTMLElement) => void,
  * }} deps
  *
  * @returns {{ addEmptyLayer: () => void }}
@@ -34,7 +35,7 @@ import { state } from './state.js';
 export function wireAIToolsMisc({
   apiBase, buildLayerBodyMask, buildSeamMask, applyImageTool,
   flatten, saveState, fitZoom, composite, createLayer, renderLayerPanel,
-  spinnerModule, uiModule,
+  spinnerModule, uiModule, openAdjustmentLayer,
 }) {
   // ── Harmonize sliders — Color match + Seam fix ──
   const harmColorPrev = document.getElementById('ge-harmonize-color-preview');
@@ -210,7 +211,52 @@ export function wireAIToolsMisc({
     renderLayerPanel();
     composite();
   }
-  document.getElementById('ge-add-layer')?.addEventListener('click', addEmptyLayer);
+  const addButton = document.getElementById('ge-add-layer');
+  addButton?.addEventListener('click', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    document.querySelector('.ge-add-layer-menu')?.remove();
+    const menu = document.createElement('div');
+    menu.className = 'ge-add-layer-menu ge-frosted';
+    menu.innerHTML = `
+      <button type="button" data-layer-kind="raster"><span class="ge-add-layer-symbol">+</span><span>Pixel Layer</span></button>
+      <span class="ge-add-layer-divider"></span>
+      <button type="button" data-adjustment-type="levels"><span class="ge-add-layer-symbol">▥</span><span>Levels</span></button>
+      <button type="button" data-adjustment-type="curves"><span class="ge-add-layer-symbol">⌁</span><span>Curves</span></button>
+      <button type="button" data-adjustment-type="exposure"><span class="ge-add-layer-symbol">☼</span><span>Exposure</span></button>
+      <button type="button" data-adjustment-type="white-balance"><span class="ge-add-layer-symbol">◑</span><span>White Balance</span></button>
+      <button type="button" data-adjustment-type="brightness-contrast"><span class="ge-add-layer-symbol">◐</span><span>Brightness / Contrast</span></button>
+      <button type="button" data-adjustment-type="hue-saturation"><span class="ge-add-layer-symbol">◉</span><span>Hue / Saturation</span></button>
+      <button type="button" data-adjustment-type="vibrance"><span class="ge-add-layer-symbol">⌁</span><span>Vibrance</span></button>
+      <button type="button" data-adjustment-type="black-white"><span class="ge-add-layer-symbol">◐</span><span>Black &amp; White</span></button>
+      <button type="button" data-adjustment-type="shadows-highlights"><span class="ge-add-layer-symbol">◐</span><span>Shadows / Highlights</span></button>
+      <button type="button" data-adjustment-type="color-balance"><span class="ge-add-layer-symbol">◒</span><span>Color Balance</span></button>
+      <button type="button" data-adjustment-type="selective-color"><span class="ge-add-layer-symbol">◎</span><span>Selective Color</span></button>
+      <button type="button" data-adjustment-type="gradient-map"><span class="ge-add-layer-symbol">▰</span><span>Gradient Map</span></button>
+    `;
+    document.body.appendChild(menu);
+    const rect = addButton.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(8, Math.min(window.innerWidth - menuRect.width - 8, rect.right - menuRect.width))}px`;
+    menu.style.top = `${Math.max(8, Math.min(window.innerHeight - menuRect.height - 8, rect.bottom + 5))}px`;
+    const close = () => {
+      menu.remove();
+      document.removeEventListener('pointerdown', away, true);
+    };
+    const away = pointerEvent => {
+      if (!menu.contains(pointerEvent.target) && pointerEvent.target !== addButton) close();
+    };
+    requestAnimationFrame(() => document.addEventListener('pointerdown', away, true));
+    menu.addEventListener('click', clickEvent => {
+      const button = clickEvent.target.closest('button');
+      if (!button) return;
+      clickEvent.preventDefault();
+      clickEvent.stopPropagation();
+      if (button.dataset.layerKind === 'raster') addEmptyLayer();
+      else if (button.dataset.adjustmentType) openAdjustmentLayer?.(button.dataset.adjustmentType, addButton);
+      close();
+    });
+  });
 
   return { addEmptyLayer };
 }

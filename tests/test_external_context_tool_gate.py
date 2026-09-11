@@ -2,11 +2,13 @@
 
 import asyncio
 import json
+import re
 from collections import namedtuple
 from pathlib import Path
 
 import pytest
 
+import src.tool_capabilities as tool_capabilities
 from src.tool_capabilities import (
     KNOWN_CAPABILITY_TOOLS,
     ResultIntegrity,
@@ -20,6 +22,11 @@ from src.tool_capabilities import (
 
 
 ToolBlock = namedtuple("ToolBlock", ["tool_type", "content"])
+
+
+@pytest.fixture(autouse=True)
+def _enable_approval_gate_for_legacy_gate_tests(monkeypatch):
+    monkeypatch.setattr(tool_capabilities, "TOOL_APPROVAL_GATE_ENABLED", True)
 
 
 def _collect_agent_events(generator):
@@ -104,6 +111,37 @@ def test_external_web_result_blocks_later_code_execution():
     assert context.external_untrusted_context_seen is True
     assert decision.allowed is False
     assert "execute_code" in decision.reason
+
+
+def test_unattended_mode_is_not_an_approval_bypass():
+    context = ToolRunSecurityContext(
+        external_untrusted_context_seen=True,
+    )
+
+    assert context.decision_for("manage_memory", '{"action":"list"}').allowed is False
+    assert context.decision_for("bash", '{"command":"pwd"}').allowed is False
+
+
+def test_request_scoped_unattended_tools_do_not_authorize_personal_actions():
+    context = ToolRunSecurityContext(
+        external_untrusted_context_seen=True,
+        unattended_tools=frozenset({"host_shell", "read_file", "edit_file"}),
+    )
+
+    assert context.decision_for("host_shell", '{"command":"pwd"}').allowed is True
+    assert context.decision_for("read_file", '{"path":"app.py"}').allowed is True
+    assert context.decision_for("edit_file", '{"path":"app.py"}').allowed is True
+    assert context.decision_for("manage_memory", '{"action":"add"}').allowed is False
+    assert context.decision_for("manage_calendar", '{"action":"create"}').allowed is False
+
+
+def test_client_runtime_context_cannot_bypass_host_shell_approval():
+    context = ToolRunSecurityContext(
+        external_untrusted_context_seen=True,
+        external_sources=["client runtime context"],
+    )
+
+    assert context.decision_for("host_shell", '{"command":"pwd"}').allowed is False
 
 
 @pytest.mark.parametrize(
@@ -335,6 +373,22 @@ def test_external_context_keeps_explicit_low_impact_tools_available(tool_name):
     context = ToolRunSecurityContext(external_untrusted_context_seen=True)
 
     assert context.decision_for(tool_name).allowed is True
+
+
+def test_inspect_media_export_is_classified_as_workspace_write():
+    read = capabilities_for_action(
+        "inspect_media", '{"path":"/workspace/source.mp4","timestamp":"00:00:01"}'
+    )
+    export = capabilities_for_action(
+        "inspect_media",
+        '{"path":"/workspace/source.mp4","timestamp":"00:00:01",'
+        '"output_path":"/workspace/still.png"}',
+    )
+
+    assert read.effects == frozenset({ToolEffect.READ_WORKSPACE})
+    assert export.effects == frozenset(
+        {ToolEffect.READ_WORKSPACE, ToolEffect.WRITE_WORKSPACE}
+    )
 
 
 def test_external_context_blocks_model_controlled_web_fetch_egress():
@@ -941,6 +995,8 @@ def test_initial_external_context_blocks_document_before_editor_side_effect(monk
             messages,
             max_rounds=1,
             relevant_tools={"create_document"},
+            # Exercise the action gate, not the low-signal summary fast path.
+            forced_tools={"create_document"},
         )
     )
 
@@ -950,7 +1006,7 @@ def test_initial_external_context_blocks_document_before_editor_side_effect(monk
         event.get("type") == "ask_user"
         and event.get("data", {}).get("kind") == "tool_approval"
         for event in events
-    )
+    ), events
 
 
 def test_native_argument_deltas_do_not_mutate_editor_before_gate(monkeypatch):
@@ -1012,6 +1068,8 @@ def test_native_argument_deltas_do_not_mutate_editor_before_gate(monkeypatch):
             messages,
             max_rounds=1,
             relevant_tools={"create_document"},
+            # Exercise native action approval, not the direct-chat passthrough.
+            forced_tools={"create_document"},
         )
     )
 
@@ -1021,7 +1079,7 @@ def test_native_argument_deltas_do_not_mutate_editor_before_gate(monkeypatch):
         and event.get("tool") == "create_document"
         and event.get("ask_user", {}).get("kind") == "tool_approval"
         for event in events
-    )
+    ), events
 
 
 def test_tainted_native_route_keeps_action_schema_for_exact_approval(monkeypatch):
@@ -1321,7 +1379,9 @@ def test_frontend_tool_approval_uses_opaque_id_and_fixed_decisions():
     assert "/test-approval`" in skills
     assert "approval_id: approval.approval_id" in skills
     assert "['approve', 'Allow once'" in skills
-    assert index.count("app.js?v=20260815toolapproval4") == 2
+    app_versions = re.findall(r"app\.js\?v=([A-Za-z0-9._-]+)", index)
+    assert len(app_versions) == 2
+    assert app_versions[0] == app_versions[1]
     assert "app.js?v=20260808startupshell1" not in index
     approval_module_sources = [
         (root / path).read_text()
@@ -1343,7 +1403,7 @@ def test_frontend_tool_approval_uses_opaque_id_and_fixed_decisions():
         for source in approval_module_sources
     )
     assert all(
-        "20260815approvalsave1" in source
+        "20260815approvalsave1" not in source
         for source in approval_module_sources
     )
 

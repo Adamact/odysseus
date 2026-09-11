@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, Form
+from fastapi.responses import HTMLResponse
 
 from sqlalchemy import case, func, or_
 from core.database import SessionLocal, Document, DocumentVersion
@@ -479,6 +480,32 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         finally:
             db.close()
 
+    # ---- GET /api/document/{doc_id}/visual-report ----
+    @router.get("/api/document/{doc_id}/visual-report", response_class=HTMLResponse)
+    async def document_visual_report(request: Request, doc_id: str) -> HTMLResponse:
+        """Render a Markdown document with the same standalone report UI used by Deep Research."""
+        user = get_current_user(request)
+        db = SessionLocal()
+        try:
+            doc = db.query(Document).filter(Document.id == doc_id).first()
+            if not doc:
+                raise HTTPException(404, "Document not found")
+            _verify_doc_owner(db, doc, user)
+            if (doc.language or "").lower() != "markdown":
+                raise HTTPException(400, "Visual reports are available for Markdown documents")
+
+            from src.visual_report import generate_visual_report
+
+            html_content = generate_visual_report(
+                question=doc.title or "Document",
+                report_markdown=doc.current_content or "",
+                sources=[],
+                stats={},
+            )
+            return HTMLResponse(content=html_content)
+        finally:
+            db.close()
+
     # ---- POST /api/document/{doc_id}/archive — soft-archive / restore ----
     @router.post("/api/document/{doc_id}/archive")
     async def archive_document(request: Request, doc_id: str, archived: bool = Query(True)) -> Dict[str, Any]:
@@ -575,7 +602,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             "markdown": ".md", "json": ".json", "yaml": ".yml", "bash": ".sh",
             "sql": ".sql", "rust": ".rs", "go": ".go", "java": ".java", "c": ".c",
             "cpp": ".cpp", "typescript": ".ts", "ruby": ".rb", "php": ".php",
-            "text": ".txt", "xml": ".xml", "toml": ".toml", "ini": ".ini",
+            "text": ".txt", "email": ".eml", "xml": ".xml", "toml": ".toml", "ini": ".ini",
         }
         db = SessionLocal()
         try:
@@ -602,7 +629,10 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                         name = f"{base}-{i}" + ("" if "." in base else ext)
                         i += 1
                     used.add(name)
-                    zf.writestr(name, doc.current_content or "")
+                    content = doc.current_content or ""
+                    if (doc.language or "").lower() == "email":
+                        content = re.sub(r"\r?\n---\r?\n", "\r\n\r\n", content, count=1)
+                    zf.writestr(name, content)
                     wrote += 1
             if not wrote:
                 raise HTTPException(404, "No documents found")

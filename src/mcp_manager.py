@@ -146,6 +146,10 @@ class McpManager:
         self._stacks: Dict[str, Any] = {}
         # server_id -> background connect task (HTTP transport / OAuth)
         self._connect_tasks: Dict[str, Any] = {}
+        # Built-in stdio owners keep their AsyncExitStack in the task that
+        # entered it. AnyIO cancel scopes must be exited by that same task.
+        self._owner_shutdown_events: Dict[str, asyncio.Event] = {}
+        self._owner_tasks: Dict[str, asyncio.Task] = {}
         # Tracking updates to tools/connections for RAG indexing / prompt cache
         self._generation = 0
 
@@ -404,18 +408,54 @@ class McpManager:
         except Exception:
             pass
 
-        stack = self._stacks.pop(server_id, None)
-        if stack:
-            try:
-                await stack.aclose()
-            except Exception as e:
-                logger.warning(f"Error closing MCP server {server_id}: {e}")
+        # Built-in stdio transports are entered by a long-lived owner task.
+        # Signal it and let that task close the stack; closing it here would
+        # violate AnyIO cancel-scope task affinity and leak subprocesses.
+        owner_event = self._owner_shutdown_events.get(server_id)
+        owner_task = self._owner_tasks.get(server_id)
+        if owner_event is not None:
+            owner_event.set()
+            if owner_task is not None and owner_task is not asyncio.current_task():
+                try:
+                    await owner_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    logger.warning(f"Error closing MCP server {server_id}: {e}")
+            self._owner_shutdown_events.pop(server_id, None)
+            self._owner_tasks.pop(server_id, None)
+        else:
+            stack = self._stacks.pop(server_id, None)
+            if stack:
+                try:
+                    await stack.aclose()
+                except Exception as e:
+                    logger.warning(f"Error closing MCP server {server_id}: {e}")
 
         self._sessions.pop(server_id, None)
         self._tools.pop(server_id, None)
         self._connections.pop(server_id, None)
         self._generation += 1
         logger.info(f"MCP server disconnected: {server_id}")
+
+    async def hold_owned_connection(self, server_id: str):
+        """Keep a built-in connection owner alive until it is disconnected.
+
+        The caller must be the task that entered the transport's
+        ``AsyncExitStack``. On shutdown this task closes the stack in its
+        ``finally`` block, satisfying AnyIO's cancel-scope ownership rule.
+        """
+        event = asyncio.Event()
+        self._owner_shutdown_events[server_id] = event
+        self._owner_tasks[server_id] = asyncio.current_task()
+        try:
+            await event.wait()
+        finally:
+            self._owner_shutdown_events.pop(server_id, None)
+            self._owner_tasks.pop(server_id, None)
+            stack = self._stacks.pop(server_id, None)
+            if stack:
+                await stack.aclose()
 
     async def disconnect_all(self):
         """Disconnect from all MCP servers."""
@@ -577,7 +617,11 @@ class McpManager:
         for server_id, tools in self._tools.items():
             # Skip builtin Python servers — they use the code-block tool format
             # But include NPX-based builtins (like browser) which need function calling
-            if self.is_builtin(server_id) and server_id != "builtin_browser":
+            # Builtin email tools participate in the native Qwen contract.
+            # They were historically omitted with the other Python-backed
+            # tools because legacy models used text wrappers, but omitting
+            # their schemas makes qualified email calls impossible to select.
+            if self.is_builtin(server_id) and server_id not in {"builtin_browser", "email"}:
                 continue
             conn = self._connections.get(server_id, {})
             server_name = conn.get("name", server_id)
@@ -658,12 +702,24 @@ class McpManager:
     _cached_prompt_desc = None
     _cached_prompt_desc_key = None
 
-    def get_tool_descriptions_for_prompt(self, disabled_map: Optional[Dict[str, set]] = None) -> str:
-        """Generate text describing MCP tools for the agent system prompt. Cached."""
+    def get_tool_descriptions_for_prompt(
+        self,
+        disabled_map: Optional[Dict[str, set]] = None,
+        allowed_names: Optional[set[str]] = None,
+    ) -> str:
+        """Generate MCP descriptions, optionally limited to selected tools.
+
+        The native schema path already supports per-turn tool selection. Keep
+        this untrusted prose catalog in the same contract; otherwise a model
+        can see and emit a tool that was deliberately removed from its schema.
+        ``allowed_names`` accepts either qualified MCP names or server-local
+        names for callers that still use legacy tool selection.
+        """
         cache_key = (
             frozenset((k, frozenset(v)) for k, v in (disabled_map or {}).items()),
             len(self._tools),
             self._generation,
+            frozenset(allowed_names) if allowed_names is not None else None,
         )
         if self._cached_prompt_desc is not None and self._cached_prompt_desc_key == cache_key:
             return self._cached_prompt_desc
@@ -674,9 +730,10 @@ class McpManager:
         lines = ["\n\nYou also have access to external MCP tool servers. These tools are called via native function calling:"]
         by_server = {}
         for t in tools:
-            # Skip builtin Python servers — they're already in the agent prompt
-            # But include NPX-based builtins (like browser) which aren't hardcoded
-            if self.is_builtin(t["server_id"]) and t["server_id"] != "builtin_browser":
+            # Skip builtin Python servers that are already in the agent prompt.
+            # Email is an exception: it also participates in native MCP schemas,
+            # so the prose catalog must expose the same surface.
+            if self.is_builtin(t["server_id"]) and t["server_id"] not in {"builtin_browser", "email"}:
                 continue
             if t.get("is_disabled"):
                 continue
@@ -695,6 +752,11 @@ class McpManager:
             label = f"{server_name} ({identity})" if identity else server_name
             lines.append(f"\n**{label}:**")
             for t in server_tools:
+                qualified = f"mcp__{t['server_id']}__{t['name']}"
+                if allowed_names is not None and not (
+                    t["name"] in allowed_names or qualified in allowed_names
+                ):
+                    continue
                 # Truncate long descriptions
                 desc = t['description'][:120] + '...' if len(t['description']) > 120 else t['description']
                 # Include the tool's declared inputs so the model calls it with

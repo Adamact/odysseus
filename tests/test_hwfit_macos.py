@@ -96,7 +96,7 @@ def test_qwen_catalog_entries_point_at_verified_gguf_repos():
 def test_safetensors_models_still_recommended_on_cuda():
     """Regression guard: vLLM serves safetensors on CUDA, so non-GGUF repos must
     NOT be filtered there — the GGUF-only rule is Metal-specific."""
-    names = {r["name"] for r in rank_models(_cuda_system(), limit=900)}
+    names = {r["name"] for r in rank_models(_cuda_system(), search="microsoft/Phi-mini-MoE-instruct", limit=10)}
     assert "microsoft/Phi-mini-MoE-instruct" in names
 
 

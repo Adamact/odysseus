@@ -20,12 +20,16 @@ export const state = {
   _libFolders: [],
   _libAccountId: null,           // null = backend default account
   _libAccounts: [],              // list of accounts for the chip strip
+  _libAutoReplyActive: false,    // active account currently has an away reply
   _libPendingExpandUid: null,
   _libSearch: '',
   _libFilter: 'all',             // all, unread, unanswered
   _libSort: 'recent',            // recent, unread, favorites
   _libHasAttachments: false,
   _libShowTags: localStorage.getItem('odysseus.email.showTags') !== '0',
+  // Embedded MIME images are shown by default; Email Settings can opt a
+  // mailbox back into the manual-load behavior.
+  _libViewInlineImages: true,
   _libLoading: false,
   _docModule: null,
   _onEmailClick: null,

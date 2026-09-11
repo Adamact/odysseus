@@ -145,6 +145,15 @@ def test_public_payload_shows_complete_action_but_not_authority_fields():
     assert "origin_run_id" not in str(payload)
 
 
+def test_approval_preserves_originating_request_only_for_server_continuation():
+    store = ToolApprovalStore()
+    request = "delete the note titled ODY-EVAL-SEQUENCE"
+    pending = _pending(store, request_text=request)
+
+    assert pending.request_text == request
+    assert request not in str(pending.public_payload())
+
+
 @pytest.mark.asyncio
 async def test_dispatcher_claims_approval_immediately_before_execution(monkeypatch):
     import src.tool_execution as tool_execution

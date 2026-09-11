@@ -8,6 +8,8 @@ scheduler without needing an LLM call.
 import logging
 import os
 import json
+import re
+import time
 from datetime import datetime
 from typing import Tuple
 
@@ -18,6 +20,128 @@ from src.constants import DATA_DIR, DEEP_RESEARCH_DIR, TIDY_CALENDAR_STATE_FILE,
 from src.interactive_gate import wait_for_interactive_quiet
 
 logger = logging.getLogger(__name__)
+
+
+EMAIL_URGENCY_CATEGORY_TAGS = {
+    "bills", "receipt", "travel", "calendar", "action-needed",
+}
+
+
+def _heuristic_email_urgency_verdict(
+    item: dict,
+    *,
+    triage_version: int,
+    category_tags=None,
+) -> dict:
+    """Conservative non-LLM email triage.
+
+    This runs in the scheduled email-tag task and must not turn ordinary
+    transactional/company receipts into urgent mail. Receipts, invoices, and
+    payments are category signals first; they become response/urgency signals
+    only when paired with real action language or consequence/deadline language.
+    """
+    category_tags = set(category_tags or EMAIL_URGENCY_CATEGORY_TAGS)
+    blob = (
+        f"{item.get('headers','')}\n{item.get('from','')}\n"
+        f"{item.get('subject','')}\n{item.get('body','')}"
+    ).lower()
+    response_tags = []
+    type_candidates = []
+
+    def add_response(tag: str):
+        if tag in category_tags and tag not in response_tags:
+            response_tags.append(tag)
+
+    def add_type(tag: str):
+        if tag in category_tags and tag not in type_candidates:
+            type_candidates.append(tag)
+
+    bulkish = bool(re.search(
+        r"\b(list-unsubscribe|list-id|mailchimp|mailchimpapp|view this email in your browser|unsubscribe|newsletter|digest|precedence:\s*bulk)\b",
+        blob,
+    ))
+    marketingish = bool(re.search(
+        r"\b(advertisement|sponsored|promo|promotion|sale|discount|offer|limited time|deal|coupon|shop now|buy now|membership|rewards?)\b",
+        blob,
+    ))
+    receiptish = bool(re.search(
+        r"\b(receipt|order|注文|payment confirmation|delivery|shipment|tracking|お届け|購入)\b",
+        blob,
+    ))
+    billish = bool(re.search(
+        r"\b(bill|billing|amount due|overdue|pay by|payment due|subscription could not be renewed)\b",
+        blob,
+    ))
+    legalish = bool(re.search(
+        r"\b(court|charge|legal|lawyer|solicitor|claim|judgment|registration fee|debt)\b",
+        blob,
+    ))
+
+    if bulkish or marketingish:
+        add_type("newsletter")
+    if receiptish:
+        add_type("receipt")
+    if billish:
+        add_type("bills")
+    if legalish:
+        add_type("legal")
+    if re.search(r"\b(flight|hotel|booking|reservation|itinerary|train|ticket|trip|旅|予約)\b", blob):
+        add_type("travel")
+    if re.search(r"\b(ticket|case|support|helpdesk|request)\b", blob):
+        add_type("support")
+    if re.search(r"\b(meeting|appointment|calendar|invite|event|schedule|予定|保育園|連絡帳)\b", blob):
+        add_response("calendar")
+
+    explicit_action = bool(re.search(
+        r"\b(action required|required action|please reply|please respond|deadline|by \d{1,2} |"
+        r"submit|sign|confirm|approval|waiting outside|locked out|can't get in|cannot get in)\b",
+        blob,
+    ))
+    consequence_action = bool(re.search(
+        r"\b(pay within|pay by|payment due|amount due|overdue|final notice|past due|"
+        r"subscription could not be renewed|debt|court|legal|lawyer|solicitor|claim|judgment)\b",
+        blob,
+    ))
+    if explicit_action or consequence_action:
+        add_response("action-needed")
+
+    type_priority = ("bills", "receipt", "travel")
+    tags = [*response_tags]
+    for type_tag in type_priority:
+        if type_tag in type_candidates and type_tag not in tags:
+            tags.append(type_tag)
+        if len(tags) >= len(response_tags) + 2:
+            break
+
+    score = 0
+    reason = "categorized by email metadata"
+    if "action-needed" in response_tags:
+        score = 2
+        reason = "action likely needed"
+    if re.search(r"\b(urgent|immediately|final notice|locked out|waiting outside|can't get in|cannot get in)\b", blob):
+        score = 3
+        reason = "urgent wording"
+    if (bulkish or marketingish) and score < 2:
+        score = 0
+        reason = "bulk marketing/newsletter"
+
+    _from_raw = item.get("from", "") or ""
+    if "<" in _from_raw:
+        _from_short = _from_raw.split("<", 1)[0].strip().strip('"') or _from_raw
+    else:
+        _from_short = _from_raw
+    return {
+        "score": max(0, min(3, score)),
+        "tags": tags[:4],
+        "spam": False,
+        "reason": reason,
+        "subject": (item.get("subject") or "")[:200],
+        "from": _from_short[:120],
+        "triage_version": triage_version,
+        "message_id": (item.get("message_id") or "").strip(),
+        "unread": bool(item.get("unread")),
+        "ts": time.time(),
+    }
 
 
 def _read_email_urgency_state(state_path):
@@ -964,6 +1088,14 @@ def _result_has_work(result: str | None) -> bool:
     if not isinstance(result, str) or not result:
         return False
     low = result.lower()
+    # Multi-account email passes concatenate one account's result after
+    # another. A mailbox with no work must not hide successful work from a
+    # different mailbox.
+    if re.search(
+        r"\b(?:processed|summarized|drafted|sent|created|tagged|moved|translated)\s+[1-9]\d*\b",
+        low,
+    ):
+        return True
     if "processed 0" in low or "no new" in low or "nothing to" in low:
         return False
     # "Tagged 0 / Moved 0" or similar zero-count summaries
@@ -2055,14 +2187,14 @@ async def action_audit_skills(owner: str, **kwargs) -> Tuple[str, bool]:
 
         sm = SkillsManager(DATA_DIR)
         skills = sm.load(owner=owner)
+        from services.memory.skill_lifecycle import automatic_audit_candidates
         names = [
-            s.get("name") for s in skills
-            if s.get("name") and not s.get("audit_verdict")
+            s["name"] for s in automatic_audit_candidates(skills)
         ]
         if not names:
             raise TaskNoop("no unaudited skills")
 
-        url, model, headers, teacher = _resolve_audit_models()
+        url, model, headers, teacher = _resolve_audit_models(owner=owner)
         try:
             from src.llm_core import seconds_since_model_activity
             recent = seconds_since_model_activity(url, model)
@@ -2085,15 +2217,17 @@ async def action_audit_skills(owner: str, **kwargs) -> Tuple[str, bool]:
             ],
             "started": _time.time(), "cancel": False,
         }
-        await _run_audit_all_job(key, sm, names, url, model, headers, teacher, owner)
+        await _run_audit_all_job(key, sm, names, url, model, headers, teacher, owner, workload="background")
         job = _skill_audit_jobs.get(key, {})
+        if job.get("unavailable"):
+            raise TaskDeferred("Skill audit model unavailable; retrying later", delay_seconds=20 * 60)
         counts = {}
         for r in job.get("results", []):
             k = r.get("result") or "unknown"
             counts[k] = counts.get(k, 0) + 1
         summary = " · ".join(f"{v} {k}" for k, v in sorted(counts.items())) or "0 results"
-        return f"Audited {job.get('done', 0)}/{len(names)} unaudited skill(s): {summary}", True
-    except TaskNoop:
+        return f"Audited {job.get('done', 0)}/{len(names)} queued skill(s): {summary}", True
+    except (TaskNoop, TaskDeferred):
         raise
     except Exception as e:
         logger.error(f"audit_skills action failed: {e}")
@@ -2286,10 +2420,8 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
         AGE_CUTOFF = _dt.utcnow() - _td(days=7)
-        TRIAGE_VERSION = 10
-        CATEGORY_TAGS = {
-            "bills", "receipt", "travel", "calendar", "action-needed",
-        }
+        TRIAGE_VERSION = 11
+        CATEGORY_TAGS = set(EMAIL_URGENCY_CATEGORY_TAGS)
         VISIBLE_EMAIL_TAGS = CATEGORY_TAGS | {"urgent", "reply-soon"}
         MANAGED_TAGS = VISIBLE_EMAIL_TAGS | {
             "newsletter", "marketing", "notification", "finance", "security",
@@ -2443,88 +2575,6 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         tag_write_details = []
         scanned = 0
         fully_scanned_account_ids = set()
-
-        def _heuristic_email_verdict(item: dict) -> dict:
-            blob = (
-                f"{item.get('headers','')}\n{item.get('from','')}\n"
-                f"{item.get('subject','')}\n{item.get('body','')}"
-            ).lower()
-            response_tags = []
-            type_candidates = []
-
-            def add_response(tag: str):
-                if tag in CATEGORY_TAGS and tag not in response_tags:
-                    response_tags.append(tag)
-
-            def add_type(tag: str):
-                if tag in CATEGORY_TAGS and tag not in type_candidates:
-                    type_candidates.append(tag)
-
-            bulkish = bool(_re.search(
-                r"\b(list-unsubscribe|list-id|mailchimp|mailchimpapp|view this email in your browser|unsubscribe|newsletter|digest|precedence:\s*bulk)\b",
-                blob,
-            ))
-            marketingish = bool(_re.search(
-                r"\b(advertisement|sponsored|promo|promotion|sale|discount|offer|limited time|deal|coupon|shop now|buy now|membership|rewards?)\b",
-                blob,
-            ))
-            if bulkish or marketingish:
-                add_type("newsletter")
-            if _re.search(r"\b(receipt|order|注文|payment confirmation|delivery|shipment|tracking|お届け|購入)\b", blob):
-                add_type("receipt")
-            if _re.search(r"\b(bill|billing|amount due|overdue|pay by|payment due|subscription could not be renewed)\b", blob):
-                add_type("bills")
-            if _re.search(r"\b(court|charge|legal|lawyer|solicitor|claim|judgment|registration fee|debt)\b", blob):
-                add_type("legal")
-            if _re.search(r"\b(flight|hotel|booking|reservation|itinerary|train|ticket|trip|旅|予約)\b", blob):
-                add_type("travel")
-            if _re.search(r"\b(ticket|case|support|helpdesk|request)\b", blob):
-                add_type("support")
-            if _re.search(r"\b(meeting|appointment|calendar|invite|event|schedule|予定|保育園|連絡帳)\b", blob):
-                add_response("calendar")
-            if _re.search(
-                r"\b(action required|required action|please reply|please respond|deadline|by \d{1,2} |pay within|submit|sign|confirm|approval|waiting outside|locked out|can't get in|cannot get in|invoice|bill|billing|payment|balance|debt|subscription|renewal|overdue|amount due|court|charge|legal|lawyer|solicitor|claim|judgment)\b",
-                blob,
-            ):
-                add_response("action-needed")
-
-            type_priority = ("bills", "receipt", "travel")
-            tags = [*response_tags]
-            for type_tag in type_priority:
-                if type_tag in type_candidates and type_tag not in tags:
-                    tags.append(type_tag)
-                if len(tags) >= len(response_tags) + 2:
-                    break
-
-            score = 0
-            reason = "categorized by email metadata"
-            if "action-needed" in response_tags:
-                score = 2
-                reason = "action likely needed"
-            if _re.search(r"\b(urgent|immediately|final notice|locked out|waiting outside|can't get in|cannot get in)\b", blob):
-                score = 3
-                reason = "urgent wording"
-            if (bulkish or marketingish) and score < 2:
-                score = 0
-                reason = "bulk marketing/newsletter"
-
-            _from_raw = item.get("from", "") or ""
-            if "<" in _from_raw:
-                _from_short = _from_raw.split("<", 1)[0].strip().strip('"') or _from_raw
-            else:
-                _from_short = _from_raw
-            return {
-                "score": max(0, min(3, score)),
-                "tags": tags[:4],
-                "spam": False,
-                "reason": reason,
-                "subject": (item.get("subject") or "")[:200],
-                "from": _from_short[:120],
-                "triage_version": TRIAGE_VERSION,
-                "message_id": (item.get("message_id") or "").strip(),
-                "unread": bool(item.get("unread")),
-                "ts": _time.time(),
-            }
 
         # ── 3. Per-account scan: pull headers + lightweight body for new UIDs
         # since 7 days ago, score via LLM, cache the verdict.
@@ -2700,7 +2750,11 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                 # Skip uids we couldn't fetch (no subject/from/body).
                 if not item.get("subject") and not item.get("from"):
                     continue
-                verdict = _heuristic_email_verdict(item)
+                verdict = _heuristic_email_urgency_verdict(
+                    item,
+                    triage_version=TRIAGE_VERSION,
+                    category_tags=CATEGORY_TAGS,
+                )
                 cache.setdefault("uids", {})[item["uid"]] = verdict
                 per_uid_scores[key] = verdict
                 saved_classifications += 1

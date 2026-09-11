@@ -1,10 +1,53 @@
 # src/constants.py
 """Application-wide constants and configuration values."""
 import os
+import subprocess
 
 from src.runtime_paths import get_app_root, get_default_data_dir
 
 APP_VERSION = "1.0.3"
+# Identifies the private maintainer-preview build without changing the public
+# application semver used by release and readiness checks. Keep the API/UI
+# value tied to HARNESS_VERSION so a version bump cannot leave the running
+# service claiming an older harness build.
+def _load_build_version() -> str:
+    override = os.getenv("ODYSSEUS_BUILD_VERSION", "").strip()
+    if override:
+        return override
+    try:
+        with open(os.path.join(get_app_root(), "HARNESS_VERSION"), encoding="utf-8") as fh:
+            value = fh.read().strip()
+            if value:
+                return value
+    except OSError:
+        pass
+    return "unknown"
+
+
+APP_BUILD_VERSION = _load_build_version()
+
+
+def _load_source_commit() -> str:
+    """Identify the source tree loaded by this process for runtime provenance."""
+    override = os.getenv("ODYSSEUS_SOURCE_COMMIT", "").strip()
+    if override:
+        return override
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=get_app_root(),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    commit = result.stdout.strip()
+    return commit if result.returncode == 0 and commit else "unknown"
+
+
+APP_SOURCE_COMMIT = _load_source_commit()
 
 # Base paths
 BASE_DIR = os.path.join(get_app_root(), "")
@@ -96,7 +139,6 @@ LLM_HOSTS = [h.strip() for h in os.getenv("LLM_HOSTS", "").split(",") if h.strip
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 SEARXNG_INSTANCE = os.getenv("SEARXNG_INSTANCE", "http://localhost:8080")
 
-
 # Cleanup configuration
 CLEANUP_ENABLED = os.getenv("CLEANUP_ENABLED", "True").lower() == "true"
 CLEANUP_INTERVAL_HOURS = int(os.getenv("CLEANUP_INTERVAL_HOURS", "24"))
@@ -106,7 +148,7 @@ PASSWORD_MIN_LENGTH = 8
 
 # Default parameters
 DEFAULT_TEMPERATURE = 1.0
-DEFAULT_MAX_TOKENS = 0
+DEFAULT_MAX_TOKENS = 32768
 
 
 def internal_api_base() -> str:

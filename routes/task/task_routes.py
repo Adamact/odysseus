@@ -10,7 +10,7 @@ from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from core.database import SessionLocal, ScheduledTask, TaskRun
+from core.database import SessionLocal, ScheduledTask, TaskRun, NotificationLog
 from core.constants import internal_api_base
 from src.auth_helpers import get_current_user
 from src.constants import DATA_DIR, EMAIL_URGENCY_CACHE_DIR
@@ -568,6 +568,57 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             return {"notifications": []}
         notes = task_scheduler.pop_notifications(owner=user)
         return {"notifications": notes}
+
+    @router.get("/notification-logs")
+    async def get_notification_logs(request: Request, limit: int = 200):
+        """Return persisted task notifications without consuming them."""
+        user = _owner(request)
+        if not user:
+            return {"notifications": []}
+        limit = max(1, min(int(limit or 200), 1000))
+        db = SessionLocal()
+        try:
+            rows = (db.query(NotificationLog)
+                    .filter(NotificationLog.owner == user)
+                    .order_by(NotificationLog.timestamp.desc())
+                    .limit(limit)
+                    .all())
+            return {"notifications": [
+                {
+                    "id": row.id,
+                    "task_name": row.task_name,
+                    "task_id": row.task_id,
+                    "status": row.status,
+                    "body": row.body,
+                    "timestamp": row.timestamp.isoformat() + "Z" if row.timestamp else None,
+                }
+                for row in rows
+            ]}
+        finally:
+            db.close()
+
+    @router.post("/notification-logs")
+    async def create_notification_log(request: Request):
+        """Persist an in-app toast so Settings can show notification history."""
+        user = _owner(request)
+        if not user:
+            raise HTTPException(401, "Authentication required")
+        body = await request.json()
+        message = str(body.get("body") or "").strip()[:2000]
+        if not message:
+            raise HTTPException(400, "Notification body required")
+        row = NotificationLog(
+            id=str(uuid.uuid4()), owner=user,
+            task_name=str(body.get("title") or "Odysseus")[:200],
+            status="error" if body.get("status") == "error" else "success",
+            body=message,
+        )
+        db = SessionLocal()
+        try:
+            db.add(row); db.commit()
+            return {"success": True}
+        finally:
+            db.close()
 
     @router.post("/{task_id}/clear-cache")
     async def clear_task_cache(request: Request, task_id: str):

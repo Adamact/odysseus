@@ -22,11 +22,12 @@
  *   createLayer:          (name: string, w: number, h: number) => object,
  *   renderLayerPanel:     () => void,
  *   composite:            () => void,
- *   handleImportedImage:  (img: HTMLImageElement) => void,
+ *   handleImportedImage:  (img: HTMLImageElement, sourceName?: string) => void,
  *   uiModule:             object,
  * }} deps
  */
 import { state } from './state.js';
+import { createPlacedData, renderPlacedLayer } from './placed-layer.js';
 
 export function wireClipboardAndDrop({
   container, saveState, createLayer, renderLayerPanel, composite,
@@ -40,7 +41,13 @@ export function wireClipboardAndDrop({
       if (!state.editorOpen) return; // user closed mid-paste
       saveState();
       const layer = createLayer(label || 'Pasted', imgSource.width, imgSource.height);
-      layer.ctx.drawImage(imgSource, 0, 0);
+      // Selection clipboard data is already a complete layer-sized surface.
+      // Keep it source-backed with an identity matrix so future transforms do
+      // not repeatedly resample the pasted pixels.
+      layer.kind = 'placed';
+      layer.placed = createPlacedData(imgSource, [1, 0, 0, 1, 0, 0], label || 'Pasted');
+      const rendered = renderPlacedLayer(layer);
+      state.layerOffsets.set(layer.id, rendered.offset);
       state.layers.push(layer);
       state.activeLayerId = layer.id;
       state.tool = 'move';
@@ -69,7 +76,10 @@ export function wireClipboardAndDrop({
       const blob = item.getAsFile();
       const url = URL.createObjectURL(blob);
       const img = new Image();
-      img.onload = () => { pasteAsLayer(img, 'Pasted'); URL.revokeObjectURL(url); };
+      // External clipboard images follow the same source-backed import path
+      // as files, gallery images, and drops. Internal selection clipboard
+      // content is handled above as an identity placed layer.
+      img.onload = () => { handleImportedImage(img, 'Pasted image'); URL.revokeObjectURL(url); };
       img.src = url;
       break;
     }

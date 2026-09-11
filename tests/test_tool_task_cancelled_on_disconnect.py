@@ -29,6 +29,7 @@ import asyncio
 import json
 
 import src.agent_loop as al
+from src.tool_capabilities import ToolGateDecision
 
 
 def test_tool_task_cancelled_on_generator_close(monkeypatch):
@@ -49,6 +50,12 @@ def test_tool_task_cancelled_on_generator_close(monkeypatch):
     monkeypatch.setattr(al, "estimate_tokens", lambda *a, **k: 10, raising=False)
     # This test exercises task cancellation, not owner authorization.
     monkeypatch.setattr(al, "blocked_tools_for_owner", lambda owner: set(), raising=False)
+    monkeypatch.setattr(
+        al.ToolRunSecurityContext,
+        "decision_for",
+        lambda self, *a, **k: ToolGateDecision(True),
+        raising=False,
+    )
     monkeypatch.setattr(al, "execute_tool_block", _slow_exec, raising=False)
 
     native_calls = [{"name": "bash", "arguments": json.dumps({"command": "sleep 60"})}]

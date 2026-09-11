@@ -1,8 +1,8 @@
 // static/js/admin.js — Admin panel module (ES6)
 // Admin-only: users, endpoints, MCP, RAG, embeddings, tokens, webhooks, features
 
-import uiModule from './ui.js';
-import settingsModule from './settings.js';
+import uiModule from './ui.js?v=20260908weekhoverfix1';
+import settingsModule from './settings.js?v=20260909defaultmodelfix1';
 import { providerLogo, providerLogoFromUrl } from './providers.js';
 import { sortModelObjects } from './modelSort.js';
 import { PROVIDER_DEVICE_FLOWS, formatDeviceFlowError, runProviderDeviceFlow } from './providerDeviceFlow.js';
@@ -15,6 +15,8 @@ let modalEl = null;
 // animation fires.
 let _recentlyAddedEpId = null;
 let _authPolicy = { password_min_length: 8, reserved_usernames: [] };
+let _endpointSelectMode = false;
+const _selectedEndpointIds = new Set();
 
 function el(id) { return document.getElementById(id); }
 function esc(s) { return uiModule.esc(s); }
@@ -466,9 +468,110 @@ async function _selectAddedModelInChat(endpoint) {
   } catch (_) {}
 }
 
+function _updateEndpointBulkControls() {
+  const selectBtn = el('adm-epSelectBtn');
+  const probeBtn = el('adm-epProbeAllBtn');
+  const bulk = el('adm-epBulkActions');
+  const count = el('adm-epSelectedCount');
+  if (selectBtn) {
+    selectBtn.classList.toggle('active', _endpointSelectMode);
+    selectBtn.setAttribute('aria-pressed', _endpointSelectMode ? 'true' : 'false');
+    selectBtn.style.display = _endpointSelectMode ? 'none' : 'inline-flex';
+  }
+  if (probeBtn) probeBtn.style.display = _endpointSelectMode ? 'none' : 'inline-flex';
+  if (bulk) bulk.style.display = _endpointSelectMode ? 'inline-flex' : 'none';
+  if (count) count.textContent = `${_selectedEndpointIds.size} selected`;
+  const deleteBtn = el('adm-epDeleteSelectedBtn');
+  if (deleteBtn) deleteBtn.disabled = _selectedEndpointIds.size === 0;
+}
+
+function _ensureEndpointBulkControls() {
+  const probeBtn = el('adm-epProbeAllBtn');
+  if (!probeBtn || el('adm-epSelectBtn')) {
+    _updateEndpointBulkControls();
+    return;
+  }
+  const selectBtn = document.createElement('button');
+  selectBtn.type = 'button';
+  selectBtn.id = 'adm-epSelectBtn';
+  selectBtn.className = 'admin-btn-sm';
+  selectBtn.title = 'Select endpoints to delete';
+  selectBtn.setAttribute('aria-pressed', 'false');
+  selectBtn.style.cssText = 'font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:4px;';
+  selectBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>Select';
+
+  const bulk = document.createElement('span');
+  bulk.id = 'adm-epBulkActions';
+  bulk.style.cssText = 'display:none;align-items:center;gap:5px;';
+  bulk.innerHTML = `
+    <span id="adm-epSelectedCount" style="font-size:11px;font-weight:normal;opacity:.65;white-space:nowrap;">0 selected</span>
+    <button type="button" class="admin-btn-sm" id="adm-epSelectAllBtn" style="font-size:11px;font-weight:normal;">All</button>
+    <button type="button" class="admin-btn-delete" id="adm-epDeleteSelectedBtn" disabled style="font-size:11px;display:inline-flex;align-items:center;gap:4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>Delete</button>
+    <button type="button" class="admin-btn-sm" id="adm-epCancelSelectBtn" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Cancel</button>`;
+  probeBtn.before(selectBtn, bulk);
+
+  selectBtn.addEventListener('click', () => {
+    _endpointSelectMode = true;
+    _selectedEndpointIds.clear();
+    loadEndpoints();
+  });
+  el('adm-epCancelSelectBtn')?.addEventListener('click', () => {
+    _endpointSelectMode = false;
+    _selectedEndpointIds.clear();
+    loadEndpoints();
+  });
+  el('adm-epSelectAllBtn')?.addEventListener('click', () => {
+    document.querySelectorAll('[data-adm-ep-select]').forEach(cb => {
+      cb.checked = true;
+      _selectedEndpointIds.add(cb.dataset.admEpSelect);
+    });
+    _updateEndpointBulkControls();
+  });
+  el('adm-epDeleteSelectedBtn')?.addEventListener('click', async () => {
+    const ids = Array.from(_selectedEndpointIds);
+    if (!ids.length) return;
+    const ok = await uiModule.styledConfirm(
+      `Delete ${ids.length} selected endpoint${ids.length === 1 ? '' : 's'}?`,
+      { confirmText: 'Delete', danger: true }
+    );
+    if (!ok) return;
+    const deleteBtn = el('adm-epDeleteSelectedBtn');
+    if (deleteBtn) deleteBtn.disabled = true;
+    document.querySelectorAll('[data-adm-ep-id]').forEach(row => {
+      if (_selectedEndpointIds.has(row.dataset.admEpId)) row.remove();
+    });
+    const results = await Promise.all(ids.map(async id => {
+      try {
+        const res = await fetch(`/api/model-endpoints/${encodeURIComponent(id)}`, {
+          method: 'DELETE', credentials: 'same-origin'
+        });
+        return res.ok;
+      } catch (_) {
+        return false;
+      }
+    }));
+    const deletedCount = results.filter(Boolean).length;
+    _endpointSelectMode = false;
+    _selectedEndpointIds.clear();
+    await _refreshAfterEndpointChange(ids.length === 1 ? ids[0] : null);
+    await loadEndpoints();
+    if (uiModule?.showToast) {
+      const failedCount = ids.length - deletedCount;
+      uiModule.showToast(
+        failedCount
+          ? `Deleted ${deletedCount}/${ids.length} endpoints; ${failedCount} failed`
+          : `Deleted ${deletedCount} endpoint${deletedCount === 1 ? '' : 's'}`,
+        failedCount ? 4200 : 1800
+      );
+    }
+  });
+  _updateEndpointBulkControls();
+}
+
 async function loadEndpoints() {
   const listLocal = el('adm-epList-local');
   const listApi = el('adm-epList-api');
+  _ensureEndpointBulkControls();
   // Render endpoint rows first. Do not make Added Models wait on /api/models or
   // endpoint probes; explicit Refresh/Probe actions do that work.
   const refreshDependentModelUi = (force = false) => {
@@ -528,6 +631,10 @@ async function loadEndpoints() {
         <div class="admin-user-row${ep.is_enabled ? '' : ' admin-ep-disabled'}${justAddedClass}" data-adm-ep-id="${ep.id}">
           <div style="display:flex;align-items:center;justify-content:space-between;${hasModels ? 'cursor:pointer;' : ''}padding:4px 0;" data-adm-ep-header="${ep.id}">
             <div class="admin-user-info" style="flex:1;flex-wrap:wrap;gap:0.3rem;align-items:center;">
+              ${_endpointSelectMode ? `<label class="adm-model-row" title="Select ${esc(ep.name)}" style="display:inline-flex;align-items:center;justify-content:center;margin:0 5px 0 0;cursor:pointer;flex-shrink:0;">
+                <input type="checkbox" class="adm-cb-hidden" data-adm-ep-select="${ep.id}" aria-label="Select ${esc(ep.name)}" ${_selectedEndpointIds.has(String(ep.id)) ? 'checked' : ''}>
+                <span class="adm-check-dot adm-endpoint-select-dot" aria-hidden="true"></span>
+              </label>` : ''}
               <span class="adm-ep-row-logo" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex-shrink:0;opacity:0.9;">${providerLogoFromUrl(ep.base_url) || ''}</span>
               <span class="admin-user-name">${esc(ep.name)}</span>
               ${ep.model_type === 'image' ? '<span class="admin-badge" style="background:color-mix(in srgb, var(--accent) 20%, transparent);color:var(--accent);">Image</span>' : ''}
@@ -537,9 +644,10 @@ async function loadEndpoints() {
               ${hasModels ? `<span style="font-size:10px;opacity:0.4;${category === 'api' ? 'flex-basis:100%;' : ''}">Click to manage models</span>` : ''}
             </div>
             <div style="display:flex;gap:4px;align-items:center;">
-              <button class="admin-btn-sm" data-adm-toggle-ep="${ep.id}">${ep.is_enabled ? 'Disable' : 'Enable'}</button>
-              <button class="admin-btn-delete" data-adm-del-ep="${ep.id}" data-adm-ep-online="${ep.online ? '1' : '0'}">Delete</button>
-              ${hasModels ? '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>' : ''}
+              ${_endpointSelectMode ? '' : `
+                <button class="admin-btn-sm" data-adm-toggle-ep="${ep.id}">${ep.is_enabled ? 'Disable' : 'Enable'}</button>
+                <button class="admin-btn-delete" data-adm-del-ep="${ep.id}" data-adm-ep-online="${ep.online ? '1' : '0'}">Delete</button>
+                ${hasModels ? '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>' : ''}`}
             </div>
           </div>
           <div class="admin-ep-detail">${esc(ep.base_url)}${category === 'local' ? `<button type="button" class="admin-ep-copy-btn" data-adm-copy-url="${esc(ep.base_url)}" title="Copy URL" aria-label="Copy URL" style="background:none;border:none;padding:0 2px;margin-left:6px;cursor:pointer;color:inherit;opacity:0.45;vertical-align:-2px;line-height:1;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>` : ''}${keyLabel}</div>
@@ -569,6 +677,11 @@ async function loadEndpoints() {
     apiIdx.sort(_sortByEnabled);
     _renderInto(listLocal, localIdx);
     _renderInto(listApi, apiIdx);
+    const availableIds = new Set(data.map(ep => String(ep.id)));
+    Array.from(_selectedEndpointIds).forEach(id => {
+      if (!availableIds.has(String(id))) _selectedEndpointIds.delete(id);
+    });
+    _updateEndpointBulkControls();
     // Iterate matching nodes across both containers.
     const queryAll = (sel) => {
       const out = [];
@@ -630,6 +743,15 @@ async function loadEndpoints() {
           .catch(() => loadEndpoints());
       });
     });
+    queryAll('[data-adm-ep-select]').forEach(cb => {
+      cb.addEventListener('click', e => e.stopPropagation());
+      cb.addEventListener('change', () => {
+        const id = String(cb.dataset.admEpSelect || '');
+        if (cb.checked) _selectedEndpointIds.add(id);
+        else _selectedEndpointIds.delete(id);
+        _updateEndpointBulkControls();
+      });
+    });
     // Clear the just-added marker now that the row has been rendered
     // with the animation class — keeps the glow from re-firing on every
     // subsequent loadEndpoints() call (e.g. when toggling a model).
@@ -641,10 +763,18 @@ async function loadEndpoints() {
       let _modelsLoaded = false;
       row.style.cursor = 'pointer';
       row.addEventListener('click', async (e) => {
+        if (_endpointSelectMode && !e.target.closest('button, input, select, a, label')) {
+          const cb = row.querySelector('[data-adm-ep-select]');
+          if (cb) {
+            cb.checked = !cb.checked;
+            cb.dispatchEvent(new Event('change'));
+          }
+          return;
+        }
         // Don't let interactions inside the expanded panel re-fire the
         // expand/collapse handler — the search box was getting closed
         // because clicking it bubbled up to here.
-        if (e.target.closest('.admin-btn-sm, .admin-btn-delete, .mcp-tools-list, .mcp-tools-header, .mcp-tools-search, input, label')) return;
+        if (e.target.closest('.admin-btn-sm, .admin-btn-delete, .mcp-tools-list, .mcp-tools-header, .mcp-tools-search, input, select, label')) return;
         const epId = header.dataset.admEpHeader;
         const panel = row.querySelector(`[data-adm-ep-models-panel="${epId}"]`);
         if (!panel) return;
@@ -715,12 +845,24 @@ async function loadEndpoints() {
                 <a href="#" data-ep-select-all="${epId}">All</a>
                 <a href="#" data-ep-select-none="${epId}">None</a>
               </span>
-            </div>${warningHtml}${showSearch ? `<input type="search" class="mcp-tools-search" placeholder="Search ${sortedModels.length} models..." data-ep-search="${epId}">` : ''}<div class="mcp-tools-list">` + sortedModels.map(m =>
-              `<label title="${esc(m.id)}" data-ep-model-row data-search="${esc((m.display + ' ' + m.id).toLowerCase())}" class="adm-model-row">
-                <input type="checkbox" class="adm-cb-hidden" data-ep-model-id="${esc(m.id)}" ${(usesPinnedPicker ? m.is_pinned : !m.is_hidden) ? 'checked' : ''}>
-                <span class="adm-check-dot" aria-hidden="true"></span>
-                <span>${esc(m.display)}</span>
-              </label>`
+            </div>${warningHtml}${showSearch ? `<input type="search" class="mcp-tools-search" placeholder="Search ${sortedModels.length} models..." data-ep-search="${epId}">` : ''}<div class="mcp-tools-list">` + sortedModels.map(m => {
+              const mode = ['none', 'compact', 'full'].includes(String(m.tool_mode || '').toLowerCase())
+                ? String(m.tool_mode).toLowerCase()
+                : 'full';
+              return `<div title="${esc(m.id)}" data-ep-model-row data-search="${esc((m.display + ' ' + m.id).toLowerCase())}" class="adm-model-row" style="display:flex;align-items:center;gap:8px;">
+                <label style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;">
+                  <input type="checkbox" class="adm-cb-hidden" data-ep-model-id="${esc(m.id)}" ${(usesPinnedPicker ? m.is_pinned : !m.is_hidden) ? 'checked' : ''}>
+                  <span class="adm-check-dot" aria-hidden="true"></span>
+                  <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(m.display)}</span>
+                </label>
+                <span title="Controls how much native tool/function schema this model receives" style="font-size:10px;opacity:0.45;flex-shrink:0;">Tools</span>
+                <select class="adm-model-tool-mode" data-ep-model-id="${esc(m.id)}" data-original-tool-mode="${esc(m.tool_mode || '')}" data-tool-mode-touched="0" title="Native tools sent to this model: no tools, compact schemas for smaller models, or full schemas" style="height:24px;font-size:11px;max-width:112px;flex-shrink:0;">
+                  <option value="none" ${mode === 'none' ? 'selected' : ''}>No tools</option>
+                  <option value="compact" ${mode === 'compact' ? 'selected' : ''}>Compact tools</option>
+                  <option value="full" ${mode === 'full' ? 'selected' : ''}>Full tools</option>
+                </select>
+              </div>`;
+            }
             ).join('') + '</div>';
             const filterRows = (q) => {
               const needle = q.trim().toLowerCase();
@@ -747,6 +889,12 @@ async function loadEndpoints() {
             panel.querySelectorAll('input[type=checkbox]').forEach(cb => {
               cb.addEventListener('change', () => _saveEpModelState(epId, panel));
             });
+            panel.querySelectorAll('.adm-model-tool-mode').forEach(sel => {
+              sel.addEventListener('change', () => {
+                sel.dataset.toolModeTouched = '1';
+                _saveEpModelState(epId, panel);
+              });
+            });
           };
           try {
             const res = await fetch(`/api/model-endpoints/${epId}/models`, { credentials: 'same-origin' });
@@ -768,19 +916,30 @@ async function loadEndpoints() {
 async function _saveEpModelState(epId, panel) {
   const hidden = [];
   const pinned = [];
+  const modelToolModes = {};
   const usesPinnedPicker = panel && panel.dataset && panel.dataset.pickerMode === 'pinned';
-  panel.querySelectorAll('input[type=checkbox]').forEach(cb => {
+  panel.querySelectorAll('input.adm-cb-hidden[type=checkbox]').forEach(cb => {
     if (cb.checked) pinned.push(cb.dataset.epModelId);
     else hidden.push(cb.dataset.epModelId);
   });
-  const total = panel.querySelectorAll('input[type=checkbox]').length;
+  panel.querySelectorAll('.adm-model-tool-mode').forEach(sel => {
+    const modelId = sel.dataset.epModelId || '';
+    const value = String(sel.value || '').toLowerCase();
+    const original = String(sel.dataset.originalToolMode || '').toLowerCase();
+    if (modelId && (sel.dataset.toolModeTouched === '1' || original)) {
+      modelToolModes[modelId] = ['none', 'compact', 'full'].includes(value) ? value : '';
+    }
+  });
+  const total = panel.querySelectorAll('input.adm-cb-hidden[type=checkbox]').length;
   const enabled = usesPinnedPicker ? pinned.length : total - hidden.length;
+  const body = usesPinnedPicker ? { pinned_models: pinned } : { hidden };
+  if (Object.keys(modelToolModes).length) body.model_tool_modes = modelToolModes;
   try {
     await fetch(`/api/model-endpoints/${epId}/models`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify(usesPinnedPicker ? { pinned_models: pinned } : { hidden }),
+      body: JSON.stringify(body),
     });
     const row = panel.closest('[data-adm-ep-id]');
     if (row) {
@@ -2961,6 +3120,8 @@ let logsPollInterval = null;
 let isLogsPolling = false;
 let cachedLogs = [];
 let logsAbortController = null;
+let cachedNotificationLogs = [];
+let notificationLogsAbortController = null;
 
 function renderLogs(isAutoPoll = false) {
   const consoleContainer = el('log-console-container');
@@ -3087,6 +3248,143 @@ async function loadLogs(isAutoPoll = false) {
   }
 }
 
+function renderNotificationLogs() {
+  const container = el('notification-log-container');
+  const statusSelect = el('notification-log-status-select');
+  const searchInput = el('notification-log-search-input');
+  if (!container) return;
+
+  const statusFilter = statusSelect ? statusSelect.value : 'ALL';
+  const searchQuery = searchInput ? searchInput.value.trim().toLowerCase() : '';
+  let logs = cachedNotificationLogs;
+  if (statusFilter !== 'ALL') {
+    logs = logs.filter(note => String(note.status || '').toLowerCase() === statusFilter);
+  }
+  if (searchQuery) {
+    logs = logs.filter(note => [note.task_name, note.status, note.body, note.task_id]
+      .some(value => String(value || '').toLowerCase().includes(searchQuery)));
+  }
+
+  container.replaceChildren();
+  if (!logs.length) {
+    const empty = document.createElement('div');
+    empty.className = 'settings-system-logs-placeholder';
+    empty.textContent = cachedNotificationLogs.length
+      ? 'No notification logs match the current filters.'
+      : 'No task notifications recorded yet.';
+    container.appendChild(empty);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  logs.forEach(note => {
+    const status = String(note.status || 'success').toLowerCase();
+    const entry = document.createElement('article');
+    entry.className = `notification-log-entry notification-log-${status === 'error' ? 'error' : 'success'}`;
+
+    const heading = document.createElement('div');
+    heading.className = 'notification-log-heading';
+    const task = document.createElement('strong');
+    task.className = 'notification-log-task';
+    task.textContent = note.task_name || 'Untitled task';
+    const badge = document.createElement('span');
+    badge.className = 'notification-log-status';
+    badge.textContent = status === 'error' ? 'Error' : 'Success';
+    heading.append(task, badge);
+
+    const meta = document.createElement('div');
+    meta.className = 'notification-log-meta';
+    const date = note.timestamp ? new Date(note.timestamp) : null;
+    meta.textContent = date && !Number.isNaN(date.getTime())
+      ? date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
+      : '';
+    if (note.task_id) meta.textContent += meta.textContent ? ` · ${note.task_id}` : note.task_id;
+
+    entry.append(heading, meta);
+    if (note.body) {
+      const body = document.createElement('div');
+      body.className = 'notification-log-body';
+      const bodyText = document.createElement('span');
+      bodyText.className = 'notification-log-body-text';
+      bodyText.textContent = note.body;
+      const copyBtn = document.createElement('button');
+      copyBtn.type = 'button';
+      copyBtn.className = 'notification-log-copy';
+      copyBtn.title = 'Copy notification';
+      copyBtn.setAttribute('aria-label', 'Copy notification');
+      const copyIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+      copyBtn.innerHTML = copyIcon;
+      copyBtn.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(String(note.body));
+          copyBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+          copyBtn.classList.add('copied');
+          setTimeout(() => { copyBtn.innerHTML = copyIcon; copyBtn.classList.remove('copied'); }, 1400);
+        } catch (_) {
+          uiModule.showToast('Could not copy notification');
+        }
+      });
+      body.append(bodyText, copyBtn);
+      entry.appendChild(body);
+    }
+    fragment.appendChild(entry);
+  });
+  container.appendChild(fragment);
+}
+
+async function loadNotificationLogs() {
+  const container = el('notification-log-container');
+  if (!container) return;
+  if (notificationLogsAbortController) notificationLogsAbortController.abort();
+  notificationLogsAbortController = new AbortController();
+  const { signal } = notificationLogsAbortController;
+  try {
+    const res = await fetch('/api/tasks/notification-logs?limit=500', {
+      credentials: 'same-origin',
+      signal,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    cachedNotificationLogs = Array.isArray(data.notifications) ? data.notifications : [];
+    renderNotificationLogs();
+  } catch (err) {
+    if (err.name === 'AbortError') return;
+    container.replaceChildren();
+    const error = document.createElement('div');
+    error.className = 'admin-error';
+    error.textContent = `Failed to load notification logs: ${err.message}`;
+    container.appendChild(error);
+  } finally {
+    if (notificationLogsAbortController?.signal === signal) {
+      notificationLogsAbortController = null;
+    }
+  }
+}
+
+function setSystemLogTab(tab) {
+  const showNotifications = tab === 'notifications';
+  document.querySelectorAll('[data-system-log-tab]').forEach(button => {
+    const active = button.dataset.systemLogTab === tab;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  const terminalPanel = el('system-log-terminal-panel');
+  const notificationPanel = el('system-log-notifications-panel');
+  if (terminalPanel) {
+    terminalPanel.hidden = showNotifications;
+    terminalPanel.classList.toggle('hidden', showNotifications);
+    terminalPanel.style.display = showNotifications ? 'none' : 'flex';
+    terminalPanel.setAttribute('aria-hidden', showNotifications ? 'true' : 'false');
+  }
+  if (notificationPanel) {
+    notificationPanel.hidden = !showNotifications;
+    notificationPanel.classList.toggle('hidden', !showNotifications);
+    notificationPanel.style.display = showNotifications ? 'flex' : 'none';
+    notificationPanel.setAttribute('aria-hidden', showNotifications ? 'false' : 'true');
+  }
+  if (showNotifications) loadNotificationLogs();
+}
+
 function startLogsPolling() {
   if (isLogsPolling) return;
   isLogsPolling = true;
@@ -3124,11 +3422,21 @@ function initLogsView() {
   const limitSelect = el('log-limit-select');
   const searchInput = el('log-search-input');
   const autoRefreshToggle = el('log-auto-refresh-toggle');
+  const notificationRefreshBtn = el('notification-log-refresh-btn');
+  const notificationStatusSelect = el('notification-log-status-select');
+  const notificationSearchInput = el('notification-log-search-input');
+
+  document.querySelectorAll('[data-system-log-tab]').forEach(button => {
+    button.addEventListener('click', () => setSystemLogTab(button.dataset.systemLogTab || 'terminal'));
+  });
 
   if (refreshBtn) refreshBtn.addEventListener('click', () => loadLogs(false));
   if (levelSelect) levelSelect.addEventListener('change', () => renderLogs(false));
   if (limitSelect) limitSelect.addEventListener('change', () => loadLogs(false));
   if (searchInput) searchInput.addEventListener('input', () => renderLogs(false));
+  if (notificationRefreshBtn) notificationRefreshBtn.addEventListener('click', loadNotificationLogs);
+  if (notificationStatusSelect) notificationStatusSelect.addEventListener('change', renderNotificationLogs);
+  if (notificationSearchInput) notificationSearchInput.addEventListener('input', renderNotificationLogs);
 
   if (autoRefreshToggle) {
     autoRefreshToggle.addEventListener('change', (e) => {
@@ -3141,6 +3449,7 @@ function initLogsView() {
   }
 
   // Initial fetch on view loading
+  setSystemLogTab('terminal');
   loadLogs(false);
 }
 
@@ -3168,6 +3477,7 @@ function refreshAll() {
   loadMcpServers();
   loadTokens();
   loadLogs(false);
+  loadNotificationLogs();
 }
 
 /* ═══════════════════════════════════════════

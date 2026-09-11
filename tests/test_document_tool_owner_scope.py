@@ -129,7 +129,8 @@ def test_update_document_active_id_filters_to_calling_owner(monkeypatch):
     finally:
         set_active_document(None)
 
-    assert result["error"] == "No documents exist to update"
+    assert result["exit_code"] == 1
+    assert "Requested document not found" in result["error"]
     assert ("id", "eq", "doc-bob") in query.filters
     assert ("owner", "eq", "alice") in query.filters
 
@@ -151,6 +152,42 @@ def test_suggest_document_active_id_filters_to_calling_owner(monkeypatch):
     assert result["error"] == "Document doc-bob not found"
     assert ("id", "eq", "doc-bob") in query.filters
     assert ("owner", "eq", "alice") in query.filters
+
+
+def test_suggest_document_accepts_reason_that_says_clearer():
+    from src.agent_tools.document_tools import parse_suggest_blocks
+
+    parsed = parse_suggest_blocks(
+        "<<<FIND>>>\nvery good\n<<<SUGGEST>>>\nclear and actionable\n"
+        "<<<REASON>>>\nThe wording is more specific and clearer.\n<<<END>>>"
+    )
+    assert len(parsed) == 1
+    assert parsed[0]["replace"] == "clear and actionable"
+
+
+def test_suggestion_ids_are_stable_for_content_but_distinct_across_suggestions():
+    from src.agent_tools.document_tools import _stable_suggestion_id
+
+    first = {"find": "wordy", "replace": "brief", "reason": "clarity"}
+    second = {"find": "slow", "replace": "quick", "reason": "pace"}
+    assert _stable_suggestion_id("doc-1", first) == _stable_suggestion_id("doc-1", first)
+    assert _stable_suggestion_id("doc-1", first) != _stable_suggestion_id("doc-1", second)
+    assert _stable_suggestion_id("doc-1", first) != _stable_suggestion_id("doc-2", first)
+
+
+def test_suggestion_matches_only_requested_email_sentence(monkeypatch):
+    doc = types.SimpleNamespace(id='draft', current_content=(
+        'To: test@example.com\nIn-Reply-To: <fixture@example.com>\n'
+        'X-Source-UID: 123\n---\n8am works for me.\nPrevious message stays.'))
+    _install_database_stub(monkeypatch, 'src.database', _Query(first_doc=doc))
+    set_active_document('draft')
+    try:
+        result = asyncio.run(TOOL_HANDLERS['suggest_document'](
+            '<<<FIND>>>\n8am works for me.\n<<<SUGGEST>>>\nFriday at 8am works.\n<<<REASON>>>\nAdd day\n<<<END>>>',
+            {'owner': 'alice'}))
+    finally:
+        set_active_document(None)
+    assert result['suggestions'][0]['find'] == '8am works for me.'
 
 
 def test_document_tool_dispatch_forwards_owner():

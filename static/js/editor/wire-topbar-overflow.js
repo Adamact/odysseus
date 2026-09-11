@@ -30,13 +30,27 @@ export function wireTopbarOverflow({ container }) {
     container.querySelector('#ge-ai-model'),
     ...container.querySelectorAll('.ge-topbar span[style*="font-size:9px"]'),
   ].filter(Boolean);
+  let lastWidth = 0;
 
   function syncOverflow() {
     if (!topbar) return;
+    // The reflow changes the topbar height but not its width. Ignore that
+    // follow-up ResizeObserver notification so the class does not oscillate.
+    const width = topbar.clientWidth;
+    if (width === lastWidth && topbar.classList.contains('ge-topbar-overflow')) return;
+    lastWidth = width;
+    topbar.classList.remove('ge-topbar-overflow');
     aiGroup.forEach(el => { el.style.display = ''; });
     if (topbar.scrollWidth > topbar.clientWidth) {
       // Hide AI group first — bulky and least essential at narrow widths.
       aiGroup.forEach(el => { el.style.display = 'none'; });
+      // If the essential controls still do not fit, make the right side a
+      // second row instead of letting Save and its menu fall outside the
+      // editor window.
+      const isMobile = window.matchMedia?.('(max-width: 700px)').matches;
+      if (!isMobile && topbar.scrollWidth > topbar.clientWidth) {
+        topbar.classList.add('ge-topbar-overflow');
+      }
     }
   }
 

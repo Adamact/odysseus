@@ -92,8 +92,13 @@ export function createApplyImageTool({
       if (data.error) throw new Error(data.error);
       if (!data.image) throw new Error('No image returned');
       const img = new Image();
-      img.onload = () => {
-        if (!state.editorOpen) return; // user closed mid-decode (v2 review HIGH-4)
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = () => reject(new Error('Failed to decode result image'));
+        img.src = 'data:image/png;base64,' + data.image;
+      });
+      if (!state.editorOpen) return; // user closed mid-decode (v2 review HIGH-4)
+      {
         saveState();
         const layer = createLayer(layerName, state.imgWidth, state.imgHeight);
         layer.ctx.drawImage(img, 0, 0);
@@ -102,9 +107,7 @@ export function createApplyImageTool({
         composite();
         renderLayerPanel();
         if (uiModule) uiModule.showToast(layerName + ' complete', 4500);
-      };
-      img.onerror = () => { if (uiModule) uiModule.showToast('Failed to load result', 6000); };
-      img.src = 'data:image/png;base64,' + data.image;
+      }
     } catch (e) {
       // Detect known failure modes and surface an action-toast.
       const msg = (e?.message || '').toLowerCase();

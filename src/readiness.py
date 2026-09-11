@@ -16,6 +16,8 @@ def check_readiness() -> Dict[str, object]:
     """Run the readiness checks and return a JSON-serialisable report.
 
     ``ready`` is True only when every critical check (database, data_dir) passes.
+    Harness deployments can also require semantic tool selection by setting
+    ``ODYSSEUS_REQUIRE_TOOL_INDEX_READY=1``.
     ``local_first`` is informational — a remote database is a valid deployment, so
     it never fails readiness, it only reports whether storage stays on this host.
     """
@@ -52,7 +54,32 @@ def check_readiness() -> Dict[str, object]:
     )
     checks["local_first"] = {"ok": True, "local": local_first}
 
-    ready = all(bool(c.get("ok")) for c in checks.values())
+    # ToolIndex is visible on every readiness response but only gates startup
+    # when the deployment requires the semantic agent surface. Product installs
+    # can remain available with deterministic tool-selection fallback.
+    require_tool_index = str(
+        os.environ.get("ODYSSEUS_REQUIRE_TOOL_INDEX_READY", "")
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    try:
+        from src.tool_index import get_tool_index_status, tool_index_prewarm_enabled
+
+        tool_index = get_tool_index_status()
+        tool_index["prewarm_enabled"] = tool_index_prewarm_enabled()
+    except Exception as e:
+        tool_index = {
+            "state": "unavailable",
+            "ready": False,
+            "error_type": type(e).__name__,
+            "prewarm_enabled": False,
+        }
+    tool_index["ok"] = bool(tool_index.get("ready"))
+    tool_index["critical"] = require_tool_index
+    checks["tool_index"] = tool_index
+
+    critical_names = ["database", "data_dir"]
+    if require_tool_index:
+        critical_names.append("tool_index")
+    ready = all(bool(checks[name].get("ok")) for name in critical_names)
     return {
         "ready": ready,
         "version": APP_VERSION,

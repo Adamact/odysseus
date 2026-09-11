@@ -61,12 +61,15 @@ async def test_reminder_minutes_accepts_abbreviations(reminder, expected):
     res = await _create_with_reminder(reminder, owner)
     assert res.get("exit_code") == 0, res
     assert f"reminder {expected} min before" in res.get("response", ""), res
+    assert res.get("reminder_note_id"), res
+    assert res.get("reminder_minutes") == expected, res
+    assert res.get("dtstart") == "2030-01-01T10:00:00", res
 
     db = _TS()
     try:
         note = (
             db.query(Note)
-            .filter(Note.owner == owner, Note.title == "Reminder: Dentist")
+            .filter(Note.owner == owner, Note.title == "Calendar reminder: Dentist")
             .first()
         )
         assert note is not None, "reminder note should have been created"
@@ -86,3 +89,37 @@ async def test_no_reminder_when_offset_absent():
     res = await do_manage_calendar(json.dumps(payload), owner=owner)
     assert res.get("exit_code") == 0, res
     assert "reminder set" not in res.get("response", ""), res
+
+
+async def test_update_event_can_add_reminder_after_creation():
+    owner = "tester-" + uuid.uuid4().hex[:6]
+    from src.tool_implementations import do_manage_calendar
+
+    created = await do_manage_calendar(json.dumps({
+        "action": "create_event",
+        "summary": "Kindergarten pickup",
+        "dtstart": "2030-03-01T15:00:00",
+    }), owner=owner)
+    assert created.get("exit_code") == 0, created
+
+    updated = await do_manage_calendar(json.dumps({
+        "action": "update_event",
+        "uid": created["uid"],
+        "reminder_minutes": 15,
+    }), owner=owner)
+    assert updated.get("exit_code") == 0, updated
+    assert "reminder set 15 min before" in updated.get("response", ""), updated
+    assert updated.get("reminder_note_id")
+    assert updated.get("reminder_minutes") == 15, updated
+    assert updated.get("dtstart") == "2030-03-01T15:00:00", updated
+
+    db = _TS()
+    try:
+        note = (
+            db.query(Note)
+            .filter(Note.owner == owner, Note.title == "Calendar reminder: Kindergarten pickup")
+            .first()
+        )
+        assert note is not None, "update_event should create the reminder note"
+    finally:
+        db.close()

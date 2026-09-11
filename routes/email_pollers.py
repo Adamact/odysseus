@@ -228,6 +228,9 @@ def _ensure_away_reply_table():
 
 
 def _sender_is_automated(msg, sender_addr: str) -> bool:
+    subject = str(msg.get("Subject") or "").lower()
+    if re.search(r"automatic\s+reply|auto(?:matic)?[- ]?reply|out\s+of\s+office|\booo\b|r[ée]ponse\s+automatique", subject):
+        return True
     auto_submitted = (msg.get("Auto-Submitted") or "").strip().lower()
     if auto_submitted and auto_submitted != "no":
         return True
@@ -242,6 +245,31 @@ def _sender_is_automated(msg, sender_addr: str) -> bool:
         "notification", "notifications", "automated", "mailer-daemon",
         "postmaster",
     }
+
+
+def _remove_urgent_tag_from_cache(message_id: str, owner: str, account_id: str) -> None:
+    """Remove stale urgent tags from messages identified as automated."""
+    import sqlite3 as _sql3
+    conn = _sql3.connect(SCHEDULED_DB)
+    try:
+        owner_clause, owner_params = _email_cache_owner_clause(owner)
+        rows = conn.execute(
+            f"SELECT rowid, tags FROM email_tags WHERE message_id=? AND {owner_clause} "
+            "AND (account_id=? OR account_id='' OR account_id IS NULL)",
+            (message_id, *owner_params, account_id or ""),
+        ).fetchall()
+        for rowid, raw_tags in rows:
+            try:
+                tags = json.loads(raw_tags or "[]")
+            except Exception:
+                tags = []
+            if not isinstance(tags, list) or "urgent" not in tags:
+                continue
+            cleaned = [tag for tag in tags if str(tag).strip().lower() != "urgent"]
+            conn.execute("UPDATE email_tags SET tags=? WHERE rowid=?", (json.dumps(cleaned), rowid))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _away_reply_already_sent(settings: dict, account_owner: str, account_id: str | None,
@@ -712,6 +740,9 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                     _, _from_addr_only = email.utils.parseaddr(_from_raw)
                 except Exception:
                     _from_addr_only = ""
+                _is_automated = _sender_is_automated(msg, _from_addr_only)
+                if _is_automated and auto_tag:
+                    _remove_urgent_tag_from_cache(message_id, account_owner or "", account_id or "")
                 _is_self_mail = bool(_self_self_addr) and _from_addr_only.lower() == _self_self_addr
                 need_sum = auto_sum and message_id not in _sum_existing
                 need_reply = auto_reply_draft and message_id not in _reply_existing
@@ -1286,6 +1317,8 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                             tags = [t.strip().lower().replace("_", "-") for t in raw_tags if isinstance(t, str)]
                             tags = ["marketing" if t == "promo" else t for t in tags]
                             tags = [t for t in tags if t in _ALLOWED_TAGS][:3]
+                            if _is_automated:
+                                tags = [t for t in tags if t != "urgent"]
                             is_spam = bool(parsed.get("spam"))
                             spam_reason = str(parsed.get("reason") or "")[:200]
 

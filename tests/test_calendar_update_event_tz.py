@@ -50,6 +50,7 @@ async def test_update_event_dtstart_anchored_to_user_tz(tokyo_offset):
         "dtstart": naive,
     }), owner=owner)
     assert created.get("exit_code", 0) == 0, created
+    assert created["all_day"] is False
     uid = created["uid"]
 
     db = _TS()
@@ -66,6 +67,7 @@ async def test_update_event_dtstart_anchored_to_user_tz(tokyo_offset):
         "dtstart": naive,
     }), owner=owner)
     assert updated.get("exit_code", 0) == 0, updated
+    assert updated["all_day"] is False
 
     db = _TS()
     try:
@@ -79,6 +81,92 @@ async def test_update_event_dtstart_anchored_to_user_tz(tokyo_offset):
     finally:
         db.close()
 
+
+async def test_update_event_with_time_converts_all_day_event_to_timed(tokyo_offset):
+    from src.tool_implementations import do_manage_calendar
+
+    owner = "all-day-to-timed-" + uuid.uuid4().hex[:6]
+    created = await do_manage_calendar(json.dumps({
+        "action": "create_event",
+        "summary": "Summer festival",
+        "dtstart": "2026-08-28",
+        "all_day": True,
+    }), owner=owner)
+    assert created.get("exit_code", 0) == 0, created
+    assert created["all_day"] is True
+
+    updated = await do_manage_calendar(json.dumps({
+        "action": "update_event",
+        "uid": created["uid"],
+        "dtstart": "2026-08-28T15:30:00",
+        "dtend": "2026-08-28T16:30:00",
+    }), owner=owner)
+    assert updated.get("exit_code", 0) == 0, updated
+    assert updated["all_day"] is False
+    assert "has_reminder" in updated
+    assert updated["dtstart"] == "2026-08-28T06:30:00Z"
+
+    db = _TS()
+    try:
+        ev = db.query(CalendarEvent).filter(CalendarEvent.uid == created["uid"]).first()
+        assert bool(ev.all_day) is False
+        assert bool(ev.is_utc) is True
+        assert ev.dtstart.hour == 6
+        assert ev.dtstart.minute == 30
+    finally:
+        db.close()
+
+
+async def test_create_all_day_date_preserves_literal_calendar_day(tokyo_offset):
+    from src.tool_implementations import do_manage_calendar
+
+    owner = "all-day-date-" + uuid.uuid4().hex[:6]
+    created = await do_manage_calendar(json.dumps({
+        "action": "create_event",
+        "summary": "My Birthday",
+        "dtstart": "2026-10-24",
+        "all_day": True,
+        "rrule": "FREQ=YEARLY",
+    }), owner=owner)
+    assert created.get("exit_code", 0) == 0, created
+
+    db = _TS()
+    try:
+        ev = db.query(CalendarEvent).filter(CalendarEvent.uid == created["uid"]).first()
+        assert bool(ev.all_day) is True
+        assert bool(ev.is_utc) is False
+        assert ev.dtstart.isoformat() == "2026-10-24T00:00:00"
+        assert ev.dtend.isoformat() == "2026-10-25T00:00:00"
+    finally:
+        db.close()
+
+
+async def test_update_event_resolves_exact_title_when_model_sends_id(tokyo_offset):
+    from src.tool_implementations import do_manage_calendar
+
+    owner = "title-update-" + uuid.uuid4().hex[:6]
+    title = "Temporary calendar fixture"
+    created = await do_manage_calendar(json.dumps({
+        "action": "create_event",
+        "summary": title,
+        "dtstart": "2030-01-02T10:00",
+        "dtend": "2030-01-02T11:00",
+    }), owner=owner)
+    assert created.get("exit_code", 0) == 0, created
+
+    updated = await do_manage_calendar(json.dumps({
+        "action": "update_event",
+        "id": title,
+        "location": "Updated fixture location",
+    }), owner=owner)
+    assert updated.get("exit_code", 0) == 0, updated
+
+    db = _TS()
+    try:
+        event = db.query(CalendarEvent).filter(CalendarEvent.uid == created["uid"]).first()
+        assert event.location == "Updated fixture location"
+    finally:
+        db.close()
 
 async def test_list_events_accepts_start_time_end_time_aliases():
     from src.tool_implementations import do_manage_calendar

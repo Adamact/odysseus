@@ -18,6 +18,10 @@ FROM python:3.14-slim
 # launch inside Docker.
 # nodejs/npm provide npx for the built-in Browser MCP server.
 # chromium provides the actual browser binary used by that MCP server.
+# fontconfig + Noto CJK provide real fallback glyphs for multilingual pages;
+# Chromium otherwise renders Chinese/Japanese/Korean labels as empty boxes.
+# iproute2/iputils-ping/net-tools/dnsutils/nmap give Docker-hosted agents the
+# basic network inspection toolkit expected by local LAN/debugging tasks.
 # gosu lets the entrypoint drop privileges cleanly so signals still reach
 # uvicorn directly (no extra shell layer like `su`/`sudo` would add).
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -28,14 +32,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     nodejs \
     npm \
     chromium \
+    fontconfig \
+    fonts-noto-cjk \
     tmux \
     openssh-client \
+    iproute2 \
+    iputils-ping \
+    net-tools \
+    dnsutils \
+    nmap \
     gosu \
     libgl1 \
     libglib2.0-0t64 \
     libxcb1 \
     libmagic1 \
     && rm -rf /var/lib/apt/lists/*
+
+# Private browser automation wrapper used by the native `private_browser` tool.
+# Chromium is installed above, so agent-browser can drive the existing browser
+# binary without paying `npx` startup/install overhead on each tool call.
+RUN npm install -g agent-browser@0.35.0 --omit=dev --loglevel=error
 
 # libgl1/libglib2.0-0t64/libxcb1 are runtime shared libs (libGL.so.1,
 # libglib-2.0/libgthread, libxcb.so.1) that opencv-python (cv2) loads. The

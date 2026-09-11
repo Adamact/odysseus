@@ -1,7 +1,7 @@
 // static/js/settings.js — Settings panel module (ES6)
 // User-facing preferences: AI models, search, appearance
 
-import uiModule from './ui.js';
+import uiModule from './ui.js?v=20260908weekhoverfix1';
 import searchModule from './search.js';
 import { byId } from './settings/dom.js';
 import {
@@ -27,6 +27,7 @@ import { providerLogo } from './providers.js';
 import { isAltGrEvent } from './platform.js';
 import { bindMenuDismiss } from './escMenuStack.js';
 import { invalidateSettings } from './appConfig.js';
+import { SEARCH_PROVIDER_LOGOS as _SEARCH_PROVIDER_LOGOS } from './searchProviderIcons.js';
 
 let initialized = false;
 let modalEl = null;
@@ -147,8 +148,17 @@ let _aiEndpointRefreshInFlight = null;
 
 async function _fetchModelEndpoints() {
   const epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
+  if (!epRes.ok) throw new Error(`HTTP ${epRes.status}`);
   const endpoints = await epRes.json();
   return Array.isArray(endpoints) ? endpoints : [];
+}
+
+function _selectableEndpointModels(endpoint) {
+  if (!endpoint) return [];
+  return Array.from(new Set([
+    ...(Array.isArray(endpoint.models) ? endpoint.models : []),
+    ...(Array.isArray(endpoint.pinned_models) ? endpoint.pinned_models : []),
+  ].filter(Boolean).map(String)));
 }
 
 function _endpointLabel(ep) {
@@ -386,7 +396,7 @@ async function initDefaultChat() {
   // Fill any <select> with the models for a given endpoint id.
   function fillModels(selectEl, epId, selected) {
     var ep = _endpoints.find(function(e) { return e.id === epId; });
-    _fillModelSelect(selectEl, ep ? ep.models : [], selected, false);
+    _fillModelSelect(selectEl, _selectableEndpointModels(ep), selected, false);
   }
 
   try {
@@ -403,7 +413,10 @@ async function initDefaultChat() {
   try {
     var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     var settings = await res.json();
-    if (settings.default_endpoint_id) epSel.value = settings.default_endpoint_id;
+    if (settings.default_endpoint_id
+        && _endpoints.some(function(ep) { return ep.id === settings.default_endpoint_id && ep.is_enabled; })) {
+      epSel.value = settings.default_endpoint_id;
+    }
     refreshModels(settings.default_model || '');
   } catch (e) { console.warn('Failed to load default chat settings', e); }
 
@@ -412,10 +425,11 @@ async function initDefaultChat() {
 
   async function saveDefault() {
     try {
-      await _postSettings({
+      var response = await _postSettings({
         default_endpoint_id: epSel.value,
         default_model: modelSel.value
       });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 2000);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
@@ -595,30 +609,20 @@ async function initImageSettings() {
   const enabledToggle = el('set-imgEnabledToggle');
   const configWrap = modelSel ? modelSel.closest('div[style*="flex-direction"]') : null;
   try {
-    const modelsRes = await fetch('/api/models', { credentials: 'same-origin' });
-    const modelsData = await modelsRes.json();
-    // Inpaint-compat allowlist — image gen here is scoped to inpainting only,
-    // so DALL-E / GPT-Image-1 (no inpaint API) are excluded. Currently:
-    //   - any model with 'inpaint' in the id
-    //   - Stable Diffusion 3.5 Medium (inpaint via diffusers pipeline)
-    const _isInpaintModel = (mid) => {
-      const lower = String(mid || '').toLowerCase();
-      return lower.includes('inpaint')
-        || lower.includes('3.5-medium')
-        || lower.includes('3-5-medium')
-        || lower.includes('sd-3.5-med');
-    };
-    const imageModels = [];
-    (modelsData.items || []).forEach(item => {
-      (item.models || []).forEach(mid => {
-        if (_isInpaintModel(mid)) imageModels.push(mid);
+    const endpointsRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
+    const endpoints = await endpointsRes.json();
+    const imageModels = new Set();
+    (Array.isArray(endpoints) ? endpoints : []).forEach(endpoint => {
+      if (!endpoint.is_enabled || !endpoint.online || String(endpoint.model_type || '').toLowerCase() !== 'image') return;
+      (Array.isArray(endpoint.models) ? endpoint.models : []).forEach(modelId => {
+        if (modelId) imageModels.add(String(modelId));
       });
     });
-    sortModelIds(imageModels).forEach(mid => { const opt = document.createElement('option'); opt.value = mid; opt.textContent = mid; modelSel.appendChild(opt); });
-    // Hardcoded fallbacks shown as "(not detected)" so users know what to
-    // download/serve to enable inpaint here.
-    ['stable-diffusion-3.5-medium', 'stable-diffusion-inpainting'].forEach(mid => {
-      if (!imageModels.includes(mid)) { const opt = document.createElement('option'); opt.value = mid; opt.textContent = mid + ' (not detected)'; modelSel.appendChild(opt); }
+    sortModelIds(Array.from(imageModels)).forEach(mid => {
+      const opt = document.createElement('option');
+      opt.value = mid;
+      opt.textContent = mid;
+      modelSel.appendChild(opt);
     });
   } catch (e) { console.warn('Failed to load models for image settings', e); }
   try {
@@ -1330,17 +1334,6 @@ async function initSearchSettings() {
   }
 }
 
-// SVG logos for each search provider (16×16 viewBox normalised to 24×24).
-var _SEARCH_PROVIDER_LOGOS = {
-  searxng:   '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 4a6 6 0 1 0 0 12 6 6 0 0 0 0-12zm0-2a8 8 0 1 1-4.93 14.32l-3.4 3.4a1 1 0 1 1-1.4-1.4l3.4-3.4A8 8 0 0 1 10 2zM13 8.5L11.5 10 13 11.5l-1 1L10.5 11 9 12.5l-1-1L9.5 10 8 8.5l1-1L10.5 9 12 7.5z"/></svg>',
-  duckduckgo:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm-1.5 5.5a1.2 1.2 0 1 1 0 2.4 1.2 1.2 0 0 1 0-2.4zm5 0a1.2 1.2 0 1 1 0 2.4 1.2 1.2 0 0 1 0-2.4zM12 13c-1.5 0-3.6.8-3.6 2.5C8.4 17.2 10.4 18 12 18s3.6-.8 3.6-2.5C15.6 13.8 13.5 13 12 13z"/></svg>',
-  brave:     '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 4l-1.5 1L15 3l-3 .5L9 3 6.5 5 5 4 3 7l1.5 2L4 12l3 5 4 3 1 1 1-1 4-3 3-5-.5-3L21 7l-2-3zM12 17l-2.5-2 .5-3-2-1.5 2-1.5L11 7l3-1 3 1-.5 2 2 1.5-2 1.5.5 3L14.5 17 12 17z"/></svg>',
-  google_pse:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M21.35 11.1H12v3.2h5.35c-.5 2.4-2.55 4-5.35 4-3.25 0-5.9-2.65-5.9-5.9s2.65-5.9 5.9-5.9c1.55 0 2.95.55 4.05 1.55l2.4-2.4C16.85 4.05 14.55 3 12 3 7 3 3 7 3 12s4 9 9 9c5.2 0 8.65-3.65 8.65-8.8 0-.4-.05-.7-.3-1.1z"/></svg>',
-  tavily:    '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 8.5l4 2.5v6l6 3.5 6-3.5v-6l4-2.5L12 2zm-4 9.5L12 14l4-2.5V16l-4 2.5L8 16v-4.5z"/></svg>',
-  serper:    '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M11 4a7 7 0 1 0 4.2 12.6l4.5 4.5 1.4-1.4-4.5-4.5A7 7 0 0 0 11 4zm0 2a5 5 0 1 1 0 10 5 5 0 0 1 0-10zm-1 2v2H8v2h2v2h2v-2h2V10h-2V8h-2z"/></svg>',
-  disabled:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
-};
-
 /* ── Deep Research Model (AI tab) ── */
 async function initResearchSettings() {
   var epSel = el('set-researchEndpoint');
@@ -1652,7 +1645,7 @@ function syncPrivacyCheckboxes() {
 
 const SHORTCUT_DEFAULTS = {
   search:         'ctrl+k',
-  toggle_sidebar: 'ctrl+b',
+  toggle_sidebar: 'ctrl+alt+b',
   new_session:    'ctrl+alt+n',
   fav_session:    'ctrl+alt+f',
   delete_session: 'ctrl+alt+d',
@@ -1670,6 +1663,7 @@ const SHORTCUT_DEFAULTS = {
   open_gallery:   '',
   open_library:   '',
   open_memory:    '',
+  open_skills:    '',
   open_notes:     '',
   open_tasks:     '',
   open_theme:     '',
@@ -1693,6 +1687,7 @@ const SHORTCUT_ICONS = {
   open_gallery:   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>',
   open_library:   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
   open_memory:    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 1 7 7c0 2.4-1.2 4.5-3 5.7V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.3C6.2 13.5 5 11.4 5 9a7 7 0 0 1 7-7z"/><line x1="10" y1="22" x2="14" y2="22"/></svg>',
+  open_skills:    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
   open_notes:     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5"/><path d="M8 17.5 15.5 10l2.5 2.5L10.5 20H8z"/></svg>',
   open_tasks:     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 16l2 2 4-4"/></svg>',
   open_theme:     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20 5 5 0 0 0 5-5 3 3 0 0 0-3-3h-2a3 3 0 0 1-3-3 5 5 0 0 1 5-5"/></svg>',
@@ -1716,6 +1711,7 @@ const SHORTCUT_LABELS = {
   open_gallery:   'Open Gallery',
   open_library:   'Open Library',
   open_memory:    'Open Memory',
+  open_skills:    'Open Skills',
   open_notes:     'Open Notes',
   open_tasks:     'Open Tasks',
   open_theme:     'Open Theme',
@@ -1725,7 +1721,7 @@ const SHORTCUT_CATEGORIES = [
   { name: 'Navigation', keys: ['search', 'toggle_sidebar', 'focus_input', 'settings'] },
   { name: 'Sessions', keys: ['new_session', 'fav_session', 'delete_session'] },
   { name: 'Tools', keys: ['incognito', 'tts', 'cancel'] },
-  { name: 'Open Tools', keys: ['open_calendar', 'open_compare', 'open_cookbook', 'open_research', 'open_gallery', 'open_library', 'open_memory', 'open_notes', 'open_tasks', 'open_theme'] },
+  { name: 'Open Tools', keys: ['open_calendar', 'open_compare', 'open_cookbook', 'open_research', 'open_gallery', 'open_library', 'open_memory', 'open_skills', 'open_notes', 'open_tasks', 'open_theme'] },
 ];
 
 function _formatKeyCaps(combo) {
@@ -1771,6 +1767,9 @@ async function initShortcuts() {
     const res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     const settings = await res.json();
     if (settings.keybinds) keybinds = { ...keybinds, ...settings.keybinds };
+    if (keybinds.toggle_sidebar === 'ctrl+b') {
+      keybinds.toggle_sidebar = SHORTCUT_DEFAULTS.toggle_sidebar;
+    }
   } catch (e) {}
 
   function _findConflicts() {
@@ -2465,7 +2464,7 @@ async function initReminderSettings() {
     const personaSel = el('set-reminder-llm-persona');
     if (personaSel) {
       try {
-        const presetsMod = await import('./presets.js');
+        const presetsMod = await import('./presets.js?v=20260908personaname1');
         const tpl = presetsMod.PROMPT_TEMPLATES || [];
         const chars = tpl.filter(t => t.isCharacter);
         for (const c of chars) {
@@ -2665,16 +2664,18 @@ async function initEmailAccountsSettings() {
   const root = el('settings-modal');
   if (!root || !root.querySelector('[data-settings-panel="email"]')) return;
 
-  el('set-email-open-library-settings')?.addEventListener('click', async () => {
+  const emailPreferences = el('settings-email-preferences');
+  if (emailPreferences && emailPreferences.dataset.emailSettingsBound !== '1') {
+    emailPreferences.dataset.emailSettingsBound = '1';
     try {
-      const mod = await import('./emailLibrary.js?v=20260815approvalsave1');
-      if (typeof mod.openEmailLibrarySettings === 'function') {
-        await mod.openEmailLibrarySettings();
+      const mod = await import('./emailLibrary.js?v=20260910replyactions1');
+      if (typeof mod.mountEmailSettings === 'function') {
+        await mod.mountEmailSettings(emailPreferences);
       }
     } catch (e) {
-      console.warn('Failed to open Email settings page', e);
+      console.warn('Failed to mount Email settings', e);
     }
-  });
+  }
   const manageBtn = el('set-email-open-integrations');
   if (manageBtn && manageBtn.dataset.bound !== '1') {
     manageBtn.dataset.bound = '1';
@@ -2685,7 +2686,7 @@ async function initEmailAccountsSettings() {
     tasksBtn.dataset.bound = '1';
     tasksBtn.addEventListener('click', async () => {
       try {
-        const mod = await import('./tasks.js');
+        const mod = await import('./tasks.js?v=20260901taskskilldensity1');
         const openTasks = mod.openTasks || (mod.default && mod.default.openTasks);
         if (typeof openTasks === 'function') openTasks(null, { filter: 'Email' });
         else document.getElementById('tool-tasks-btn')?.click();

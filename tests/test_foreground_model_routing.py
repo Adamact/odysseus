@@ -16,6 +16,7 @@ import routes.chat_routes as chat_routes
 import routes.chat_helpers as chat_helpers
 import routes.prefs_routes as prefs_routes
 from src.request_models import ChatRequest
+from src.tool_capabilities import ToolGateDecision
 from src.tool_approvals import document_content_digest
 from src.foreground_model_routing import (
     FOREGROUND_AVAILABILITY_STATUSES,
@@ -31,6 +32,44 @@ def _collect(gen):
         return [chunk async for chunk in gen]
 
     return asyncio.run(_run())
+
+
+def test_visible_response_text_for_save_collapses_duplicate_done():
+    assert chat_routes._visible_response_text_for_save("\u2063Done.Done.") == "Done."
+    assert chat_routes._visible_response_text_for_save("Done. Done.") == "Done."
+    assert chat_routes._visible_response_text_for_save("Updated fact `abc123`.Done.") == "Updated fact `abc123`."
+    assert (
+        chat_routes._visible_response_text_for_save("Deleted the memory `abc123` about marker xyz.Done.")
+        == "Deleted the memory `abc123` about marker xyz."
+    )
+
+
+def test_agent_render_state_replaces_untagged_thinking_with_final_decision():
+    state = chat_routes._AgentRenderState()
+    event = state.consume({
+        "type": "final_response",
+        "content": "Thinking Process:\n\nAnalyze.\n\nFinal decision:\nClean answer.",
+    })
+    assert event["content"] == "Clean answer."
+    assert state.content == "Clean answer."
+    assert event["replacement_scope"] == "turn"
+
+
+@pytest.fixture(autouse=True)
+def _allow_tools_for_routing_fixtures(monkeypatch):
+    """Keep routing tests focused on candidate selection, not authorization.
+
+    Production approval behavior is covered by the tool-policy suites. These
+    tests use synthetic tool streams to inspect foreground fallback routing;
+    stopping those streams at the security gate makes the assertions about
+    later candidates meaningless.
+    """
+    monkeypatch.setattr(
+        agent_loop.ToolRunSecurityContext,
+        "decision_for",
+        lambda self, *args, **kwargs: ToolGateDecision(True),
+        raising=False,
+    )
 
 
 class _EmptyQuery:
@@ -65,7 +104,18 @@ class _RouteRequest:
             "session": "session-1",
             "mode": mode,
             "compare_mode": "true",
+            "no_documents": "true",
+            "no_memory": "true",
         }
+        if mode == "agent":
+            self._form.update(
+                {
+                    "allow_web_search": "true",
+                    "allow_bash": "true",
+                }
+            )
+        else:
+            self._form["use_rag"] = "false"
 
     async def form(self):
         return self._form
@@ -96,13 +146,14 @@ def _chat_stream_endpoint(
     capture_completion=False,
     capture_context=False,
     endpoint_url="https://selected.example/v1",
+    session_model="selected-model",
 ):
     def add_message(message):
         captured.setdefault("added_messages", []).append(message)
 
     session = SimpleNamespace(
         endpoint_url=endpoint_url,
-        model="selected-model",
+        model=session_model,
         headers={"Authorization": "Bearer selected"},
         name="test",
         history=[],
@@ -2273,6 +2324,38 @@ def test_multi_round_agent_uses_only_selected_model(monkeypatch):
     assert any('"delta": "done"' in chunk for chunk in chunks)
 
 
+def test_agent_stream_attributes_model_response_reference_to_round(monkeypatch):
+    monkeypatch.setattr(agent_loop, "get_setting", lambda key, default=None: default)
+    monkeypatch.setattr(agent_loop, "get_mcp_manager", lambda: None)
+    monkeypatch.setattr(agent_loop, "estimate_tokens", lambda *args, **kwargs: 10)
+    monkeypatch.setattr(agent_loop, "blocked_tools_for_owner", lambda owner: set())
+
+    async def fake_stream(candidates, messages, **kwargs):
+        yield 'data: {"type": "model_response_ref", "response_id": "response-neutral-1", "model": "policy-model"}\n\n'
+        yield 'data: {"delta": "complete"}\n\n'
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(agent_loop, "stream_llm_with_fallback", fake_stream)
+
+    chunks = _collect(
+        agent_loop.stream_agent_loop(
+            "https://model.invalid/v1",
+            "policy-model",
+            [{"role": "user", "content": "Return a short status."}],
+            max_rounds=1,
+            relevant_tools=set(),
+            fallbacks=[],
+            _is_teacher_run=True,
+        )
+    )
+
+    reference = json.loads(next(
+        chunk for chunk in chunks if '"type": "model_response_ref"' in chunk
+    )[6:])
+    assert reference["response_id"] == "response-neutral-1"
+    assert reference["round"] == 1
+
+
 def test_multi_round_agent_pins_answering_fallback_for_the_run(monkeypatch):
     """A tool round must not silently switch back to the selected model."""
 
@@ -2352,6 +2435,7 @@ def test_late_agent_fallback_records_each_round_and_stays_pinned(monkeypatch):
     monkeypatch.setattr(agent_loop, "get_setting", lambda key, default=None: default)
     monkeypatch.setattr(agent_loop, "get_mcp_manager", lambda: None)
     monkeypatch.setattr(agent_loop, "estimate_tokens", lambda *args, **kwargs: 10)
+    monkeypatch.setattr(agent_loop, "blocked_tools_for_owner", lambda owner: set())
     monkeypatch.setattr(agent_loop, "_agent_route_tool_mode", lambda url, model, owner=None, headers=None: (True, False, False))
 
     async def fake_stream(candidates, messages, **kwargs):
@@ -2880,6 +2964,7 @@ def test_agent_metrics_attribute_usage_to_each_answering_route(monkeypatch):
     monkeypatch.setattr(agent_loop, "get_setting", lambda key, default=None: default)
     monkeypatch.setattr(agent_loop, "get_mcp_manager", lambda: None)
     monkeypatch.setattr(agent_loop, "estimate_tokens", lambda *args, **kwargs: 10)
+    monkeypatch.setattr(agent_loop, "blocked_tools_for_owner", lambda owner: set())
     monkeypatch.setattr(
         agent_loop,
         "_agent_route_tool_mode",
@@ -3122,7 +3207,9 @@ def test_force_answer_recovery_persists_and_bills_pinned_fallback_route(
         (primary[0], primary[1]),
         (backup[0], backup[1]),
     ]
-    assert requests_by_round[1:] == [[(backup[0], backup[1])]] * 5
+    # The loop breaker asks the pinned fallback route to make one recovery
+    # attempt, then synthesizes instead of repeating the failed tool call.
+    assert requests_by_round[1:] == [[(backup[0], backup[1])]] * 2
     assert len(synthesis_calls) == 1
     assert synthesis_calls[0]["url"] == backup[0]
     assert synthesis_calls[0]["model"] == backup[1]
@@ -3135,7 +3222,7 @@ def test_force_answer_recovery_persists_and_bills_pinned_fallback_route(
     assert metrics["round_models"][-1] == backup[1]
     assert metrics["round_endpoint_ids"][-1] == "backup-ep"
     assert metrics["usage_buckets"][-1] == {
-        "round": 6,
+        "round": 3,
         "model": backup[1],
         "endpoint_id": "backup-ep",
         "endpoint_label": "Backup",
@@ -3144,7 +3231,7 @@ def test_force_answer_recovery_persists_and_bills_pinned_fallback_route(
         "usage_source": "estimated",
         "endpoint_cost_tracked": True,
     }
-    assert len(metrics["usage_buckets"]) == 7
+    assert len(metrics["usage_buckets"]) == 4
 
 
 def test_agent_terminal_retains_completed_paid_fallback_usage(monkeypatch):
@@ -3154,6 +3241,7 @@ def test_agent_terminal_retains_completed_paid_fallback_usage(monkeypatch):
     monkeypatch.setattr(agent_loop, "get_setting", lambda key, default=None: default)
     monkeypatch.setattr(agent_loop, "get_mcp_manager", lambda: None)
     monkeypatch.setattr(agent_loop, "estimate_tokens", lambda *args, **kwargs: 10)
+    monkeypatch.setattr(agent_loop, "blocked_tools_for_owner", lambda owner: set())
     monkeypatch.setattr(
         agent_loop,
         "_agent_route_tool_mode",
@@ -3298,7 +3386,7 @@ def test_agent_fallback_request_uses_candidate_context_budget(
     round_number = 0
     primary = ("https://selected.example/v1", "selected-model", {})
     backup = ("https://backup.example/v1", "backup-model", {})
-    latest_user = "LATEST USER TURN MUST SURVIVE"
+    latest_user = "CURRENT USER TURN MUST SURVIVE"
     history = [
         {"role": "user" if index % 2 == 0 else "assistant", "content": f"history-{index}"}
         for index in range(20)
@@ -3635,15 +3723,21 @@ def test_skill_activation_reaches_later_fallback_request_and_pinned_round(monkey
     }
     assert "grep" in primary_schema_names
     assert round_two_requests[1]["kwargs"]["tools"] is None
-    assert any(
-        "route=odysseus-qwen-backup; tools=grep,manage_skills" in (message.get("content") or "")
+    fallback_route_prompt = next(
+        message.get("content") or ""
         for message in round_two_requests[1]["messages"]
+        if "route=odysseus-qwen-backup; tools=" in (message.get("content") or "")
     )
+    fallback_tool_names = set(fallback_route_prompt.partition("tools=")[2].split(","))
+    assert {"grep", "manage_skills"} <= fallback_tool_names
 
     round_three_candidates, round_three_requests = requests_by_round[2]
     assert round_three_candidates == [backup]
-    assert any(
-        "route=odysseus-qwen-backup; tools=grep,manage_skills" in (message.get("content") or "")
+    pinned_route_prompt = next(
+        message.get("content") or ""
         for message in round_three_requests[0]["messages"]
+        if "route=odysseus-qwen-backup; tools=" in (message.get("content") or "")
     )
+    pinned_tool_names = set(pinned_route_prompt.partition("tools=")[2].split(","))
+    assert {"grep", "manage_skills"} <= pinned_tool_names
     assert any('"delta": "pinned backup answer"' in chunk for chunk in chunks)

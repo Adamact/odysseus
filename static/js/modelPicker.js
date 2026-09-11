@@ -2,8 +2,8 @@
 // Extracted from sessions.js
 
 import { providerLogo } from './providers.js';
-import uiModule from './ui.js';
-import settingsModule from './settings.js';
+import uiModule from './ui.js?v=20260908weekhoverfix1';
+import settingsModule from './settings.js?v=20260909defaultmodelfix1';
 import { sortModelObjects } from './modelSort.js';
 import spinnerModule from './spinner.js';
 
@@ -290,16 +290,12 @@ function _initModelPickerDropdown() {
       // Mark local endpoints whose live probe failed.
       const probeResult = item.endpoint_id ? _localProbe[item.endpoint_id] : null;
       const isLocalDead = !!(probeResult && probeResult.alive === false);
-      const isApiEndpoint = item.category && item.category !== 'local';
       allModels.forEach((mid, i) => {
-        // Local/self-hosted servers often expose the same model through several
-        // stale endpoints, so keep deduping those by model id. Cloud/API
-        // endpoints are user-selected provider routes; the same model id can be
-        // intentionally enabled on OpenRouter and OpenAI, so key those by
-        // endpoint too or the chat picker silently drops one.
-        const seenKey = isApiEndpoint
-          ? `${item.endpoint_id || item.url || item.endpoint_name || 'api'}::${mid}`
-          : mid;
+        // A registered route is a user choice, including local routes using
+        // identical weights with different harness profiles. Never collapse
+        // distinct endpoints just because their model IDs match.
+        const seenKey = _pickerModelKey({ endpointId: item.endpoint_id,
+          url: item.url, epName: item.endpoint_name, mid });
         if (seen.has(seenKey)) return;
         seen.add(seenKey);
         result.push({
@@ -502,13 +498,13 @@ function _initModelPickerDropdown() {
       epSpan.textContent = _epDisplay;
       row.appendChild(epSpan);
 
-      // Inline favorite dot — toggles favorite, never picks the model.
+      // Inline favorite button — toggles favorite, never picks the model.
       const favDot = document.createElement('button');
       favDot.type = 'button';
       favDot.className = 'mp-fav-dot' + (favs.includes(m.mid) ? ' active' : '');
-      favDot.textContent = '●';
       const _setFavState = (on) => {
         favDot.classList.toggle('active', on);
+        favDot.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>`;
         favDot.title = on ? 'Remove from favorites' : 'Add to favorites';
         favDot.setAttribute('aria-label', on ? 'Remove from favorites' : 'Add to favorites');
         favDot.setAttribute('aria-pressed', on ? 'true' : 'false');
@@ -650,6 +646,7 @@ async function _pick(m) {
         endpoint_id: m.endpointId || '',
         display: m.display || m.mid || '',
         picked_at: Date.now(),
+        session_id: _deps.getCurrentSessionId() || null,
       };
     } catch (_) {}
     let switchDone = null;
@@ -701,7 +698,7 @@ async function _pick(m) {
       // Existing session with no model — PATCH it
       const sessions = _deps.getSessions();
       const s = sessions.find(x => x.id === currentSessionId);
-      if (s) { s.model = m.mid; s.endpoint_url = m.url; s.endpoint_id = m.endpointId || s.endpoint_id || ''; }
+      if (s) { s.model = m.mid; s.endpoint_url = m.url; s.endpoint_id = m.endpointId || ''; s.endpoint_name = m.epName || ''; }
       updateModelPicker();
       const fd = new FormData();
       fd.append('model', m.mid);
@@ -945,13 +942,25 @@ export function updateModelPicker() {
     _ensureDefaultPendingChat();
   }
 
-  const displayName = modelId ? modelId.split('/').pop() : 'Select model';
+  let displayName = modelId ? modelId.split('/').pop() : 'Select model';
+  const routeItems = window.modelsModule?.getCachedItems?.() || [];
+  const candidates = routeItems.filter(item => (item.models || []).concat(item.models_extra || []).includes(modelId));
+  const selectedId = s?.endpoint_id || latestPending?.endpointId;
+  const selectedUrl = s?.endpoint_url || latestPending?.url || '';
+  const normalizeRouteUrl = url => String(url || '').replace(/\/chat\/completions\/?$/, '').replace(/\/$/, '');
+  const selectedEndpoint = candidates.find(item => selectedId ? item.endpoint_id === selectedId
+    : normalizeRouteUrl(item.url) === normalizeRouteUrl(selectedUrl));
+  const routeName = s?.endpoint_name || selectedEndpoint?.endpoint_name;
+  if (routeName) {
+    displayName = `${routeName} · ${displayName}`;
+  }
   // The header indicator clips long names with ellipsis; show the full model
   // identifier on hover (#1982). No tooltip on the "Select model" placeholder.
-  label.title = modelId || '';
+  label.title = modelId ? displayName : '';
   const logo = modelId ? providerLogo(modelId) : null;
   if (logo) {
-    label.innerHTML = '<span class="model-picker-logo">' + logo + '</span> ' + displayName;
+    label.innerHTML = '<span class="model-picker-logo">' + logo + '</span> ';
+    label.appendChild(document.createTextNode(displayName));
   } else {
     label.textContent = displayName;
   }

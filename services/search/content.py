@@ -65,6 +65,49 @@ try:
 except ImportError:
     pdf_extract_text = None  # type: ignore
 
+try:
+    from pypdf import PdfReader
+except ImportError:
+    PdfReader = None  # type: ignore
+
+
+def _extract_pdf_text(pdf_bytes: bytes, url: str = "") -> str:
+    """Extract PDF text with available permissive dependencies."""
+    # Prefer pypdf's layout mode. Plain text extraction and pdfminer often
+    # collapse table columns into an ambiguous number stream, which makes a
+    # correct source passage easy for the model to misread.
+    if PdfReader is not None:
+        try:
+            reader = PdfReader(io.BytesIO(pdf_bytes))
+            pages: List[str] = []
+            for idx, page in enumerate(reader.pages):
+                try:
+                    try:
+                        page_text = page.extract_text(extraction_mode="layout") or ""
+                    except TypeError:
+                        page_text = page.extract_text() or ""
+                except Exception as e:
+                    logger.warning(f"pypdf extraction failed for {url} page {idx + 1}: {e}")
+                    page_text = ""
+                if page_text.strip():
+                    pages.append(f"[Page {idx + 1}]\n{page_text.strip()}")
+            if pages:
+                return "\n\n".join(pages)
+        except Exception as e:
+            logger.warning(f"pypdf extraction failed for {url}: {e}")
+
+    if pdf_extract_text is not None:
+        try:
+            text = pdf_extract_text(io.BytesIO(pdf_bytes)) or ""
+            if text.strip():
+                return text
+        except Exception as e:
+            logger.warning(f"pdfminer extraction failed for {url}: {e}")
+
+    if PdfReader is None and pdf_extract_text is None:
+        logger.error("No PDF text extractor installed; install pdfminer.six or pypdf.")
+    return ""
+
 
 # ----------------------------------------------------------------------
 # HTML extraction helpers
@@ -216,9 +259,6 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0,
             "User-Agent": WEB_FETCH_USER_AGENT,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
-            # identity so the streamed size cap in _get_public_url stays honest
-            # (a compressed body can decode to far more than Content-Length).
-            "Accept-Encoding": "identity",
             "Connection": "keep-alive",
         }
         response = _get_public_url(url, headers=headers, timeout=timeout,
@@ -252,26 +292,43 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0,
     # PDF handling
     content_type = response.headers.get("Content-Type", "").lower()
     if "application/pdf" in content_type or url.lower().endswith(".pdf"):
+        if (
+            _size_fields["truncated"]
+            and effective_cap < WEB_FETCH_HARD_MAX_BYTES
+            and (
+                _size_fields["total_bytes"] is None
+                or _size_fields["total_bytes"] <= WEB_FETCH_HARD_MAX_BYTES
+            )
+        ):
+            try:
+                response = _get_public_url(
+                    url,
+                    headers=headers,
+                    timeout=timeout,
+                    max_bytes=WEB_FETCH_HARD_MAX_BYTES,
+                )
+                _size_fields = {
+                    "truncated": getattr(response, "truncated", False),
+                    "fetched_bytes": len(response.content),
+                    "total_bytes": getattr(response, "declared_bytes", None),
+                }
+                effective_cap = WEB_FETCH_HARD_MAX_BYTES
+            except BodyTooLargeError as e:
+                error_logger.warning(f"Refused oversized PDF body for {url}: {e}")
+                return _empty_result(url, f"TooLarge: {e}")
+            except Exception as e:
+                logger.warning(f"Full-budget PDF retry failed for {url}: {e}")
         if _size_fields["truncated"]:
             # A PDF cut mid-stream is not parseable; unlike text there is no
             # useful partial result, so report the budget problem instead.
             _declared = _size_fields["total_bytes"]
-            return _empty_result(
-                url,
-                f"TooLarge: PDF exceeds the {effective_cap:,}-byte fetch budget"
-                + (f" (size {_declared:,} bytes)" if _declared else "")
-                + "; retry with a larger budget if it fits under the hard cap",
+            error = (
+                f"TooLarge: PDF decoded body exceeded the {effective_cap:,}-byte fetch budget"
+                + (f" (declared compressed size {_declared:,} bytes)" if _declared else "")
+                + "; retry with a larger budget if it fits under the hard cap"
             )
-        if pdf_extract_text is None:
-            logger.error("pdfminer.six is not installed; cannot extract PDF text.")
-            pdf_text = ""
-        else:
-            try:
-                pdf_bytes = io.BytesIO(response.content)
-                pdf_text = pdf_extract_text(pdf_bytes)
-            except Exception as e:
-                logger.warning(f"PDF extraction failed for {url}: {e}")
-                pdf_text = ""
+            return {**_empty_result(url, error), **_size_fields}
+        pdf_text = _extract_pdf_text(response.content, url)
         result = {
             "url": url,
             "title": os.path.basename(url),

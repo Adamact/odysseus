@@ -1,9 +1,11 @@
 """Background scheduler for ScheduledTask execution."""
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
+import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -248,7 +250,7 @@ HOUSEKEEPING_DEFAULTS = {
     "extract_email_events": {"name": "Email Calendar Events",    "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */1 * * *", "ship_paused": True, "legacy_names": ["Email → Calendar Events"]},
     "classify_events":      {"name": "Calendar Classify Events", "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 6,18 * * *", "ship_paused": True, "legacy_names": ["Classify Calendar Events"]},
     "check_email_urgency":   {"name": "Email Tags",               "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 * * * *", "ship_paused": True, "old_cron_expressions": ["*/15 * * * *"], "legacy_names": ["Email Triage", "Urgent Email"]},
-    "audit_skills":          {"name": "Skills Audit",             "trigger_type": "event", "trigger_event": "skill_added", "trigger_count": 5, "schedule": None, "scheduled_time": None, "cron_expression": None, "legacy_names": ["Audit Skills"]},
+    "audit_skills":          {"name": "Skills Audit",             "trigger_type": "schedule", "schedule": "daily", "scheduled_time": "02:00", "cron_expression": None, "legacy_names": ["Audit Skills"]},
 }
 
 RETIRED_HOUSEKEEPING_ACTIONS = frozenset({
@@ -341,7 +343,7 @@ class TaskScheduler:
         # coroutine; trigger_task() can be called from request handlers; the
         # event bus fires from background tasks. Without this lock long-running
         # tasks could be double-dispatched.
-        self._executing_lock = asyncio.Lock()
+        self._executing_lock = threading.RLock()
         self._pending_notifications = []  # completed task notifications
         self._task_defer_counts = {}
         # Strict serial execution — exactly one task runs at a time. Anything
@@ -351,6 +353,24 @@ class TaskScheduler:
         self._run_semaphore = asyncio.Semaphore(1)
         self._concurrency_cap = 1
         self._task_handles = {}
+
+    @contextlib.asynccontextmanager
+    async def _executing_guard(self):
+        # This scheduler can be touched by request handlers, event-bus tasks,
+        # and the background scheduler loop. An asyncio.Lock is bound to the
+        # first event loop that awaits it, which breaks after app reloads or
+        # loop changes. The guarded sections only mutate in-memory sets/maps
+        # and do not await, so a process-local reentrant lock is sufficient and
+        # loop-agnostic.
+        lock = self._executing_lock
+        if hasattr(lock, "__aenter__"):
+            # Compatibility for tests or old in-memory scheduler instances that
+            # predate the RLock migration.
+            async with lock:
+                yield
+            return
+        with lock:
+            yield
 
     def _set_run_progress(self, run_id: str, message: str):
         """Persist short live progress text for Activity while a run is active."""
@@ -398,20 +418,70 @@ class TaskScheduler:
             logger.debug("Task abort marker failed for %s", task_id, exc_info=True)
             return False
 
+    def _finish_cancelled_run(self, task_id: str, run_id: str, message: str, foreground: bool):
+        """Persist running-task cancellation using a worker-owned DB session."""
+        from core.database import SessionLocal, ScheduledTask, TaskRun
+        with SessionLocal() as db:
+            run = db.query(TaskRun).filter(TaskRun.id == run_id).first()
+            if run:
+                run.status = 'aborted'
+                run.error = message
+                run.result = run.result or message
+                run.finished_at = _utcnow()
+            task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
+            if task:
+                task.last_run = _utcnow()
+                if foreground:
+                    task.next_run = _utcnow() + timedelta(minutes=15)
+                elif (task.trigger_type or 'schedule') == 'schedule':
+                    task.next_run = compute_next_run(
+                        task.schedule, task.scheduled_time, task.scheduled_day,
+                        task.scheduled_date, after=_utcnow(),
+                        cron_expression=task.cron_expression,
+                        tz_name=_resolve_task_timezone(db, task),
+                    )
+                else:
+                    task.next_run = None
+            db.commit()
+
     def add_notification(self, task_name: str, status: str, task_id: str = None, owner: str = None, body: str = None):
         """Store a notification about a completed task run. Tagged with the
         task's owner so `pop_notifications` can return only that user's
         notifications and prevent cross-tenant drain. `body` is the result
         text — populated when output_target='notification' so the client can
         show a rich browser Notification, not just a toast."""
-        self._pending_notifications.append({
+        timestamp = _utcnow()
+        notification = {
             "task_name": task_name,
             "status": status,
             "task_id": task_id,
             "owner": owner,
             "body": (body[:500] + "…") if body and len(body) > 500 else body,
-            "timestamp": _utcnow().isoformat() + "Z",
-        })
+            "timestamp": timestamp.isoformat() + "Z",
+        }
+        self._pending_notifications.append(notification)
+        # Keep a durable copy because the live notifications endpoint consumes
+        # its queue after delivering the toast/browser notification.
+        try:
+            from core.database import SessionLocal, NotificationLog
+            db = SessionLocal()
+            try:
+                db.add(NotificationLog(
+                    id=uuid.uuid4().hex,
+                    owner=owner,
+                    task_name=task_name or "Untitled task",
+                    task_id=task_id,
+                    status=status or "success",
+                    body=notification["body"],
+                    timestamp=timestamp,
+                ))
+                db.commit()
+            finally:
+                db.close()
+        except Exception:
+            # A database write must never prevent the live notification from
+            # reaching the user or interrupt task completion.
+            logger.warning("Could not persist task notification", exc_info=True)
         # Cap at 50 to avoid unbounded growth
         if len(self._pending_notifications) > 50:
             self._pending_notifications = self._pending_notifications[-50:]
@@ -698,7 +768,7 @@ class TaskScheduler:
                 foreground_active = has_foreground_activity()
             except Exception:
                 foreground_active = False
-            async with self._executing_lock:
+            async with self._executing_guard():
                 # Snapshot under the lock so we don't race with mid-iteration adds.
                 executing_snapshot = set(self._executing)
                 # Scheduled tasks and deferred event tasks both use next_run.
@@ -769,15 +839,17 @@ class TaskScheduler:
         except asyncio.CancelledError:
             # If cancellation happens while queued behind the semaphore,
             # _execute_task_locked never runs and cannot update the Activity row.
-            self._mark_run_aborted(task_id, run_id)
-            self._defer_immediately_due_task(task_id, delay=timedelta(minutes=15))
+            await asyncio.to_thread(self._mark_run_aborted, task_id, run_id)
+            await asyncio.to_thread(
+                self._defer_immediately_due_task, task_id, delay=timedelta(minutes=15),
+            )
             raise
         finally:
             handle = self._task_handles.get(task_id)
             if handle is current:
                 self._task_handles.pop(task_id, None)
             if release_executing:
-                async with self._executing_lock:
+                async with self._executing_guard():
                     self._executing.discard(task_id)
 
     def _defer_immediately_due_task(self, task_id: str, *, delay: timedelta):
@@ -902,7 +974,7 @@ class TaskScheduler:
                         if has_foreground_activity():
                             foreground_cancel["hit"] = True
                             logger.info("Task '%s' interrupted because Odysseus became active", task.name)
-                            if current_task:
+                            if current_task and not current_task.cancelling():
                                 current_task.cancel()
                             return
 
@@ -952,26 +1024,13 @@ class TaskScheduler:
                     else "Stopped by user"
                 )
                 logger.info("Task '%s' %s", task.name, msg)
-                run_obj = db.query(TaskRun).filter(TaskRun.id == run_id).first()
-                if run_obj:
-                    run_obj.status = "aborted"
-                    run_obj.error = msg
-                    run_obj.result = run_obj.result or msg
-                    run_obj.finished_at = _utcnow()
-                task.last_run = _utcnow()
-                if foreground_cancel.get("hit"):
-                    task.next_run = _utcnow() + timedelta(minutes=15)
-                elif (task.trigger_type or "schedule") == "schedule":
-                    task.next_run = compute_next_run(
-                        task.schedule, task.scheduled_time,
-                        task.scheduled_day, task.scheduled_date,
-                        after=_utcnow(),
-                        cron_expression=task.cron_expression,
-                        tz_name=_resolve_task_timezone(db, task),
-                    )
-                else:
-                    task.next_run = None
-                db.commit()
+                # Release the loop-owned transaction before the worker writes.
+                # Do not move a live ORM session/objects across threads.
+                db.close()
+                await asyncio.to_thread(
+                    self._finish_cancelled_run, task_id, run_id, msg,
+                    bool(foreground_cancel.get('hit')),
+                )
                 return
             except TaskNoop as noop:
                 # Action reported "nothing to do". Mark the run as `skipped`
@@ -1159,7 +1218,7 @@ class TaskScheduler:
             if handle is asyncio.current_task():
                 self._task_handles.pop(task_id, None)
             if release_executing:
-                async with self._executing_lock:
+                async with self._executing_guard():
                     self._executing.discard(task_id)
 
 
@@ -2139,7 +2198,7 @@ class TaskScheduler:
         """Run a chained task. Acquires _executing membership the same way
         run_task_now does so an overlapping scheduler tick can't double-dispatch
         the same task while the chain run is in flight."""
-        async with self._executing_lock:
+        async with self._executing_guard():
             if task_id in self._executing:
                 return  # already in flight (manual trigger, scheduler tick, or another chain)
             self._executing.add(task_id)
@@ -2255,7 +2314,7 @@ class TaskScheduler:
         if force:
             asyncio.create_task(self._execute_task(task_id, bypass_model_slot=True, release_executing=False))
             return True
-        async with self._executing_lock:
+        async with self._executing_guard():
             if task_id in self._executing:
                 return False
             self._executing.add(task_id)
@@ -2267,14 +2326,17 @@ class TaskScheduler:
         handle = self._task_handles.get(task_id)
         stopped = False
         if handle and not handle.done():
-            handle.cancel()
+            # A second cancel interrupts the first cancellation's async DB
+            # cleanup, potentially leaving an overdue task immediately due.
+            if not handle.cancelling():
+                handle.cancel()
             stopped = True
-        async with self._executing_lock:
+        async with self._executing_guard():
             if task_id in self._executing:
                 self._executing.discard(task_id)
                 stopped = True
 
-        stopped = self._mark_run_aborted(task_id) or stopped
+        stopped = await asyncio.to_thread(self._mark_run_aborted, task_id) or stopped
         return stopped
 
     async def stop_background_tasks_for_foreground(self, *, reason: str = "Odysseus became active") -> int:
@@ -2285,15 +2347,20 @@ class TaskScheduler:
         Manual force-runs can be restarted by the user; automatic jobs will be
         deferred by their cancellation path instead of stealing the app.
         """
-        async with self._executing_lock:
+        async with self._executing_guard():
             task_ids = list(self._executing)
         stopped = 0
         for task_id in task_ids:
             handle = self._task_handles.get(task_id)
             if handle and not handle.done():
-                handle.cancel()
+                if not handle.cancelling():
+                    handle.cancel()
                 stopped += 1
-            if self._mark_run_aborted(task_id):
+        # Cancel every handle before waiting on persistence. A contended SQLite
+        # writer must not stall the foreground request's event loop, or delay
+        # cancellation of the remaining background work.
+        for task_id in task_ids:
+            if await asyncio.to_thread(self._mark_run_aborted, task_id):
                 stopped += 1
         if stopped:
             logger.info("Stopped %d background scheduler task(s): %s", stopped, reason)
@@ -2420,6 +2487,34 @@ class TaskScheduler:
                             tz_name=_resolve_task_timezone(db, task),
                         )
                         normalized = True
+                if desired_trigger == "schedule" and (
+                    (task.trigger_type or "schedule") != "schedule"
+                    or task.trigger_event is not None
+                    or task.trigger_count is not None
+                    or task.schedule != defs.get("schedule")
+                    or task.scheduled_time != defs.get("scheduled_time")
+                    or task.scheduled_date is not None
+                    or task.cron_expression != defs.get("cron_expression")
+                ):
+                    # Migrate older event-based housekeeping tasks to their
+                    # current scheduled definition. Keep the user's status;
+                    # only replace the trigger configuration.
+                    task.trigger_type = "schedule"
+                    task.trigger_event = None
+                    task.trigger_count = None
+                    task.trigger_counter = 0
+                    task.schedule = defs.get("schedule")
+                    task.scheduled_time = defs.get("scheduled_time")
+                    task.scheduled_day = None
+                    task.scheduled_date = None
+                    task.cron_expression = defs.get("cron_expression")
+                    task.next_run = compute_next_run(
+                        task.schedule, task.scheduled_time,
+                        task.scheduled_day, task.scheduled_date,
+                        after=_utcnow(), cron_expression=task.cron_expression,
+                        tz_name=_resolve_task_timezone(db, task),
+                    )
+                    normalized = True
                 if desired_trigger == "event" and (
                     (task.trigger_type or "schedule") != "event"
                     or task.trigger_event != defs.get("trigger_event")

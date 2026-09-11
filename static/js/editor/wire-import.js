@@ -26,6 +26,11 @@
  * @returns {{ handleImportedImage: (img: HTMLImageElement) => void }}
  */
 import { state } from './state.js';
+import {
+  createPlacedData,
+  initialPlacedMatrix,
+  renderPlacedLayer,
+} from './placed-layer.js';
 
 export function wireImport({ container, saveState, createLayer, composite, renderLayerPanel, uiModule }) {
   // Hidden <input type="file"> the topbar + File buttons both click.
@@ -35,7 +40,7 @@ export function wireImport({ container, saveState, createLayer, composite, rende
   importFileInput.style.display = 'none';
   container.appendChild(importFileInput);
 
-  function handleImportedImage(img) {
+  function handleImportedImage(img, sourceName = 'Imported image') {
     if (!state.editorOpen) return;
     saveState('Import image');
     // Scale down if larger than canvas.
@@ -46,11 +51,22 @@ export function wireImport({ container, saveState, createLayer, composite, rende
       w = Math.round(w * scale);
       h = Math.round(h * scale);
     }
-    const layer = createLayer('Imported', state.imgWidth, state.imgHeight);
+    const source = document.createElement('canvas');
+    source.width = img.naturalWidth || img.width;
+    source.height = img.naturalHeight || img.height;
+    source.getContext('2d').drawImage(img, 0, 0);
+    const layer = createLayer('Imported', w, h);
     // Centre on the canvas.
     const ox = Math.round((state.imgWidth - w) / 2);
     const oy = Math.round((state.imgHeight - h) / 2);
-    layer.ctx.drawImage(img, ox, oy, w, h);
+    layer.kind = 'placed';
+    layer.placed = createPlacedData(
+      source,
+      initialPlacedMatrix(source.width, source.height, { x: ox, y: oy, width: w, height: h }),
+      sourceName,
+    );
+    const rendered = renderPlacedLayer(layer);
+    state.layerOffsets.set(layer.id, rendered.offset);
     state.layers.push(layer);
     state.activeLayerId = layer.id;
     // Switch to move tool so the imported layer is immediately
@@ -72,7 +88,7 @@ export function wireImport({ container, saveState, createLayer, composite, rende
     const reader = new FileReader();
     reader.onload = (ev) => {
       const img = new Image();
-      img.onload = () => handleImportedImage(img);
+      img.onload = () => handleImportedImage(img, file.name || 'Imported image');
       img.src = ev.target.result;
     };
     reader.readAsDataURL(file);
@@ -128,7 +144,7 @@ export function wireImport({ container, saveState, createLayer, composite, rende
           overlay.remove();
           const img = new Image();
           img.crossOrigin = 'anonymous';
-          img.onload = () => handleImportedImage(img);
+          img.onload = () => handleImportedImage(img, item.name || item.filename || 'Gallery image');
           img.onerror = () => { if (uiModule) uiModule.showToast('Failed to load gallery image'); };
           img.src = item.url;
         });

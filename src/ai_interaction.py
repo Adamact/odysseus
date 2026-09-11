@@ -17,6 +17,7 @@ through the standard agent_tools.py pipeline.
 import asyncio
 import json
 import logging
+import re
 import uuid
 import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
@@ -338,6 +339,44 @@ async def do_pipeline(content: str, session_id: Optional[str] = None, owner: Opt
 # Memory management tool
 # ---------------------------------------------------------------------------
 
+def _manage_memory_lines(content: str) -> list[str]:
+    """Normalize the public JSON contract to the legacy line protocol."""
+    raw_content = content.strip()
+    if not raw_content.startswith("{"):
+        return raw_content.split("\n")
+    try:
+        payload = json.loads(raw_content)
+    except (TypeError, json.JSONDecodeError):
+        return raw_content.split("\n")
+    if not isinstance(payload, dict):
+        return raw_content.split("\n")
+    action = str(payload.get("action") or "").strip().lower()
+    command = payload.get("command")
+    if not action and isinstance(command, str) and command.strip():
+        return command.strip().split("\n")
+    command_lines: list[str] = []
+    if isinstance(command, str) and command.strip():
+        command_lines = command.strip().split("\n")
+        if command_lines and command_lines[0].strip().lower() == action:
+            command_lines = command_lines[1:]
+    if action == "list":
+        return [action, str(payload.get("category") or "")]
+    if action == "add":
+        text = payload.get("text") or (command_lines[0] if command_lines else "")
+        category = payload.get("category") or (command_lines[1] if len(command_lines) > 1 else "fact")
+        return [action, str(text), str(category)]
+    if action == "edit":
+        memory_id = payload.get("memory_id") or payload.get("id") or (command_lines[0] if command_lines else "")
+        text = payload.get("text") or ("\n".join(command_lines[1:]) if len(command_lines) > 1 else "")
+        return [action, str(memory_id), str(text)]
+    if action == "delete":
+        memory_id = payload.get("memory_id") or payload.get("id") or (command_lines[0] if command_lines else "")
+        return [action, str(memory_id)]
+    if action == "search":
+        query = payload.get("text") or payload.get("query") or "\n".join(command_lines)
+        return [action, str(query)]
+    return [action] if action else raw_content.split("\n")
+
 async def do_manage_memory(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
     """Manage memories: list, add, edit, delete, search.
 
@@ -355,7 +394,7 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
     if not _memory_manager:
         return {"error": "Memory manager not available"}
 
-    lines = content.strip().split("\n")
+    lines = _manage_memory_lines(content)
     if not lines:
         return {"error": "Need at least 1 line: action"}
 
@@ -489,7 +528,16 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
         query_lower = query.lower()
         exact_results = [m for m in memories if query_lower in (m.get("text", "").lower())]
 
-        if hasattr(_memory_manager, 'get_relevant_memories'):
+        # An exact marker is commonly used to identify one record for an
+        # edit/delete workflow.  Do not mix fuzzy neighbors into that result:
+        # a semantically related record must never be mistaken for the exact
+        # target of a destructive operation.
+        exact_marker_query = bool(
+            re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{12,}", query)
+        )
+        if exact_results or exact_marker_query:
+            vector_results = []
+        elif hasattr(_memory_manager, 'get_relevant_memories'):
             vector_results = _memory_manager.get_relevant_memories(query, memories, threshold=0.05, max_items=20)
         else:
             vector_results = []
@@ -503,6 +551,29 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
             results.append(m)
             if len(results) >= 20:
                 break
+
+        # Keep a lexical safety net for short preference/identity queries. A
+        # vector-only top-k result can bury an exact fact such as "Maya uses
+        # Pacific time" beneath several related Maya fixture facts.
+        if not exact_results and not exact_marker_query and len(results) < 20:
+            query_terms = {
+                token for token in re.findall(r"[a-z0-9]+", query_lower)
+                if len(token) >= 4 and token not in {"what", "does", "with", "saved", "memory", "search", "look"}
+            }
+            lexical = []
+            for memory in memories:
+                text_lower = str(memory.get("text") or "").lower()
+                overlap = sum(1 for token in query_terms if token in text_lower)
+                if overlap:
+                    lexical.append((overlap, memory))
+            for _, memory in sorted(lexical, key=lambda item: (-item[0], str(item[1].get("id", "")))):
+                mid = memory.get("id")
+                if mid in seen:
+                    continue
+                seen.add(mid)
+                results.append(memory)
+                if len(results) >= 20:
+                    break
 
         if not results:
             return {"results": f"No memories found matching '{query}'."}
@@ -626,7 +697,7 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
       switch_model <model>    — Change the model for the current session
       set_theme <preset>      — Apply a built-in theme preset (dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute)
       create_theme <name> <bg> <fg> <panel> <border> <accent> [key=val ...] — Create custom theme. Optional key=val: advanced color overrides AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false
-      open_panel <name>       — Open a panel (documents, gallery, email, sessions, notes, memories, skills, settings, cookbook)
+      open_panel <name>       — Open a panel (documents, gallery, calendar, email, sessions, notes, memories, skills, settings, theme, cookbook)
       open_email_reply <uid> [folder] [reply|reply-all|ai-reply] [body text] — Open a reply draft document for an email; does not send. ALWAYS append the body text when the user told you what to say (one-shot draft); only omit body when the user just asked to "open a reply" without content.
       get_toggles             — Return current toggle states (server-side knowledge)
     """
@@ -827,8 +898,10 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
 
     elif action == "open_panel":
         # Open a top-level panel/modal: documents/library, gallery,
-        # email, sessions, notes, memories, skills, settings, cookbook.
+        # calendar, email, sessions, notes, memories, skills, settings, theme, cookbook.
         panel = parts[1].lower() if len(parts) > 1 else ""
+        view = ""
+        target_date = ""
         _panel_aliases = {
             "documents": "documents",
             "document": "documents",
@@ -838,6 +911,9 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
             "doclib": "documents",
             "gallery": "gallery",
             "images": "gallery",
+            "calendar": "calendar",
+            "cal": "calendar",
+            "schedule": "calendar",
             "email": "email",
             "emails": "email",
             "inbox": "email",
@@ -855,6 +931,9 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
             "skills": "skills",
             "settings": "settings",
             "preferences": "settings",
+            "theme": "theme",
+            "themes": "theme",
+            "appearance": "theme",
             "cookbook": "cookbook",
             "models": "cookbook",
             "llm": "cookbook",
@@ -863,12 +942,34 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
         }
         target = _panel_aliases.get(panel)
         if not target:
-            return {"error": f"Unknown panel '{panel}'. Valid: documents, gallery, email, sessions, notes, memories, skills, settings, cookbook."}
-        return {
+            return {"error": f"Unknown panel '{panel}'. Valid: documents, gallery, calendar, email, sessions, notes, memories, skills, settings, theme, cookbook."}
+        if target == "calendar":
+            view_words = {"day", "week", "month", "year", "agenda"}
+            tail_text = ""
+            if len(parts) > 2:
+                tail_text = parts[2]
+            if len(lines) > 1:
+                tail_text = " ".join(p for p in [tail_text, " ".join(line.strip() for line in lines[1:] if line.strip())] if p)
+            tail = [p.strip().lower() for p in tail_text.split() if p.strip()]
+            for i, token in enumerate(tail):
+                if token in view_words:
+                    view = token
+                    target_date = " ".join(t for t in tail[i + 1:] if t != "view").strip()
+                    break
+            if not view and tail and tail[0] in view_words:
+                view = tail[0]
+                target_date = " ".join(tail[1:]).strip()
+        payload = {
             "ui_event": "open_panel",
             "panel": target,
             "results": f"Opening {target} panel",
         }
+        if view:
+            payload["view"] = view
+            payload["results"] = f"Opening {target} panel in {view} view"
+        if target_date:
+            payload["target_date"] = target_date
+        return payload
 
     elif action == "open_email_reply":
         # Two forms supported:

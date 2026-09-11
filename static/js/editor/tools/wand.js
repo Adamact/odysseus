@@ -20,7 +20,7 @@
 import { state } from '../state.js';
 import { canvasCoords } from '../canvas-coords.js';
 
-export function createWandTool({ activeLayer, saveState, composite, wandHits, runMagicWand }) {
+export function createWandTool({ activeLayer, saveState, composite, wandHits, runMagicWand, deselectSelection }) {
   return {
     click(e) {
       const layer = activeLayer();
@@ -33,9 +33,15 @@ export function createWandTool({ activeLayer, saveState, composite, wandHits, ru
       else if (e.altKey) mode = 'subtract';
       // Click INSIDE the existing selection with no modifier → deselect.
       if (mode === 'replace' && wandHits(coords.x, coords.y)) {
+        if (deselectSelection) {
+          deselectSelection();
+          return;
+        }
         saveState();
         state.wandMask = null;
         state.wandLayerId = null;
+        state.wandMaskSpace = 'layer';
+        state.selectionSource = null;
         state.wandLastSeed = null;
         composite();
         return;

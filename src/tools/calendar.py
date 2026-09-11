@@ -7,6 +7,7 @@ Holds the manage_calendar tool (CalDAV-backed event CRUD).
 import json
 import logging
 import re
+from datetime import datetime, timedelta
 from typing import Dict, Optional
 
 from src.tools._common import _parse_tool_args
@@ -18,7 +19,6 @@ logger = logging.getLogger(__name__)
 
 async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
     """Handle manage_calendar tool calls: list/create/update/delete calendar events (local SQLite)."""
-    from datetime import datetime, timedelta
     from core.database import SessionLocal, CalendarCal, CalendarEvent, Note
     from routes.calendar_routes import (
         _ensure_default_calendar,
@@ -28,6 +28,9 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
         _resolve_base_uid,
         _push_caldav_event_after_commit,
         _record_caldav_delete_tombstone,
+        _delete_calendar_reminders_for_event,
+        _calendar_reminder_for_event,
+        _event_to_dict,
     )
     import uuid as _uuid
 
@@ -99,13 +102,31 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             q = q.filter(CalendarCal.owner == owner)
         return q
 
+    def _first_present_arg(raw_args, *names: str):
+        for name in names:
+            if name in raw_args and raw_args.get(name) is not None:
+                return raw_args.get(name)
+        return None
+
+    def _has_reminder_request(raw_args) -> bool:
+        if any(name in raw_args for name in (
+            "reminder_minutes",
+            "remind_before_minutes",
+            "alarm_minutes",
+            "reminder",
+            "alarm",
+        )):
+            return True
+        return bool(re.search(r"\b(remind|reminder|alarm)\b", str(raw_args.get("description") or ""), re.I))
+
     def _reminder_minutes(raw_args) -> Optional[int]:
-        raw = (
-            raw_args.get("reminder_minutes")
-            or raw_args.get("remind_before_minutes")
-            or raw_args.get("alarm_minutes")
-            or raw_args.get("reminder")
-            or raw_args.get("alarm")
+        raw = _first_present_arg(
+            raw_args,
+            "reminder_minutes",
+            "remind_before_minutes",
+            "alarm_minutes",
+            "reminder",
+            "alarm",
         )
         if raw in (None, ""):
             desc = str(raw_args.get("description") or "")
@@ -145,6 +166,29 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
         """Parse agent event datetimes in the user's timezone when available."""
         return _parse_dt_pair(parse_due_for_user(raw))
 
+    def _parse_all_day_event_dt(raw: str) -> tuple[datetime, bool]:
+        """Preserve literal calendar dates for all-day events.
+
+        A date-only all-day value like ``2026-10-24`` is not an instant in UTC;
+        it is the user's calendar day. Routing it through parse_due_for_user()
+        shifts the stored naive datetime for positive timezones and makes
+        birthdays render on the previous date.
+        """
+        text = str(raw or "").strip()
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+            return datetime.fromisoformat(text), False
+        return _parse_event_dt(text)
+
+    def _looks_like_timed_dt(raw) -> bool:
+        text = str(raw or "").strip()
+        if not text or re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+            return False
+        return bool(
+            re.search(r"\d{4}-\d{2}-\d{2}[T\s]\d{1,2}:\d{2}", text)
+            or re.search(r"\b\d{1,2}:\d{2}\b", text)
+            or re.search(r"\b\d{1,2}\s*(?:am|pm)\b", text, re.I)
+        )
+
     def _first_nonempty_arg(*names: str):
         for name in names:
             value = args.get(name)
@@ -168,16 +212,16 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
         loc = f" @ {location}" if location else ""
         text = f"{summary}{loc} — {start_fmt}"
         due_date = remind_at.isoformat() + ("Z" if is_utc else "")
-        expected_title = f"Reminder: {summary}"
+        expected_title = f"Calendar reminder: {summary}"
         existing_q = db.query(Note).filter(
             Note.archived == False,  # noqa: E712
             Note.due_date == due_date,
         )
         if owner is not None:
             existing_q = existing_q.filter(Note.owner == owner)
-        target_title = re.sub(r"^\s*reminder\s*:\s*", "", expected_title.strip().lower())
+        target_title = re.sub(r"^\s*(?:calendar\s+)?reminder\s*:\s*", "", expected_title.strip().lower())
         for existing in existing_q.limit(25).all():
-            existing_title = re.sub(r"^\s*reminder\s*:\s*", "", (existing.title or "").strip().lower())
+            existing_title = re.sub(r"^\s*(?:calendar\s+)?reminder\s*:\s*", "", (existing.title or "").strip().lower())
             if existing_title == target_title:
                 return existing.id, "duplicate reminder already exists"
         note = Note(
@@ -218,12 +262,13 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                 end_raw = _first_nonempty_arg(
                     "end", "end_time", "end_date", "range_end", "to", "dtend", "until"
                 )
-                query_raw = args.get("query") or args.get("date_range") or args.get("range")
-                if query_raw and (not start_raw or not end_raw):
+                query_raw = args.get("query")
+                range_query_raw = args.get("date_range") or args.get("range")
+                if (query_raw or range_query_raw) and (not start_raw or not end_raw):
                     return {
                         "error": (
                             "list_events needs explicit start/end ISO datetimes; "
-                            f"resolve the requested range ({query_raw!r}) and call manage_calendar again."
+                            f"resolve the requested range ({(query_raw or range_query_raw)!r}) and call manage_calendar again."
                         ),
                         "exit_code": 1,
                     }
@@ -253,23 +298,19 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                     (CalendarCal.name == calendar_filter)
                 )
             rows = q.order_by(CalendarEvent.dtstart).all()
+            if query_raw:
+                needle = str(query_raw).strip().lower()
+                if needle:
+                    rows = [
+                        ev for ev in rows
+                        if needle in (ev.summary or "").lower()
+                        or needle in (ev.description or "").lower()
+                        or needle in (ev.location or "").lower()
+                        or needle in (ev.event_type or "").lower()
+                    ]
             events = []
             for ev in rows:
-                if ev.all_day:
-                    s, e = ev.dtstart.strftime("%Y-%m-%d"), ev.dtend.strftime("%Y-%m-%d")
-                else:
-                    suffix = "Z" if getattr(ev, "is_utc", False) else ""
-                    s, e = ev.dtstart.isoformat() + suffix, ev.dtend.isoformat() + suffix
-                events.append({
-                    "uid": ev.uid, "summary": ev.summary or "", "dtstart": s, "dtend": e,
-                    "all_day": ev.all_day, "description": ev.description or "",
-                    "location": ev.location or "",
-                    "calendar": ev.calendar.name if ev.calendar else "",
-                    "calendar_href": ev.calendar_id,
-                    "event_type": ev.event_type or "",
-                    "importance": ev.importance or "normal",
-                    "rrule": ev.rrule or "",
-                })
+                events.append(_event_to_dict(ev, db=db, owner=owner))
             if not events:
                 response_text = f"No events between {start_dt.date().isoformat()} and {end_dt.date().isoformat()}."
             else:
@@ -285,6 +326,11 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                         line += f" !{ev['importance']}"
                     if ev.get("rrule"):
                         line += f" repeats({ev['rrule']})"
+                    if ev.get("has_reminder"):
+                        minutes = ev.get("reminder_minutes")
+                        line += f" 🔔 reminder"
+                        if minutes is not None:
+                            line += f" {minutes} min before"
                     if ev.get("location"):
                         line += f" @ {ev['location']}"
                     if ev.get("calendar"):
@@ -330,13 +376,21 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
 
             all_day = bool(args.get("all_day", False))
             try:
-                dtstart, dtstart_is_utc = _parse_event_dt(dtstart_str)
+                dtstart, dtstart_is_utc = (
+                    _parse_all_day_event_dt(dtstart_str)
+                    if all_day
+                    else _parse_event_dt(dtstart_str)
+                )
             except ValueError as e:
                 return {"error": f"Could not parse dtstart {dtstart_str!r}: {e}", "exit_code": 1}
             dtend_raw = args.get("dtend") or args.get("end") or args.get("end_time")
             if dtend_raw:
                 try:
-                    dtend, dtend_is_utc = _parse_event_dt(dtend_raw)
+                    dtend, dtend_is_utc = (
+                        _parse_all_day_event_dt(dtend_raw)
+                        if all_day
+                        else _parse_event_dt(dtend_raw)
+                    )
                     dtstart_is_utc = dtstart_is_utc or dtend_is_utc
                 except ValueError as e:
                     return {"error": f"Could not parse dtend {dtend_raw!r}: {e}", "exit_code": 1}
@@ -397,11 +451,16 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                     )
                 return {
                     "response": (
-                        f"Event already exists: '{summary}' on {dtstart_str}"
+                        f"Event already exists: [{summary}](#event-{existing.uid}) on {dtstart_str}"
                         + reminder_text
                     ),
                     "uid": existing.uid,
+                    "dtstart": dtstart_str,
+                    "all_day": bool(existing.all_day),
+                    "anchor": f"[{summary}](#event-{existing.uid})",
+                    "has_reminder": bool(reminder_note_id),
                     "reminder_note_id": reminder_note_id,
+                    "reminder_minutes": minutes_before if reminder_note_id else None,
                     "reminder_skipped_reason": reminder_skipped_reason,
                     "duplicate": True,
                     "exit_code": 0,
@@ -467,14 +526,23 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             return {
                 "response": f"Created event [{summary}](#event-{uid}){tag_blurb} on {dtstart_str}{reminder_blurb}",
                 "uid": uid,
+                "dtstart": dtstart_str,
+                "all_day": bool(all_day),
                 "anchor": f"[{summary}](#event-{uid})",
+                "has_reminder": bool(reminder_note_id),
                 "reminder_note_id": reminder_note_id,
+                "reminder_minutes": minutes_before if reminder_note_id else None,
                 "reminder_skipped_reason": reminder_skipped_reason,
                 "exit_code": 0,
             }
 
         elif action == "update_event":
-            uid = args.get("uid")
+            # Compact routers sometimes call the identifier field ``id`` and
+            # place the event title there. Accept both forms, but resolve a
+            # title only when it is unique within the owner's calendar.
+            uid = args.get("uid") or args.get("id") or args.get("title")
+            if not uid and args.get("summary"):
+                uid = args.get("summary")
             if not uid:
                 return {"error": "uid is required", "exit_code": 1}
             try:
@@ -482,6 +550,18 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             except ValueError as e:
                 return {"error": str(e), "exit_code": 1}
             ev = _event_query().filter(CalendarEvent.uid == base_uid).first()
+            if not ev:
+                title_matches = _event_query().filter(
+                    CalendarEvent.summary == str(uid).strip()
+                ).all()
+                if len(title_matches) == 1:
+                    ev = title_matches[0]
+                    base_uid = ev.uid
+                elif len(title_matches) > 1:
+                    return {
+                        "error": "Multiple events have that exact title; uid is required",
+                        "exit_code": 1,
+                    }
             if not ev:
                 return {"error": f"Event {uid} not found", "exit_code": 1}
             missing_id = reserve_upload_references(
@@ -509,10 +589,15 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                 _eff_all_day = (
                     args["all_day"] if args.get("all_day") is not None else ev.all_day
                 )
+                if args.get("all_day") is None and bool(ev.all_day) and _looks_like_timed_dt(args["dtstart"]):
+                    _eff_all_day = False
+                    ev.all_day = False
                 ev.dtstart, _su = _parse_event_dt(args["dtstart"])
                 ev.is_utc = bool(_su and not _eff_all_day)
             if args.get("dtend") is not None:
                 ev.dtend, _eu = _parse_event_dt(args["dtend"])
+                if args.get("all_day") is None and bool(ev.all_day) and _looks_like_timed_dt(args["dtend"]):
+                    ev.all_day = False
             if args.get("all_day") is not None:
                 ev.all_day = args["all_day"]
             # Tag/category + importance updates (any of these aliases).
@@ -526,18 +611,67 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                 ev.rrule = args.get("rrule") or ""
             elif str(args.get("repeat") or "").strip().lower() in {"none", "no", "off", "false", "single"}:
                 ev.rrule = ""
+
+            reminder_text = ""
+            reminder_note_id = None
+            reminder_skipped_reason = None
+            minutes_before = None
+            if _has_reminder_request(args):
+                _delete_calendar_reminders_for_event(db, owner, ev)
+                minutes_before = _reminder_minutes(args)
+                if minutes_before is None:
+                    reminder_text = "; reminder removed"
+                else:
+                    reminder_note_id, reminder_skipped_reason = _create_calendar_reminder(
+                        ev.summary or "",
+                        ev.location or "",
+                        ev.dtstart,
+                        bool(ev.all_day),
+                        minutes_before,
+                        bool(ev.is_utc),
+                    )
+                    if reminder_note_id:
+                        reminder_text = f"; reminder set {minutes_before} min before"
+                    else:
+                        reminder_text = f"; reminder not set ({reminder_skipped_reason or 'reminder time already passed'})"
+
             is_caldav = ev.calendar and ev.calendar.source == "caldav"
             if is_caldav:
                 ev.caldav_sync_pending = "update"
             db.commit()
             if is_caldav:
                 await _push_caldav_event_after_commit(owner, base_uid, "update")
-            return {"response": f"Updated event {uid}", "exit_code": 0}
+            return {
+                "response": f"Updated event [{ev.summary or uid}](#event-{base_uid}){reminder_text}",
+                "uid": base_uid,
+                "dtstart": (
+                    (ev.dtstart.isoformat() + ("Z" if bool(ev.is_utc) and not bool(ev.all_day) else ""))
+                    if ev.dtstart else None
+                ),
+                "all_day": bool(ev.all_day),
+                "anchor": f"[{ev.summary or uid}](#event-{base_uid})",
+                "has_reminder": bool(reminder_note_id) or bool(_calendar_reminder_for_event(db, owner, ev)),
+                "reminder_note_id": reminder_note_id,
+                "reminder_minutes": minutes_before if reminder_note_id else None,
+                "reminder_skipped_reason": reminder_skipped_reason,
+                "exit_code": 0,
+            }
 
         elif action == "delete_event":
             uid = args.get("uid")
+            if not uid and args.get("summary"):
+                # Exact-title deletion is safe when the title is unique and
+                # avoids forcing a weak router through an unnecessary list
+                # round-trip. Refuse ambiguous matches.
+                matches = _event_query().filter(
+                    CalendarEvent.summary == str(args.get("summary")).strip()
+                ).all()
+                if len(matches) == 1:
+                    uid = matches[0].uid
+                elif len(matches) > 1:
+                    return {"error": "Multiple events have that exact title; uid is required", "exit_code": 1}
             if not uid:
-                return {"error": "uid is required", "exit_code": 1}
+                return {"error": "uid or exact summary is required", "exit_code": 1}
             try:
                 base_uid = _resolve_base_uid(uid)
             except ValueError as e:
@@ -548,6 +682,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             is_caldav = ev.calendar and ev.calendar.source == "caldav" and ev.remote_href
             if is_caldav:
                 _record_caldav_delete_tombstone(db, ev, owner)
+            _delete_calendar_reminders_for_event(db, owner, ev)
             db.delete(ev)
             db.commit()
             if is_caldav:

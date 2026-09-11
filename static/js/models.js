@@ -5,11 +5,11 @@
  */
 
 import Storage from './storage.js';
-import uiModule from './ui.js';
+import uiModule from './ui.js?v=20260908weekhoverfix1';
 import sessionModule from './sessions.js';
 import dragSortModule from './dragSort.js';
 import spinnerModule from './spinner.js';
-import { modelColor } from './chatRenderer.js';
+import { modelColor } from './chatRenderer.js?v=20260910streamlinks2';
 import { providerLogo } from './providers.js';
 import { sortModelIds } from './modelSort.js';
 

@@ -196,3 +196,49 @@ def test_read_file_plain_path_backcompat(repo):
     r = _run("read_file", os.path.join(repo, "a.py"))
     assert r["exit_code"] == 0
     assert "needle" in r["output"]
+
+
+def test_read_file_extracts_structured_documents(repo, monkeypatch):
+    p = os.path.join(repo, "report.docx")
+    with open(p, "wb") as f:
+        f.write(b"PK fake structured document")
+
+    calls = []
+
+    def _fake_extract(path, **kwargs):
+        calls.append((path, kwargs))
+        return "Heading\nFirst fact\nSecond fact\n"
+
+    monkeypatch.setattr(
+        "src.document_processor.extract_local_document",
+        _fake_extract,
+    )
+
+    r = _run("read_file", f'{{"path": "{p}", "offset": 2, "limit": 2}}')
+
+    assert r == {"output": "First fact\nSecond fact\n", "exit_code": 0}
+    assert calls == [(p, {
+        "display_name": "report.docx",
+        "analyze_embedded_images": False,
+    })]
+
+
+def test_read_file_extracts_legacy_word_documents(repo, monkeypatch):
+    p = os.path.join(repo, "report.doc")
+    with open(p, "wb") as f:
+        f.write(b"binary OLE document")
+
+    calls = []
+
+    def _fake_extract(path, **kwargs):
+        calls.append((path, kwargs))
+        return "Legacy Word content\nShipping price\n"
+
+    monkeypatch.setattr("src.document_processor.extract_local_document", _fake_extract)
+    r = _run("read_file", p)
+
+    assert r == {"output": "Legacy Word content\nShipping price\n", "exit_code": 0}
+    assert calls == [(p, {
+        "display_name": "report.doc",
+        "analyze_embedded_images": False,
+    })]

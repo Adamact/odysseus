@@ -150,6 +150,20 @@ class TestEstimateTokens:
         long = estimate_tokens([{"role": "user", "content": long_text}])
         assert long > short * 10
 
+    def test_cjk_text_is_not_estimated_with_latin_character_ratio(self):
+        cjk = estimate_tokens([{"role": "user", "content": "诉讼时效期间" * 20}])
+        latin = estimate_tokens([{"role": "user", "content": "a" * 120}])
+
+        assert cjk == 124
+        assert cjk > latin * 2
+
+    def test_binary_replacement_text_is_not_estimated_as_latin(self):
+        replacement_dump = estimate_tokens([
+            {"role": "tool", "content": "\ufffd" * 1000},
+        ])
+
+        assert replacement_dump == 1004
+
 
 class TestLookupKnown:
     def test_claude_sonnet(self):

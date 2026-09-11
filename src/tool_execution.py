@@ -15,9 +15,12 @@ import logging
 import os
 import pathlib
 import re
+import secrets
 import sys
 import time
-from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
+from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Dict, Iterator, Optional, Tuple
 
 
 
@@ -30,6 +33,7 @@ from src.tool_security import (
 from src.tool_capabilities import ToolRunSecurityContext, blocked_tool_result
 from src.tool_approvals import ExactToolApproval
 from src.tool_policy import ToolPolicy
+from src.client_tool_contract import TUI_ROUTED_BRIDGE_TOOL_NAMES
 from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES, DATA_DIR
 from src.tool_utils import _truncate, get_mcp_manager
 
@@ -51,6 +55,622 @@ NO_TOOL_SECURITY_CONTEXT = _NoToolSecurityContext()
 # Using this as cwd and HOME prevents the agent from silently creating files
 # in ephemeral container layers that are lost on the next rebuild.
 _AGENT_WORKDIR = DATA_DIR
+
+
+ExecutionBridgeHandler = Callable[
+    [str, str, Optional[str], Optional[Dict[str, Any]]],
+    Awaitable[Tuple[str, Dict[str, Any]]],
+]
+
+
+@dataclass(frozen=True)
+class AgentExecutionBridge:
+    """Request-scoped transport for tools owned by an external environment.
+
+    Tool parsing, policy, approvals, evidence, and completion remain in the
+    canonical loop. Only execution crosses this boundary. Context variables
+    keep concurrent rollouts isolated without process-global monkeypatches.
+    """
+
+    route_tool: ExecutionBridgeHandler
+    supported_tools: frozenset[str]
+    name: str = "external_environment"
+
+    def __post_init__(self) -> None:
+        if not callable(self.route_tool):
+            raise TypeError("execution bridge route_tool must be callable")
+        if not self.supported_tools:
+            raise ValueError("execution bridge supported_tools cannot be empty")
+
+
+_active_execution_bridge: contextvars.ContextVar[AgentExecutionBridge | None] = (
+    contextvars.ContextVar("agent_execution_bridge", default=None)
+)
+
+
+@contextmanager
+def bind_execution_bridge(bridge: AgentExecutionBridge) -> Iterator[AgentExecutionBridge]:
+    """Bind an external execution transport to the current rollout task."""
+
+    if not isinstance(bridge, AgentExecutionBridge):
+        raise TypeError("bridge must be an AgentExecutionBridge")
+    token = _active_execution_bridge.set(bridge)
+    try:
+        yield bridge
+    finally:
+        _active_execution_bridge.reset(token)
+
+
+def get_active_execution_bridge() -> AgentExecutionBridge | None:
+    return _active_execution_bridge.get()
+
+
+def _tui_host_bridge_patch_url(
+    client_runtime_context: Optional[Dict[str, Any]],
+) -> tuple[str, str] | None:
+    if not isinstance(client_runtime_context, dict):
+        return None
+    if str(client_runtime_context.get("surface") or "").strip() != "odysseus-tui":
+        return None
+    bridge = (
+        client_runtime_context.get("host_shell_bridge")
+        or client_runtime_context.get("hostShellBridge")
+    )
+    if not isinstance(bridge, dict):
+        return None
+    url = str(bridge.get("url") or "").strip().rstrip("/")
+    token = str(bridge.get("token") or "").strip()
+    if not url or not token:
+        return None
+    from src.agent_tools.subprocess_tools import is_host_shell_bridge_url_allowed
+    if not is_host_shell_bridge_url_allowed(url):
+        return None
+    if url.endswith("/run"):
+        url = url[:-4] + "/patch"
+    elif not url.endswith("/patch"):
+        url += "/patch"
+    return url, token
+
+
+async def _apply_patch_via_tui_host_bridge(
+    patch_text: str,
+    client_runtime_context: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    target = _tui_host_bridge_patch_url(client_runtime_context)
+    if target is None:
+        return {"error": "apply_patch: TUI host bridge is unavailable", "exit_code": 1}
+    url, token = target
+    request_id = secrets.token_urlsafe(18)
+    try:
+        import httpx
+
+        timeout = httpx.Timeout(125.0, connect=5.0, write=10.0, pool=5.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                url,
+                headers={"x-odysseus-tui-bridge-token": token},
+                json={"patch": patch_text, "request_id": request_id},
+            )
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+        if not isinstance(payload, dict) or not payload:
+            return {
+                "error": "apply_patch: host bridge returned an invalid payload",
+                "exit_code": 1,
+            }
+        if response.status_code >= 400:
+            payload.setdefault(
+                "error",
+                f"apply_patch: host bridge returned HTTP {response.status_code}",
+            )
+            payload["exit_code"] = 1
+        elif payload.get("error"):
+            payload["exit_code"] = 1
+        else:
+            payload.setdefault("exit_code", 0)
+        exit_code = payload.get("exit_code")
+        if exit_code is not None and (
+            isinstance(exit_code, bool) or not isinstance(exit_code, int)
+        ):
+            return {
+                "error": "apply_patch: host bridge returned an invalid exit_code",
+                "exit_code": 1,
+            }
+        return payload
+    except asyncio.CancelledError:
+        bridge = (
+            client_runtime_context.get("host_shell_bridge")
+            or client_runtime_context.get("hostShellBridge")
+            or {}
+        )
+        task = asyncio.create_task(
+            _cancel_bridge_request(bridge, request_id),
+            name=f"cancel-tui-patch-{request_id[:24]}",
+        )
+        _bridge_cancel_tasks.add(task)
+        task.add_done_callback(_bridge_cancel_tasks.discard)
+        raise
+    except Exception as exc:
+        return {"error": f"apply_patch: host bridge request failed: {exc}", "exit_code": 1}
+
+
+async def _bridge_post(bridge: Dict, path: str, payload: Dict, *, timeout_s: float, err_prefix: str) -> Dict:
+    url = str(bridge.get("url") or "").strip()
+    token = str(bridge.get("token") or "").strip()
+    from src.agent_tools.subprocess_tools import is_host_shell_bridge_url_allowed
+    if not token or not is_host_shell_bridge_url_allowed(url):
+        return {
+            "error": f"{err_prefix}: invalid TUI host bridge",
+            "exit_code": 1,
+        }
+    base = url.rsplit("/", 1)[0] if url.endswith(("/run", "/read", "/write")) else url.rstrip("/")
+    try:
+        import httpx
+        timeout = httpx.Timeout(
+            timeout_s + 5.0,
+            connect=5.0,
+            write=10.0,
+            pool=5.0,
+        )
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                f"{base}{path}",
+                headers={"x-odysseus-tui-bridge-token": token},
+                json=payload,
+            )
+        try:
+            result = response.json()
+        except Exception:
+            detail = str(response.text or "")[:500].strip()
+            result = {
+                "error": detail or f"{err_prefix}: bridge returned invalid JSON",
+                "exit_code": 1,
+            }
+        if not isinstance(result, dict):
+            result = {"error": f"{err_prefix}: bridge returned non-object response", "exit_code": 1}
+        elif not result:
+            result = {"error": f"{err_prefix}: bridge returned an empty response", "exit_code": 1}
+        elif response.status_code >= 400:
+            result.setdefault("error", f"{err_prefix}: bridge returned HTTP {response.status_code}")
+            result["exit_code"] = 1
+        elif result.get("error"):
+            result["exit_code"] = 1
+        else:
+            result.setdefault("exit_code", 0)
+        exit_code = result.get("exit_code")
+        if exit_code is not None and (
+            isinstance(exit_code, bool) or not isinstance(exit_code, int)
+        ):
+            return {
+                "error": f"{err_prefix}: bridge returned an invalid exit_code",
+                "exit_code": 1,
+            }
+        return result
+    except asyncio.CancelledError:
+        request_id = str(payload.get("request_id") or "").strip()
+        if request_id and payload.get("detach") is not True:
+            task = asyncio.create_task(
+                _cancel_bridge_request(bridge, request_id),
+                name=f"cancel-tui-bridge-{request_id[:24]}",
+            )
+            _bridge_cancel_tasks.add(task)
+            task.add_done_callback(_bridge_cancel_tasks.discard)
+        raise
+    except Exception as exc:
+        return {"error": f"{err_prefix}: bridge request failed: {exc}", "exit_code": 1}
+
+
+_bridge_cancel_tasks: set[asyncio.Task[Any]] = set()
+
+
+async def _cancel_bridge_request(bridge: Dict, request_id: str) -> None:
+    """Best-effort cancellation for a host command whose rollout was interrupted."""
+    url = str(bridge.get("url") or "").strip()
+    token = str(bridge.get("token") or "").strip()
+    from src.agent_tools.subprocess_tools import is_host_shell_bridge_url_allowed
+    if not token or not is_host_shell_bridge_url_allowed(url):
+        return
+    base = url.rsplit("/", 1)[0]
+    try:
+        import httpx
+        timeout = httpx.Timeout(5.0, connect=2.0, write=2.0, pool=2.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            await client.post(
+                f"{base}/cancel",
+                headers={"x-odysseus-tui-bridge-token": token},
+                json={"request_id": request_id},
+            )
+    except Exception:
+        logger.debug("Failed to cancel TUI bridge request %s", request_id, exc_info=True)
+
+
+def _client_bridge(client_runtime_context: Optional[Dict]) -> Optional[Dict]:
+    context = client_runtime_context if isinstance(client_runtime_context, dict) else {}
+    if str(context.get("surface") or "").strip() != "odysseus-tui":
+        return None
+    bridge = context.get("host_shell_bridge")
+    if not isinstance(bridge, dict):
+        return None
+    url = str(bridge.get("url") or "").strip()
+    token = str(bridge.get("token") or "").strip()
+    if not url or not token:
+        return None
+    from src.agent_tools.subprocess_tools import is_host_shell_bridge_url_allowed
+    if not is_host_shell_bridge_url_allowed(url):
+        return None
+    return bridge
+
+
+_ROUTED_BRIDGE_TOOLS = TUI_ROUTED_BRIDGE_TOOL_NAMES
+_BRIDGE_TOOL_TIMEOUT_S = 900.0
+
+
+async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[str], client_runtime_context: Optional[Dict]):
+    import base64
+    bridge = _client_bridge(client_runtime_context)
+    if bridge is None:
+        return tool, {"error": f"{tool}: TUI host bridge is not available", "exit_code": 1}
+    if tool == "bash":
+        from src.agent_tools.subprocess_tools import _host_shell_requires_detach, _host_shell_should_auto_poll
+
+        is_background, command = _split_bg_marker(content)
+        auto_poll = not is_background and _host_shell_should_auto_poll(command)
+        display_command = command if is_background else content
+        desc = f"bash: {display_command.strip().splitlines()[0][:80] if display_command.strip() else ''}"
+        payload = {
+            "command": command if is_background else content,
+            "timeout": _BRIDGE_TOOL_TIMEOUT_S,
+        }
+        if is_background or _host_shell_requires_detach(command):
+            payload["detach"] = True
+        else:
+            payload["request_id"] = secrets.token_urlsafe(18)
+        result = await _bridge_post(
+            bridge,
+            "/run",
+            payload,
+            timeout_s=_BRIDGE_TOOL_TIMEOUT_S,
+            err_prefix="bash",
+        )
+        # Keep implicit long commands from returning a false start-success.
+        # Explicit #!bg is intentionally left for the agent's poll contract.
+        if auto_poll and isinstance(result, dict) and result.get("job_id") and result.get("status") == "running":
+            job_id = str(result["job_id"])
+            deadline = time.monotonic() + 120.0
+            while time.monotonic() < deadline:
+                await asyncio.sleep(0.25)
+                polled = await _bridge_post(
+                    bridge,
+                    "/run",
+                    {"job_id": job_id},
+                    timeout_s=30.0,
+                    err_prefix="bash",
+                )
+                if not isinstance(polled, dict):
+                    continue
+                if polled.get("status") not in {"running", "unknown"}:
+                    result = polled
+                    break
+            else:
+                result = {
+                    **result,
+                    "detached": True,
+                    "status": "running",
+                    "job_id": job_id,
+                    "output": "host job still running; poll the returned job_id",
+                    "exit_code": 0,
+                }
+        return desc, result
+    if tool == "python":
+        return "python: (client)", await _bridge_post(
+            bridge,
+            "/run",
+            {
+                "exec": ["python3", "-I", "-c", content],
+                "timeout": _BRIDGE_TOOL_TIMEOUT_S,
+                "request_id": secrets.token_urlsafe(18),
+            },
+            timeout_s=_BRIDGE_TOOL_TIMEOUT_S,
+            err_prefix="python",
+        )
+    if tool == "grep":
+        stripped = content.strip()
+        try:
+            args = json.loads(stripped) if stripped.startswith("{") else {"pattern": stripped}
+        except (TypeError, ValueError):
+            args = None
+        if not isinstance(args, dict):
+            return "grep: invalid arguments", {
+                "error": "grep: expected a JSON object", "exit_code": 1,
+            }
+        pattern = args.get("pattern")
+        path = args.get("path", ".")
+        glob = args.get("glob")
+        ignore_case = args.get("ignore_case", False)
+        max_results = args.get("max_results", 200)
+        if (
+            not isinstance(pattern, str) or not pattern or "\n" in pattern or "\r" in pattern
+            or not isinstance(path, str) or "\n" in path or "\r" in path
+            or (glob is not None and (not isinstance(glob, str) or not glob))
+            or not isinstance(ignore_case, bool)
+            or isinstance(max_results, bool) or not isinstance(max_results, int)
+            or max_results < 1 or max_results > 1000
+        ):
+            return "grep: invalid arguments", {
+                "error": "grep: invalid pattern, path, glob, ignore_case, or max_results",
+                "exit_code": 1,
+            }
+        payload = {
+            "pattern": pattern,
+            "path": path.strip() or ".",
+            "ignore_case": ignore_case,
+            "max_results": max_results,
+        }
+        if glob is not None:
+            payload["glob"] = glob
+        return f"grep: {pattern[:80]}", await _bridge_post(
+            bridge, "/grep", payload, timeout_s=60.0, err_prefix="grep",
+        )
+    if tool in {"ls", "list_dir"}:
+        stripped = content.strip()
+        if stripped.startswith("{"):
+            try:
+                args = json.loads(stripped)
+            except (TypeError, ValueError):
+                return f"{tool}: invalid arguments", {
+                    "error": f"{tool}: expected JSON with an optional path",
+                    "exit_code": 1,
+                }
+            if not isinstance(args, dict):
+                return f"{tool}: invalid arguments", {
+                    "error": f"{tool}: expected a JSON object",
+                    "exit_code": 1,
+                }
+            path_value = args.get("path", ".")
+            offset = args.get("offset", 0)
+            limit = args.get("limit", 0)
+        else:
+            path_value = stripped or "."
+            offset = 0
+            limit = 0
+        if (
+            not isinstance(path_value, str)
+            or "\n" in path_value
+            or "\r" in path_value
+            or isinstance(offset, bool)
+            or not isinstance(offset, int)
+            or offset < 0
+            or isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or limit < 0
+        ):
+            return f"{tool}: invalid arguments", {
+                "error": f"{tool}: path must be a string and ranges non-negative integers",
+                "exit_code": 1,
+            }
+        path = path_value.strip() or "."
+        return f"{tool}: {path[:80]}", await _bridge_post(
+            bridge,
+            "/list",
+            {
+                "path": path,
+                "offset": offset,
+                "limit": limit,
+                "recursive": tool == "list_dir",
+            },
+            timeout_s=60.0,
+            err_prefix=tool,
+        )
+    if tool in {"glob", "find_files"}:
+        stripped = content.strip()
+        if stripped.startswith("{"):
+            try:
+                args = json.loads(stripped)
+            except (TypeError, ValueError):
+                return f"{tool}: invalid arguments", {
+                    "error": f"{tool}: expected JSON with pattern and optional path",
+                    "exit_code": 1,
+                }
+            if not isinstance(args, dict):
+                return f"{tool}: invalid arguments", {
+                    "error": f"{tool}: expected a JSON object",
+                    "exit_code": 1,
+                }
+            pattern_value = args.get("pattern")
+            path_value = args.get("path", ".")
+        else:
+            pattern_value = stripped
+            path_value = "."
+        if (
+            not isinstance(pattern_value, str)
+            or not pattern_value.strip()
+            or "\n" in pattern_value
+            or "\r" in pattern_value
+            or not isinstance(path_value, str)
+            or "\n" in path_value
+            or "\r" in path_value
+        ):
+            return f"{tool}: invalid arguments", {
+                "error": f"{tool}: pattern and path must be single-line strings",
+                "exit_code": 1,
+            }
+        pattern = pattern_value.strip()
+        path = path_value.strip() or "."
+        find_payload = {"path": path}
+        if tool == "glob":
+            find_payload["glob"] = pattern
+        else:
+            find_payload["pattern"] = pattern
+        return f"{tool}: {pattern[:80]}", await _bridge_post(
+            bridge,
+            "/find",
+            find_payload,
+            timeout_s=60.0,
+            err_prefix=tool,
+        )
+    if tool == "read_file":
+        payload = {"path": content.split("\n", 1)[0].strip()}
+        stripped = content.strip()
+        if stripped.startswith("{"):
+            try:
+                args = json.loads(stripped)
+            except (TypeError, ValueError):
+                return "read_file: invalid arguments", {
+                    "error": "read_file: expected JSON with a path",
+                    "exit_code": 1,
+                }
+            if not isinstance(args, dict):
+                return "read_file: invalid arguments", {
+                    "error": "read_file: expected a JSON object",
+                    "exit_code": 1,
+                }
+            offset = args.get("offset", 0)
+            limit = args.get("limit", 0)
+            if (
+                isinstance(offset, bool)
+                or not isinstance(offset, int)
+                or offset < 0
+                or isinstance(limit, bool)
+                or not isinstance(limit, int)
+                or limit < 0
+            ):
+                return "read_file: invalid arguments", {
+                    "error": "read_file: offset and limit must be non-negative integers",
+                    "exit_code": 1,
+                }
+            path_value = args.get("path")
+            if (
+                not isinstance(path_value, str)
+                or not path_value.strip()
+                or "\n" in path_value
+                or "\r" in path_value
+            ):
+                return "read_file: invalid arguments", {
+                    "error": "read_file: path must be a non-empty single-line string",
+                    "exit_code": 1,
+                }
+            payload = {
+                "path": path_value.strip(),
+                "offset": offset,
+                "limit": limit,
+            }
+        path = str(payload.get("path") or "")
+        if not path:
+            return "read_file: invalid arguments", {
+                "error": "read_file: path is required",
+                "exit_code": 1,
+            }
+        return f"read_file: {path[:80]}", await _bridge_post(
+            bridge,
+            "/read",
+            payload,
+            timeout_s=60.0,
+            err_prefix="read_file",
+        )
+    if tool == "edit_file":
+        try:
+            args = json.loads(content.strip())
+        except (TypeError, ValueError):
+            return "edit_file: invalid arguments", {
+                "error": "edit_file: expected JSON with path, old_string, and new_string",
+                "exit_code": 1,
+            }
+        if not isinstance(args, dict):
+            return "edit_file: invalid arguments", {
+                "error": "edit_file: expected a JSON object",
+                "exit_code": 1,
+            }
+        path_value = args.get("path")
+        path = path_value.strip() if isinstance(path_value, str) else ""
+        if "\n" in path or "\r" in path:
+            path = ""
+        old_string = args.get("old_string")
+        new_string = args.get("new_string")
+        replace_all = args.get("replace_all", False)
+        if not path:
+            return "edit_file: invalid arguments", {
+                "error": "edit_file: path is required",
+                "exit_code": 1,
+            }
+        if not isinstance(old_string, str) or not old_string:
+            return "edit_file: invalid arguments", {
+                "error": "edit_file: old_string is required",
+                "exit_code": 1,
+            }
+        if not isinstance(new_string, str):
+            return "edit_file: invalid arguments", {
+                "error": "edit_file: new_string is required",
+                "exit_code": 1,
+            }
+        if old_string == new_string:
+            return "edit_file: invalid arguments", {
+                "error": "edit_file: old_string and new_string are identical",
+                "exit_code": 1,
+            }
+        if not isinstance(replace_all, bool):
+            return "edit_file: invalid arguments", {
+                "error": "edit_file: replace_all must be a boolean",
+                "exit_code": 1,
+            }
+        return f"edit_file: {str(args.get('path') or '')[:80]}", await _bridge_post(
+            bridge,
+            "/edit",
+            {
+                "path": path,
+                "old_string": old_string,
+                "new_string": new_string,
+                "replace_all": replace_all,
+                "request_id": secrets.token_urlsafe(18),
+            },
+            timeout_s=60.0,
+            err_prefix="edit_file",
+        )
+    stripped = content.strip()
+    if stripped.startswith("{"):
+        try:
+            args = json.loads(stripped)
+        except (TypeError, ValueError):
+            return "write_file: invalid arguments", {
+                "error": "write_file: expected JSON with path and content",
+                "exit_code": 1,
+            }
+        if not isinstance(args, dict):
+            return "write_file: invalid arguments", {
+                "error": "write_file: expected a JSON object",
+                "exit_code": 1,
+            }
+        path_value = args.get("path")
+        path = path_value.strip() if isinstance(path_value, str) else ""
+        if "\n" in path or "\r" in path:
+            path = ""
+        body_value = args.get("content", "")
+        if not isinstance(body_value, str):
+            return "write_file: invalid arguments", {
+                "error": "write_file: content must be a string",
+                "exit_code": 1,
+            }
+        body = body_value
+    else:
+        path, _, body = content.partition("\n")
+        path = path.strip()
+    if not path:
+        return "write_file: invalid arguments", {
+            "error": "write_file: path is required",
+            "exit_code": 1,
+        }
+    return f"write_file: {path[:80]}", await _bridge_post(
+        bridge,
+        "/write",
+        {
+            "path": path,
+            "content_b64": base64.b64encode(body.encode("utf-8")).decode("ascii"),
+            "request_id": secrets.token_urlsafe(18),
+        },
+        timeout_s=60.0,
+        err_prefix="write_file",
+    )
 
 
 
@@ -221,6 +841,13 @@ def _resolve_tool_path_in_workspace(workspace: str, raw_path: str) -> str:
         raise ValueError("path is required")
     base = os.path.realpath(workspace)
     expanded = os.path.expanduser(str(raw_path).strip())
+    # `/workspace` is the stable user-facing agent root in tasks and docs.
+    # Native/manual installs may bind the request to another physical folder;
+    # resolve the alias inside that active workspace rather than rejecting it.
+    if expanded == "/workspace":
+        expanded = base
+    elif expanded.startswith("/workspace/"):
+        expanded = os.path.join(base, expanded.removeprefix("/workspace/"))
     candidate = expanded if os.path.isabs(expanded) else os.path.join(base, expanded)
     resolved = os.path.realpath(candidate)
     if _is_sensitive_path(resolved):
@@ -260,6 +887,26 @@ _active_workspace: contextvars.ContextVar = contextvars.ContextVar(
 def get_active_workspace() -> Optional[str]:
     """The folder the agent is confined to this turn, or None."""
     return _active_workspace.get()
+
+
+def _display_tool_path(path: str) -> str:
+    """Render a resolved workspace path through the stable `/workspace` alias."""
+
+    value = str(path or "")
+    workspace = get_active_workspace()
+    if not workspace:
+        return value
+    base = os.path.realpath(workspace)
+    resolved = os.path.realpath(value)
+    try:
+        relative = os.path.relpath(resolved, base)
+    except ValueError:
+        return value
+    if relative == ".":
+        return "/workspace"
+    if relative == ".." or relative.startswith(".." + os.sep):
+        return value
+    return "/workspace/" + relative.replace(os.sep, "/")
 
 
 def vet_workspace(raw: str) -> Optional[str]:
@@ -353,6 +1000,7 @@ _MCP_TOOL_MAP = {
     "generate_image": ("image_gen",  "generate_image"),
 }
 _EMAIL_MCP_OWNER_ARG = "_odysseus_owner"
+_EMAIL_MCP_SESSION_ARG = "_odysseus_session_id"
 
 
 def _parse_qualified_mcp_args(tool: str, content: str) -> tuple[Dict, Optional[str]]:
@@ -459,6 +1107,16 @@ def _build_mcp_args(tool: str, content: str) -> Dict:
     return parser(content) if parser else {}
 
 
+def _normalize_mcp_text_error(result: Dict) -> Dict:
+    """Lift an explicit Error: TextContent result into the host error shape."""
+    if isinstance(result, dict) and result.get("exit_code") in (None, 0):
+        stdout = str(result.get("stdout") or "").strip()
+        if re.match(r"^Error:\s*", stdout, re.IGNORECASE):
+            result["error"] = re.sub(r"^Error:\s*", "", stdout, flags=re.IGNORECASE)
+            result["exit_code"] = 1
+    return result
+
+
 async def _call_mcp_tool(
     tool: str,
     content: str,
@@ -473,6 +1131,11 @@ async def _call_mcp_tool(
     qualified = f"mcp__{server_id}__{tool_name}"
     args = _build_mcp_args(tool, content)
     result = await mcp.call_tool(qualified, args)
+
+    # Stdio MCP servers can only return TextContent, so an explicit
+    # ``Error: ...`` may arrive as stdout with exit_code=0. Normalize that
+    # transport shape before success checks, audit capture, and loop breaking.
+    result = _normalize_mcp_text_error(result)
 
     # If MCP server not connected, try direct fallback
     if isinstance(result, dict) and result.get("exit_code") == 1 and "not connected" in result.get("error", ""):
@@ -536,6 +1199,7 @@ async def _direct_fallback(
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
     session_id: Optional[str] = None,
     owner: Optional[str] = None,
+    client_runtime_context: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict]:
     _subproc_env = {
         **os.environ,
@@ -551,6 +1215,7 @@ async def _direct_fallback(
             "subproc_env": _subproc_env,
             "session_id": session_id,
             "owner": owner,
+            "client_runtime_context": client_runtime_context,
         }
 
         from src.agent_tools import TOOL_HANDLERS
@@ -604,6 +1269,8 @@ async def execute_tool_block(
         | _MissingToolSecurityContext
     ) = _MISSING_TOOL_SECURITY_CONTEXT,
     exact_approval: Optional[ExactToolApproval] = None,
+    active_document_id: Optional[str] = None,
+    client_runtime_context: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
@@ -624,6 +1291,14 @@ async def execute_tool_block(
             "security_context must be a ToolRunSecurityContext or "
             "NO_TOOL_SECURITY_CONTEXT"
         )
+
+    from src.turn_contract import active_turn_contract
+    contract = active_turn_contract()
+    if contract is not None and not contract.permits(getattr(block, "tool_type", "")):
+        return f"{getattr(block, 'tool_type', '')}: BLOCKED", {
+            "error": "Tool is outside the requested turn capabilities.",
+            "exit_code": 1, "failure_kind": "turn_contract_denied",
+        }
 
     approval_claimed = False
     if exact_approval is not None:
@@ -733,6 +1408,8 @@ async def execute_tool_block(
                 if approval_claimed
                 else None
             ),
+            active_document_id=active_document_id,
+            client_runtime_context=client_runtime_context,
         )
         if isinstance(security_context, ToolRunSecurityContext):
             security_context.observe_tool_result(
@@ -755,6 +1432,8 @@ async def _execute_tool_block_impl(
     approved_document_id: Optional[str] = None,
     approved_document_version: Optional[int] = None,
     approved_document_digest: Optional[str] = None,
+    active_document_id: Optional[str] = None,
+    client_runtime_context: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
@@ -829,6 +1508,14 @@ async def _execute_tool_block_impl(
             pass
 
     # Reject tools that the user has disabled for this request
+    from src.turn_contract import active_turn_contract
+    contract = active_turn_contract()
+    if contract is not None and not contract.permits(tool):
+        return f"{tool}: BLOCKED", {
+            "error": f"Tool '{tool}' is outside the requested turn capabilities.",
+            "exit_code": 1,
+            "failure_kind": "turn_contract_denied",
+        }
     if disabled_tools and not policy_names.isdisjoint(disabled_tools):
         desc = f"{tool}: BLOCKED"
         result = {"error": f"Tool '{tool}' is disabled by user.", "exit_code": 1}
@@ -850,7 +1537,22 @@ async def _execute_tool_block_impl(
         logger.warning("Admin tool blocked for non-admin owner=%r tool=%s", owner, tool)
         return desc, result
 
-    if is_public_blocked_tool(tool) and not _owner_is_admin(owner):
+    execution_bridge = get_active_execution_bridge()
+    bridge_owns_tool = (
+        execution_bridge is not None
+        and tool in execution_bridge.supported_tools
+    )
+
+    # Public-owner restrictions protect tools executed by this deployment.
+    # A request-scoped execution bridge is a separate, explicit authority for
+    # its own allowlisted environment (for example, a disposable task
+    # container). User-disabled, guide-only, and admin-tool gates above still
+    # win; only the deployment-local public restriction is inapplicable.
+    if (
+        is_public_blocked_tool(tool)
+        and not _owner_is_admin(owner)
+        and not bridge_owns_tool
+    ):
         desc = f"{tool}: BLOCKED"
         result = {
             "error": (
@@ -862,6 +1564,35 @@ async def _execute_tool_block_impl(
         logger.warning("Public tool policy blocked owner=%r tool=%s", owner, tool)
         return desc, result
 
+    if bridge_owns_tool:
+        try:
+            return await execution_bridge.route_tool(
+                tool,
+                content,
+                session_id,
+                client_runtime_context,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "Scoped execution bridge %s failed for tool=%s: %s: %s",
+                execution_bridge.name,
+                tool,
+                type(exc).__name__,
+                exc,
+            )
+            return (
+                f"{tool}: external execution failed",
+                {
+                    "error": f"{tool}: external execution failed: {type(exc).__name__}: {exc}",
+                    "exit_code": 1,
+                    "execution_bridge": execution_bridge.name,
+                },
+            )
+
+    if tool in _ROUTED_BRIDGE_TOOLS and _client_bridge(client_runtime_context) is not None:
+        return await _route_tool_via_bridge(tool, content, session_id, client_runtime_context)
 
     # Background execution: a `bash` block whose first line is the `#!bg`
     # marker runs DETACHED — returns a job id immediately so the chat stream
@@ -897,12 +1628,22 @@ async def _execute_tool_block_impl(
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
         result = await _call_mcp_tool(tool, content, progress_cb=progress_cb)
-    elif tool in ("grep", "glob", "ls", "get_workspace"):
+    elif tool in ("grep", "glob", "ls", "get_workspace", "host_shell"):
         # Code-navigation tools — no MCP server; run the direct implementation.
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
-        result = await _direct_fallback(tool, content, progress_cb=progress_cb) \
+        result = await _direct_fallback(
+            tool,
+            content,
+            progress_cb=progress_cb,
+            owner=owner,
+            client_runtime_context=client_runtime_context,
+        ) \
             or {"error": f"{tool}: execution failed", "exit_code": 1}
+    elif tool == "apply_patch" and _tui_host_bridge_patch_url(client_runtime_context):
+        first_line = content.split(chr(10))[0][:80]
+        desc = f"{tool}: {first_line}" if first_line else tool
+        result = await _apply_patch_via_tui_host_bridge(content, client_runtime_context)
     elif tool in ("apply_patch", "todowrite"):
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}" if first_line else tool
@@ -921,7 +1662,7 @@ async def _execute_tool_block_impl(
             content,
             session_id,
             owner,
-            document_id=approved_document_id,
+            document_id=approved_document_id or active_document_id,
             document_version=approved_document_version,
             document_digest=approved_document_digest,
         ) \
@@ -1023,7 +1764,7 @@ async def _execute_tool_block_impl(
         desc = result.get("output") or result.get("error") or "edit_file"
     elif tool == "trigger_research":
         desc = "trigger_research"
-        result = await do_trigger_research(content, owner=owner)
+        result = await do_trigger_research(content, owner=owner, chat_session_id=session_id)
     elif tool == "manage_research":
         desc = "manage_research"
         result = await do_manage_research(content, owner=owner)
@@ -1084,6 +1825,9 @@ async def _execute_tool_block_impl(
                 if owner:
                     args = dict(args)
                     args[_EMAIL_MCP_OWNER_ARG] = owner
+                if session_id:
+                    args = dict(args)
+                    args[_EMAIL_MCP_SESSION_ARG] = session_id
                 result = await mcp.call_tool(qualified, args)
         else:
             result = {"error": "MCP manager not available", "exit_code": 1}
@@ -1096,10 +1840,14 @@ async def _execute_tool_block_impl(
             if parse_error:
                 result = {"error": parse_error, "exit_code": 1}
             else:
-                if tool.startswith("mcp__email__") and owner:
-                    args = dict(args)
-                    args[_EMAIL_MCP_OWNER_ARG] = owner
-                result = await mcp.call_tool(tool, args)
+                if tool.startswith("mcp__email__"):
+                    if owner:
+                        args = dict(args)
+                        args[_EMAIL_MCP_OWNER_ARG] = owner
+                    if session_id:
+                        args = dict(args)
+                        args[_EMAIL_MCP_SESSION_ARG] = session_id
+                result = _normalize_mcp_text_error(await mcp.call_tool(tool, args))
         else:
             desc = f"mcp: {tool}"
             result = {"error": "MCP manager not available", "exit_code": 1}
@@ -1108,7 +1856,14 @@ async def _execute_tool_block_impl(
     elif tool in dynamic_handlers:
         first_line = content.split(chr(10))[0][:80]
         desc = f"registry: {tool} {first_line}".strip()
-        res = await _direct_fallback(tool, content, progress_cb=progress_cb)
+        res = await _direct_fallback(
+            tool,
+            content,
+            progress_cb=progress_cb,
+            session_id=session_id,
+            owner=owner,
+            client_runtime_context=client_runtime_context,
+        )
 
         if isinstance(res, tuple):
             desc, result = res
@@ -1135,8 +1890,28 @@ _FORMATTER_HANDLED_KEYS = {
     "stdout", "stderr", "exit_code", "content", "size",
     "response", "results", "session_id", "name", "model", "session_name",
     "success", "path", "action", "title", "doc_id", "version", "applied",
-    "error", "output",
+    "error", "output", "images",
 }
+
+
+def _compact_binary_like_output(value: object) -> str:
+    """Replace decoded binary dumps with bounded extraction guidance."""
+
+    text = str(value or "")
+    if len(text) < 128:
+        return text
+    suspicious = text.count("\ufffd") + sum(
+        1
+        for char in text
+        if ord(char) < 32 and char not in "\n\r\t"
+    )
+    if suspicious / len(text) < 0.08:
+        return text
+    return (
+        f"[Binary-like output omitted: {len(text)} decoded characters, "
+        f"{suspicious} replacement/control characters. Use `file`, `strings`, "
+        "or a format-specific extractor instead of printing the binary file.]"
+    )
 
 
 def format_tool_result(description: str, result: Dict) -> str:
@@ -1145,17 +1920,24 @@ def format_tool_result(description: str, result: Dict) -> str:
 
     if "stdout" in result:
         if result["stdout"]:
-            parts.append(f"**stdout:**\n```\n{result['stdout']}\n```")
+            parts.append(
+                f"**stdout:**\n```\n{_compact_binary_like_output(result['stdout'])}\n```"
+            )
         if result["stderr"]:
-            parts.append(f"**stderr:**\n```\n{result['stderr']}\n```")
+            parts.append(
+                f"**stderr:**\n```\n{_compact_binary_like_output(result['stderr'])}\n```"
+            )
         parts.append(f"**exit_code:** {result.get('exit_code', 'unknown')}")
     elif "output" in result:
         # bash / python canonical result shape: {"output": ..., "exit_code": ...}
-        parts.append(f"```\n{result['output']}\n```")
+        parts.append(f"```\n{_compact_binary_like_output(result['output'])}\n```")
         if result.get("exit_code") not in (0, None):
             parts.append(f"**exit_code:** {result['exit_code']}")
     elif "content" in result:
-        parts.append(f"**content ({result.get('size', '?')} chars):**\n```\n{result['content']}\n```")
+        parts.append(
+            f"**content ({result.get('size', '?')} chars):**\n```\n"
+            f"{_compact_binary_like_output(result['content'])}\n```"
+        )
     elif "response" in result:
         model = result.get("model", result.get("session_name", ""))
         if model:
@@ -1182,6 +1964,17 @@ def format_tool_result(description: str, result: Dict) -> str:
     elif "error" in result:
         parts.append(f"**Error:** {result['error']}")
 
+    if result.get("detached") or (
+        result.get("status") == "running" and result.get("job_id")
+    ):
+        parts.append(
+            "**POLL REQUIRED:** this host job is only started, not finished. "
+            "The next tool call must be `host_shell` with JSON "
+            f"`{{\"job_id\":\"{result.get('job_id', '')}\"}}`; "
+            "do not run a substitute command or report completion until the "
+            "job result says `status=completed`."
+        )
+
     # Surface any additional structured payload (events, tasks, notes, calendars,
     # documents, attachments, etc.) that the dedicated branches above don't show.
     # Without this, tools that return {"response": "...", "events": [...]} would
@@ -1197,4 +1990,7 @@ def format_tool_result(description: str, result: Dict) -> str:
         except (TypeError, ValueError):
             pass
 
-    return "\n".join(parts)
+    # External execution bridges are allowed to return canonical result shapes
+    # without using the built-in tools' output cap. Bound the final model-facing
+    # text here so one verbose command cannot consume the next request window.
+    return _truncate("\n".join(parts))

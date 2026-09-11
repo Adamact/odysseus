@@ -12,6 +12,16 @@ what is threaded back.
 import src.agent_loop as al
 
 
+def test_private_browser_product_query_extracts_short_storefront_term():
+    assert al._private_browser_product_query(
+        "Browse IKEA and find the best chair."
+    ) == "chair"
+    assert al._private_browser_product_query(
+        "Search for a standing desk on IKEA"
+    ) == "a standing desk"
+    assert al._private_browser_product_query("Where is IKEA?") == ""
+
+
 def test_resolve_returns_converted_calls_aligned():
     native = [
         {"name": "bogus_unknown_tool", "arguments": "{}", "id": "A"},

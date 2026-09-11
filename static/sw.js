@@ -1,13 +1,13 @@
 // static/sw.js — Odysseus PWA Service Worker
 // Strategy:
-//   - HTML (navigation): stale-while-revalidate. Instant open from cache,
-//     background refresh so the next open has latest HTML.
+//   - HTML (navigation): network-first, cache fallback. Code graph updates
+//     need the current app shell on the reload the user actually performs.
 //   - JS/CSS (/static/*.js|.css): network-first, cache fallback for offline.
 //     (So code/style edits show up on a normal reload, no manual cache clear.)
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v380-shared-config-image-editor-lazy-katex-mermaid';
+const CACHE_NAME = 'odysseus-v636-shell-toggle-authority';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -39,52 +39,59 @@ const KATEX_FONTS = [
 // exact URL the browser requests, query string included.
 const PRECACHE = [
   '/',
-  '/static/style.css',
-  '/static/app.js',
+  '/static/style.css?v=20260910researchmobilebuttons41',
+  '/static/app.js?v=20260910shelltoggle3',
   '/static/js/storage.js',
   '/static/js/appConfig.js',
-  '/static/js/ui.js',
+  '/static/js/ui.js?v=20260908weekhoverfix1',
   '/static/js/markdown.js',
   '/static/js/dragSort.js',
   '/static/js/sessions.js',
   '/static/js/memory.js',
-  '/static/js/skills.js',
+  '/static/js/skills.js?v=20260909kebabconsistency1',
+  '/static/js/skillsMetrics.js?v=20260908autonomousskills1',
   '/static/js/tourHints.js',
-  '/static/js/fileHandler.js',
+  '/static/js/fileHandler.js?v=20260909mobileattachmentedit1',
   '/static/js/voiceRecorder.js',
+  '/static/js/actionMenuOrder.js',
   '/static/js/models.js',
   '/static/js/rag.js',
-  '/static/js/presets.js',
+  '/static/js/presets.js?v=20260908personaname1',
   '/static/js/search.js',
   '/static/js/spinner.js',
   '/static/js/tts-ai.js',
-  '/static/js/document.js',
-  '/static/js/gallery.js',
-  '/static/js/chatRenderer.js',
-  '/static/js/codeRunner.js',
-  '/static/js/chatStream.js',
-  '/static/js/chat.js',
+  '/static/js/document.js?v=20260910minimizedcontext1',
+  '/static/js/gallery.js?v=20260910promptcopy1',
+  '/static/js/chatRenderer.js?v=20260910streamlinks2',
+  '/static/js/codeRunner.js?v=20260831richtexttools91',
+  '/static/js/chatStream.js?v=20260909cardlayout1',
+  '/static/js/chat.js?v=20260910shelltoggle1',
   '/static/js/cookbook.js',
   '/static/js/search-chat.js',
-  '/static/js/compare/index.js',
-  '/static/js/theme.js',
+  '/static/js/compare/index.js?v=20260909mobilepaneaddscroll1',
+  '/static/js/compare/vote.js?v=20260828resendcaldrag1',
+  '/static/js/colorPicker.js?v=20260910eyedropper1',
+  '/static/js/panels.js?v=20260909movepicklayer1',
+  '/static/js/theme.js?v=20260909effectspeed1',
   '/static/js/censor.js',
-  '/static/js/settings.js',
-  '/static/js/admin.js',
-  '/static/js/init.js',
-  '/static/js/slashCommands.js',
-  '/static/js/emailInbox.js',
+  '/static/js/settings.js?v=20260909defaultmodelfix1',
+  '/static/js/admin.js?v=20260908notificationcopy1',
+  '/static/js/init.js?v=20260829chatstyle12',
+  '/static/js/slashCommands.js?v=20260902tuiharness1',
+  '/static/js/research/jobs.js?v=20260910researcherrorpersist1',
+  '/static/js/emailInbox.js?v=20260903emailsend2',
   '/static/js/emailLibrary/utils.js',
   '/static/js/emailLibrary/signatureFold.js',
   '/static/js/emailLibrary/state.js',
-  '/static/js/notes.js',
-  '/static/js/tasks.js',
-  '/static/js/calendar.js',
+  '/static/js/notes.js?v=20260910drawmerge2',
+  '/static/js/tasks.js?v=20260910tasksortpicker1',
+  '/static/js/calendar.js?v=20260903weekscrollstable1',
   '/static/js/calendar/utils.js',
   '/static/js/calendar/reminders.js',
   '/static/js/group.js',
-  '/static/js/keyboard-shortcuts.js',
-  '/static/js/sidebar-layout.js',
+  '/static/js/keyboard-shortcuts.js?v=20260829chatstyle12',
+  '/static/js/sidebar-layout.js?v=20260910sidebarbounce1',
+  '/static/js/tileManager.js?v=20260910responsivebounds1',
   '/static/js/section-management.js',
   '/static/lib/highlight.min.js',
   // Math turns up in ordinary answers and KaTeX is small, so precaching it and
@@ -102,24 +109,39 @@ const PRECACHE = [
 // precached so the panel still opens with no network.
 const PANEL_PRECACHE = [
   // Image editor — galleryEditor.js and its js/editor/ graph.
-  '/static/js/galleryEditor.js',
+  '/static/js/galleryEditor.js?v=20260909movepicklayer1',
   '/static/js/editor/ai-inpaint.js?v=20260708match1',
   '/static/js/editor/ai-models.js',
   '/static/js/editor/ai-rembg.js',
   '/static/js/editor/ai-tool-runner.js',
   '/static/js/editor/ai-tools-misc.js',
-  '/static/js/editor/build/controls.js?v=20260708match1',
+  '/static/js/editor/build/controls.js?v=20260830editor2',
   '/static/js/editor/build/popups.js',
   '/static/js/editor/build/right-panel.js',
-  '/static/js/editor/build/toolbar.js?v=20260708sam3',
+  '/static/js/editor/build/toolbar.js?v=20260830editor2',
   '/static/js/editor/build/topbar.js',
   '/static/js/editor/build/transform-popup.js',
   '/static/js/editor/canvas-coords.js',
   '/static/js/editor/canvas-events.js',
+  '/static/js/editor/canvas-navigation.js',
   '/static/js/editor/canvas-transforms.js',
+  '/static/js/editor/brush-engine.js',
+  '/static/js/editor/brush-presets.js',
   '/static/js/editor/checkerboard.js',
   '/static/js/editor/clipboard-and-drop.js',
   '/static/js/editor/composite-helpers.js',
+  '/static/js/editor/document-codec.js',
+  '/static/js/editor/adjustment-layer.js',
+  '/static/js/editor/adjustments-worker.js',
+  '/static/js/editor/thumbnail-worker.js',
+  '/static/js/editor/serialization-worker.js',
+  '/static/js/editor/effects.js',
+  '/static/js/editor/gradient-stops.js',
+  '/static/js/editor/render-cancellation.js',
+  '/static/js/editor/effects-worker.js',
+  '/static/js/editor/document-geometry.js',
+  '/static/js/editor/export-dialog.js',
+  '/static/js/editor/selection-mask.js',
   '/static/js/editor/filters/blur.js',
   '/static/js/editor/filters/edge-feather.js',
   '/static/js/editor/fx/adj-popup.js',
@@ -128,8 +150,17 @@ const PANEL_PRECACHE = [
   '/static/js/editor/fx/pixel-pass.js',
   '/static/js/editor/harmonize-masks.js',
   '/static/js/editor/history-panel.js',
+  '/static/js/editor/history-budget.js',
   '/static/js/editor/keyboard-shortcuts.js',
   '/static/js/editor/layer-helpers.js',
+  '/static/js/editor/layer-groups.js',
+  '/static/js/editor/layer-clipping.js',
+  '/static/js/editor/multi-transform.js',
+  '/static/js/editor/direct-manipulation-session.js',
+  '/static/js/editor/placed-layer.js',
+  '/static/js/editor/layer-selection.js',
+  '/static/js/editor/layer-geometry.js',
+  '/static/js/editor/precision-guides.js',
   '/static/js/editor/layer-panel.js',
   '/static/js/editor/mask-utils.js',
   '/static/js/editor/shortcuts-popover.js',
@@ -138,11 +169,18 @@ const PANEL_PRECACHE = [
   '/static/js/editor/state.js',
   '/static/js/editor/stroke-pipeline.js',
   '/static/js/editor/stroke-tool-sliders.js',
+  '/static/js/editor/text-layer.js',
+  '/static/js/editor/text-edit-overlay.js',
+  '/static/js/editor/shape-layer.js',
+  '/static/js/editor/transform-frame-geometry.js',
   '/static/js/editor/tools/clone.js',
+  '/static/js/editor/tools/eyedropper.js',
   '/static/js/editor/tools/crop.js',
   '/static/js/editor/tools/flood-fill.js',
+  '/static/js/editor/tools/gradient.js',
   '/static/js/editor/tools/lasso-mask.js',
   '/static/js/editor/tools/lasso.js',
+  '/static/js/editor/tools/marquee.js',
   '/static/js/editor/tools/move.js',
   '/static/js/editor/tools/stroke.js',
   '/static/js/editor/tools/transform-drag.js',
@@ -156,6 +194,7 @@ const PANEL_PRECACHE = [
   '/static/js/editor/wire-topbar-menus.js',
   '/static/js/editor/wire-topbar-overflow.js',
   '/static/js/editor/wire-topbar.js',
+  '/static/js/editor/wire-view-menu.js',
 ];
 
 self.addEventListener('install', (e) => {
@@ -189,19 +228,18 @@ self.addEventListener('fetch', (e) => {
   // Never touch API calls or non-GET.
   if (url.pathname.startsWith('/api/') || e.request.method !== 'GET') return;
 
-  // HTML navigation: stale-while-revalidate the app shell — but ONLY for the
-  // SPA root. Other navigations (e.g. a deep-linked /static/*.html page) must
-  // go to the network/static handlers below; otherwise every navigation was
-  // served the app index, replacing the page the user actually asked for.
+  // HTML navigation: network-first app shell — but ONLY for the SPA root.
+  // Other navigations (e.g. a deep-linked /static/*.html page) must go to the
+  // network/static handlers below; otherwise every navigation was served the
+  // app index, replacing the page the user actually asked for.
   if (e.request.mode === 'navigate' && url.pathname === '/') {
     e.respondWith(
       caches.open(CACHE_NAME).then(async cache => {
         const cached = await cache.match('/');
-        const network = fetch(e.request).then(res => {
+        return fetch(e.request).then(res => {
           if (res && res.ok) cache.put('/', res.clone());
           return res;
         }).catch(() => cached);
-        return cached || network;
       })
     );
     return;

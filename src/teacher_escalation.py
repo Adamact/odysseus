@@ -734,12 +734,11 @@ async def run_teacher_inline(
         )
         return
 
-    import json as _json
     import uuid as _uuid
     from src.tool_approvals import tool_approval_store
     from src.tool_capabilities import capabilities_for_action
 
-    skill_content = _json.dumps(skill, ensure_ascii=False)
+    skill_content = json.dumps(skill, ensure_ascii=False)
     pending = tool_approval_store.create(
         owner=owner,
         session_id=session_id,

@@ -6,6 +6,7 @@ and the real startup-shell coordinator then run together under Node.
 """
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -23,14 +24,8 @@ _IMPORT_REWRITES = {
     "import uiModule, { autoResize, styledPrompt } from './ui.js';": (
         "import uiModule, { autoResize, styledPrompt } from './ui.mjs';"
     ),
-    "import chatRenderer from './chatRenderer.js?v=20260815toolapproval4';": (
-        "import chatRenderer from './chatRenderer.mjs';"
-    ),
     "import { providerLogo } from './providers.js';": (
         "import { providerLogo } from './providers.mjs';"
-    ),
-    "import { initModelPicker, updateModelPicker } from './modelPicker.js?v=20260722ctxheader1';": (
-        "import { initModelPicker, updateModelPicker } from './modelPicker.mjs';"
     ),
     "import themeModule from './theme.js';": "import themeModule from './theme.mjs';",
     "import spinnerModule from './spinner.js';": "import spinnerModule from './spinner.mjs';",
@@ -306,6 +301,19 @@ def results(tmp_path_factory):
 
     module_dir = tmp_path_factory.mktemp("session-bootstrap-js")
     source = _SESSIONS.read_text(encoding="utf-8")
+    versioned_rewrites = (
+        (
+            r"import chatRenderer from './chatRenderer\.js(?:\?v=[A-Za-z0-9_-]+)?';",
+            "import chatRenderer from './chatRenderer.mjs';",
+        ),
+        (
+            r"import \{ initModelPicker, updateModelPicker \} from './modelPicker\.js(?:\?v=[A-Za-z0-9_-]+)?';",
+            "import { initModelPicker, updateModelPicker } from './modelPicker.mjs';",
+        ),
+    )
+    for pattern, replacement in versioned_rewrites:
+        source, count = re.subn(pattern, replacement, source, count=1)
+        assert count == 1, f"sessions import changed: {pattern}"
     for original, replacement in _IMPORT_REWRITES.items():
         assert original in source, f"sessions import changed: {original}"
         source = source.replace(original, replacement, 1)

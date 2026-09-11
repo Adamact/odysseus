@@ -40,10 +40,21 @@ async def create_session(content: str, session_id: Optional[str] = None, owner: 
     if not name:
         return {"error": "Session name cannot be empty"}
 
-    try:
-        url, model, headers = await asyncio.to_thread(_resolve_model, model_spec, owner=owner)
-    except ValueError as e:
-        return {"error": str(e)}
+    source = _session_manager.get_session(session_id) if session_id else None
+    source_owner_ok = not owner or (source and getattr(source, "owner", None) == owner)
+    source_model = str(getattr(source, "model", "") or "") if source_owner_ok else ""
+    if source_model and source_model.lower() == model_spec.lower():
+        # A child chat using the current model should inherit the exact working
+        # runtime. Re-resolving through stored endpoints can select a stale key
+        # even while the parent request is successfully using an override.
+        url = str(getattr(source, "endpoint_url", "") or "")
+        model = source_model
+        headers = dict(getattr(source, "headers", None) or {})
+    else:
+        try:
+            url, model, headers = await asyncio.to_thread(_resolve_model, model_spec, owner=owner)
+        except ValueError as e:
+            return {"error": str(e)}
 
     sid = str(uuid.uuid4())[:8]
     try:
@@ -54,11 +65,14 @@ async def create_session(content: str, session_id: Optional[str] = None, owner: 
             model=model,
             rag=False,
             owner=owner,
+            headers=headers,
         )
-        # Store headers on session for future calls
+        # Keep lightweight/fake managers and the live cache in sync with the
+        # atomically persisted runtime. The DB value remains authoritative on
+        # later metadata refreshes.
         sess = _session_manager.get_session(sid)
-        if sess and headers:
-            sess.headers = headers
+        if sess is not None:
+            sess.headers = dict(headers or {})
         try:
             from src.event_bus import fire_event
             fire_event("session_created", owner)
@@ -180,7 +194,13 @@ async def send_to_session(content: str, session_id: Optional[str] = None, owner:
     target_sid = lines[0].strip()
     message = lines[1].strip()
 
-    sess = _session_manager.get_session(target_sid)
+    try:
+        sess = _session_manager.get_session(target_sid)
+    except KeyError:
+        return {"error": f"Session '{target_sid}' not found"}
+    except Exception as e:
+        logger.warning("send_to_session failed to load session %s: %s", target_sid, e)
+        return {"error": f"Session '{target_sid}' could not be loaded"}
     if not sess:
         return {"error": f"Session '{target_sid}' not found"}
 
@@ -383,6 +403,8 @@ async def manage_session(content: str, session_id: Optional[str] = None, owner: 
                 ok = _session_manager.delete_session(target_sid)
                 if not ok:
                     return {"error": f"Session '{target_sid}' was not deleted because it no longer exists."}
+                from routes.chat_helpers import remove_session_sft_trace_rows
+                remove_session_sft_trace_rows(owner, target_sid)
                 return {"action": "delete", "session_id": target_sid,
                         "results": f"Session '{db_sess.name or target_sid}' deleted"}
             except Exception as e:

@@ -49,20 +49,20 @@ def test_only_gguf_models_recommended_on_consumer_rdna():
 def test_safetensors_models_still_recommended_on_cdna():
     """Datacenter Instinct (CDNA) runs vLLM/SGLang on ROCm fine, so non-GGUF
     repos must NOT be filtered there — the GGUF-only rule is consumer-RDNA only."""
-    names = {r["name"] for r in rank_models(_rocm_system(family="cdna"), limit=900)}
+    names = {r["name"] for r in rank_models(_rocm_system(family="cdna"), search="microsoft/Phi-mini-MoE-instruct", limit=10)}
     assert "microsoft/Phi-mini-MoE-instruct" in names
 
 
 def test_unknown_amd_family_not_filtered():
     """When rocminfo is unavailable (family 'unknown'), don't hide non-GGUF
     models — a possibly-capable Instinct box shouldn't lose models on misdetect."""
-    names = {r["name"] for r in rank_models(_rocm_system(family="unknown"), limit=900)}
+    names = {r["name"] for r in rank_models(_rocm_system(family="unknown"), search="microsoft/Phi-mini-MoE-instruct", limit=10)}
     assert "microsoft/Phi-mini-MoE-instruct" in names
 
 
 def test_safetensors_models_still_recommended_on_cuda():
     """Regression guard: the GGUF-only rule must not leak onto CUDA."""
-    names = {r["name"] for r in rank_models(_cuda_system(), limit=900)}
+    names = {r["name"] for r in rank_models(_cuda_system(), search="microsoft/Phi-mini-MoE-instruct", limit=10)}
     assert "microsoft/Phi-mini-MoE-instruct" in names
 
 

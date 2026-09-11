@@ -1,4 +1,6 @@
 from typing import Any, Dict, List, Optional
+import hashlib
+import html
 import logging
 import re
 from src.constants import MAX_READ_CHARS
@@ -254,17 +256,33 @@ def _coerce_email_document_content(existing: str, incoming: str) -> str:
     return header.rstrip() + "\n---\n" + body
 
 def parse_edit_blocks(content: str) -> list:
-    """Parse <<<FIND>>>...<<<REPLACE>>>...<<<END>>> blocks."""
+    """Parse canonical or compact FIND/REPLACE edit blocks."""
     edits = []
-    pattern = r'<<<FIND>>>\n(.*?)\n<<<REPLACE>>>\n(.*?)\n<<<END>>>'
+    # Accept the newline form used in training examples and the compact form
+    # emitted by some native tool callers. Marker whitespace is structural;
+    # preserve whitespace inside the actual find/replace text.
+    pattern = (
+        r'<<<FIND>>>[ \t]*(?:\r?\n)?(.*?)[ \t]*(?:\r?\n)?'
+        r'<<<REPLACE>>>[ \t]*(?:\r?\n)?(.*?)[ \t]*(?:\r?\n)?<<<END>>>'
+    )
     for m in re.finditer(pattern, content, re.DOTALL):
         edits.append({"find": m.group(1), "replace": m.group(2)})
+    if not edits and "<<<FIND>>>" in content and "<<<REPLACE>>>" in content:
+        # Some native callers stop generation immediately after the replace
+        # body. Treat end-of-content as the terminal marker only in that
+        # unmistakable two-marker form.
+        compact_pattern = (
+            r'<<<FIND>>>[ \t]*(?:\r?\n)?(.*?)'
+            r'[ \t]*(?:\r?\n)?<<<REPLACE>>>[ \t]*(?:\r?\n)?(.*?)(?:<<<END>>>)?\s*$'
+        )
+        for m in re.finditer(compact_pattern, content, re.DOTALL):
+            edits.append({"find": m.group(1), "replace": m.group(2)})
     return edits
 
 def parse_suggest_blocks(content: str) -> list:
     """Parse <<<FIND>>>...<<<SUGGEST>>>...<<<REASON>>>...<<<END>>> blocks."""
     suggestions = []
-    _skip_phrases = ["no change", "clear", "fine as", "looks good", "no improvement", "keep as"]
+    _skip_phrases = ["no change", "fine as", "looks good", "no improvement", "keep as"]
     pattern = r'<<<FIND>>>\n(.*?)\n<<<SUGGEST>>>\n(.*?)\n<<<REASON>>>\n(.*?)\n<<<END>>>'
     for m in re.finditer(pattern, content, re.DOTALL):
         find_text = m.group(1)
@@ -282,6 +300,102 @@ def parse_suggest_blocks(content: str) -> list:
             "reason": reason,
         })
     return suggestions
+
+
+def _stable_suggestion_id(doc_id: str, suggestion: dict) -> str:
+    """Deduplicate the same suggestion without colliding across tool calls."""
+    payload = "\0".join((
+        str(doc_id or ''), str(suggestion.get('find') or ''),
+        str(suggestion.get('replace') or ''), str(suggestion.get('reason') or ''),
+    ))
+    return 'sugg-' + hashlib.sha256(payload.encode('utf-8')).hexdigest()[:16]
+
+
+def _visible_text_match_source(source: str, needle: str) -> Optional[str]:
+    """Return the source fragment corresponding to visible ``needle`` text.
+
+    Rich/email documents are stored as HTML, while browser selections contain
+    only rendered text. Build a lightweight visible-text index so suggestions
+    can still be anchored when markup or entities sit between selected words.
+    """
+    if not source or not needle:
+        return None
+
+    # Keep the plain-text path cheap and exact.
+    canonical_needle = needle.replace("\r\n", "\n").replace("\r", "\n")
+    if canonical_needle in source:
+        return canonical_needle
+
+    if "<" not in source or ">" not in source:
+        return None
+
+    visible_chars = []
+    char_spans = []
+    for match in re.finditer(r"<!--.*?-->|<[^>]*>|[^<]+", source, re.DOTALL):
+        token = match.group(0)
+        if token.startswith("<"):
+            continue
+        decoded = html.unescape(token)
+        # Entities decode to fewer characters; map each decoded character to
+        # the source token so the returned fragment remains source-valid.
+        for char in decoded:
+            visible_chars.append(char)
+            char_spans.append((match.start(), match.end()))
+
+    visible = "".join(visible_chars)
+    normalize = lambda value: re.sub(r"\s+", " ", value.replace("\r\n", "\n").replace("\r", "\n")).strip()
+    normalized_visible = normalize(visible)
+    normalized_needle = normalize(canonical_needle)
+    start = normalized_visible.find(normalized_needle)
+    if start < 0:
+        return None
+
+    # Map the normalized match back to source positions. Whitespace runs are
+    # collapsed, so walk the original visible text while building the same
+    # normalized-character spans.
+    normalized_chars = []
+    normalized_spans = []
+    in_space = False
+    for index, char in enumerate(visible_chars):
+        if char.isspace():
+            if not in_space:
+                normalized_chars.append(" ")
+                normalized_spans.append(char_spans[index])
+                in_space = True
+        else:
+            normalized_chars.append(char)
+            normalized_spans.append(char_spans[index])
+            in_space = False
+    while normalized_chars and normalized_chars[0].isspace():
+        normalized_chars.pop(0)
+        normalized_spans.pop(0)
+    while normalized_chars and normalized_chars[-1].isspace():
+        normalized_chars.pop()
+        normalized_spans.pop()
+    normalized_visible = "".join(normalized_chars)
+    end = start + len(normalized_needle)
+    if end > len(normalized_spans):
+        return None
+    source_start = normalized_spans[start][0]
+    source_end = normalized_spans[end - 1][1]
+    # Keep inline wrappers intact when the selection starts/ends inside one.
+    # Without this, replacing a selection ending in <strong> would leave its
+    # closing tag outside the replacement fragment and corrupt the HTML.
+    inline_open = re.search(
+        r"<(?:strong|em|b|i|u|s|del|strike|a|span|font)(?:\s[^>]*)?>$",
+        source[:source_start],
+        re.IGNORECASE,
+    )
+    if inline_open:
+        source_start = inline_open.start()
+    inline_close = re.match(
+        r"(?:</(?:strong|em|b|i|u|s|del|strike|a|span|font)>)+",
+        source[source_end:],
+        re.IGNORECASE,
+    )
+    if inline_close:
+        source_end += inline_close.end()
+    return source[source_start:source_end]
 
 
 def _pdf_source_upload_id(content: str) -> Optional[str]:
@@ -364,7 +478,7 @@ class CreateDocumentTool:
 
         # Known languages the editor understands (match the <select> in HTML)
         _KNOWN_LANGS = {
-            "python", "javascript", "typescript", "html", "css", "markdown", "json",
+            "python", "javascript", "typescript", "html", "css", "richtext", "markdown", "json",
             "yaml", "bash", "sql", "rust", "go", "java", "c", "cpp", "xml", "toml",
             "ini", "ruby", "php", "csv", "email", "text", "plain", "svg",
         }
@@ -496,6 +610,8 @@ class UpdateDocumentTool:
             ):
                 return _approved_document_version_error(None, ctx)
             if not doc:
+                if target_id:
+                    return {"error": "Requested document not found; no other document was changed", "exit_code": 1}
                 doc = _most_recent_owned_document(db, Document, owner)
                 if doc:
                     target_id = doc.id
@@ -582,6 +698,8 @@ class EditDocumentTool:
             ):
                 return _approved_document_version_error(None, ctx)
             if not doc:
+                if target_id:
+                    return {"error": "Requested document not found; no other document was changed", "exit_code": 1}
                 # Fallback: most recently updated document. Avoids "no active doc" errors
                 # after server restart or when the agent loses track of which doc to edit.
                 doc = _most_recent_owned_document(db, Document, owner)
@@ -739,10 +857,20 @@ class SuggestDocumentTool:
             # Validate that FIND text exists in document
             valid = []
             for s in suggestions:
-                if s["find"] in doc.current_content:
+                find_text = s["find"]
+                # Browser selections from markdown, rich text, and email are
+                # rendered text, while the stored document may contain LF
+                # normalization or HTML markup. Resolve the visible passage
+                # back to the exact source fragment used by the editor.
+                source_find = _visible_text_match_source(doc.current_content, find_text)
+                if source_find is not None:
+                    if source_find != find_text:
+                        s = dict(s)
+                        s["find"] = source_find
+                    s["id"] = _stable_suggestion_id(target_id, s)
                     valid.append(s)
                 else:
-                    logger.warning(f"suggest_document: FIND text not found, skipping: {s['find'][:80]!r}")
+                    logger.warning(f"suggest_document: FIND text not found, skipping: {find_text[:80]!r}")
 
             if not valid:
                 return {"error": "No suggestions matched the document content"}
@@ -779,6 +907,10 @@ class ManageDocumentTool:
             return {"error": "Invalid JSON arguments", "exit_code": 1}
 
         action = args.get("action", "list")
+        if action in {"search", "find"}:
+            action = "list"
+            if not args.get("search"):
+                args["search"] = args.get("text") or args.get("query") or args.get("title")
         db = SessionLocal()
 
         def _rel(ts):
@@ -799,13 +931,22 @@ class ManageDocumentTool:
             if action == "list":
                 q = db.query(Document).filter(Document.is_active == True)
                 q = _owned_document_query(q, Document, owner)
-                if args.get("search"):
-                    q = q.filter(Document.title.ilike(f"%{args['search']}%"))
+                search_text = args.get("search")
+                if search_text:
+                    # Tolerate unambiguous conversational framing in a title
+                    # fallback without introducing broad fuzzy matching.
+                    search_text = re.sub(
+                        r"\s+from\s+my\s+documents\b", "", str(search_text), flags=re.IGNORECASE
+                    )
+                    search_text = re.sub(
+                        r"\s+(?:instead|please)\s*$", "", search_text, flags=re.IGNORECASE
+                    ).strip()
+                    q = q.filter(Document.title.ilike(f"%{search_text}%"))
                 if args.get("language"):
                     q = q.filter(Document.language == args["language"])
                 docs = q.order_by(Document.updated_at.desc()).limit(args.get("limit", 50)).all()
                 if not docs:
-                    msg = "No documents found" + (f" matching '{args['search']}'" if args.get("search") else "") + "."
+                    msg = "No documents found" + (f" matching '{search_text}'" if search_text else "") + "."
                     return {"response": msg, "documents": [], "exit_code": 0}
                 lines = []
                 items = []
@@ -832,6 +973,7 @@ class ManageDocumentTool:
                 doc = _get_owned_document(db, Document, doc_id, owner, active_only=True)
                 if not doc:
                     return {"error": f"Document '{doc_id}' not found", "exit_code": 1}
+                set_active_document(doc.id)
                 body = doc.current_content or ""
                 try:
                     preview_limit = max(1, min(int(args.get("limit", MAX_READ_CHARS)), MAX_READ_CHARS))
@@ -864,15 +1006,20 @@ class ManageDocumentTool:
                 }
 
             elif action == "delete":
-                doc_id = args.get("document_id") or args.get("id") or args.get("uid") or _active_document_id
+                doc_id = args.get("document_id") or args.get("id") or args.get("uid") or ctx.get("doc_id") or _active_document_id
                 doc = None
                 if doc_id:
                     doc = _get_owned_document(db, Document, doc_id, owner)
                 if not doc:
+                    if doc_id:
+                        return {"error": "Requested document not found; no other document was deleted", "exit_code": 1}
                     # Fallback: most recently updated doc (likely what the user means)
                     doc = _most_recent_owned_document(db, Document, owner, active_only=True)
                 if not doc:
                     return {"error": "No document to delete", "exit_code": 1}
+                version_error = _approved_document_version_error(doc, ctx)
+                if version_error:
+                    return version_error
                 title = doc.title
                 doc.is_active = False
                 db.commit()

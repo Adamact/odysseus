@@ -1,6 +1,7 @@
 """Executable regression coverage for behavior lost in PR #6020's rebase."""
 
 import asyncio
+import inspect
 import json
 
 import src.agent_loop as agent_loop
@@ -87,7 +88,7 @@ def _run_probe(messages, *, relevant_tools, **kwargs):
     )
 
 
-def test_odysseus_notes_mode_clamps_and_reenables_all_personal_managers(monkeypatch):
+def test_odysseus_notes_mode_clamps_without_overriding_caller_denials(monkeypatch):
     prompt_calls, _ = _install_route_probe(monkeypatch)
 
     _run_probe(
@@ -98,9 +99,7 @@ def test_odysseus_notes_mode_clamps_and_reenables_all_personal_managers(monkeypa
 
     route = prompt_calls[0]
     assert route["relevant_tools"] == NOTES_TOOLS
-    assert route["disabled_tools"].isdisjoint(
-        {"manage_notes", "manage_calendar", "manage_tasks"}
-    )
+    assert {"manage_notes", "manage_calendar", "manage_tasks"} <= route["disabled_tools"]
 
 
 def test_odysseus_general_mode_disables_every_tool(monkeypatch):
@@ -109,7 +108,7 @@ def test_odysseus_general_mode_disables_every_tool(monkeypatch):
     prompt_calls, _ = _install_route_probe(monkeypatch)
 
     _run_probe(
-        [{"role": "user", "content": "Explain the CAP theorem."}],
+        [{"role": "user", "content": "Explain the CAP theorem with a concrete distributed database example."}],
         relevant_tools={"bash", "manage_notes", "ask_user"},
     )
 
@@ -197,7 +196,9 @@ def test_qwen_fallback_candidate_gets_capped_temperature(monkeypatch):
 
     assert stream_calls[0]["temperature"] == 1.2
     factory = stream_calls[0]["candidate_request_factory"]
-    request = asyncio.run(factory(1, "https://qwen.example/v1", ODY_QWEN, {}))
+    request = factory(1, "https://qwen.example/v1", ODY_QWEN, {})
+    if inspect.isawaitable(request):
+        request = asyncio.run(request)
     assert request["kwargs"]["temperature"] == 0.2
 
 

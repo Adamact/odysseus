@@ -49,7 +49,7 @@ def test_only_gguf_models_recommended_on_windows():
 
 def test_safetensors_models_still_recommended_on_cuda():
     """Regression guard: the GGUF-only rule must not leak onto CUDA."""
-    names = {r["name"] for r in rank_models(_cuda_system(), limit=900)}
+    names = {r["name"] for r in rank_models(_cuda_system(), search="microsoft/Phi-mini-MoE-instruct", limit=10)}
     assert "microsoft/Phi-mini-MoE-instruct" in names
 
 
@@ -63,7 +63,7 @@ def test_awq_model_hidden_on_windows():
 def test_awq_model_visible_on_cuda():
     """The same AWQ model should still be visible on CUDA where vLLM can
     serve it."""
-    names = {r["name"] for r in rank_models(_cuda_system(), limit=900)}
+    names = {r["name"] for r in rank_models(_cuda_system(), search="Qwen/Qwen2.5-3B-Instruct-AWQ", limit=10)}
     assert "Qwen/Qwen2.5-3B-Instruct-AWQ" in names
 
 

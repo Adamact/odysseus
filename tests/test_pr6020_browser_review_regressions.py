@@ -114,6 +114,10 @@ export function __pr6020StreamStateSmoke() {
     module_uri = module_path.as_uri()
     script = f"""
       globalThis.window = globalThis;
+      Object.defineProperty(globalThis, 'navigator', {{
+        value: {{ platform: 'Linux' }},
+        configurable: true,
+      }});
       globalThis.addEventListener = () => {{}};
       globalThis.removeEventListener = () => {{}};
       globalThis.dispatchEvent = () => {{}};

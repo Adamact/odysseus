@@ -20,6 +20,7 @@ const REAL_MODULES = new Set([
   path.join(JS, 'settings/sidebar.js'),
   path.join(JS, 'settings/navigation.js'),
   path.join(JS, 'settings/lifecycle.js'),
+  path.join(JS, 'searchProviderIcons.js'),
 ]);
 
 const realModulesLoaded = new Set();

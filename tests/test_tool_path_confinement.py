@@ -278,6 +278,40 @@ async def test_write_file_dispatch_blocks_authorized_keys(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_write_file_dispatch_rejects_empty_directory_like_workspace_path(monkeypatch, tmp_path):
+    """End-to-end: benchmark agents must not turn a directory path into an empty file."""
+    auth_mod = sys.modules.get("core.auth")
+    if auth_mod is None:
+        import core.auth as _real_auth
+        auth_mod = _real_auth
+
+    class _AdminAuth:
+        is_configured = True
+        def is_admin(self, username):
+            return True
+
+    monkeypatch.setattr(auth_mod, "AuthManager", lambda: _AdminAuth())
+    monkeypatch.setattr(
+        "src.tool_execution.owner_is_admin_or_single_user",
+        lambda owner: True,
+    )
+
+    from src.tool_execution import NO_TOOL_SECURITY_CONTEXT, execute_tool_block
+    desc, result = await execute_tool_block(
+        _make_block("write_file", "/workspace/papers"),
+        owner="admin-user",
+        workspace=str(tmp_path),
+        security_context=NO_TOOL_SECURITY_CONTEXT,
+    )
+    assert desc == "write_file: /workspace/papers"
+    assert "refusing to create an empty file at a directory-like path" in (
+        result.get("error") or ""
+    )
+    assert result.get("exit_code") == 1
+    assert not (tmp_path / "papers").exists()
+
+
+@pytest.mark.asyncio
 async def test_write_file_dispatch_blocks_cron(monkeypatch):
     """End-to-end: write_file to /etc/cron.d must be rejected."""
     auth_mod = sys.modules.get("core.auth")

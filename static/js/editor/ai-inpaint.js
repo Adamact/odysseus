@@ -45,7 +45,7 @@ import { state } from './state.js';
 export function wireInpaintButtons({
   buildMergedMaskCanvas, dilateMask, applyInpaintFeather,
   getSelectedAIEndpoint, ensureActiveMaskLayer,
-  saveState, createLayer, composite, renderLayerPanel,
+  saveState, createLayer, composite, flatten, renderLayerPanel,
   spinnerModule, uiModule,
 }) {
   // Shared inpaint runner — used by Generate, Remove, and Outpaint.
@@ -110,16 +110,7 @@ export function wireInpaintButtons({
     } catch (_) { /* overlay is decorative */ }
     try {
       // Flatten current image.
-      const flatCanvas = document.createElement('canvas');
-      flatCanvas.width = state.imgWidth; flatCanvas.height = state.imgHeight;
-      const flatCtx = flatCanvas.getContext('2d');
-      for (const layer of state.layers) {
-        if (!layer.visible) continue;
-        flatCtx.globalAlpha = layer.opacity;
-        const off = state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
-        flatCtx.drawImage(layer.canvas, off.x, off.y);
-      }
-      flatCtx.globalAlpha = 1;
+      const flatCanvas = flatten();
       // Dilate the user's brush mask before sending to the model.
       // The AI fills a small buffer zone around the brush, so the
       // post-gen Edge feather slider has AI content to fade INTO
@@ -196,7 +187,9 @@ export function wireInpaintButtons({
           // on each sub-row's eye icon.
           for (const ly of state.layers) {
             if (!ly.masks || !ly.masks.length) continue;
-            for (const mk of ly.masks) mk.visible = false;
+            for (const mk of ly.masks) {
+              if (mk.mode !== 'layer') mk.visible = false;
+            }
           }
           composite();
           renderLayerPanel();
