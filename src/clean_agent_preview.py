@@ -4313,8 +4313,17 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         history[-1]['content'] = content
                         yield event({'delta': content})
                         break
+                    research_expansion_due = (
+                        broad_current_web_request(direct_user_text)
+                        and successful_web_searches == 1
+                        and web_search_attempts < 2
+                        and not breadth_recovery_attempted
+                        and not search_completion_attempted
+                        and round_number < round_limit
+                    )
                     if (
-                        requested_web_source_links(direct_user_text)
+                        not research_expansion_due
+                        and requested_web_source_links(direct_user_text)
                         and successful_web_searches
                         and not re.search(r'https?://\S+', content or '')
                         and not citation_recovery_attempted
@@ -4341,7 +4350,8 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         yield event({'type': 'completion_recovery', 'reason': 'requested_source_link_missing'})
                         continue
                     if (
-                        contentless_final_response(content)
+                        not research_expansion_due
+                        and contentless_final_response(content)
                         and answer_recovery_attempts == 0
                         and round_number < round_limit
                     ):
@@ -4359,14 +4369,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         })
                         yield event({'type': 'completion_recovery', 'reason': 'contentless_answer'})
                         continue
-                    if (
-                        broad_current_web_request(direct_user_text)
-                        and successful_web_searches == 1
-                        and web_search_attempts < 2
-                        and not breadth_recovery_attempted
-                        and not search_completion_attempted
-                        and round_number < round_limit
-                    ):
+                    if research_expansion_due:
                         breadth_recovery_attempted = True
                         force_web_search_next_round = True
                         replace_streamed_draft_on_finish = True

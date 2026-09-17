@@ -1199,7 +1199,8 @@ async def test_stream_bounds_research_to_two_searches_fetch_then_synthesis(monke
 @pytest.mark.asyncio
 @pytest.mark.parametrize('embedded_article', [False, True])
 @pytest.mark.parametrize('empty_second_search', [False, True])
-async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatch, embedded_article, empty_second_search):
+@pytest.mark.parametrize('sources_requested', [False, True])
+async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatch, embedded_article, empty_second_search, sources_requested):
     """Broad current research expands, retrieves evidence, then synthesizes."""
     import src.clean_agent_preview as module
 
@@ -1286,7 +1287,7 @@ async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatc
     contract = resolve_full_inventory_contract(schemas=schemas, policy=ToolPolicy())
     raw = [chunk async for chunk in stream_preview(
         endpoint_url='http://test', model='test',
-        messages=[{'role': 'user', 'content': 'Latest news in AI?'}],
+        messages=[{'role': 'user', 'content': 'Latest news in AI?' + (' Include source links.' if sources_requested else '')}],
         headers={}, turn_contract=contract, session_id='test', owner='test',
         disabled_tools=set(), tool_policy=ToolPolicy(), max_rounds=5,
     )]
