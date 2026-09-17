@@ -5592,9 +5592,12 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         shell_terminal_response = shell_listing_terminal_response(
                             output, user_text=latest_user,
                         ) or shell_output_terminal_response(output)
-                        if shell_terminal_response:
+                        artifact_pending = bool(
+                            required_artifacts and not successful_artifact_write
+                        )
+                        if shell_terminal_response and not artifact_pending:
                             structured_terminal_response = shell_terminal_response
-                        else:
+                        elif not artifact_pending:
                             # Successful mutating shell commands commonly have
                             # no stdout.  The executor's ``(no output)`` sentinel
                             # is evidence, not a useful user-facing answer.  Give

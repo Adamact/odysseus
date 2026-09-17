@@ -3976,6 +3976,70 @@ async def test_native_bash_arguments_use_canonical_execution_content(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_native_shell_evidence_cannot_finish_with_required_artifact_missing(monkeypatch):
+    import src.clean_agent_preview as module
+
+    responses = iter([
+        {'choices': [{'delta': {'tool_calls': [{'index': 0, 'id': 'analyze',
+            'function': {'name': 'bash', 'arguments': json.dumps({
+                'command': 'python3 -c "print(42)"',
+            })}}]}}]},
+        {'choices': [{'delta': {'tool_calls': [{'index': 0, 'id': 'write',
+            'function': {'name': 'write_file', 'arguments': json.dumps({
+                'path': '/workspace/output.html', 'content': '<html>done</html>',
+            })}}]}}]},
+        {'choices': [{'delta': {'content': 'Created and verified output.html.'}}]},
+    ])
+    requests = []
+
+    class Response:
+        def __init__(self, payload): self.payload = payload
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def raise_for_status(self): pass
+        async def aiter_lines(self):
+            yield 'data: ' + json.dumps(self.payload)
+            yield 'data: [DONE]'
+
+    class Client:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def stream(self, *args, **kwargs):
+            requests.append(kwargs['json'])
+            return Response(next(responses))
+
+    executions = []
+
+    async def execute(block, **kwargs):
+        executions.append(block.tool_type)
+        return block.tool_type, {'output': '42' if block.tool_type == 'bash' else 'saved',
+                                 'exit_code': 0}
+
+    monkeypatch.setattr(module.httpx, 'AsyncClient', Client)
+    monkeypatch.setattr(module, 'execute_tool_block', execute)
+    schemas = [schema for schema in FUNCTION_TOOL_SCHEMAS
+               if schema['function']['name'] in {'bash', 'write_file'}]
+    contract = resolve_full_inventory_contract(schemas=schemas, policy=ToolPolicy())
+    raw = [chunk async for chunk in stream_preview(
+        endpoint_url='http://test', model='test', headers={},
+        messages=[{'role': 'user', 'content': (
+            'Analyze the input with Python, then create /workspace/output.html.'
+        )}], turn_contract=contract, session_id='test', owner='test',
+        disabled_tools=set(), tool_policy=ToolPolicy(), workspace='/tmp/workspace',
+        client_runtime_context={
+            'surface': 'odysseus-native', 'terminal_agent': True,
+            'unattended_mode': True,
+            'completion_requirements': {'required_artifacts': ['/workspace/output.html']},
+        }, max_rounds=4,
+    )]
+
+    assert executions == ['bash', 'write_file']
+    assert len(requests) == 3
+    assert any('Created and verified' in chunk for chunk in raw)
+
+
+@pytest.mark.asyncio
 async def test_native_stream_normalizes_single_clip_exports_before_validation(monkeypatch):
     import src.clean_agent_preview as module
     arguments = json.dumps({
