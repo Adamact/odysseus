@@ -28,6 +28,12 @@ def resolve(capabilities=(), *, schemas=FUNCTION_TOOL_SCHEMAS, policy=None, requ
                                  warm_tools=warm_tools)
 
 
+def test_latest_topic_info_and_common_news_typo_route_to_web_search():
+    """Broad current-info prompts must not silently lose the Web surface."""
+    for prompt in ("What's latest AI info?", "What's latest AI nees?"):
+        assert requested_capabilities(prompt) == frozenset({"search_browser"})
+
+
 def test_successfully_used_tool_stays_offered_when_next_turn_routes_elsewhere():
     contract = resolve(
         {"notes"},

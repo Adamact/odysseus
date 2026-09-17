@@ -881,6 +881,21 @@ def contentless_final_response(content):
     ))
 
 
+def incomplete_broad_web_answer(content, user_text):
+    """Reject a fragmentary answer to a broad current-information request."""
+    request = str(user_text or '')
+    if not (
+        re.search(r'\b(?:latest|recent|current|today(?:\'s)?)\b', request, re.I)
+        and re.search(r'\b(?:info(?:rmation)?|news|nees|updates?)\b', request, re.I)
+    ):
+        return False
+    answer = re.sub(r'https?://\S+', ' ', str(content or '')).strip()
+    words = re.findall(r"[A-Za-z0-9][A-Za-z0-9'’-]*", answer)
+    # A broad briefing cannot be fulfilled by one headline fragment. This is
+    # intentionally inapplicable to narrow quick-fact searches.
+    return len(words) < 25
+
+
 def progressive_thinking_for_turn(model, offered_schemas):
     """Use Qwen reasoning only when this turn has no Odysseus tool surface."""
 
@@ -3749,6 +3764,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     budget_completion_attempted = False
     answer_recovery_attempted = False
     force_no_tools_next_round = False
+    force_web_search_next_round = False
     suggestion_retry_required = False
     suggestion_retry_attempted = False
     media_detail_nudge_sent = False
@@ -3918,6 +3934,20 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             }
                     if research_choice is not None:
                         request['tool_choice'] = research_choice
+                    if force_web_search_next_round:
+                        web_search_name = next(
+                            (
+                                schema['function']['name'] for schema in round_offered
+                                if canonical(schema['function']['name']) == 'web_search'
+                            ),
+                            None,
+                        )
+                        if web_search_name:
+                            request['tool_choice'] = {
+                                'type': 'function',
+                                'function': {'name': web_search_name},
+                            }
+                        force_web_search_next_round = False
                 pending, content = {}, ''
                 async with preview_model_response(client, endpoint_url, headers, request, context_recovery) as response:
                     response.raise_for_status()
@@ -3991,6 +4021,31 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             ),
                         })
                         yield event({'type': 'completion_recovery', 'reason': 'contentless_answer'})
+                        continue
+                    if (
+                        successful_web_searches
+                        and incomplete_broad_web_answer(content, direct_user_text)
+                        and not answer_recovery_attempted
+                        and round_number < round_limit
+                    ):
+                        answer_recovery_attempted = True
+                        force_no_tools_next_round = True
+                        replace_streamed_draft_on_finish = True
+                        history.pop()
+                        history.append({
+                            'role': 'user', '_harness_control': True,
+                            'content': (
+                                'Completion check: the draft is only a fragment and does not '
+                                'answer the broad current-information request. Using the Web '
+                                'evidence already gathered, provide a complete useful briefing '
+                                'with the main findings, source attribution, and any evidence '
+                                'limitations. Do not call another tool.'
+                            ),
+                        })
+                        yield event({
+                            'type': 'completion_recovery',
+                            'reason': 'incomplete_research_answer',
+                        })
                         continue
                     if artifact_body_handoff_target:
                         target = artifact_body_handoff_target
@@ -4618,7 +4673,16 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                 'again. Retrieve the strongest authoritative result with web_fetch, '
                                 'then answer every requested fact, comparison, and caveat with source URLs.'
                             )
-                    if not failed and canonical(actual_tool) in {'web_fetch', 'private_browser'}:
+                    browser_access_blocked = (
+                        canonical(actual_tool) == 'private_browser'
+                        and not failed
+                        and browser_observation_access_blocked(output)
+                    )
+                    if (
+                        not failed
+                        and canonical(actual_tool) in {'web_fetch', 'private_browser'}
+                        and not browser_access_blocked
+                    ):
                         successful_web_retrievals += 1
                         for source_url in retrieved_source_urls(args):
                             if source_url not in retrieved_web_sources:
@@ -4641,33 +4705,62 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     if (
                         canonical(actual_tool) == 'private_browser'
                         and not failed
-                        and browser_observation_access_blocked(output)
+                        and browser_access_blocked
                         and any(
                             canonical(schema['function']['name']) == 'web_fetch'
                             for schema in offered
                         )
                     ):
                         suppressed_tool_until_round['private_browser'] = round_number + 1
-                        browser_url = str(
-                            args.get('url') or args.get('target_url') or browser_current_url or ''
-                        ).strip().rstrip('/')
-                        if browser_url and browser_url in static_fetch_failed_urls:
-                            # Both independent transports have now failed for
-                            # this exact source.  Do not bounce between them.
-                            force_no_tools_next_round = True
+                        requested_browser_url = private_browser_open_url(args)
+                        effective_browser_url = private_browser_effective_url(result)
+                        browser_search_url = requested_browser_url or effective_browser_url
+                        is_search_engine_navigation = bool(re.search(
+                            r'https?://(?:[^/]+\.)?(?:google\.[^/]+|bing\.com|duckduckgo\.com)'
+                            r'/(?:search|sorry|html|lite|\?)',
+                            browser_search_url,
+                            re.I,
+                        )) or bool(re.search(
+                            r'https?://(?:[^/]+\.)?google\.[^/]+/sorry/',
+                            effective_browser_url,
+                            re.I,
+                        ))
+                        has_native_search = any(
+                            canonical(schema['function']['name']) == 'web_search'
+                            for schema in offered
+                        )
+                        if is_search_engine_navigation and has_native_search:
+                            force_web_search_next_round = True
                             round_recovery_messages.append(
-                                'Both static fetch and rendered browser access failed for this '
-                                'same URL. Do not retry either path; briefly report the source '
-                                'access limitation without inventing article content.'
+                                'The public search-engine browser page returned a CAPTCHA, not '
+                                'evidence. Use the native web_search tool now with the underlying '
+                                'research query; do not retry or fetch the search-engine page.'
                             )
+                            yield event({
+                                'type': 'tool_loop_recovery',
+                                'reason': 'browser_search_blocked_fallback',
+                            })
                         else:
-                            # A CAPTCHA is transport output, not article
-                            # evidence. Try the independent static reader once.
-                            round_recovery_messages.append(
-                                'The browser returned only an access block or CAPTCHA, not page '
-                                'content. Retry the same known URL once with web_fetch; if that '
-                                'also fails, report the limitation without inventing content.'
-                            )
+                            browser_url = str(
+                                args.get('url') or args.get('target_url') or browser_current_url or ''
+                            ).strip().rstrip('/')
+                            if browser_url and browser_url in static_fetch_failed_urls:
+                                # Both independent transports have now failed for
+                                # this exact source.  Do not bounce between them.
+                                force_no_tools_next_round = True
+                                round_recovery_messages.append(
+                                    'Both static fetch and rendered browser access failed for this '
+                                    'same URL. Do not retry either path; briefly report the source '
+                                    'access limitation without inventing article content.'
+                                )
+                            else:
+                                # A CAPTCHA is transport output, not article
+                                # evidence. Try the independent static reader once.
+                                round_recovery_messages.append(
+                                    'The browser returned only an access block or CAPTCHA, not page '
+                                    'content. Retry the same known URL once with web_fetch; if that '
+                                    'also fails, report the limitation without inventing content.'
+                                )
                     if (
                         canonical(actual_tool) == 'web_fetch'
                         and failed

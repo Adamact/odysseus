@@ -3963,6 +3963,14 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
         # weak search can recover through fetch/browser without schema growth.
         return frozenset({"search_browser"})
     if (
+        re.search(r"\b(?:latest|recent|current|today(?:'s)?)\b", text, re.I)
+        and re.search(r"\b(?:info(?:rmation)?|news|nees|updates?)\b", text, re.I)
+    ):
+        # Broad current-information requests still require live Web evidence.
+        # Keep the common ``nees`` typo because a missed route leaves the model
+        # with no way to answer and encourages it to ask unnecessary questions.
+        return frozenset({"search_browser"})
+    if (
         len(concrete_urls) >= 2
         and re.search(r"\b(?:open|fetch|read|retrieve|check|use)\b", text, re.I)
         and re.search(

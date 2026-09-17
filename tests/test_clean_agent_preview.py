@@ -1152,6 +1152,79 @@ async def test_stream_bounds_research_to_two_searches_fetch_then_synthesis(monke
     assert any('Complete evidence-grounded answer' in chunk for chunk in raw)
 
 
+@pytest.mark.asyncio
+async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatch):
+    """A successful search must not end in a fragmentary headline stub."""
+    import src.clean_agent_preview as module
+
+    packets = iter([
+        {'choices': [{'delta': {'tool_calls': [{
+            'index': 0, 'id': 'search-1', 'function': {
+                'name': 'web_search',
+                'arguments': json.dumps({'query': 'latest AI news'}),
+            },
+        }]}}]},
+        {'choices': [{'delta': {'content': 'Current AI news includes reports about U.'}}]},
+        {'choices': [{'delta': {'content': (
+            'Here is a fuller evidence-based briefing covering the major current AI '
+            'developments, what each source actually reports, and the limits of the '
+            'available evidence. Source: https://example.org/ai-news'
+        )}}]},
+    ])
+    requests = []
+
+    class Response:
+        def __init__(self, payload): self.payload = payload
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def raise_for_status(self): pass
+        async def aiter_lines(self):
+            yield 'data: ' + json.dumps(self.payload)
+            yield 'data: [DONE]'
+
+    class Client:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def stream(self, *args, **kwargs):
+            requests.append(kwargs['json'])
+            return Response(next(packets))
+
+    async def execute(block, **kwargs):
+        return 'web_search', {
+            'output': '[1] AI News\n    https://example.org/ai-news',
+            'exit_code': 0,
+            'evidence_status': 'available',
+        }
+
+    monkeypatch.setattr(module.httpx, 'AsyncClient', Client)
+    monkeypatch.setattr(module, 'execute_tool_block', execute)
+    schema = next(
+        s for s in FUNCTION_TOOL_SCHEMAS if s['function']['name'] == 'web_search'
+    )
+    contract = resolve_full_inventory_contract(schemas=[schema], policy=ToolPolicy())
+    raw = [chunk async for chunk in stream_preview(
+        endpoint_url='http://test', model='test',
+        messages=[{'role': 'user', 'content': 'Latest news in AI?'}],
+        headers={}, turn_contract=contract, session_id='test', owner='test',
+        disabled_tools=set(), tool_policy=ToolPolicy(), max_rounds=3,
+    )]
+    events = [json.loads(chunk[6:]) for chunk in raw if '[DONE]' not in chunk]
+
+    assert len(requests) == 3
+    assert 'tools' not in requests[2]
+    assert any(
+        event.get('type') == 'completion_recovery'
+        and event.get('reason') == 'incomplete_research_answer'
+        for event in events
+    )
+    assert any(
+        event.get('type') == 'final_response'
+        and 'fuller evidence-based briefing' in event.get('content', '')
+        for event in events
+    )
+
+
 def test_task_renderer_honors_few_and_filters_confirmed_morning_schedule():
     from src.clean_agent_preview import tasks_terminal_response
     raw = {"response": "Found 3 tasks:\n"
@@ -3884,6 +3957,103 @@ async def test_failed_static_fetch_recovers_once_through_rendered_browser(monkey
     events = [json.loads(chunk[6:]) for chunk in raw if '[DONE]' not in chunk]
     assert any(event.get('type') == 'tool_loop_recovery' for event in events)
     assert any('blocked both access methods' in event.get('delta', '') for event in events)
+
+
+@pytest.mark.asyncio
+async def test_blocked_search_engine_browser_forces_native_web_search(monkeypatch):
+    import src.clean_agent_preview as module
+
+    responses = iter([
+        {'choices': [{'delta': {'tool_calls': [{
+            'index': 0, 'id': 'browser-1',
+            'function': {
+                'name': 'private_browser',
+                'arguments': json.dumps({
+                    'action': 'open',
+                    'url': 'https://www.google.com/search?q=latest+AI+news',
+                }),
+            },
+        }]}}]},
+        {'choices': [{'delta': {'tool_calls': [{
+            'index': 0, 'id': 'search-1',
+            'function': {
+                'name': 'web_search',
+                'arguments': json.dumps({'query': 'latest AI news'}),
+            },
+        }]}}]},
+        {'choices': [{'delta': {'content': (
+            'Recent AI developments include new model releases and policy updates. '
+            'The search results identify the relevant primary sources and dates for each item, '
+            'including publication details, concrete findings, and links readers can inspect '
+            'for the full context behind each development.'
+        )}}]},
+    ])
+    requests = []
+
+    class Response:
+        def __init__(self, payload): self.payload = payload
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def raise_for_status(self): pass
+        async def aiter_lines(self):
+            yield 'data: ' + json.dumps(self.payload)
+            yield 'data: [DONE]'
+
+    class Client:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def stream(self, *args, **kwargs):
+            requests.append(kwargs['json'])
+            return Response(next(responses))
+
+    executions = []
+
+    async def execute(block, **kwargs):
+        executions.append(block.tool_type)
+        if block.tool_type == 'private_browser':
+            return 'private_browser', {
+                'output': json.dumps({
+                    'url': 'https://www.google.com/sorry/index?continue=search',
+                    'text': 'Our systems have detected unusual traffic. Complete the reCAPTCHA.',
+                }),
+                'exit_code': 0,
+            }
+        return 'web_search', {
+            'output': json.dumps({'results': [{
+                'title': 'AI update', 'url': 'https://example.com/ai',
+                'snippet': 'A dated current report.',
+            }]}),
+            'exit_code': 0,
+        }
+
+    monkeypatch.setattr(module.httpx, 'AsyncClient', Client)
+    monkeypatch.setattr(module, 'execute_tool_block', execute)
+    schemas = [
+        schema for schema in FUNCTION_TOOL_SCHEMAS
+        if schema['function']['name'] in {'web_search', 'web_fetch', 'private_browser'}
+    ]
+    contract = replace(
+        resolve_full_inventory_contract(schemas=schemas, policy=ToolPolicy()),
+        routing_experiment='recent_model_choice',
+    )
+    raw = [chunk async for chunk in stream_preview(
+        endpoint_url='http://test', model='test',
+        messages=[{'role': 'user', 'content': 'Open browser and find the latest AI news.'}],
+        headers={}, turn_contract=contract, session_id='test', owner='test',
+        disabled_tools=set(), tool_policy=ToolPolicy(), max_rounds=4,
+    )]
+
+    assert executions == ['private_browser', 'web_search']
+    assert requests[1]['tool_choice'] == {
+        'type': 'function', 'function': {'name': 'web_search'},
+    }
+    events = [json.loads(chunk[6:]) for chunk in raw if '[DONE]' not in chunk]
+    assert any(
+        event.get('type') == 'tool_loop_recovery'
+        and event.get('reason') == 'browser_search_blocked_fallback'
+        for event in events
+    )
 
 
 @pytest.mark.asyncio
