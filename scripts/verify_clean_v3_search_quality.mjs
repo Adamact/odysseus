@@ -88,6 +88,9 @@ async function send(page, prompt) {
     prompt, seconds: (performance.now() - started) / 1000,
     streamed_text_chunks: events.filter(event => typeof event.delta === 'string' && event.delta.length).length,
     final_replacement_count: events.filter(event => event.type === 'final_response').length,
+    event_order: events.filter(event => event.type === 'tool_start' || event.type === 'final_response' || event.delta)
+      .map(event => event.type === 'tool_start' ? `tool:${event.tool}` : event.type === 'final_response' ? 'final' : 'text')
+      .filter((value, index, array) => index === 0 || value !== array[index - 1]),
     rendered_answers: renderedAnswers,
     rounds: metrics?.agent_rounds ?? null,
     tool_execution_timings: metrics?.tool_execution_timings || [],
@@ -121,6 +124,7 @@ try {
     const cases = [
       ['news-typo', ['latset ai neews?', 'more about the second story, with sources'], true],
       ['country-casual', ['whats new in japan rn'], true],
+      ['country-sweden', ['Latest news in sweden'], true],
       ['software-typo', ['latest pythno verison? official source pls'], true],
       ['manual', ['find official english manual for Sony WH-1000XM5'], true],
       ['comparison', ['compare current firefox and chrome privacy features with sources'], true],

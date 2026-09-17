@@ -1200,7 +1200,7 @@ async def test_stream_bounds_research_to_two_searches_fetch_then_synthesis(monke
 @pytest.mark.parametrize('embedded_article', [False, True])
 @pytest.mark.parametrize('empty_second_search', [False, True])
 @pytest.mark.parametrize('sources_requested', [False, True])
-async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatch, embedded_article, empty_second_search, sources_requested):
+async def test_stream_research_prerequisite_precedes_broad_web_answer(monkeypatch, embedded_article, empty_second_search, sources_requested):
     """Broad current research expands, retrieves evidence, then synthesizes."""
     import src.clean_agent_preview as module
 
@@ -1211,7 +1211,6 @@ async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatc
                 'arguments': json.dumps({'query': 'latest AI news'}),
             },
         }]}}]},
-        {'choices': [{'delta': {'content': 'Current AI news includes reports about U.'}}]},
         {'choices': [{'delta': {'tool_calls': [{
             'index': 0, 'id': 'search-2', 'function': {
                 'name': 'web_search',
@@ -1240,7 +1239,7 @@ async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatc
     ]
     article = packets[-1]['choices'][0]['delta']['content']
     if embedded_article or empty_second_search:
-        packets.pop(3)
+        packets.pop(2)
     packets = iter(packets)
     requests = []
 
@@ -1293,27 +1292,27 @@ async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatc
     )]
     events = [json.loads(chunk[6:]) for chunk in raw if '[DONE]' not in chunk]
 
-    assert len(requests) == (4 if embedded_article or empty_second_search else 5)
-    assert requests[2]['tool_choice'] == 'required'
-    assert [s['function']['name'] for s in requests[2]['tools']] == ['web_search']
+    assert len(requests) == (3 if embedded_article or empty_second_search else 4)
+    assert requests[1]['tool_choice'] == 'required'
+    assert [s['function']['name'] for s in requests[1]['tools']] == ['web_search']
     if not embedded_article and not empty_second_search:
-        assert requests[3]['tool_choice'] == {
+        assert requests[2]['tool_choice'] == {
             'type': 'function', 'function': {'name': 'web_fetch'},
         }
     assert any(s['function']['name'] == 'web_fetch' for s in requests[-1]['tools'])
     assert requests[-1].get('tool_choice') != 'none'
     assert any(
         event.get('type') == 'completion_recovery'
-        and event.get('reason') == 'insufficient_research_breadth'
+        and event.get('reason') == 'research_before_synthesis'
         for event in events
     )
-    assert sum(event.get('reason') == 'insufficient_research_breadth' for event in events) == 1
+    assert sum(event.get('reason') == 'research_before_synthesis' for event in events) == 1
     assert any(
         event.get('type') == 'final_response'
         and 'fuller evidence-based briefing' in event.get('content', '')
         for event in events
     )
-    assert any(
+    assert not any(
         event.get('delta') == 'Current AI news includes reports about U.'
         for event in events
     )
@@ -1324,7 +1323,7 @@ async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatc
     replacement = next(event for event in events if event.get('type') == 'final_response')
     assert replacement['replacement_scope'] == 'turn'
     assert replacement['render_owner'] == 'streamed'
-    assert any(event.get('delta') and event.get('replacement_scope') == 'turn' for event in events)
+    assert any(event.get('delta') for event in events)
 
 
 def test_task_renderer_honors_few_and_filters_confirmed_morning_schedule():

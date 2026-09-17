@@ -4089,6 +4089,26 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
             for round_number in range(1, round_limit + 1):
                 rounds_used = round_number
                 yield event({'type': 'agent_step', 'round': round_number})
+                # Enforce a known research prerequisite before asking the model
+                # for another response, not after streaming a premature answer.
+                if (
+                    broad_current_web_request(direct_user_text)
+                    and successful_web_searches == 1 and web_search_attempts < 2
+                    and not breadth_recovery_attempted and not search_completion_attempted
+                    and not force_no_tools_next_round and not required_artifacts
+                    and round_number < round_limit
+                    and any(canonical(s['function']['name']) == 'web_search' for s in offered)
+                    and 'web_search' not in permanently_suppressed_tools
+                ):
+                    breadth_recovery_attempted = True
+                    force_web_search_next_round = True
+                    history.append({'role': 'user', '_harness_control': True, 'content': (
+                        'Continue research before drafting the answer. Use the findings from the '
+                        'first search to choose one materially different follow-up query that '
+                        'fills a gap or corroborates the strongest findings. Then assess the '
+                        'source evidence and prepare the briefing. Do not repeat the same query.'
+                    )})
+                    yield event({'type': 'completion_recovery', 'reason': 'research_before_synthesis'})
                 if (
                     required_artifacts
                     and not successful_write
@@ -4260,6 +4280,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             if (
                                 not prior_summary_answer
                                 and not progressive_thinking
+                                and request.get('tool_choice') in (None, 'auto', 'none')
                             ):
                                 text_event = {'delta': text}
                                 if replace_streamed_draft_on_finish and not streamed_round_text:
@@ -4385,9 +4406,12 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                 'Completion check: the draft is still too shallow and does not '
                                 'answer the broad current-information request. Using the Web '
                                 'evidence already gathered, provide a complete useful briefing '
-                                'of at least several substantive paragraphs or equivalent bullets, '
+                                'with a short opening and clearly separated **bold topic labels** '
+                                'or Markdown headings, followed by substantive paragraphs or bullets, '
                                 'with the main findings, context, source links, and any evidence '
-                                'limitations. Do not call another tool or return another one-sentence summary.'
+                                'limitations. Use descriptive Markdown links next to the supported '
+                                'findings rather than raw URLs. Do not call another tool or return '
+                                'another one-sentence summary.'
                             ),
                         })
                         yield event({
@@ -5632,7 +5656,9 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         recovery = (
                             'Research budget reached: no more tools will be offered. Using only '
                             'the search evidence already returned, provide the complete final '
-                            'answer now with useful detail and source URLs. Do not emit a tool call.'
+                            'answer now with useful detail. For a multi-topic briefing, use bold '
+                            'topic labels or headings, separated paragraphs or bullets, and '
+                            'descriptive source links alongside supported findings. Do not emit a tool call.'
                         )
                         if history and history[-1].get('_harness_control'):
                             history[-1]['content'] = (
