@@ -1306,6 +1306,14 @@ def native_execution_limits(max_rounds):
     return round_limit, NATIVE_TOOL_CALL_LIMIT
 
 
+def standalone_social_turn(text):
+    """A complete social utterance cannot authorize a tool action."""
+    return bool(re.fullmatch(
+        r"\s*(?:hi|hey|hello|helo|hiya|thanks|thank you|good morning|good evening)"
+        r"[\s!.?]*", str(text or ''), re.I,
+    ))
+
+
 def interactive_execution_limit(max_rounds):
     """Bound interactive turns independently of long-running native jobs."""
     if max_rounds is None:
@@ -3745,6 +3753,8 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
             suggestion_only=suggestion_target,
         )
     offered = compact_schemas(turn_contract.schemas())
+    if standalone_social_turn(direct_user_text):
+        offered = []
     external_schema_by_name = {
         str((schema.get('function') or {}).get('name') or ''): copy.deepcopy(schema)
         for schema in (external_tool_schemas or ())

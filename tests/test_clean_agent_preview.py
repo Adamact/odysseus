@@ -319,6 +319,16 @@ def test_compact_preview_honors_configured_interactive_round_limit():
     assert interactive_execution_limit("invalid") == 8
 
 
+@pytest.mark.parametrize('text,expected', [
+    ('helo', True), ('Hello!', True), ('thanks', True),
+    ('hello, find the latest news', False), ('thanks, now open the source', False),
+    ('search for the song Hello', False),
+])
+def test_social_turn_requires_the_entire_request(text, expected):
+    from src.clean_agent_preview import standalone_social_turn
+    assert standalone_social_turn(text) is expected
+
+
 @pytest.mark.parametrize('prompt,expected', [
     ('Read /workspace/fixtures/paper.pdf and create /workspace/results.csv and /workspace/chart.png',
      ('/workspace/results.csv', '/workspace/chart.png')),
