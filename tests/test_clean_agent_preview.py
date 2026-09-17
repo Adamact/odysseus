@@ -2018,12 +2018,13 @@ def test_current_search_arguments_repair_stale_year_and_add_freshness():
 
 
 @pytest.mark.parametrize('missing_query', [{}, {'query': ''}, {'query': '  ', 'time_filter': 'day'}])
-def test_missing_refinement_query_is_not_fabricated(missing_query):
-    with pytest.raises(ValueError, match='explicit query for a follow-up'):
+@pytest.mark.parametrize('prior_intents', [[], ['ai news']])
+def test_missing_refinement_query_is_not_fabricated(missing_query, prior_intents):
+    with pytest.raises(ValueError, match='explicit nonempty query'):
         preserve_requested_web_recency(
             'web_search', missing_query,
             user_text='serch latest ai news pls',
-            prior_search_intents=['ai news'],
+            prior_search_intents=prior_intents,
         )
 
 

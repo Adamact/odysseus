@@ -3460,15 +3460,13 @@ def preserve_requested_web_recency(name, args, *, user_text='', prior_search_int
     user = str(user_text or '')
     query = str(args.get('query') or '').strip()
     if not query:
-        if prior_search_intents:
-            raise ValueError(
-                'web_search requires an explicit query for a follow-up. Supply a '
-                'specific missing fact, entity, or corroboration question based on '
-                'the evidence already returned; do not repeat the original query.'
-            )
-        query = re.sub(r'\s+', ' ', user).strip().rstrip('?.!')
-        if not query:
-            return args
+        raise ValueError(
+            'web_search requires an explicit nonempty query. '
+            + ('Supply a specific missing fact, entity, or corroboration question '
+               'based on the evidence already returned; do not repeat the original query.'
+               if prior_search_intents else
+               'Supply the subject to search for, not the full conversation or answer-format instructions.')
+        )
     normalized = dict(args)
     # Keep the user's explicit news intent when a model rewrites it to a
     # subject plus "today". Freshness alone does not select the news vertical.
