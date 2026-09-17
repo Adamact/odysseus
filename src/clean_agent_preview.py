@@ -1372,6 +1372,17 @@ def runtime_required_artifacts(user_text, client_runtime_context):
     return tuple(paths)
 
 
+def execution_targets_required_artifact(tool_name, arguments, required_artifacts):
+    """Return true only when a successful mutation names a required output."""
+    if canonical(tool_name) == 'write_file':
+        return True
+    serialized = (
+        arguments if isinstance(arguments, str)
+        else json.dumps(arguments or {}, ensure_ascii=False)
+    )
+    return any(str(path or '').rstrip('/') in serialized for path in required_artifacts)
+
+
 def protocol_safe_tool_calls(calls):
     """Keep malformed model calls out of the next provider request."""
     safe_calls = copy.deepcopy(calls)
@@ -4508,7 +4519,11 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                     history[-1] = {'role': 'assistant', 'content': confirmation}
                                     yield event({'type': 'final_response', 'content': confirmation})
                                     break
-                    if native_workspace_enabled and required_artifacts and not successful_write:
+                    if (
+                        native_workspace_enabled
+                        and required_artifacts
+                        and not successful_artifact_write
+                    ):
                         # Runner-owned workspaces (for example Harbor containers)
                         # are not visible in the harness process. Use declared
                         # completion requirements plus successful mutation evidence
@@ -5047,7 +5062,9 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                     successful_duplicate_counts.pop(prior_signature, None)
                             if canonical(block.tool_type) in {'edit_document', 'update_document'}:
                                 successful_editor_writer = canonical(block.tool_type)
-                            if canonical(block.tool_type) == 'write_file':
+                            if execution_targets_required_artifact(
+                                block.tool_type, args, required_artifacts,
+                            ):
                                 successful_artifact_write = True
                     except (ValueError, jsonschema.ValidationError) as exc:
                         if str(exc).startswith('The calendar read has not succeeded yet.'):
