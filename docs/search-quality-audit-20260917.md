@@ -55,6 +55,12 @@ A direct paired SearXNG query `Firefox Chrome privacy features` returned five re
 
 Temperature-0 replay: `reports/clean-v3-search-quality-2026-09-17T20-47-17-632Z.json` (three conversations, four turns). The Firefox/Chrome comparison now retrieved sources and produced a substantive answer (44.3s) instead of the preceding empty-search refusal (16.3s). This is not a validated accuracy win: several current-feature claims still need support checks. Sony's actual official manuals page appeared in evidence; the 17.5s final omitted its link. Mozilla documentation lookup still failed to identify the requested page (14.6s), and its Chrome follow-up supplied an unverified URL (17.6s). No overall promotion claimed.
 
+### Explicit source-link completion
+
+`ba67ad26` adds one bounded evidence-grounded completion check when the user explicitly requested links but a searched answer omitted them. It does not append a search result as a citation; the model must select an evidenced URL or state the source was not found. This shares the existing answer-recovery budget. Source-request drafts are buffered to avoid displaying the incomplete draft as the final answer.
+
+Live `reports/clean-v3-search-quality-2026-09-17T20-51-12-931Z.json`: the Sony lookup now returns the exact official manuals-page URL seen in evidence (18.9s, three rounds, one search), versus omitting it in the preceding 17.5s run. This is a successful link-completion replay, not a statistical latency result. The Python task failed on a model-added month filter; `5cf17293` extends reference-date semantics to version/release lookups and allows a corrected query to identify reference intent while the user's own wording remains authoritative for date constraints. Regression run: 1,226 passed; live version replay pending.
+
 ## Outstanding work
 
 1. Finish and manually audit all 16 conversations; inspect claim/source alignment, request completion, follow-up referents, and latency.
