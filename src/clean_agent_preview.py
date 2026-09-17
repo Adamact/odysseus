@@ -5291,11 +5291,17 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                 'source; do not repeat equivalent wording.'
                             )
                         else:
-                            suppressed_tool_until_round['web_search'] = round_number + 1
-                            force_no_tools_next_round = True
+                            suppressed_tool_until_round['web_search'] = round_limit + 1
+                            force_no_tools_next_round = not bool(discovered_web_sources)
                             round_recovery_messages.append(
                                 'Two search attempts returned no usable evidence. Do not search '
-                                'again this turn; report the limitation without inventing results.'
+                                'again this turn. ' + (
+                                    'Previously discovered source URLs remain available. Inspect a '
+                                    'relevant source with web_fetch or private_browser before answering; '
+                                    'search snippets alone do not establish the full report.'
+                                    if discovered_web_sources else
+                                    'Report the limitation without inventing results.'
+                                )
                             )
                     if canonical(actual_tool) == 'private_browser' and not failed:
                         requested_url = private_browser_open_url(args)
