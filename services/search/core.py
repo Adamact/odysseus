@@ -782,6 +782,10 @@ def searxng_search_results(query: str, count: int = 10, time_filter: str = None)
                 if results:
                     logger.info(f"{provider_name} search succeeded with {len(results)} results")
                     break
+                # A completed empty/unrelated result set is not a transport
+                # failure. Advance to another provider rather than repeating
+                # the exact request and spending the tool deadline twice.
+                break
             except (NetworkError, ParseError, RateLimitError) as e:
                 error_logger.error(f"{provider_name} search error (attempt {attempt + 1}): {e}")
             except Exception as e:
@@ -915,6 +919,8 @@ def comprehensive_web_search(
                     logger.info(f"Comprehensive search: {provider_name} returned {len(search_results)} results")
                     break
                 empty = True
+                last_err = None
+                break
             except Exception as e:
                 last_err = e
                 logger.warning(f"Comprehensive search: {provider_name} attempt {attempt + 1} failed: {e}")

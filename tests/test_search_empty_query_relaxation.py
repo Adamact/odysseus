@@ -2,6 +2,33 @@ from services.search import core
 import pytest
 
 
+@pytest.mark.parametrize('comprehensive', [False, True])
+@pytest.mark.parametrize('transient_error', [False, True])
+def test_empty_results_advance_provider_but_transport_errors_get_one_retry(monkeypatch, tmp_path, comprehensive, transient_error):
+    calls = []
+    def provider(name, query, count, time_filter=None):
+        calls.append(name)
+        if transient_error and name == 'primary' and calls.count(name) == 1:
+            raise ConnectionError('temporary failure')
+        return []
+    monkeypatch.setattr(core, 'SEARCH_CACHE_DIR', tmp_path)
+    monkeypatch.setattr(core, 'search_cache_index', {})
+    monkeypatch.setattr(core, '_get_search_settings', lambda: {'search_provider': 'primary'})
+    monkeypatch.setattr(core, '_build_provider_chain', lambda primary: ['primary', 'fallback'])
+    monkeypatch.setattr(core, '_call_provider', provider)
+    monkeypatch.setattr(core, '_record_query', lambda *a, **k: None)
+    monkeypatch.setattr(core, 'cleanup_cache', lambda *a, **k: None)
+    query = 'reference site:example.org'
+    if comprehensive:
+        output, sources = core.comprehensive_web_search(query, return_sources=True)
+        assert sources == []
+        if transient_error:
+            assert 'primary:empty' in output
+    else:
+        assert core.searxng_search_results(query) == []
+    assert calls == (['primary', 'primary', 'fallback'] if transient_error else ['primary', 'fallback'])
+
+
 @pytest.mark.parametrize('url,accepted', [
     ('https://python.org/downloads/', True),
     ('https://docs.python.org/3/', True),
