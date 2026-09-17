@@ -10,6 +10,27 @@ from src.agent_tools.web_tools import (
 )
 
 
+def test_long_report_preserves_late_source_through_tool_and_runtime(monkeypatch):
+    from src.clean_agent_preview import preview_tool_result_text
+    sources = [{'title': f'Page {i}', 'url': f'https://example.org/{i}'} for i in range(1, 6)]
+    report = '```sources\n' + '\n'.join(
+        f'[{i}] {s["title"]}\n    {s["url"]}' for i, s in enumerate(sources, 1)
+    ) + '\n```\nQuery: measured battery evidence\n'
+    for i, source in enumerate(sources, 1):
+        report += (f'\n[CONTENT {i}] From: {source["url"]}\nTitle: {source["title"]}\n------------------------------\n'
+                   + f'Unique evidence for page {i}. ' * 100
+                   + '\nTL;DR:\n' + 'Repeated body summary. ' * 200)
+    monkeypatch.setattr(search, 'comprehensive_web_search', lambda *a, **kw: (report, sources))
+    result = asyncio.run(WebSearchTool().execute(json.dumps({'query': 'measured battery evidence'}), {}))
+    observation = preview_tool_result_text(result, 'web_search', {})
+    assert len(observation) <= 8000
+    for i in range(1, 6):
+        assert f'[CONTENT {i}] From:' in observation
+        assert f'Unique evidence for page {i}.' in observation
+    assert 'Repeated body summary' not in observation
+    assert json.loads(result['output'].split('<!-- SOURCES:')[1].split(' -->')[0]) == sources
+
+
 @pytest.mark.parametrize('sources,status', [([], 'empty'),
     ([{'title': 'Example', 'url': 'https://example.org'}], 'available')])
 def test_search_reports_evidence_availability_independently_of_execution(monkeypatch, sources, status):

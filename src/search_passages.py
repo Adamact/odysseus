@@ -5,6 +5,34 @@ import re
 _FILLER = frozenset('the and for with from this that what which how find search compare explain latest current recent official source sources documentation document please about'.split())
 
 
+def bounded_search_observation(output, budget=8000):
+    """Budget all fetched sources before any transport-level prefix truncation."""
+    if len(output) <= budget:
+        return output
+    pattern = re.compile(r'\n(\[CONTENT(?: \d+)?\] From: [^\n]+\nTitle: [^\n]*\n-+\n)')
+    matches = list(pattern.finditer(output))
+    if not matches:
+        return output
+    source_match = re.search(r'```sources\n.*?```', output, re.DOTALL)
+    query_match = re.search(r'^Query: .*$', output, re.MULTILINE)
+    prefix = '\n'.join(match.group(0) for match in (source_match, query_match) if match)
+    suffix = '\n[Excerpts shortened across sources; use web_fetch on a source URL for full details.]'
+    headers = [match.group(1) for match in matches]
+    room = budget - len(prefix) - len(suffix) - sum(len(h) + 2 for h in headers) - 2
+    if room < 100 * len(matches):
+        return output  # Caller retains its hard cap for exceptional metadata.
+    per_page = room // len(matches)
+    blocks = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(output)
+        body = output[match.end():end]
+        body = re.split(r'\n(?:Key Points:|TL;DR:|Important Quotes:|Data / Statistics:|={20,}|<!-- SOURCES:)', body, maxsplit=1)[0].strip()
+        if len(body) > per_page:
+            body = search_excerpt(body, query_match.group(0) if query_match else '', per_page)
+        blocks.append(headers[index] + body)
+    return prefix + '\n\n' + '\n\n'.join(blocks) + suffix
+
+
 def search_excerpt(text: str, query: str, max_chars: int) -> str:
     """Keep the opening plus relevant, non-overlapping literal page excerpts.
 

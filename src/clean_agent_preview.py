@@ -182,37 +182,8 @@ def search_tool_choice_request(request):
 
 
 def bounded_search_observation(output, budget=8000):
-    """Share the observation budget across fetched sources, not prefix order.
-
-    Search's full report repeats bodies in summaries/quotes/statistics. Retain
-    source attribution and an excerpt of every fetched page before truncating.
-    This is evidence selection, never answer generation.
-    """
-    if len(output) <= budget:
-        return output
-    pattern = re.compile(r'\n(\[CONTENT(?: \d+)?\] From: [^\n]+\nTitle: [^\n]*\n-+\n)')
-    matches = list(pattern.finditer(output))
-    if not matches:
-        return output
-    source_match = re.search(r'```sources\n.*?```', output, re.DOTALL)
-    query_match = re.search(r'^Query: .*$', output, re.MULTILINE)
-    prefix = '\n'.join(match.group(0) for match in (source_match, query_match) if match)
-    suffix = '\n[Excerpts shortened across sources; use web_fetch on a source URL for full details.]'
-    headers = [match.group(1) for match in matches]
-    room = budget - len(prefix) - len(suffix) - sum(len(h) + 2 for h in headers)
-    if room < 100 * len(matches):
-        return output  # Unusually large metadata: preserve existing hard cap.
-    per_page = room // len(matches)
-    blocks = []
-    for index, match in enumerate(matches):
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(output)
-        body = output[match.end():end]
-        body = re.split(r'\n(?:Key Points:|TL;DR:|Important Quotes:|Data / Statistics:|={20,}|<!-- SOURCES:)', body, maxsplit=1)[0].strip()
-        if len(body) > per_page:
-            from src.search_passages import search_excerpt
-            body = search_excerpt(body, query_match.group(0) if query_match else '', per_page)
-        blocks.append(headers[index] + body)
-    return prefix + '\n\n' + '\n\n'.join(blocks) + suffix
+    from src.search_passages import bounded_search_observation as compact
+    return compact(output, budget)
 
 
 def preview_tool_result_text(result, tool, args):

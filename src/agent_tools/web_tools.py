@@ -304,6 +304,10 @@ class WebSearchTool:
                 "elapsed_s": 30,
                 "tail": "Search completed; preparing sources.",
             })
+        # Compact the complete report before the transport cap. Otherwise
+        # repeated summaries from early sources permanently erase later pages.
+        from src.search_passages import bounded_search_observation
+        text = bounded_search_observation(text, MAX_OUTPUT_CHARS)
         output = text[:MAX_OUTPUT_CHARS] if len(text) > MAX_OUTPUT_CHARS else text
         if sources:
             output += "\n\n<!-- SOURCES:" + json.dumps(sources) + " -->"
