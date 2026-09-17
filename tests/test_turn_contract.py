@@ -34,6 +34,15 @@ def test_latest_topic_info_and_common_news_typo_route_to_web_search():
         assert requested_capabilities(prompt) == frozenset({"search_browser"})
 
 
+@pytest.mark.parametrize("prompt", [
+    "I'm using a WIKING fireplace; can I find an English manual online?",
+    "Can you look online",
+    "Could you search online for the operator's manual?",
+])
+def test_explicit_online_lookup_requests_route_to_web_search(prompt):
+    assert requested_capabilities(prompt) == frozenset({"search_browser"})
+
+
 def test_successfully_used_tool_stays_offered_when_next_turn_routes_elsewhere():
     contract = resolve(
         {"notes"},

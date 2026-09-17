@@ -3093,6 +3093,28 @@ def test_preview_contract_keeps_only_routed_family_from_trained_inventory():
     assert scoped.active_capabilities == {'notes'}
 
 
+def test_preview_contract_adds_safe_interactive_core_beside_routed_tools():
+    core = {'web_search', 'web_fetch', 'private_browser', 'bash', 'ask_user'}
+    schemas = [
+        schema for schema in FUNCTION_TOOL_SCHEMAS
+        if schema['function']['name'] in core | {'manage_notes'}
+    ]
+    preview = resolve_full_inventory_contract(schemas=schemas, policy=ToolPolicy())
+    routed = SimpleNamespace(
+        unavailable=frozenset(), offered=frozenset({'manage_notes'}),
+        required=frozenset({'manage_notes'}), capabilities=frozenset({'notes'}),
+        required_read_operation=None,
+    )
+
+    scoped = scope_preview_contract(
+        preview, routed, {'notes'}, extra_tools=core,
+    )
+
+    assert scoped.offered == core | {'manage_notes'}
+    assert scoped.required == {'manage_notes'}
+    assert {schema['function']['name'] for schema in scoped.schemas()} == core | {'manage_notes'}
+
+
 def test_preview_contract_keeps_available_family_when_an_independent_family_is_unavailable():
     schemas = [s for s in FUNCTION_TOOL_SCHEMAS if s['function']['name'] in {
         'write_file', 'web_search',

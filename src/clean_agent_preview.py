@@ -102,6 +102,13 @@ PREVIEW_TOOLS = (
     READ_TOOLS | SAFE_WRITE_TOOLS | EXPLICIT_EXECUTE_TOOLS | SAFE_UI_TOOLS
     | BROKERED_JOB_TOOLS | CONTRACT_REQUIRED_TOOLS
 )
+# Keep a small recovery-capable surface on every interactive compact agent
+# turn. Routing still adds domain tools, while policy and action guards remain
+# authoritative for execution. Python is deliberately excluded here because
+# the WebUI does not own a confined workspace.
+INTERACTIVE_CORE_TOOLS = frozenset({
+    'web_search', 'web_fetch', 'private_browser', 'bash', 'ask_user',
+})
 # The interactive compact-v5 surface above stays unchanged. These tools are
 # added only for a server-validated ``odysseus-native`` request with an active,
 # confined workspace. This lets the model-specific clean runtime serve native

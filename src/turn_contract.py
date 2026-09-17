@@ -3971,6 +3971,17 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
         # with no way to answer and encourages it to ask unnecessary questions.
         return frozenset({"search_browser"})
     if (
+        re.search(r"\b(?:online|on\s+the\s+(?:web|internet))\b", text, re.I)
+        and re.search(
+            r"\b(?:find|look|search|check|locate|get|download|available|manual|guide|docs?)\b",
+            text,
+            re.I,
+        )
+    ):
+        # Explicitly asking Odysseus to look online is sufficient web intent,
+        # including referential follow-ups such as "Can you look online?".
+        return frozenset({"search_browser"})
+    if (
         len(concrete_urls) >= 2
         and re.search(r"\b(?:open|fetch|read|retrieve|check|use)\b", text, re.I)
         and re.search(

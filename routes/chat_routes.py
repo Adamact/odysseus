@@ -3390,8 +3390,8 @@ def setup_chat_routes(
             if _clean_v3_preview:
                 from dataclasses import replace
                 from src.clean_agent_preview import (
-                    MODE, NATIVE_WORKSPACE_TOOLS, PREVIEW_TOOLS, canonical,
-                    scope_preview_contract, tool_family,
+                    INTERACTIVE_CORE_TOOLS, MODE, NATIVE_WORKSPACE_TOOLS, PREVIEW_TOOLS, canonical,
+                    scope_preview_contract,
                 )
                 from src.turn_contract import resolve_full_inventory_contract
                 _warm_canonical = {canonical(name) for name in _warm_tools}
@@ -3414,41 +3414,6 @@ def setup_chat_routes(
                         if canonical(s['function']['name']) != 'bash'
                         or canonical(s['function']['name']) in _warm_canonical
                     ]
-                # Browser automation is a deliberate capability, not a side
-                # effect of merely enabling ordinary Web search. Once a clean
-                # turn successfully uses it, typed execution evidence keeps it
-                # warm for the conversation so referential follow-ups can
-                # inspect the same page.
-                if (
-                    _explicit_browser_intent
-                    and not set(_selected_tools or ()).intersection(
-                        {'web_search', 'web_fetch'}
-                    )
-                ):
-                    # Navigation and interaction are browser operations.  Do
-                    # not make the model choose between a site browser and the
-                    # search/fetch APIs after the request has already made
-                    # that distinction. An explicitly named brokered search or
-                    # fetch tool is stronger than the generic URL/open signal;
-                    # preserving it also prevents the browser-only filter from
-                    # intersecting an exact web_fetch contract down to zero
-                    # tools. A later turn can explicitly ask for Web search as
-                    # a fallback.
-                    _preview_schemas = [
-                        s for s in _preview_schemas
-                        if tool_family(s['function']['name']) != 'search_browser'
-                        or canonical(s['function']['name']) in (
-                            {'private_browser'} | NATIVE_WORKSPACE_TOOLS
-                        )
-                        or canonical(s['function']['name']) in _warm_canonical
-                    ]
-                elif not _clean_v3_private_browser_warm and not (
-                    _native_workspace_contract and _local_browser_render_intent
-                ) and 'private_browser' not in _warm_canonical:
-                    _preview_schemas = [
-                        s for s in _preview_schemas
-                        if canonical(s['function']['name']) != 'private_browser'
-                    ]
                 _turn_contract = scope_preview_contract(
                     replace(resolve_full_inventory_contract(
                         schemas=_preview_schemas,
@@ -3467,9 +3432,9 @@ def setup_chat_routes(
                     # OCR operation. Exact operations therefore stay exact;
                     # ordinary native turns retain warm and workspace tools.
                     extra_tools=(
-                        frozenset()
+                        INTERACTIVE_CORE_TOOLS
                         if _exact_selected_native_chain
-                        else _warm_tools | (
+                        else INTERACTIVE_CORE_TOOLS | _warm_tools | (
                             NATIVE_WORKSPACE_TOOLS | (
                                 {"private_browser"} if _local_browser_render_intent else frozenset()
                             )
