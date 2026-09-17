@@ -5179,14 +5179,18 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             prefer_official=bool(re.search(r'\bofficial\b', direct_user_text, re.I)),
                             query=args.get('query', ''),
                         )
-                        if requested_links and source_links:
+                        source_only_request = not re.search(
+                            r'\b(?:latest|latset|current|recent|today|compare|explain|summari[sz]e)\b',
+                            direct_user_text, re.I,
+                        )
+                        if requested_links and source_links and source_only_request:
                             # For an exact requested link count, evidence owns
                             # the final rendering so model prose cannot add a
                             # wrong or duplicate source.
                             structured_terminal_response = '\n'.join(
                                 link for _, link in source_links[:requested_links]
                             )
-                        elif (requested_links
+                        elif (requested_links and not source_links
                               and re.search(r'\bofficial\b', direct_user_text, re.I)):
                             if not official_source_retry_attempted and round_number < round_limit:
                                 official_source_retry_attempted = True

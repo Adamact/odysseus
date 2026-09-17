@@ -32,6 +32,9 @@ from src.turn_contract import (
     'Compare the latest AI models',
     'Best laptops right now',
     'Recommend a laptop based on current reviews',
+    'latset ai neews?',
+    'whats new in japan rn',
+    'what’s new in Sweden',
 ])
 def test_broad_web_briefings_share_one_search_semantic(prompt):
     from src.turn_contract import broad_web_briefing_request

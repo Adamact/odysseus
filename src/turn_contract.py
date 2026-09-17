@@ -3980,14 +3980,14 @@ def broad_web_briefing_request(message: str) -> bool:
     """Recognize requests that need broad, current, multi-source Web evidence."""
     text = _normalize_request_lead(message)
     if re.search(
-        r"\b(?:what(?:'s|\s+is)\s+(?:new|happening)|anything\s+new|"
+        r"\b(?:what(?:['’]?s|\s+is)\s+(?:new|happening)|anything\s+new|"
         r"catch\s+me\s+up|give\s+me\s+(?:an?\s+)?update|"
         r"what\s+should\s+i\s+know)\b",
         text,
         re.I,
     ):
         return True
-    if re.search(r"\b(?:news|headlines?|top\s+stories|news\s+roundup)\b", text, re.I):
+    if re.search(r"\b(?:news|neews|nees|headlines?|top\s+stories|news\s+roundup)\b", text, re.I):
         return True
     if re.search(r"\b(?:research|investigate|deep[ -]?dive)\b", text, re.I):
         return True
