@@ -337,7 +337,7 @@ FUNCTION_TOOL_SCHEMAS = [
                 "properties": {
                     "query": {"type": "string", "description": "Search query"},
                     "command": {"type": "string", "description": "Search query in text command form"},
-                    "time_filter": {"type": "string", "enum": ["day", "week", "month", "year"], "description": "Optional freshness filter for news/latest/today queries"}
+                    "time_filter": {"type": "string", "enum": ["day", "week", "month", "year"], "description": "Optional publication-date window for recent articles/news. Omit for current documentation, manuals, or features unless the user specifies a publication window."}
                 },
                 "required": []
             }

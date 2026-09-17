@@ -1990,7 +1990,7 @@ def test_current_search_arguments_repair_stale_year_and_add_freshness():
 
     assert '2025' not in args['query']
     assert str(__import__('datetime').datetime.now(__import__('datetime').timezone.utc).year) in args['query']
-    assert args['time_filter'] == 'week'
+    assert args['time_filter'] == 'day'
 
 
 def test_missing_refinement_query_is_grounded_in_user_request():

@@ -220,14 +220,12 @@ def searxng_search_api(query: str, count: Optional[int] = None, categories: str 
     if is_news and categories == "general":
         params["categories"] = "news"
         if time_filter in ("day", "week", "month", "year"):
-            # 'day' is too sparse on most SearXNG news engines — widen to a week
-            # so there's enough volume; the news category already biases recent.
-            params["time_range"] = "week" if time_filter in ("day", "week") else time_filter
+            params["time_range"] = time_filter
     else:
         params["categories"] = categories
         # Freshness and source category are independent: current manuals,
         # comparisons and documentation still belong in general search.
-        if not is_software_release_query and time_filter in ("day", "week", "month", "year"):
+        if time_filter in ("day", "week", "month", "year"):
             params["time_range"] = time_filter
         # Route general queries to engines that aren't blocked (default general
         # set returns 0 on this instance — see _GENERAL_ENGINES).

@@ -720,7 +720,7 @@ def searxng_search_results(query: str, count: int = 10, time_filter: str = None)
     # first instead of spending the full tool deadline retrying generic search
     # providers; the returned official URL lets the agent proceed to PDF tools.
     scholarly_title = _scholarly_title_from_query(provider_query)
-    if scholarly_title:
+    if scholarly_title and not time_filter:
         direct_results = [result for result in _direct_scholarly_title_results(scholarly_title, count)
                           if _result_matches_site_scope(provider_query, result)]
         if direct_results:

@@ -3490,15 +3490,19 @@ def preserve_requested_web_recency(name, args, *, user_text='', prior_search_int
     if (current_intent
             and not re.search(r'\b(?:latest|recent|current|today|news|updates?|20\d{2})\b', query, re.I)):
         query = f'{query} latest {current_year}'
-    if current_intent and not normalized.get('time_filter'):
-        if re.search(r'\b(?:version|release|driver)\b', user, re.I):
-            normalized['time_filter'] = 'year'
-        elif re.search(r"\btoday(?:'s)?\b", user, re.I):
-            normalized['time_filter'] = 'day'
-        elif re.search(r'\brecent\b', user, re.I):
-            normalized['time_filter'] = 'month'
-        else:
-            normalized['time_filter'] = 'week'
+    from src.search_intent import inferred_search_publication_window, reference_lookup_without_date_window, requested_search_publication_window
+    requested_window = requested_search_publication_window(user)
+    if requested_window:
+        normalized['time_filter'] = requested_window
+    elif reference_lookup_without_date_window(user):
+        # A model-generated publication cutoff must not hide still-current
+        # reference pages when the user did not ask for recent publications.
+        normalized.pop('time_filter', None)
+        normalized.pop('freshness', None)
+    elif not normalized.get('time_filter'):
+        window = inferred_search_publication_window(user)
+        if window:
+            normalized['time_filter'] = window
     normalized['query'] = query
     return normalized
 

@@ -231,18 +231,8 @@ class WebSearchTool:
         if not query:
             query = raw.split("\n")[0].strip()
         if time_filter is None:
-            q_lc = query.lower()
-            if any(kw in q_lc for kw in (
-                "today", "latest", "breaking", "this morning", "right now",
-                "currently", "current events", "what's happening", "what is happening",
-            )):
-                time_filter = "day"
-            elif any(kw in q_lc for kw in ("this week", "past week", "recent news", "last few days")):
-                time_filter = "week"
-            elif any(kw in q_lc for kw in ("this month", "past month")):
-                time_filter = "month"
-            elif " news" in q_lc or q_lc.startswith("news ") or q_lc.endswith(" news"):
-                time_filter = "week"
+            from src.search_intent import inferred_search_publication_window
+            time_filter = inferred_search_publication_window(query)
         loop = asyncio.get_running_loop()
         if progress_cb:
             await progress_cb({
@@ -254,7 +244,7 @@ class WebSearchTool:
                 results = await asyncio.wait_for(
                     loop.run_in_executor(
                         None,
-                        lambda: searxng_search_results(query, max_pages),
+                        lambda: searxng_search_results(query, max_pages, **({'time_filter': time_filter} if time_filter else {})),
                     ),
                     timeout=30,
                 )
@@ -283,7 +273,7 @@ class WebSearchTool:
                 results = await asyncio.wait_for(
                     loop.run_in_executor(
                         None,
-                        lambda: searxng_search_results(query, max_pages),
+                        lambda: searxng_search_results(query, max_pages, **({'time_filter': time_filter} if time_filter else {})),
                     ),
                     timeout=12,
                 )

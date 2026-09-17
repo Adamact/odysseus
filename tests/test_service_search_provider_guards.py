@@ -76,7 +76,7 @@ def test_service_searxng_json_sends_safesearch(monkeypatch):
 
 
 @pytest.mark.parametrize('query,expected_time', [
-    ('latest ollama release version github', None),
+    ('latest ollama release version github', 'day'),
     ('current Firefox Chrome privacy features comparison', 'day'),
     ('Sony headphone manual', 'day'),
 ])
