@@ -1374,8 +1374,6 @@ def runtime_required_artifacts(user_text, client_runtime_context):
 
 def execution_targets_required_artifact(tool_name, arguments, required_artifacts):
     """Return true only when a successful mutation names a required output."""
-    if canonical(tool_name) == 'write_file':
-        return True
     serialized = (
         arguments if isinstance(arguments, str)
         else json.dumps(arguments or {}, ensure_ascii=False)

@@ -466,6 +466,9 @@ def test_read_only_python_does_not_satisfy_required_artifact():
     assert execution_targets_required_artifact(
         'write_file', {'path': '/workspace/output.html', 'content': '<html />'}, required,
     )
+    assert not execution_targets_required_artifact(
+        'write_file', {'path': '/workspace/analyze.py', 'content': 'print(1)'}, required,
+    )
 
 
 def test_read_only_gate_blocks_mutation_and_network_shell():
