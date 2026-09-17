@@ -262,6 +262,16 @@ test('explicit turn replacement resumes legitimate synthesis after an intermedia
   assert.deepEqual(result, { resumed: true, appended: true, text: 'Synthesis continues', sameThread: true });
 });
 
+test('corrected research replaces earlier prose while preserving tools and markdown', async () => {
+  const result = await run('<div class="msg-ai"><div class="body">Unfinished news draft</div></div><div class="agent-thread">Search activity</div><div class="msg-ai"><div class="body" id="answer">Corrected answer</div></div>', () => {
+    const body = document.querySelector('#answer');
+    const thread = document.querySelector('.agent-thread');
+    owner.render({body, html: '<h3>Politics</h3><p><strong>Cabinet changes</strong>: supported details.</p><p><a href="https://example.org">Original report</a></p>', raw: '### Politics\n**Cabinet changes**: supported details.', render_owner: 'streamed', replacement_scope: 'turn'});
+    return {bubbles: document.querySelectorAll('.msg-ai').length, sameThread: thread === document.querySelector('.agent-thread'), heading: body.querySelector('h3')?.textContent, bold: body.querySelector('strong')?.textContent, link: body.querySelector('a')?.getAttribute('href'), oldDraft: document.body.textContent.includes('Unfinished news draft')};
+  });
+  assert.deepEqual(result, {bubbles: 1, sameThread: true, heading: 'Politics', bold: 'Cabinet changes', link: 'https://example.org', oldDraft: false});
+});
+
 test('a scoped streamed final can replace structured content but thinking cannot transfer ownership', async () => {
   const result = await run('<div class="msg-ai"><div class="body"></div></div>', () => {
     const body = document.querySelector('.body');

@@ -79,10 +79,16 @@ async function send(page, prompt) {
   const outputs = events.filter(event => event.type === 'tool_output').map(event => ({ tool: canonical(event.tool), exit_code: event.exit_code ?? null, error: Boolean(event.error) }));
   const final = events.filter(event => event.type === 'final_response').map(event => event.content || '').join('') || events.filter(event => typeof event.delta === 'string').map(event => event.delta).join('');
   const metrics = events.find(event => event.type === 'metrics')?.data;
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const renderedAnswers = await page.locator('.msg-ai .body').evaluateAll(nodes => nodes
+    .filter(node => node.getClientRects().length && node.innerText.trim())
+    .map(node => ({text: node.innerText, headings: node.querySelectorAll('h1,h2,h3,h4,h5,h6').length,
+      bold: node.querySelectorAll('strong').length, links: node.querySelectorAll('a[href]').length})));
   const observation = {
     prompt, seconds: (performance.now() - started) / 1000,
     streamed_text_chunks: events.filter(event => typeof event.delta === 'string' && event.delta.length).length,
     final_replacement_count: events.filter(event => event.type === 'final_response').length,
+    rendered_answers: renderedAnswers,
     rounds: metrics?.agent_rounds ?? null,
     tool_execution_timings: metrics?.tool_execution_timings || [],
     runtime_seconds: metrics?.response_time ?? null,

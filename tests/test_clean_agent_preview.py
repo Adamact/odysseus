@@ -1321,6 +1321,10 @@ async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatc
     # incomplete draft rather than persisting both as one answer.
     final = [event['content'] for event in events if event.get('type') == 'final_response'][-1]
     assert 'Current AI news includes reports about U.' not in final
+    replacement = next(event for event in events if event.get('type') == 'final_response')
+    assert replacement['replacement_scope'] == 'turn'
+    assert replacement['render_owner'] == 'streamed'
+    assert any(event.get('delta') and event.get('replacement_scope') == 'turn' for event in events)
 
 
 def test_task_renderer_honors_few_and_filters_confirmed_morning_schedule():
