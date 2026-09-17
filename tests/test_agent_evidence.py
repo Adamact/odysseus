@@ -557,6 +557,41 @@ def test_json_write_file_then_read_records_required_artifact_mutation():
     )
 
 
+def test_read_file_after_write_satisfies_required_artifact_validation():
+    requirements = CompletionRequirements(
+        required_artifacts=("/workspace/results/paper_digest.md",),
+        verifier_required=True,
+    )
+    ledger = EvidenceLedger.from_tool_events(
+        [
+            {
+                "round": 1,
+                "tool": "write_file",
+                "command": json.dumps({
+                    "path": "/workspace/results/paper_digest.md",
+                    "content": "# Verified digest\n",
+                }),
+                "output": "wrote /workspace/results/paper_digest.md",
+                "exit_code": 0,
+            },
+            {
+                "round": 2,
+                "tool": "read_file",
+                "command": json.dumps({
+                    "path": "/workspace/results/paper_digest.md",
+                }),
+                "output": "# Verified digest\n",
+                "exit_code": 0,
+            },
+        ],
+        requirements,
+    )
+
+    decision = ledger.evaluate()
+    assert decision.status == CompletionStatus.SATISFIED
+    assert decision.can_complete is True
+
+
 def test_inspect_media_export_satisfies_declared_artifact():
     requirements = infer_completion_requirements("Save /workspace/frame.png")
     ledger = EvidenceLedger.from_tool_events(

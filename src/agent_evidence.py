@@ -592,6 +592,29 @@ class EvidenceLedger:
                 artifact_path=path,
             )
 
+        if tool == "read_file":
+            try:
+                read_args = json.loads(command or "{}")
+            except (TypeError, json.JSONDecodeError):
+                read_args = None
+            read_path = (
+                _clean_path(str(read_args.get("path") or ""))
+                if isinstance(read_args, Mapping)
+                else ""
+            )
+            if read_path and any(
+                _artifact_path_matches_required(read_path, required)
+                for required in self.requirements.required_artifacts
+            ):
+                self._append(
+                    kind=EvidenceKind.ARTIFACT_VALIDATION,
+                    success=success,
+                    authoritative=authoritative,
+                    source=event,
+                    artifact_path=read_path,
+                    detail="post-write artifact inspection",
+                )
+
         if _TEST_COMMAND_RE.search(_command_text(command)) or _matches_declared_verifier(
             command,
             self.requirements.verifier_commands,
