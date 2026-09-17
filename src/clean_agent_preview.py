@@ -6,6 +6,7 @@ import base64
 import importlib.util
 import io
 import json
+import logging
 import os
 import re
 import sys
