@@ -1188,7 +1188,8 @@ async def test_stream_bounds_research_to_two_searches_fetch_then_synthesis(monke
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('embedded_article', [False, True])
-async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatch, embedded_article):
+@pytest.mark.parametrize('empty_second_search', [False, True])
+async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatch, embedded_article, empty_second_search):
     """Broad current research expands, retrieves evidence, then synthesizes."""
     import src.clean_agent_preview as module
 
@@ -1227,7 +1228,7 @@ async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatc
         )}}]},
     ]
     article = packets[-1]['choices'][0]['delta']['content']
-    if embedded_article:
+    if embedded_article or empty_second_search:
         packets.pop(3)
     packets = iter(packets)
     requests = []
@@ -1249,7 +1250,14 @@ async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatc
             requests.append(kwargs['json'])
             return Response(next(packets))
 
+    search_calls = 0
+
     async def execute(block, **kwargs):
+        nonlocal search_calls
+        if block.tool_type == 'web_search':
+            search_calls += 1
+            if empty_second_search and search_calls == 2:
+                return block.tool_type, {'output': 'No matching results', 'exit_code': 0, 'evidence_status': 'empty'}
         return block.tool_type, {
             'output': '[1] AI News\n    https://example.org/ai-news' + (
                 '\n[CONTENT 1] From: https://example.org/ai-news\nTitle: Report\n-----\n'
@@ -1274,11 +1282,11 @@ async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatc
     )]
     events = [json.loads(chunk[6:]) for chunk in raw if '[DONE]' not in chunk]
 
-    assert len(requests) == (4 if embedded_article else 5)
+    assert len(requests) == (4 if embedded_article or empty_second_search else 5)
     assert requests[2]['tool_choice'] == {
         'type': 'function', 'function': {'name': 'web_search'},
     }
-    if not embedded_article:
+    if not embedded_article and not empty_second_search:
         assert requests[3]['tool_choice'] == {
             'type': 'function', 'function': {'name': 'web_fetch'},
         }
@@ -1289,6 +1297,7 @@ async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatc
         and event.get('reason') == 'insufficient_research_breadth'
         for event in events
     )
+    assert sum(event.get('reason') == 'insufficient_research_breadth' for event in events) == 1
     assert any(
         event.get('type') == 'final_response'
         and 'fuller evidence-based briefing' in event.get('content', '')

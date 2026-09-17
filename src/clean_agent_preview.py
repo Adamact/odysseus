@@ -3939,6 +3939,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     empty_search_intents = {}
     successful_search_intents = []
     web_search_attempts = 0
+    breadth_recovery_attempted = False
     empty_web_search_attempts = 0
     successful_web_searches = 0
     successful_web_retrievals = 0
@@ -4276,8 +4277,12 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     if (
                         broad_current_web_request(direct_user_text)
                         and successful_web_searches == 1
+                        and web_search_attempts < 2
+                        and not breadth_recovery_attempted
+                        and not search_completion_attempted
                         and round_number < round_limit
                     ):
+                        breadth_recovery_attempted = True
                         force_web_search_next_round = True
                         replace_streamed_draft_on_finish = True
                         history.pop()
