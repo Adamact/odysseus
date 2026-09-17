@@ -670,6 +670,16 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
         )
     }
     if explicitly_named_web:
+        if (
+            "web_search" in explicitly_named_web
+            and re.search(
+                r"\b(?:fetch|read|open|visit|inspect)\b[^.\n]{0,120}"
+                r"\b(?:sources?|pages?|urls?|links?)\b",
+                raw_text,
+                re.I,
+            )
+        ):
+            explicitly_named_web.add("web_fetch")
         return frozenset(explicitly_named_web)
     if (
         re.search(r"\b(?:look\s*up|search|find)\b", text, re.I)
