@@ -1864,6 +1864,28 @@ def test_broad_current_web_request_covers_natural_phrasings(prompt):
     assert broad_current_web_request(prompt)
 
 
+def test_followup_search_must_change_subject_angle_not_only_freshness():
+    from src.clean_agent_preview import repeated_search_refinement
+
+    assert repeated_search_refinement('latest AI news this week', ['ai news'])
+    assert repeated_search_refinement('current Sweden events', ['sweden events'])
+    assert not repeated_search_refinement(
+        'Sweden election coalition negotiations', ['sweden current events']
+    )
+
+
+def test_web_fetch_collapses_single_and_batch_url_fields_without_losing_targets():
+    tool, args = normalize_preview_function_args('web_fetch', {
+        'url': 'https://example.org/a',
+        'urls': ['https://example.org/a', 'https://example.org/b'],
+    })
+
+    assert tool == 'web_fetch'
+    assert args == {
+        'urls': ['https://example.org/a', 'https://example.org/b'],
+    }
+
+
 def test_preview_allows_only_reversible_client_local_ui_control():
     assert preview_call_allowed(
         'ui_control', {'action': 'open_panel', 'name': 'gallery'}, 'open gallery'

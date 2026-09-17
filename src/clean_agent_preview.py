@@ -1662,6 +1662,10 @@ def normalize_preview_function_args(name, args, *, user_text=''):
             else:
                 normalized_urls.append(item)
         args['urls'] = normalized_urls
+        single_url = str(args.get('url') or '').strip()
+        if single_url:
+            args['urls'] = list(dict.fromkeys([single_url, *args['urls']]))
+            args.pop('url', None)
     if canonical(name) == 'bash' and isinstance(args.get('command'), str):
         if re.search(r'\bhostname\b', str(user_text or ''), re.I):
             args['command'] = re.sub(
@@ -3129,6 +3133,25 @@ def normalized_search_intent(query):
     return ' '.join(token for token in tokens if token not in cosmetic)
 
 
+def repeated_search_refinement(query, prior_intents):
+    """Whether a follow-up only changes cosmetic freshness wording."""
+    temporal = {
+        'latest', 'recent', 'current', 'currently', 'today', 'week', 'month',
+        'year', 'daily', 'weekly', 'now', 'new', 'this', 'past',
+    }
+    current = set(normalized_search_intent(query).split()) - temporal
+    if not current:
+        return False
+    for prior in prior_intents or ():
+        previous = set(str(prior or '').split()) - temporal
+        if current == previous:
+            return True
+        union = current | previous
+        if union and len(current & previous) / len(union) >= 0.8:
+            return True
+    return False
+
+
 def requested_web_source_links(user_text):
     return bool(re.search(
         r'\b(?:return|give|show|include|provide|cite|find)\b.{0,35}\b(?:source\s+)?links?\b'
@@ -3767,6 +3790,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     permanently_suppressed_tools = set()
     successful_duplicate_counts = {}
     empty_search_intents = {}
+    successful_search_intents = []
     empty_web_search_attempts = 0
     successful_web_searches = 0
     successful_web_retrievals = 0
@@ -3788,7 +3812,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     artifact_write_phase = False
     suppression_completion_attempted = False
     budget_completion_attempted = False
-    answer_recovery_attempted = False
+    answer_recovery_attempts = 0
     force_no_tools_next_round = False
     force_web_search_next_round = False
     force_private_browser_next_round = False
@@ -4046,10 +4070,10 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         break
                     if (
                         contentless_final_response(content)
-                        and not answer_recovery_attempted
+                        and answer_recovery_attempts == 0
                         and round_number < round_limit
                     ):
-                        answer_recovery_attempted = True
+                        answer_recovery_attempts += 1
                         force_no_tools_next_round = True
                         replace_streamed_draft_on_finish = True
                         history.pop()
@@ -4088,21 +4112,22 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     if (
                         successful_web_searches
                         and incomplete_broad_web_answer(content, direct_user_text)
-                        and not answer_recovery_attempted
+                        and answer_recovery_attempts < 2
                         and round_number < round_limit
                     ):
-                        answer_recovery_attempted = True
+                        answer_recovery_attempts += 1
                         force_no_tools_next_round = True
                         replace_streamed_draft_on_finish = True
                         history.pop()
                         history.append({
                             'role': 'user', '_harness_control': True,
                             'content': (
-                                'Completion check: the draft is only a fragment and does not '
+                                'Completion check: the draft is still too shallow and does not '
                                 'answer the broad current-information request. Using the Web '
                                 'evidence already gathered, provide a complete useful briefing '
-                                'with the main findings, source attribution, and any evidence '
-                                'limitations. Do not call another tool.'
+                                'of at least several substantive paragraphs or equivalent bullets, '
+                                'with the main findings, context, source links, and any evidence '
+                                'limitations. Do not call another tool or return another one-sentence summary.'
                             ),
                         })
                         yield event({
@@ -4409,6 +4434,16 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                 )
                         if tool_type == 'web_search':
                             search_intent = normalized_search_intent(args.get('query'))
+                            if repeated_search_refinement(
+                                args.get('query'), successful_search_intents,
+                            ):
+                                force_web_search_next_round = True
+                                calls += 1
+                                raise ValueError(
+                                    'This follow-up search is equivalent to an earlier successful '
+                                    'query. Change the angle, missing subtopic, source type, or '
+                                    'corroboration target instead of only changing freshness wording.'
+                                )
                             if search_intent and empty_search_intents.get(search_intent, 0) >= 2:
                                 calls += 1
                                 raise ValueError(
@@ -4748,6 +4783,9 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         })
                     if not failed and canonical(actual_tool) == 'web_search':
                         successful_web_searches += 1
+                        successful_intent = normalized_search_intent(args.get('query'))
+                        if successful_intent:
+                            successful_search_intents.append(successful_intent)
                         if successful_web_searches == 2 and not required_artifacts:
                             round_recovery_messages.append(
                                 'Research discovery is complete after two searches. Do not search '
