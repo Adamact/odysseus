@@ -5,7 +5,7 @@ import jsonschema
 import pytest
 import re
 
-from src.clean_agent_preview import conversation, readonly_call, preview_call_allowed, evaluate_preview_call, authorized_write_families, compact_schemas, normalize_preview_function_args, normalize_preview_call_args, private_browser_dom_batch, private_browser_state_transition, private_browser_success_repeat_limit, stream_preview, denied_response, execution_has_write_effect, requests_mutation, claims_completion, recent_successful_write_families, scope_preview_contract, multimodal_image_count, attachment_reference_count, active_document_context_message, active_email_context_message, targets_active_editor, active_editor_whole_draft_request, active_editor_suggestion_request, scope_active_editor_contract, native_execution_limits, interactive_execution_limit, runtime_required_artifacts, document_suggestions_event, document_suggestion_quality_error, required_read_tool_choice, required_active_editor_tool_choice, sealed_read_arguments, email_identifier_error, requested_item_limit, contract_item_limit, notes_terminal_response, documents_terminal_response, shell_listing_terminal_response, shell_output_terminal_response, ui_panel_terminal_response, ui_toggle_state_result, calendar_terminal_response, memory_terminal_response, tasks_terminal_response, task_list_requires_synthesis, skills_terminal_response, cookbook_servers_terminal_response, prior_short_answer_for_no_tool_summary, prior_collection_repeat_answer, prior_failed_operation_answer, prior_cookbook_server_answer, prior_workspace_path_answer, prior_web_source_answer, inherit_referential_read_arguments, normalized_search_intent, requested_web_source_links, web_source_links, requested_web_link_limit, preserve_requested_web_recency, ground_referenced_note_content, note_search_result_empty, note_referent_error, research_referent_error, private_browser_open_url, private_browser_effective_url, record_tool_execution, align_structured_tool_history, provider_request_messages, offered_tool_alias, dependent_write_prerequisite_error, serialize_required_email_attachment_chain
+from src.clean_agent_preview import conversation, readonly_call, preview_call_allowed, evaluate_preview_call, authorized_write_families, compact_schemas, normalize_preview_function_args, normalize_preview_call_args, private_browser_dom_batch, private_browser_state_transition, private_browser_success_repeat_limit, stream_preview, denied_response, execution_has_write_effect, requests_mutation, claims_completion, recent_successful_write_families, scope_preview_contract, multimodal_image_count, attachment_reference_count, active_document_context_message, active_email_context_message, targets_active_editor, active_editor_whole_draft_request, active_editor_suggestion_request, scope_active_editor_contract, native_execution_limits, interactive_execution_limit, runtime_required_artifacts, document_suggestions_event, document_suggestion_quality_error, required_read_tool_choice, required_active_editor_tool_choice, sealed_read_arguments, email_identifier_error, requested_item_limit, contract_item_limit, notes_terminal_response, documents_terminal_response, shell_listing_terminal_response, shell_output_terminal_response, ui_panel_terminal_response, ui_toggle_state_result, calendar_terminal_response, memory_terminal_response, tasks_terminal_response, task_list_requires_synthesis, skills_terminal_response, cookbook_servers_terminal_response, prior_short_answer_for_no_tool_summary, prior_collection_repeat_answer, prior_failed_operation_answer, prior_cookbook_server_answer, prior_workspace_path_answer, prior_web_source_answer, inherit_referential_read_arguments, normalized_search_intent, requested_web_source_links, web_source_links, requested_web_link_limit, preserve_requested_web_recency, ground_referenced_note_content, note_search_result_empty, note_referent_error, research_referent_error, private_browser_open_url, private_browser_effective_url, record_tool_execution, align_structured_tool_history, provider_request_messages, offered_tool_alias, dependent_write_prerequisite_error, bounded_research_tool_policy, serialize_required_email_attachment_chain
 from src.tool_capabilities import capabilities_for_tool
 
 
@@ -1022,6 +1022,120 @@ def test_contract_item_limit_exposes_inherited_read_cap():
     contract = SimpleNamespace(required_read_operation=SimpleNamespace(max_items=3))
     assert contract_item_limit(contract, 20) == 3
     assert contract_item_limit(SimpleNamespace(required_read_operation=None), 20) == 20
+
+
+def test_bounded_research_policy_preserves_tools_before_second_search():
+    schemas = [
+        {'type': 'function', 'function': {'name': name, 'parameters': {}}}
+        for name in ('web_search', 'web_fetch', 'manage_calendar')
+    ]
+    offered, choice, active = bounded_research_tool_policy(
+        schemas, searches=1, retrievals=0,
+    )
+    assert offered == schemas
+    assert choice is None
+    assert active is False
+
+
+def test_bounded_research_policy_forces_fetch_after_two_searches():
+    schemas = [
+        {'type': 'function', 'function': {'name': name, 'parameters': {}}}
+        for name in ('web_search', 'web_fetch', 'manage_calendar')
+    ]
+    offered, choice, active = bounded_research_tool_policy(
+        schemas, searches=2, retrievals=0,
+    )
+    assert [schema['function']['name'] for schema in offered] == [
+        'web_fetch', 'manage_calendar',
+    ]
+    assert choice == {
+        'type': 'function', 'function': {'name': 'web_fetch'},
+    }
+    assert active is True
+
+
+def test_bounded_research_policy_reserves_synthesis_after_retrieval():
+    schemas = [
+        {'type': 'function', 'function': {'name': name, 'parameters': {}}}
+        for name in ('web_search', 'web_fetch', 'manage_calendar')
+    ]
+    offered, choice, active = bounded_research_tool_policy(
+        schemas, searches=2, retrievals=1,
+    )
+    assert offered == []
+    assert choice == 'none'
+    assert active is True
+
+
+@pytest.mark.asyncio
+async def test_stream_bounds_research_to_two_searches_fetch_then_synthesis(monkeypatch):
+    import src.clean_agent_preview as module
+
+    def call(index, name, arguments):
+        return {'index': index, 'id': f'call-{index}', 'function': {
+            'name': name, 'arguments': json.dumps(arguments),
+        }}
+
+    packets = iter([
+        {'choices': [{'delta': {'tool_calls': [call(0, 'web_search', {'query': 'topic overview'})]}}]},
+        {'choices': [{'delta': {'tool_calls': [call(1, 'web_search', {'query': 'topic official source'})]}}]},
+        {'choices': [{'delta': {'tool_calls': [call(2, 'web_fetch', {'url': 'https://example.org/source'})]}}]},
+        {'choices': [{'delta': {'content': 'Complete evidence-grounded answer with https://example.org/source'}}]},
+    ])
+    requests = []
+    executions = []
+
+    class Response:
+        def __init__(self, payload): self.payload = payload
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def raise_for_status(self): pass
+        async def aiter_lines(self):
+            yield 'data: ' + json.dumps(self.payload)
+            yield 'data: [DONE]'
+
+    class Client:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def stream(self, *args, **kwargs):
+            requests.append(kwargs['json'])
+            return Response(next(packets))
+
+    async def execute(block, **kwargs):
+        executions.append(block.tool_type)
+        if block.tool_type == 'web_search':
+            return 'web_search', {
+                'output': '[1] Source\n    https://example.org/source',
+                'exit_code': 0,
+                'evidence_status': 'available',
+            }
+        return 'web_fetch', {'output': 'Authoritative source evidence', 'exit_code': 0}
+
+    monkeypatch.setattr(module.httpx, 'AsyncClient', Client)
+    monkeypatch.setattr(module, 'execute_tool_block', execute)
+    schemas = [
+        schema for schema in FUNCTION_TOOL_SCHEMAS
+        if schema['function']['name'] in {'web_search', 'web_fetch'}
+    ]
+    contract = resolve_full_inventory_contract(schemas=schemas, policy=ToolPolicy())
+    raw = [chunk async for chunk in stream_preview(
+        endpoint_url='http://test', model='test',
+        messages=[{'role': 'user', 'content': 'Research this topic using authoritative sources.'}],
+        headers={}, turn_contract=contract, session_id='test', owner='test',
+        disabled_tools=set(), tool_policy=ToolPolicy(), max_rounds=4,
+    )]
+
+    assert executions == ['web_search', 'web_search', 'web_fetch']
+    assert requests[2]['tool_choice'] == {
+        'type': 'function', 'function': {'name': 'web_fetch'},
+    }
+    assert all(
+        schema['function']['name'] != 'web_search'
+        for schema in requests[2]['tools']
+    )
+    assert 'tools' not in requests[3]
+    assert any('Complete evidence-grounded answer' in chunk for chunk in raw)
 
 
 def test_task_renderer_honors_few_and_filters_confirmed_morning_schedule():

@@ -1906,6 +1906,39 @@ def dependent_write_prerequisite_error(turn_contract, name, successful_required_
     return None
 
 
+def bounded_research_tool_policy(offered, *, searches=0, retrievals=0):
+    """Bound research loops after enough discovery evidence has been gathered.
+
+    Two searches are enough to choose a source in the ordinary research flow.
+    The next step must retrieve source evidence, and the following step belongs
+    to final synthesis.  This is deliberately activated by observed web calls,
+    so unrelated calendar, email, document, and media turns are unchanged.
+    """
+    schemas = list(offered or ())
+    if searches < 2:
+        return schemas, None, False
+    schemas = [
+        schema for schema in schemas
+        if canonical((schema.get('function') or {}).get('name')) != 'web_search'
+    ]
+    if retrievals:
+        return [], 'none', True
+    fetch = next(
+        (
+            (schema.get('function') or {}).get('name')
+            for schema in schemas
+            if canonical((schema.get('function') or {}).get('name')) == 'web_fetch'
+        ),
+        None,
+    )
+    if fetch:
+        return schemas, {
+            'type': 'function',
+            'function': {'name': fetch},
+        }, True
+    return schemas, None, True
+
+
 def serialize_required_email_attachment_chain(proposed, required_tools, executions):
     """Keep speculative email attachment batches on one grounded stage."""
     stages = ('search_emails', 'read_email', 'download_attachment', 'draft_email')
@@ -3677,6 +3710,8 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     successful_duplicate_counts = {}
     empty_search_intents = {}
     empty_web_search_attempts = 0
+    successful_web_searches = 0
+    successful_web_retrievals = 0
     browser_navigation_outcomes = {}
     failed_call_counts = {}
     semantic_attempt_counts = {}
@@ -3796,6 +3831,13 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             canonical(schema['function']['name']), 0
                         ) < round_number
                     ]
+                research_choice = None
+                if not required_artifacts:
+                    round_offered, research_choice, _ = bounded_research_tool_policy(
+                        round_offered,
+                        searches=successful_web_searches,
+                        retrievals=successful_web_retrievals,
+                    )
                 round_max_tokens = (
                     min(request_max_tokens, 4096)
                     if artifact_body_handoff_target else request_max_tokens
@@ -3856,6 +3898,8 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                 'type': 'function',
                                 'function': {'name': suggestion_name},
                             }
+                    if research_choice is not None:
+                        request['tool_choice'] = research_choice
                 pending, content = {}, ''
                 async with preview_model_response(client, endpoint_url, headers, request, context_recovery) as response:
                     response.raise_for_status()
@@ -4548,6 +4592,23 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         result.get('error')
                         or result.get('exit_code') not in (None, 0)
                     )
+                    if not failed and canonical(actual_tool) == 'web_search':
+                        successful_web_searches += 1
+                        if successful_web_searches == 2 and not required_artifacts:
+                            round_recovery_messages.append(
+                                'Research discovery is complete after two searches. Do not search '
+                                'again. Retrieve the strongest authoritative result with web_fetch, '
+                                'then answer every requested fact, comparison, and caveat with source URLs.'
+                            )
+                    if not failed and canonical(actual_tool) in {'web_fetch', 'private_browser'}:
+                        successful_web_retrievals += 1
+                        if successful_web_searches >= 2 and not required_artifacts:
+                            force_no_tools_next_round = True
+                            round_recovery_messages.append(
+                                'Evidence retrieval is complete. Stop using tools and deliver the '
+                                'complete answer now, covering every requested fact, comparison, and '
+                                'caveat with the source URLs supported by the retrieved evidence.'
+                            )
                     if (execution_attempted
                             and canonical(actual_tool) in contract_required_tools):
                         attempted_required_tools.add(canonical(actual_tool))
