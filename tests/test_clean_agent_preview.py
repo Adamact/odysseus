@@ -1900,6 +1900,21 @@ def test_browser_access_gate_is_not_treated_as_page_evidence():
     )
 
 
+@pytest.mark.parametrize('title,snapshot,blocked', [
+    ('Client Challenge', '(empty page)', True),
+    ('Just a moment...', '(empty page)', True),
+    ('Example documentation', '(empty page)', False),
+    ('Client Challenge', 'An article discussing client challenge design.', False),
+])
+def test_browser_challenge_title_with_empty_snapshot(title, snapshot, blocked):
+    from src.clean_agent_preview import browser_observation_access_blocked
+    raw = json.dumps([
+        {'command': ['open', 'https://example.org'], 'result': {'title': title}, 'success': True},
+        {'command': ['snapshot'], 'result': {'snapshot': snapshot}, 'success': True},
+    ])
+    assert browser_observation_access_blocked(raw) is blocked
+
+
 def test_rendered_missing_page_is_not_article_evidence():
     from src.clean_agent_preview import browser_observation_page_missing
 
@@ -4185,7 +4200,11 @@ async def test_failed_static_fetch_recovers_once_through_rendered_browser(monkey
             'name': 'private_browser',
             'arguments': json.dumps({'action': 'open', 'url': 'https://www.reuters.com/example'}),
         }}]}}]},
-        {'choices': [{'delta': {'content': 'Reuters blocked both access methods.'}}]},
+        {'choices': [{'delta': {'tool_calls': [{'index': 0, 'id': 'alternative', 'function': {
+            'name': 'web_fetch',
+            'arguments': json.dumps({'url': 'https://example.org/report'}),
+        }}]}}]},
+        {'choices': [{'delta': {'content': 'Reuters blocked both access methods. The alternative report was readable.'}}]},
     ])
     requests = []
 
@@ -4211,6 +4230,8 @@ async def test_failed_static_fetch_recovers_once_through_rendered_browser(monkey
     async def execute(block, **kwargs):
         executions.append(block.tool_type)
         if block.tool_type == 'web_fetch':
+            if json.loads(block.content).get('url') == 'https://example.org/report':
+                return 'web_fetch', {'output': 'Independent report with readable evidence.', 'exit_code': 0}
             return 'web_fetch', {'error': 'web_fetch: HTTP 401', 'exit_code': 1}
         return 'private_browser', {
             'output': 'Iframe "DataDome CAPTCHA" Access is temporarily restricted',
@@ -4234,12 +4255,13 @@ async def test_failed_static_fetch_recovers_once_through_rendered_browser(monkey
         disabled_tools=set(), tool_policy=ToolPolicy(), max_rounds=4,
     )]
 
-    assert executions == ['web_fetch', 'private_browser']
+    assert executions == ['web_fetch', 'private_browser', 'web_fetch']
     assert all(
         schema['function']['name'] != 'web_fetch'
         for schema in requests[1].get('tools', [])
     )
-    assert 'tools' not in requests[2]
+    assert any(schema['function']['name'] == 'web_fetch' for schema in requests[2]['tools'])
+    assert any('Use another relevant source' in str(msg.get('content')) for msg in requests[2]['messages'])
     events = [json.loads(chunk[6:]) for chunk in raw if '[DONE]' not in chunk]
     assert any(event.get('type') == 'tool_loop_recovery' for event in events)
     assert any('blocked both access methods' in event.get('delta', '') for event in events)

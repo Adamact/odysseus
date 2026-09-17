@@ -3573,6 +3573,22 @@ def browser_observation_page_missing(raw):
 
 def browser_observation_access_blocked(raw):
     """Identify browser observations containing only an access gate."""
+    try:
+        decoded = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        decoded = None
+    rows = decoded if isinstance(decoded, list) else [decoded]
+    page_title = ''
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        payload = row.get('result') if isinstance(row.get('result'), dict) else row
+        # A new navigation supersedes the previous page title in a batch.
+        if 'title' in payload:
+            page_title = str(payload['title']).strip().casefold().rstrip('.!')
+        if (page_title in {'client challenge', 'just a moment', 'security verification', 'verify you are human'}
+                and str(payload.get('snapshot', '')).strip() == '(empty page)'):
+            return True
     return bool(re.search(
         r"\b(?:captcha|access\s+(?:is\s+)?temporarily\s+restricted|access\s+denied|"
         r"verify\s+(?:that\s+)?you(?:\s+are|'re)\s+human|checking\s+your\s+browser|"
@@ -5099,11 +5115,11 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             if browser_url and browser_url in static_fetch_failed_urls:
                                 # Both independent transports have now failed for
                                 # this exact source.  Do not bounce between them.
-                                force_no_tools_next_round = True
                                 round_recovery_messages.append(
                                     'Both static fetch and rendered browser access failed for this '
-                                    'same URL. Do not retry either path; briefly report the source '
-                                    'access limitation without inventing article content.'
+                                    'same URL. Do not retry either path for this source. Use another '
+                                    'relevant source already discovered if available; otherwise '
+                                    'report the access limitation without inventing article content.'
                                 )
                             else:
                                 # A CAPTCHA is transport output, not article
