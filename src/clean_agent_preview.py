@@ -4433,19 +4433,12 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         history.append({'role': 'assistant', 'content': refusal})
                         yield event({'type': 'final_response', 'content': refusal})
                         break
-                    # Keep navigation evidence even when synthesis omits the
-                    # tool's link. Append to the existing stream, never replace
-                    # it or ask the model for another round just for formatting.
+                    # Keep created-object navigation links, not search-result
+                    # citations. Finding a page does not establish that it
+                    # supports a generated claim; citation selection belongs
+                    # to evidence-grounded synthesis.
                     missing_links = [link for target, link in entity_result_links.items()
                                      if f']({target})' not in content]
-                    if (
-                        broad_current_web_request(direct_user_text)
-                        and not re.search(r'https?://\S+', content or '')
-                    ):
-                        missing_links.extend(
-                            link for link in discovered_web_sources[:5]
-                            if link not in missing_links
-                        )
                     if missing_links:
                         suffix = ('\n\n' if content else '') + '\n'.join(missing_links)
                         content += suffix
@@ -5251,9 +5244,6 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                 structured_terminal_response = (
                                     "I couldn't find a matching official source in the search results."
                                 )
-                        else:
-                            for target, link in source_links:
-                                entity_result_links[target] = link
                     if block is not None and block.tool_type in {
                         'create_document', 'update_document', 'edit_document'
                     } and result.get('doc_id'):

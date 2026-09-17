@@ -21,6 +21,16 @@ A separate direct endpoint control supplied two short **fictional** reports to M
 
 Latest extraction/query regression run: 1,215 passing tests. Passing mechanics or length checks are **not** evidence of factual correctness.
 
+### Completed variety run and matched synthesis probe
+
+The 16 conversations completed (19 user turns). The run does **not** establish good search quality: examples include irrelevant battery citations, generic or unsupported news, missing manual links, poor source-seeking follow-ups, and a spelling correction incorrectly refused as an operation. Arithmetic, greeting, and the simple browser explanation were clear successes. Evidence reuse avoided another call, but answer quality remained limited.
+
+`reports/search-synthesis-probe-1789676901820.json` reuses the exact first news turn's two public evidence outputs, temperature 0, max_tokens 768, thinking disabled. A short research-specific system prompt produced concrete stories in both user-evidence (18.91s) and tool-evidence (10.22s) placement; tool-evidence still supplied only one citation for multiple stories. This is not a fully isolated live-harness A/B: system prompt, prior assistant messages, tool availability, and recovery history also differ. Do not infer a unique cause from this control.
+
+Further code inspection identified **automatic citation fabrication by the harness**: web search results were inserted into `entity_result_links`, then appended after model synthesis without claim support verification. Broad answers also received automatic source lists. Removing these paths preserves calendar/research-object navigation links and explicit source-only lookup results. A runtime regression test checks that an old-release search result is not attached as the citation for a latest-release answer. Earlier wrong citations therefore cannot be attributed solely to the model.
+
+A temporary loopback relay captured zero requests because registered endpoint IDs override submitted URLs. It was shut down and removed. Endpoint record `1518b6ee` was checked read-only and does map to the same `19211` Model F used by the direct probe. Future evidence capture must respect that registered routing rather than claiming an unused proxy observed traffic.
+
 ## Outstanding work
 
 1. Finish and manually audit all 16 conversations; inspect claim/source alignment, request completion, follow-up referents, and latency.
