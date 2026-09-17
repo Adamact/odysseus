@@ -1154,7 +1154,7 @@ async def test_stream_bounds_research_to_two_searches_fetch_then_synthesis(monke
 
 @pytest.mark.asyncio
 async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatch):
-    """A successful search must not end in a fragmentary headline stub."""
+    """Broad current research expands, retrieves evidence, then synthesizes."""
     import src.clean_agent_preview as module
 
     packets = iter([
@@ -1165,10 +1165,30 @@ async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatc
             },
         }]}}]},
         {'choices': [{'delta': {'content': 'Current AI news includes reports about U.'}}]},
+        {'choices': [{'delta': {'tool_calls': [{
+            'index': 0, 'id': 'search-2', 'function': {
+                'name': 'web_search',
+                'arguments': json.dumps({'query': 'AI policy and model releases today'}),
+            },
+        }]}}]},
+        {'choices': [{'delta': {'tool_calls': [{
+            'index': 0, 'id': 'fetch-1', 'function': {
+                'name': 'web_fetch',
+                'arguments': json.dumps({'url': 'https://example.org/ai-news'}),
+            },
+        }]}}]},
         {'choices': [{'delta': {'content': (
-            'Here is a fuller evidence-based briefing covering the major current AI '
-            'developments, what each source actually reports, and the limits of the '
-            'available evidence. Source: https://example.org/ai-news'
+            'Here is a fuller evidence-based briefing. Recent developments include '
+            'new model releases, updated deployment commitments, and policy proposals '
+            'from several governments. The first source explains what changed in the '
+            'models and how developers can access them. A second independent report '
+            'adds context about evaluation, safety, and likely industry effects. The '
+            'policy coverage distinguishes proposals from rules already in force and '
+            'identifies the dates involved. Taken together, the evidence suggests '
+            'continued rapid deployment alongside stronger demands for transparency, '
+            'although several announced measures remain preliminary. Readers should '
+            'check the linked primary material because this is a changing story. '
+            'Sources: https://example.org/ai-news and https://example.org/ai-policy'
         )}}]},
     ])
     requests = []
@@ -1191,7 +1211,7 @@ async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatc
             return Response(next(packets))
 
     async def execute(block, **kwargs):
-        return 'web_search', {
+        return block.tool_type, {
             'output': '[1] AI News\n    https://example.org/ai-news',
             'exit_code': 0,
             'evidence_status': 'available',
@@ -1199,23 +1219,30 @@ async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatc
 
     monkeypatch.setattr(module.httpx, 'AsyncClient', Client)
     monkeypatch.setattr(module, 'execute_tool_block', execute)
-    schema = next(
-        s for s in FUNCTION_TOOL_SCHEMAS if s['function']['name'] == 'web_search'
-    )
-    contract = resolve_full_inventory_contract(schemas=[schema], policy=ToolPolicy())
+    schemas = [
+        s for s in FUNCTION_TOOL_SCHEMAS
+        if s['function']['name'] in {'web_search', 'web_fetch'}
+    ]
+    contract = resolve_full_inventory_contract(schemas=schemas, policy=ToolPolicy())
     raw = [chunk async for chunk in stream_preview(
         endpoint_url='http://test', model='test',
         messages=[{'role': 'user', 'content': 'Latest news in AI?'}],
         headers={}, turn_contract=contract, session_id='test', owner='test',
-        disabled_tools=set(), tool_policy=ToolPolicy(), max_rounds=3,
+        disabled_tools=set(), tool_policy=ToolPolicy(), max_rounds=5,
     )]
     events = [json.loads(chunk[6:]) for chunk in raw if '[DONE]' not in chunk]
 
-    assert len(requests) == 3
-    assert 'tools' not in requests[2]
+    assert len(requests) == 5
+    assert requests[2]['tool_choice'] == {
+        'type': 'function', 'function': {'name': 'web_search'},
+    }
+    assert requests[3]['tool_choice'] == {
+        'type': 'function', 'function': {'name': 'web_fetch'},
+    }
+    assert 'tools' not in requests[4]
     assert any(
         event.get('type') == 'completion_recovery'
-        and event.get('reason') == 'incomplete_research_answer'
+        and event.get('reason') == 'insufficient_research_breadth'
         for event in events
     )
     assert any(

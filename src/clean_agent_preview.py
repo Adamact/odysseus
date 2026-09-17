@@ -888,19 +888,24 @@ def contentless_final_response(content):
     ))
 
 
-def incomplete_broad_web_answer(content, user_text):
-    """Reject a fragmentary answer to a broad current-information request."""
+def broad_current_web_request(user_text):
+    """Whether the user requested a broad current-information briefing."""
     request = str(user_text or '')
-    if not (
+    return bool(
         re.search(r'\b(?:latest|recent|current|today(?:\'s)?)\b', request, re.I)
         and re.search(r'\b(?:info(?:rmation)?|news|nees|updates?)\b', request, re.I)
-    ):
+    )
+
+
+def incomplete_broad_web_answer(content, user_text):
+    """Reject a shallow answer to a broad current-information request."""
+    if not broad_current_web_request(user_text):
         return False
     answer = re.sub(r'https?://\S+', ' ', str(content or '')).strip()
     words = re.findall(r"[A-Za-z0-9][A-Za-z0-9'’-]*", answer)
     # A broad briefing cannot be fulfilled by one headline fragment. This is
     # intentionally inapplicable to narrow quick-fact searches.
-    return len(words) < 25
+    return len(words) < 80
 
 
 def progressive_thinking_for_turn(model, offered_schemas):
@@ -4060,6 +4065,28 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             ),
                         })
                         yield event({'type': 'completion_recovery', 'reason': 'contentless_answer'})
+                        continue
+                    if (
+                        broad_current_web_request(direct_user_text)
+                        and successful_web_searches == 1
+                        and round_number < round_limit
+                    ):
+                        force_web_search_next_round = True
+                        replace_streamed_draft_on_finish = True
+                        history.pop()
+                        history.append({
+                            'role': 'user', '_harness_control': True,
+                            'content': (
+                                'Research breadth check: one search is insufficient for this broad '
+                                'current-information request. Run one materially different follow-up '
+                                'search that fills gaps or corroborates the strongest findings. Then '
+                                'inspect the best source evidence before synthesizing the answer.'
+                            ),
+                        })
+                        yield event({
+                            'type': 'completion_recovery',
+                            'reason': 'insufficient_research_breadth',
+                        })
                         continue
                     if (
                         successful_web_searches
