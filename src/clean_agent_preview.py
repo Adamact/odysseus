@@ -3251,17 +3251,7 @@ def web_source_links(raw, *, max_items=1, prefer_official=False, query=''):
                 host == domain or host.endswith('.' + domain)
                 for domain in official_domains
             )
-            direct_document = bool(re.search(
-                r'\.(?:pdf|docx?|xlsx?|pptx?)(?:$|[?#])', row[1], re.I,
-            ))
-            query_tokens_in_url = any(
-                token in row[1].casefold()
-                for token in query_tokens
-                if len(token) >= 4
-            )
-            if query_host_match or (
-                not official_domains and direct_document and query_tokens_in_url
-            ):
+            if query_host_match:
                 primary.append(row)
         rows = primary
     links = []
@@ -5185,10 +5175,14 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         and requested_web_source_links(direct_user_text)
                     ):
                         requested_links = requested_web_link_limit(direct_user_text)
+                        official_requested = bool(re.search(r'\bofficial\b', direct_user_text, re.I))
+                        known_official_domains = official_domains_for_text(
+                            direct_user_text + ' ' + str(args.get('query', ''))
+                        )
                         source_links = web_source_links(
                             output,
                             max_items=requested_links or 1,
-                            prefer_official=bool(re.search(r'\bofficial\b', direct_user_text, re.I)),
+                            prefer_official=official_requested,
                             query=args.get('query', ''),
                         )
                         source_only_request = not re.search(
@@ -5203,7 +5197,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                 link for _, link in source_links[:requested_links]
                             )
                         elif (requested_links and not source_links
-                              and re.search(r'\bofficial\b', direct_user_text, re.I)):
+                              and official_requested and known_official_domains):
                             if not official_source_retry_attempted and round_number < round_limit:
                                 official_source_retry_attempted = True
                                 force_web_search_next_round = True

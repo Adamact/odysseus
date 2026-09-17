@@ -2012,7 +2012,7 @@ def test_official_manual_does_not_invent_pdf_requirement():
     assert explicit['query'].endswith('filetype:pdf')
 
 
-def test_unknown_official_domain_rejects_reseller_but_accepts_direct_document():
+def test_unknown_official_domain_cannot_be_proven_by_pdf_suffix():
     raw = '''
 [1] WIKING Miro 4 Wood Burning Stove
     https://scottishstovecentre.co.uk/product/wiking-miro-4/
@@ -2025,11 +2025,9 @@ def test_unknown_official_domain_rejects_reseller_but_accepts_direct_document():
         query='WIKING Miro stove manual official source filetype:pdf',
     )
 
-    assert links == [(
-        'https://www.hwam.com/pub/media/wiking/53-0756_Miro_EN.pdf',
-        '[Source: WIKING Miro Installation and User Manual]'
-        '(https://www.hwam.com/pub/media/wiking/53-0756_Miro_EN.pdf)',
-    )]
+    assert links == []
+    # Candidates remain in the full tool output for the model to inspect.
+    assert len(web_source_links(raw, max_items=2, query='WIKING Miro')) == 2
 
 
 def test_web_fetch_collapses_single_and_batch_url_fields_without_losing_targets():
@@ -2044,7 +2042,7 @@ def test_web_fetch_collapses_single_and_batch_url_fields_without_losing_targets(
     }
 
 
-def test_manual_locator_prefers_manufacturer_link_and_requests_one_result():
+def test_manual_locator_requests_one_result_but_needs_manufacturer_evidence():
     from src.clean_agent_preview import (
         requested_web_link_limit, requested_web_source_links, web_source_links,
     )
@@ -2061,12 +2059,7 @@ def test_manual_locator_prefers_manufacturer_link_and_requests_one_result():
     assert requested_web_link_limit(prompt) == 1
     assert web_source_links(
         raw, max_items=1, prefer_official=True, query=prompt,
-    ) == [
-        (
-            'https://www.hwam.com/media/wiking/miro-en.pdf',
-            '[Source: WIKING Miro English manual PDF](https://www.hwam.com/media/wiking/miro-en.pdf)',
-        )
-    ]
+    ) == []
 
 
 def test_preview_allows_only_reversible_client_local_ui_control():
