@@ -892,8 +892,15 @@ def broad_current_web_request(user_text):
     """Whether the user requested a broad current-information briefing."""
     request = str(user_text or '')
     return bool(
-        re.search(r'\b(?:latest|recent|current|today(?:\'s)?)\b', request, re.I)
-        and re.search(r'\b(?:info(?:rmation)?|news|nees|updates?)\b', request, re.I)
+        (
+            re.search(r'\b(?:latest|recent|current|today(?:\'s)?)\b', request, re.I)
+            and re.search(r'\b(?:info(?:rmation)?|news|nees|updates?)\b', request, re.I)
+        )
+        or re.search(
+            r"\b(?:what(?:'s|\s+is)|anything|something)\s+new\b",
+            request,
+            re.I,
+        )
     )
 
 
