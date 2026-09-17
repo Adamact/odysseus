@@ -48,9 +48,9 @@ _FAMILY_WORDS = {
     "memory": r"\b(?:memory|memories|memores|remember|forget|past\s+chats?|previous\s+conversations?)\b",
     "documents": r"\b(?:documents?|documets?|docs?|editor)\b",
     "email": r"\b(?:emails?|inbox|mailbox|mail|spam)\b",
-    "search_browser": r"\b(?:search\s+(?:the\s+)?web|web|online|browse|browser|websites?|sites?|news|weather|youtube|hugging\s*face)\b|https?://|\b\w+\.(?:com|org|net|io)\b",
+    "search_browser": r"\b(?:search\s+(?:the\s+)?web|web|online|browse|browser|websites?|sites?|news|weather|youtube|arxiv|hugging\s*face)\b|https?://|\b\w+\.(?:com|org|net|io)\b",
     "shell_files": r"\b(?:files?|folders?|directory|shell|terminal|workspace|repo|repository|python|hostname|b?ssh|bash)\b",
-    "cookbook_admin": r"\b(?:cookbo{1,2}k|endpoints?|models?|servers?|settings|downloads?|integrations?)\b",
+    "cookbook_admin": r"\b(?:cookbo{1,2}k|endpoints?|models?|servers?|settings|integrations?)\b",
     "research": r"\bresearch\b",
     "contacts": r"\bcontacts?\b",
     "sessions": r"\b(?:sessions?|chats?|conversations?)\b",
@@ -933,6 +933,7 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
         return frozenset({"web_search"})
     if (
         re.match(r"^\s*" + _REQUEST_PREFIX + r"(?:open|navigate|browse|visit|go\s+to)\b", text, re.I)
+        and not re.search(r"(?:file://)?/(?:tmp_)?workspace/", text, re.I)
         and (
             re.search(r"\bhttps?://[^\s<>\"']+", text, re.I)
             or re.search(r"\b(?:[a-z0-9-]+\.)+(?:com|org|net|io|ai|jp|co\.jp)\b", text, re.I)
@@ -1115,20 +1116,22 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
         re.I,
     ):
         return frozenset({"list_models"})
-    if (
-        re.search(r"\b(?:models?|qwen|llama|gemma|mistral|instruct)\b", text, re.I)
+    model_discovery_clauses = re.split(r"[\n.!?;]+", text)
+    if any(
+        re.search(r"\b(?:models?|qwen|llama|gemma|mistral|instruct)\b", clause, re.I)
         and re.search(
             r"\b(?:i(?:['’]?m|\s+am)\s+after|look(?:ing)?\s+for|find|search|show|"
             r"recommend|suggest|anything\s+in)\b",
-            text,
+            clause,
             re.I,
         )
         and re.search(
             r"\b(?:hugging\s*face|huggingface|hf|small|local(?:ly)?|at\s+home|"
             r"\d+(?:\.\d+)?\s*[-–]\s*\d+(?:\.\d+)?\s*b|\d+(?:\.\d+)?b)\b",
-            text,
+            clause,
             re.I,
         )
+        for clause in model_discovery_clauses
     ):
         # Model discovery belongs to the Hugging Face catalog.  This covers
         # natural recommendation wording, not only the literal phrase
@@ -1336,6 +1339,12 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
         re.search(r"\b(?:grab|download)\b", text, re.I)
         and re.search(r"\b[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\b", text)
         and re.search(r"\b(?:locally|local|download)\b", text, re.I)
+        and re.search(
+            r"\b(?:models?|qwen|llama|gemma|mistral|safetensors|gguf|"
+            r"hugging\s*face|huggingface|hf\s+hub|model\s+hub)\b",
+            text,
+            re.I,
+        )
     ):
         return frozenset({"download_model"})
     if (
@@ -1603,7 +1612,7 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
             re.I,
         )
         and not re.search(r"(?:\.pdf(?:[?#]|$)|/pdf/)", urls[0], re.I)
-        and not re.search(r"(?:^|\s)(?:file://)?/workspace/", text, re.I)
+        and not re.search(r"(?:file://)?/(?:tmp_)?workspace/", text, re.I)
         and not re.search(
             r"\b(?:browse|navigate|click|fill|submit|private[_ -]?browser|"
             r"save|write|create|export|render|generate|send|email)\b",
@@ -3135,15 +3144,17 @@ def required_read_operation_for_request(message: str, history: Iterable = ()) ->
         and not re.search(r"\b(?:add|delete|remove|enable|disable|reconnect|change)\b", text, re.I)
     ):
         return RequiredReadOperation("manage_mcp", {"action": "list_tools"}, maximum)
-    if (
-        re.search(r"\b(?:agent\s+)?tools?\b", text, re.I)
+    tool_inventory_clauses = re.split(r"[\n.!?;]+", text)
+    if any(
+        re.search(r"\b(?:agent\s+)?tools?\b", clause, re.I)
         and re.search(
             r"\b(?:disabled|enabled|available|unavailable|toggles?|"
             r"switched\s+(?:off|on)|turned\s+(?:off|on))\b",
-            text,
+            clause,
             re.I,
         )
-        and re.search(r"\b(?:what|which|wich|show|list|check)\b", text, re.I)
+        and re.search(r"\b(?:what|which|wich|show|list|check)\b", clause, re.I)
+        for clause in tool_inventory_clauses
     ):
         return RequiredReadOperation("manage_settings", {"action": "list_tools"}, maximum)
     if re.match(
@@ -3646,6 +3657,23 @@ def _clause_capabilities(text: str) -> set[str]:
     # only as the forbidden side effect (for example, "do not create a file").
     if _PURE_ACTION_PROHIBITION.fullmatch(text):
         return set()
+    if re.fullmatch(
+        r"\s*(?:please\s+)?solve\s+(?:the|this)\s+task\s+efficiently\s+"
+        r"before\s+(?:the\s+)?timeout(?:\s*\([^)]*\))?\s*",
+        text,
+        re.I,
+    ):
+        # Execution boilerplate describes the current turn; it is not a
+        # request to operate on the user's background-task scheduler.
+        return set()
+    if delegated := re.match(
+        r"^\s*(?:your|the)\s+task\s+is\s+to\s+(?P<request>[\s\S]+)$",
+        text,
+        re.I,
+    ):
+        # ``task`` labels the current instruction here; route the actual
+        # request body instead of granting background-scheduler authority.
+        return _clause_capabilities(delegated["request"])
     if conditional := _CONDITIONAL_ACTION.fullmatch(text):
         # The premise supplies context; the post-condition clause owns the
         # requested side effect and therefore its product family.
@@ -4837,7 +4865,26 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
     ):
         # A filename is workspace data, even when its stem is a product name
         # such as notes.txt or calendar.json.
-        return frozenset({"shell_files"})
+        families = {"shell_files"}
+        if concrete_urls:
+            families.add("search_browser")
+        elif (
+            re.search(r"\barxiv\b", text, re.I)
+            and re.search(
+                r"\b(?:fetch|retrieve|get|download|search|find|read|inspect|prepare|digest|identify|recover)\b",
+                text,
+                re.I,
+            )
+        ):
+            # Creating a local artifact does not replace the explicitly named
+            # external source needed to populate it.
+            families.add("search_browser")
+        elif (
+            re.search(r"\bgithub\b", text, re.I)
+            and re.search(r"\b(?:repositor(?:y|ies)|repos?|contributors?|commits?|pushed_at)\b", text, re.I)
+        ):
+            families.add("search_browser")
+        return frozenset(families)
     if re.match(
         r"^\s*what(?:['’]?s|\s+is)\s+happening\s+(?:in|with|around)\b"
         r"[^?!.]{1,180}\b(?:lately|recently|right\s+now)\b",
@@ -5311,6 +5358,25 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
     clauses = re.split(r"[;\n]|[.!?]\s+|\b(?:and|then)\s+(?=" + _ACTION_REQUEST + r")",
                        text, flags=re.I)
     families = set().union(*(_clause_capabilities(clause) for clause in clauses))
+    if re.search(r"(?:file://)?/tmp_workspace(?:/|\b)", text, re.I):
+        families.add("shell_files")
+    if (
+        re.search(r"\bgithub\b", text, re.I)
+        and re.search(r"\b(?:repositor(?:y|ies)|repos?|contributors?|commits?|pushed_at)\b", text, re.I)
+    ):
+        families.add("search_browser")
+    if (
+        re.search(r"\barxiv\b", text, re.I)
+        and re.search(
+            r"\b(?:fetch|retrieve|get|download|search|find|read|inspect|prepare|digest|identify|recover)\b",
+            text,
+            re.I,
+        )
+    ):
+        # arXiv is an external paper source. Long artifact requests often put
+        # the retrieval verb and ``arXiv`` in different list items, so routing
+        # each clause independently can otherwise leave only local file tools.
+        families.add("search_browser")
     if (recent == ("email",)
             and re.search(r"\b(?:from\s+them|latest\s+one|that\s+(?:message|email))\b", text, re.I)):
         families.add("email")

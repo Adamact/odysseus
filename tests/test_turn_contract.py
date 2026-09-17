@@ -523,6 +523,28 @@ def test_local_model_discovery_selects_hugging_face_search_and_persistence_switc
     ) == {"notes"}
 
 
+def test_unrelated_model_terms_do_not_combine_into_hugging_face_discovery():
+    prompt = (
+        "You are in a restricted environment. Use the available tools. Prepare my daily "
+        "arXiv paper digest. Classify papers under Multimodal / Vision-Language Models. Based "
+        "on my research interests, highlight papers I might find interesting. If any "
+        "paper benchmarks against CapRL, extract the comparison results. Save the digest "
+        "to /tmp_workspace/results/digest.md.\n"
+        "| CapRL-3B | result |"
+    )
+    assert selected_tools_for_request(prompt) != {"search_hf_models"}
+    assert "search_browser" in requested_capabilities(prompt)
+
+
+def test_execution_boilerplate_does_not_route_to_background_tasks():
+    prompt = (
+        "Solve the task efficiently before the timeout (600s). Use the available tools. "
+        "Unpack /tmp_workspace/images.tar and classify the images into output folders."
+    )
+    capabilities = requested_capabilities(prompt)
+    assert capabilities == {"shell_files"}
+
+
 def test_referential_web_source_relationship_keeps_web_tools_warm():
     history = [{"role": "assistant", "content": "Official link.", "metadata": {
         "tool_events": [{"tool": "web_search", "exit_code": 0}],
@@ -1965,6 +1987,24 @@ def test_explicit_repo_download_selects_tracked_cookbook_download():
     )
     assert selected_tools_for_request(message) == {"download_model"}
     assert requested_capabilities(message) == {"cookbook_admin"}
+
+
+def test_arxiv_source_download_is_not_a_model_download():
+    message = (
+        "Download the source package from https://arxiv.org/abs/2501.07888, "
+        "extract every table, and save each one to /tmp_workspace/results/1.tex."
+    )
+    assert selected_tools_for_request(message) != {"download_model"}
+    assert requested_capabilities(message) == {"search_browser", "shell_files"}
+
+
+def test_single_web_page_with_workspace_outputs_is_not_sealed_to_fetch_only():
+    message = (
+        "Visit https://example.org/catalog and save every item under "
+        "/tmp_workspace/results/items/ plus a summary.jsonl file."
+    )
+    assert selected_tools_for_request(message) is None
+    assert requested_capabilities(message) == {"search_browser", "shell_files"}
 
 
 def test_even_have_email_accounts_selects_account_inventory():

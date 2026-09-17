@@ -278,6 +278,15 @@ def test_quick_web_lookup_with_official_link_selects_search():
     assert requested_capabilities(message) == {"search_browser"}
 
 
+def test_available_tools_execution_boilerplate_is_not_a_tool_inventory_request():
+    message = (
+        "Solve the task efficiently before the timeout. Use the available tools and "
+        "as many iterative steps as needed. Fetch today's papers, classify every paper "
+        "into exactly one category, and report which paper is most relevant."
+    )
+    assert required_read_operation_for_request(message) is None
+
+
 @pytest.mark.parametrize(("message", "expected"), [
     (
         "whats on my agenda today? just the titles, dont change anything",
