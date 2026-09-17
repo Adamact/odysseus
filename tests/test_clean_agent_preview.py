@@ -2017,17 +2017,14 @@ def test_current_search_arguments_repair_stale_year_and_add_freshness():
     assert args['time_filter'] == 'day'
 
 
-def test_missing_refinement_query_is_grounded_in_user_request():
-    args = preserve_requested_web_recency(
-        'web_search',
-        {'time_filter': 'day'},
-        user_text='What are the latest important AI developments?',
-        prior_search_intents=['important ai developments'],
-    )
-
-    assert 'AI developments' in args['query']
-    assert 'corroborating analysis' in args['query']
-    assert args['time_filter'] == 'day'
+@pytest.mark.parametrize('missing_query', [{}, {'query': ''}, {'query': '  ', 'time_filter': 'day'}])
+def test_missing_refinement_query_is_not_fabricated(missing_query):
+    with pytest.raises(ValueError, match='explicit query for a follow-up'):
+        preserve_requested_web_recency(
+            'web_search', missing_query,
+            user_text='serch latest ai news pls',
+            prior_search_intents=['ai news'],
+        )
 
 
 def test_official_manual_does_not_invent_pdf_requirement():

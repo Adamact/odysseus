@@ -3459,9 +3459,13 @@ def preserve_requested_web_recency(name, args, *, user_text='', prior_search_int
     user = str(user_text or '')
     query = str(args.get('query') or '').strip()
     if not query:
-        query = re.sub(r'\s+', ' ', user).strip().rstrip('?.!')
         if prior_search_intents:
-            query += ' corroborating analysis authoritative sources'
+            raise ValueError(
+                'web_search requires an explicit query for a follow-up. Supply a '
+                'specific missing fact, entity, or corroboration question based on '
+                'the evidence already returned; do not repeat the original query.'
+            )
+        query = re.sub(r'\s+', ' ', user).strip().rstrip('?.!')
         if not query:
             return args
     normalized = dict(args)
