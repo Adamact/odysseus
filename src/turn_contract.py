@@ -651,7 +651,7 @@ def inline_text_transformation(message: str) -> bool:
     """
     return bool(re.fullmatch(
         r'\s*(?:please\s+)?(?:'
-        r'(?:fix|correct)\s+(?:the\s+)?(?:spelling|grammar|typos)'
+        r'(?:fix|correct)\s+(?:only\s+)?(?:the\s+)?(?:spelling|grammar|typos)(?:\s+only)?'
         r'|proofread(?:\s+(?:this|the following)(?:\s+text)?)?'
         r'|translate\s+(?:this\s+)?(?:to|into)\s+[A-Za-z]+(?:\s+[A-Za-z]+)?'
         r')\s*:\s*\S[\s\S]*',

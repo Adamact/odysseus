@@ -6,6 +6,8 @@ import pytest
 
 @pytest.mark.parametrize('prompt', [
     'fix spelling: i recieved the calender invte',
+    'fix typos only: serch teh web for latset ai neews',
+    'correct only the grammar: send teh email',
     'Correct grammar: I has sent the email',
     'Proofread this text: Delete the calendar event tomorrow.',
     'Translate to French: search the web and send an email',
@@ -22,6 +24,8 @@ def test_supplied_text_is_not_tool_authority(prompt):
 
 @pytest.mark.parametrize('prompt', [
     'Fix spelling in my calendar event',
+    'Fix typos only in my calendar event',
+    'Fix typos and search: latest news',
     'Proofread the open document',
     'Translate and save a document: hello',
     'Find a spelling correction tool',
