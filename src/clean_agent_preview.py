@@ -1239,6 +1239,32 @@ def prior_web_source_answer(user_text, history):
     return candidates[-1] if candidates else ''
 
 
+def bounded_web_evidence_answer(user_text, source_links):
+    """Preserve useful Web evidence when a model will not stop searching.
+
+    This is a last-resort terminal response, not a substitute for synthesis. It
+    deliberately reports only source titles and URLs already returned by the
+    search provider so the harness cannot invent a summary or discard evidence
+    behind a generic tool-loop error.
+    """
+    unique = []
+    for item in source_links or ():
+        value = str(item or '').strip()
+        if value and value not in unique:
+            unique.append(value)
+    if not unique:
+        return ''
+    subject = re.sub(r'\s+', ' ', str(user_text or '')).strip().rstrip('?.!')
+    return (
+        f'I found current Web sources for “{subject}”, but could not complete a '
+        'reliable synthesis because the model kept requesting additional searches '
+        'after the bounded research budget. Here are the sources already found:\n\n'
+        + '\n'.join(f'- {link}' for link in unique[:5])
+        + '\n\nThese are preliminary search results; open the strongest source or ask me to '
+          'retry the synthesis before relying on details not visible in the titles.'
+    )
+
+
 def document_suggestions_event(result, *, failed=False):
     """Return the browser-owned inline-suggestion event for a successful call."""
     if failed or not isinstance(result, dict):
@@ -3815,6 +3841,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     artifact_body_handoff_target = ''
     artifact_write_phase = False
     suppression_completion_attempted = False
+    search_completion_attempted = False
     budget_completion_attempted = False
     answer_recovery_attempts = 0
     force_no_tools_next_round = False
@@ -4390,6 +4417,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     break
                 terminal_denial = False
                 terminal_suppression_violation = False
+                terminal_search_budget_violation = False
                 terminal_budget_violation = False
                 structured_terminal_response = ''
                 round_recovery_messages = []
@@ -4450,7 +4478,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             if not native_workspace_enabled and web_search_attempts > 3:
                                 suppressed_tool_until_round['web_search'] = round_limit + 1
                                 force_no_tools_next_round = True
-                                terminal_suppression_violation = True
+                                terminal_search_budget_violation = True
                                 calls += 1
                                 raise ValueError(
                                     'The bounded search-attempt budget is exhausted. Do not search '
@@ -5343,6 +5371,40 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     refusal = denied_response()
                     history.append({'role': 'assistant', 'content': refusal})
                     yield event({'type': 'final_response', 'content': refusal})
+                    break
+                if terminal_search_budget_violation:
+                    if not search_completion_attempted and round_number < round_limit:
+                        search_completion_attempted = True
+                        force_no_tools_next_round = True
+                        recovery = (
+                            'Research budget reached: no more tools will be offered. Using only '
+                            'the search evidence already returned, provide the complete final '
+                            'answer now with useful detail and source URLs. Do not emit a tool call.'
+                        )
+                        if history and history[-1].get('_harness_control'):
+                            history[-1]['content'] = (
+                                str(history[-1].get('content') or '') + ' ' + recovery
+                            )
+                        else:
+                            history.append({
+                                'role': 'user', '_harness_control': True, 'content': recovery,
+                            })
+                        yield event({
+                            'type': 'completion_recovery',
+                            'reason': 'bounded_search_final_synthesis',
+                        })
+                        continue
+                    evidence_answer = bounded_web_evidence_answer(
+                        direct_user_text, discovered_web_sources,
+                    )
+                    if not evidence_answer:
+                        evidence_answer = (
+                            'I could not find usable Web evidence within the bounded search '
+                            'attempts. I did not infer an answer from unsupported results. Try a '
+                            'narrower topic, date range, organization, or source type.'
+                        )
+                    history.append({'role': 'assistant', 'content': evidence_answer})
+                    yield event({'type': 'final_response', 'content': evidence_answer})
                     break
                 if terminal_suppression_violation:
                     missing_artifacts = missing_workspace_artifacts(latest_user, workspace)

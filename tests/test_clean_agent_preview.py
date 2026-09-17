@@ -5,7 +5,7 @@ import jsonschema
 import pytest
 import re
 
-from src.clean_agent_preview import conversation, readonly_call, preview_call_allowed, evaluate_preview_call, authorized_write_families, compact_schemas, normalize_preview_function_args, normalize_preview_call_args, private_browser_dom_batch, private_browser_state_transition, private_browser_success_repeat_limit, stream_preview, denied_response, execution_has_write_effect, requests_mutation, claims_completion, recent_successful_write_families, scope_preview_contract, multimodal_image_count, attachment_reference_count, active_document_context_message, active_email_context_message, targets_active_editor, active_editor_whole_draft_request, active_editor_suggestion_request, scope_active_editor_contract, native_execution_limits, interactive_execution_limit, runtime_required_artifacts, document_suggestions_event, document_suggestion_quality_error, required_read_tool_choice, required_active_editor_tool_choice, sealed_read_arguments, email_identifier_error, requested_item_limit, contract_item_limit, notes_terminal_response, documents_terminal_response, shell_listing_terminal_response, shell_output_terminal_response, ui_panel_terminal_response, ui_toggle_state_result, calendar_terminal_response, memory_terminal_response, tasks_terminal_response, task_list_requires_synthesis, skills_terminal_response, cookbook_servers_terminal_response, prior_short_answer_for_no_tool_summary, prior_collection_repeat_answer, prior_failed_operation_answer, prior_cookbook_server_answer, prior_workspace_path_answer, prior_web_source_answer, inherit_referential_read_arguments, normalized_search_intent, requested_web_source_links, web_source_links, requested_web_link_limit, preserve_requested_web_recency, ground_referenced_note_content, note_search_result_empty, note_referent_error, research_referent_error, private_browser_open_url, private_browser_effective_url, web_fetch_observation_is_boilerplate, broad_current_web_request, record_tool_execution, align_structured_tool_history, provider_request_messages, offered_tool_alias, dependent_write_prerequisite_error, bounded_research_tool_policy, retrieved_source_urls, serialize_required_email_attachment_chain
+from src.clean_agent_preview import conversation, readonly_call, preview_call_allowed, evaluate_preview_call, authorized_write_families, compact_schemas, normalize_preview_function_args, normalize_preview_call_args, private_browser_dom_batch, private_browser_state_transition, private_browser_success_repeat_limit, stream_preview, denied_response, execution_has_write_effect, requests_mutation, claims_completion, recent_successful_write_families, scope_preview_contract, multimodal_image_count, attachment_reference_count, active_document_context_message, active_email_context_message, targets_active_editor, active_editor_whole_draft_request, active_editor_suggestion_request, scope_active_editor_contract, native_execution_limits, interactive_execution_limit, runtime_required_artifacts, document_suggestions_event, document_suggestion_quality_error, required_read_tool_choice, required_active_editor_tool_choice, sealed_read_arguments, email_identifier_error, requested_item_limit, contract_item_limit, notes_terminal_response, documents_terminal_response, shell_listing_terminal_response, shell_output_terminal_response, ui_panel_terminal_response, ui_toggle_state_result, calendar_terminal_response, memory_terminal_response, tasks_terminal_response, task_list_requires_synthesis, skills_terminal_response, cookbook_servers_terminal_response, prior_short_answer_for_no_tool_summary, prior_collection_repeat_answer, prior_failed_operation_answer, prior_cookbook_server_answer, prior_workspace_path_answer, prior_web_source_answer, bounded_web_evidence_answer, inherit_referential_read_arguments, normalized_search_intent, requested_web_source_links, web_source_links, requested_web_link_limit, preserve_requested_web_recency, ground_referenced_note_content, note_search_result_empty, note_referent_error, research_referent_error, private_browser_open_url, private_browser_effective_url, web_fetch_observation_is_boilerplate, broad_current_web_request, record_tool_execution, align_structured_tool_history, provider_request_messages, offered_tool_alias, dependent_write_prerequisite_error, bounded_research_tool_policy, retrieved_source_urls, serialize_required_email_attachment_chain
 from src.tool_capabilities import capabilities_for_tool
 
 
@@ -1889,6 +1889,21 @@ def test_broad_briefing_requires_substance_and_clickable_source_links():
         substantial + ' https://example.org/report', 'AI news'
     )
     assert not incomplete_broad_web_answer('Short answer.', 'What is Python?')
+
+
+def test_bounded_web_evidence_answer_preserves_sources_without_claiming_synthesis():
+    answer = bounded_web_evidence_answer(
+        "What's happening in Norway?",
+        [
+            '[Source: Norway election update](https://example.org/norway-election)',
+            '[Source: Norway economy update](https://example.net/norway-economy)',
+        ],
+    )
+
+    assert 'could not complete a reliable synthesis' in answer
+    assert 'https://example.org/norway-election' in answer
+    assert 'https://example.net/norway-economy' in answer
+    assert 'repeated a tool call after that tool was disabled' not in answer
 
 
 def test_followup_search_must_change_subject_angle_not_only_freshness():
