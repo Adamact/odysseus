@@ -4031,7 +4031,9 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     official_source_retry_attempted = False
     note_search_recovery_attempted = False
     replace_streamed_draft_on_finish = False
-    buffer_completion_drafts = broad_current_web_request(direct_user_text) or requested_web_source_links(direct_user_text)
+    # Stream model text immediately. A canonical final event reconciles any
+    # draft that completion/research checks subsequently replace.
+    finalize_search_answer = broad_current_web_request(direct_user_text) or requested_web_source_links(direct_user_text)
     usage_in = usage_out = 0
     has_real_usage = False
     first_request_tokens = last_request_tokens = 0
@@ -4253,7 +4255,6 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             if (
                                 not prior_summary_answer
                                 and not progressive_thinking
-                                and not buffer_completion_drafts
                             ):
                                 yield event({'delta': text})
                         for fragment in delta.get('tool_calls') or []:
@@ -4264,7 +4265,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                 call['function'][key] += (fragment.get('function') or {}).get(key) or ''
                 if progressive_thinking:
                     content = visible_content_after_qwen_thinking(content)
-                    if content and not prior_summary_answer and not buffer_completion_drafts:
+                    if content and not prior_summary_answer:
                         yield event({'delta': content})
                 proposed = [pending[i] for i in sorted(pending)]
                 proposed = serialize_required_email_attachment_chain(
@@ -4550,7 +4551,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         yield event({'delta': suffix})
                     if not content:
                         yield event({'delta': 'The test model returned no answer. No substitute answer was generated.'})
-                    elif replace_streamed_draft_on_finish or buffer_completion_drafts:
+                    elif replace_streamed_draft_on_finish or finalize_search_answer:
                         yield event({'type': 'final_response', 'content': content})
                     break
                 # Treat a model-proposed call batch atomically for preview

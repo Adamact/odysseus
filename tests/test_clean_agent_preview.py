@@ -1313,10 +1313,14 @@ async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatc
         and 'fuller evidence-based briefing' in event.get('content', '')
         for event in events
     )
-    assert not any(
+    assert any(
         event.get('delta') == 'Current AI news includes reports about U.'
         for event in events
     )
+    # Live drafts may be visible, but the final canonical answer replaces the
+    # incomplete draft rather than persisting both as one answer.
+    final = [event['content'] for event in events if event.get('type') == 'final_response'][-1]
+    assert 'Current AI news includes reports about U.' not in final
 
 
 def test_task_renderer_honors_few_and_filters_confirmed_morning_schedule():

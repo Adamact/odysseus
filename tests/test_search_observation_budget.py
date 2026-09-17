@@ -177,6 +177,50 @@ def test_short_search_results_are_unchanged():
     assert preview_tool_result_text({'output': text}, 'web_search', {}) == text
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('prompt', ['latest AI news', 'Explain these findings with sources'])
+async def test_search_answer_streams_before_upstream_completion(monkeypatch, prompt):
+    import src.clean_agent_preview as runtime
+    from src.tool_policy import ToolPolicy
+    from src.turn_contract import resolve_full_inventory_contract
+    consumed = []
+    class Response:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def raise_for_status(self): pass
+        async def aiter_lines(self):
+            for part in ['Supported finding. ', 'Source: https://example.org/report']:
+                consumed.append(part)
+                yield 'data: ' + json.dumps({'choices': [{'delta': {'content': part}}]})
+            consumed.append('DONE')
+            yield 'data: [DONE]'
+    class Client:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def stream(self, *args, **kwargs): return Response()
+    monkeypatch.setattr(runtime.httpx, 'AsyncClient', Client)
+    contract = resolve_full_inventory_contract(schemas=[], policy=ToolPolicy())
+    events = []
+    async for chunk in runtime.stream_preview(
+        endpoint_url='http://test', model='test', headers={},
+        messages=[{'role': 'user', 'content': prompt}], turn_contract=contract,
+        session_id='test', owner='test', disabled_tools=set(), tool_policy=ToolPolicy(), max_rounds=1,
+    ):
+        if '[DONE]' in chunk:
+            continue
+        event = json.loads(chunk[6:])
+        events.append(event)
+        if event.get('delta') == 'Supported finding. ':
+            assert consumed == ['Supported finding. '], 'First chunk was buffered until model completion'
+    assert [e['delta'] for e in events if e.get('delta')] == [
+        'Supported finding. ', 'Source: https://example.org/report',
+    ]
+    assert [e['content'] for e in events if e.get('type') == 'final_response'] == [
+        'Supported finding. Source: https://example.org/report',
+    ]
+
+
 def test_failure_status_is_not_lost_to_search_compaction():
     result = {'output': 'Partial evidence. ' * 1000, 'error': 'fetch failed', 'exit_code': 1}
     output = preview_tool_result_text(result, 'web_search', {})

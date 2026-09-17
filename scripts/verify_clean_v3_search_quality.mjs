@@ -81,6 +81,8 @@ async function send(page, prompt) {
   const metrics = events.find(event => event.type === 'metrics')?.data;
   const observation = {
     prompt, seconds: (performance.now() - started) / 1000,
+    streamed_text_chunks: events.filter(event => typeof event.delta === 'string' && event.delta.length).length,
+    final_replacement_count: events.filter(event => event.type === 'final_response').length,
     rounds: metrics?.agent_rounds ?? null,
     tool_execution_timings: metrics?.tool_execution_timings || [],
     runtime_seconds: metrics?.response_time ?? null,
