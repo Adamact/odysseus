@@ -684,6 +684,7 @@ def test_service_ddg_html_fallback_sends_safesearch(monkeypatch):
 
     def fake_get(url, **kwargs):
         seen["params"] = kwargs["params"]
+        seen["timeout"] = kwargs["timeout"]
         return _Response()
 
     monkeypatch.setattr(providers, "_get_search_settings", lambda: {"search_safesearch": "off"})
@@ -693,4 +694,5 @@ def test_service_ddg_html_fallback_sends_safesearch(monkeypatch):
     results = providers.duckduckgo_search("odysseus", count=1)
 
     assert seen["params"]["kp"] == "-2"
+    assert seen["timeout"] <= 5
     assert results[0]["url"].startswith("https://notduckduckgo.com/")

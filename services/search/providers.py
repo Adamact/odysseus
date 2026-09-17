@@ -453,7 +453,11 @@ def duckduckgo_search(query: str, count: Optional[int] = None, time_filter: Opti
                 "https://html.duckduckgo.com/html/",
                 params={"q": query, "kp": _safesearch_for("duckduckgo_html")},
                 headers={"User-Agent": WEB_FETCH_USER_AGENT},
-                timeout=REQUEST_TIMEOUT,
+                # This is a last-resort compatibility path when the declared
+                # optional ``ddgs`` dependency is absent. Keep it short so a
+                # blocked public endpoint cannot consume the full search SLA
+                # across provider and query-relaxation retries.
+                timeout=min(REQUEST_TIMEOUT, 5),
             )
             response.raise_for_status()
             soup = BeautifulSoup(response.text, "html.parser")
