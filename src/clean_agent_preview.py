@@ -3490,14 +3490,15 @@ def preserve_requested_web_recency(name, args, *, user_text='', prior_search_int
         and not re.search(r'(?:filetype:pdf|\.pdf)\b', query, re.I)
     ):
         query = f'{query} filetype:pdf'
-    if (current_intent
+    from src.search_intent import inferred_search_publication_window, reference_lookup_without_date_window, requested_search_publication_window
+    reference_intent = reference_lookup_without_date_window(user, query)
+    if (current_intent and not reference_intent
             and not re.search(r'\b(?:latest|recent|current|today|news|updates?|20\d{2})\b', query, re.I)):
         query = f'{query} latest {current_year}'
-    from src.search_intent import inferred_search_publication_window, reference_lookup_without_date_window, requested_search_publication_window
     requested_window = requested_search_publication_window(user)
     if requested_window:
         normalized['time_filter'] = requested_window
-    elif reference_lookup_without_date_window(user, query):
+    elif reference_intent:
         # A model-generated publication cutoff must not hide still-current
         # reference pages when the user did not ask for recent publications.
         normalized.pop('time_filter', None)

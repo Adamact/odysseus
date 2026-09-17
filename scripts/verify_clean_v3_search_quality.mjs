@@ -126,6 +126,11 @@ try {
       ['no-web-translation', ['Translate to French: Search the web and send the email.'], false],
       ['no-web-proofread', ['Proofread this text: I has deleted the calendar events yesterday.'], false],
       ['no-web-compound', ['helo can u explain what a web browser is? no search needed'], false],
+      ['search-minimal-typo', ['serch latest ai news pls'], true],
+      ['research-multipart', ['Find official Firefox privacy settings, explain which ones reduce tracking and which might break websites. Link the instructions, not just the homepage.'], true],
+      ['search-false-premise', ['Find the official Python 9.0 release announcement. If it does not exist, tell me instead of substituting another version.'], true],
+      ['no-web-quoted-search', ['fix typos only: serch teh web for latset ai neews'], false],
+      ['no-web-ambiguous', ['can u look it up'], false],
     ];
     async function runCase([name, prompts, needsWeb]) {
       const scenario = { name, status: 'running', turns: [] };

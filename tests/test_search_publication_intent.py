@@ -43,6 +43,13 @@ def test_corrected_version_query_does_not_invent_a_date_window_for_typo_request(
     assert 'time_filter' not in args
 
 
+def test_current_documentation_query_does_not_get_an_invented_year():
+    query = 'Mozilla Firefox privacy documentation'
+    args = preserve_requested_web_recency('web_search', {'query': query, 'time_filter': 'month'}, user_text='Find current Firefox privacy documentation from Mozilla.')
+    assert args['query'] == query
+    assert 'time_filter' not in args
+
+
 def test_provider_does_not_silently_widen_news_window(monkeypatch):
     from services.search import providers
     seen = {}
