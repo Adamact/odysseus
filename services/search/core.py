@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List, Set
 from urllib.parse import urlparse
+from src.search_passages import search_excerpt
 
 import httpx
 
@@ -1108,9 +1109,7 @@ def comprehensive_web_search(
             output_parts.append(f"Title: {content['title']}")
             output_parts.append("-" * 30)
 
-            text = content["content"][:3000]
-            if len(content["content"]) > 3000:
-                text += "... [truncated]"
+            text = search_excerpt(content["content"], provider_query, 3000)
             output_parts.append(text)
 
             key_points = extract_key_points(content["content"])

@@ -190,7 +190,8 @@ def bounded_search_observation(output, budget=8000):
         body = output[match.end():end]
         body = re.split(r'\n(?:Key Points:|TL;DR:|Important Quotes:|Data / Statistics:|={20,}|<!-- SOURCES:)', body, maxsplit=1)[0].strip()
         if len(body) > per_page:
-            body = body[:per_page - 15].rstrip() + '\n[...excerpt]'
+            from src.search_passages import search_excerpt
+            body = search_excerpt(body, query_match.group(0) if query_match else '', per_page)
         blocks.append(headers[index] + body)
     return prefix + '\n\n' + '\n\n'.join(blocks) + suffix
 
