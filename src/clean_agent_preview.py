@@ -4667,6 +4667,12 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                 terminal_budget_violation = False
                 structured_terminal_response = ''
                 round_recovery_messages = []
+                # Keep an OpenAI-compatible tool-call batch contiguous.  A
+                # multimodal user message inserted between sibling tool
+                # results makes providers such as DeepSeek reject the next
+                # request with HTTP 400.  Collect visual evidence while the
+                # batch executes and append it only after every tool result.
+                round_visual_blocks = []
                 for call in proposed:
                     name = offered_tool_alias(call['function']['name'], round_offered)
                     arguments = call['function']['arguments']
@@ -5411,6 +5417,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     visual_blocks = bounded_visual_result_blocks(result, max_images=3)
                     if visual_blocks:
                         tool_event['screenshot'] = visual_blocks[0]['image_url']['url']
+                        round_visual_blocks.extend(visual_blocks)
                     record_tool_execution(executions, tool_event)
                     yield event(tool_event)
                     history.append({'role': 'tool', 'tool_call_id': call['id'], 'content': output})
@@ -5596,18 +5603,18 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             "I couldn't check the inbox because one or more email accounts are "
                             "currently unavailable. No reliable empty-inbox result was returned."
                         )
-                    if visual_blocks:
-                        visual_message = untrusted_context_message(
-                            'tool visual evidence',
-                            'Visual evidence returned by tool execution.',
-                        )
-                        visual_message['content'] = [
-                            {'type': 'text', 'text': visual_message['content']},
-                            *visual_blocks,
-                        ]
-                        history.append(visual_message)
                     if policy_denied:
                         terminal_denial = True
+                if round_visual_blocks:
+                    visual_message = untrusted_context_message(
+                        'tool visual evidence',
+                        'Visual evidence returned by tool execution.',
+                    )
+                    visual_message['content'] = [
+                        {'type': 'text', 'text': visual_message['content']},
+                        *round_visual_blocks[:3],
+                    ]
+                    history.append(visual_message)
                 if artifact_body_handoff_target:
                     force_no_tools_next_round = True
                     replace_streamed_draft_on_finish = True

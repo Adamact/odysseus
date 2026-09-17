@@ -5607,3 +5607,66 @@ async def test_native_stream_marks_masked_shell_pipeline_failure_as_error(monkey
     assert output['error'] is True
     assert output['exit_code'] == 1
     assert 'No such file or directory' in output['output']
+
+
+@pytest.mark.asyncio
+async def test_parallel_tool_results_precede_visual_evidence(monkeypatch):
+    import src.clean_agent_preview as module
+
+    responses = iter([
+        {"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "id": "inspect", "function": {
+                "name": "inspect_media", "arguments": json.dumps({"path": "/workspace/input.png"})}},
+            {"index": 1, "id": "list", "function": {
+                "name": "ls", "arguments": json.dumps({"path": "/workspace"})}},
+        ]}}]},
+        {"choices": [{"delta": {"content": "Done."}}]},
+    ])
+
+    class Response:
+        def __init__(self, payload): self.payload = payload
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def raise_for_status(self): pass
+        async def aiter_lines(self):
+            yield "data: " + json.dumps(self.payload)
+            yield "data: [DONE]"
+
+    requests = []
+
+    class Client:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def stream(self, *args, **kwargs):
+            requests.append(kwargs["json"])
+            return Response(next(responses))
+
+    async def execute(block, **kwargs):
+        if block.tool_type == "inspect_media":
+            return "inspect_media", {
+                "output": "image evidence", "exit_code": 0,
+                "images": [{"mimeType": "image/png", "data": "aQ=="}],
+            }
+        return "ls", {"output": "input.png", "exit_code": 0}
+
+    monkeypatch.setattr(module.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(module, "execute_tool_block", execute)
+    schemas = [
+        next(item for item in FUNCTION_TOOL_SCHEMAS if item["function"]["name"] == name)
+        for name in ("inspect_media", "ls")
+    ]
+    contract = resolve_full_inventory_contract(schemas=schemas, policy=ToolPolicy())
+    _ = [chunk async for chunk in stream_preview(
+        endpoint_url="http://test", model="test", headers={},
+        messages=[{"role": "user", "content": "Inspect and list."}],
+        turn_contract=contract, session_id="test", owner="test",
+        disabled_tools=set(), tool_policy=ToolPolicy(), workspace="/tmp/workspace",
+        client_runtime_context={"surface": "odysseus-native", "terminal_agent": True,
+                                "unattended_mode": True}, max_rounds=2,
+    )]
+
+    messages = requests[1]["messages"]
+    assistant_index = max(i for i, message in enumerate(messages) if message["role"] == "assistant")
+    assert [message["role"] for message in messages[assistant_index + 1:]] == ["tool", "tool", "user"]
+    assert messages[-1]["content"][1]["type"] == "image_url"
