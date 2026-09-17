@@ -3412,6 +3412,23 @@ def browser_observation_access_blocked(raw):
     ))
 
 
+def web_fetch_observation_is_boilerplate(raw):
+    """Detect a nominally successful fetch containing repeated site chrome only."""
+    text = re.sub(r'\s+', ' ', str(raw or '')).strip()
+    words = re.findall(r"[A-Za-z0-9][A-Za-z0-9'’-]*", text.casefold())
+    if len(words) < 100:
+        return False
+    width = 12
+    shingles = [tuple(words[index:index + width]) for index in range(len(words) - width + 1)]
+    if not shingles:
+        return False
+    counts = {}
+    for shingle in shingles:
+        counts[shingle] = counts.get(shingle, 0) + 1
+    repeated = sum(count - 1 for count in counts.values() if count > 1)
+    return max(counts.values(), default=0) >= 3 and repeated / len(shingles) >= 0.25
+
+
 def bounded_visual_result_blocks(result, *, max_images=3):
     """Return all inline tool pixels packed within the model image limit."""
     images = result.get('images') if isinstance(result, dict) else None
@@ -3772,6 +3789,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     answer_recovery_attempted = False
     force_no_tools_next_round = False
     force_web_search_next_round = False
+    force_private_browser_next_round = False
     suggestion_retry_required = False
     suggestion_retry_attempted = False
     media_detail_nudge_sent = False
@@ -3955,6 +3973,20 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                 'function': {'name': web_search_name},
                             }
                         force_web_search_next_round = False
+                    if force_private_browser_next_round:
+                        private_browser_name = next(
+                            (
+                                schema['function']['name'] for schema in round_offered
+                                if canonical(schema['function']['name']) == 'private_browser'
+                            ),
+                            None,
+                        )
+                        if private_browser_name:
+                            request['tool_choice'] = {
+                                'type': 'function',
+                                'function': {'name': private_browser_name},
+                            }
+                        force_private_browser_next_round = False
                 pending, content = {}, ''
                 async with preview_model_response(client, endpoint_url, headers, request, context_recovery) as response:
                     response.raise_for_status()
@@ -4672,6 +4704,24 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         result.get('error')
                         or result.get('exit_code') not in (None, 0)
                     )
+                    if (
+                        not failed
+                        and canonical(actual_tool) == 'web_fetch'
+                        and web_fetch_observation_is_boilerplate(output)
+                    ):
+                        recovery = (
+                            'The static fetch returned repeated navigation or site chrome without '
+                            'substantive page content. Treat it as unreadable and use the rendered '
+                            'private browser for the same URL.'
+                        )
+                        result = {**result, 'error': recovery, 'exit_code': 1}
+                        output = recovery
+                        failed = True
+                        force_private_browser_next_round = True
+                        yield event({
+                            'type': 'tool_loop_recovery',
+                            'reason': 'web_fetch_boilerplate_fallback',
+                        })
                     if not failed and canonical(actual_tool) == 'web_search':
                         successful_web_searches += 1
                         if successful_web_searches == 2 and not required_artifacts:
