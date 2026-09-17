@@ -73,6 +73,14 @@ Further provider inspection found that the news-to-general fallback dropped the 
 
 ## Outstanding work
 
+### Additional informal/multi-part live checks
+
+`reports/clean-v3-search-quality-2026-09-17T21-09-49-686Z.json` completed five additional cases. No overall quality pass: short misspelled news took 48.9 seconds and exhausted research without synthesis; Firefox instructions took 32.2 seconds and omitted requested links; a context-free “can u look it up” invented a game-release topic; correction-only text incorrectly triggered news research. The Python false-premise answer rejected Python 9.0, but its extra latest-version claim still needs source verification.
+
+The Firefox trace showed HTTP-200 access-challenge pages treated as article evidence. `d1db1353` classifies short interstitials using corroborating title/body signals, emits an explicit fetch failure with recovery guidance, leaves ordinary articles intact, and avoids caching transient challenges. `44b56a46` preserves the supplied-text boundary for correction-only phrasing. Combined regression run: 1,249 passed. Both deployed; live targeted replay pending. Neither unit tests nor deployment establishes improved research quality.
+
+Earlier `fb669cde` added query-focused extractive passages to preserve relevant evidence beyond page prefixes. `f7532bd3` stopped appending an invented current year to evergreen reference queries. Latest suite covers 23 conversations, not 23 validated successes.
+
 1. Finish and manually audit all 16 conversations; inspect claim/source alignment, request completion, follow-up referents, and latency.
 2. Distinguish provider emptiness from model query drift and unsupported synthesis. Do not label every weak answer a routing defect.
 3. Preserve explicit user source constraints even when model queries omit them; do not infer official provenance from URL appearance.
