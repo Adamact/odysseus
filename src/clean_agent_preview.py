@@ -3224,7 +3224,17 @@ def web_source_links(raw, *, max_items=1, prefer_official=False, query=''):
                 host == domain or host.endswith('.' + domain)
                 for domain in official_domains
             )
-            if query_host_match or not official_domains:
+            direct_document = bool(re.search(
+                r'\.(?:pdf|docx?|xlsx?|pptx?)(?:$|[?#])', row[1], re.I,
+            ))
+            query_tokens_in_url = any(
+                token in row[1].casefold()
+                for token in query_tokens
+                if len(token) >= 4
+            )
+            if query_host_match or (
+                not official_domains and direct_document and query_tokens_in_url
+            ):
                 primary.append(row)
         rows = primary
     links = []
@@ -3383,23 +3393,51 @@ def requested_web_link_limit(user_text):
     return max(1, min(5, int(token) if token.isdigit() else words[token]))
 
 
-def preserve_requested_web_recency(name, args, *, user_text=''):
-    """Keep explicit source/freshness intent when the model shortens a query."""
+def preserve_requested_web_recency(name, args, *, user_text='', prior_search_intents=()):
+    """Ground omitted/stale search arguments in the user's current request."""
     if canonical(name) != 'web_search' or not isinstance(args, dict):
         return args
     user = str(user_text or '')
     query = str(args.get('query') or '').strip()
     if not query:
-        return args
+        query = re.sub(r'\s+', ' ', user).strip().rstrip('?.!')
+        if prior_search_intents:
+            query += ' corroborating analysis authoritative sources'
+        if not query:
+            return args
     normalized = dict(args)
+    current_year = datetime.now(timezone.utc).year
+    current_intent = bool(re.search(
+        r"\b(?:latest|recent|current|today(?:'s)?|news|updates?|"
+        r"what(?:'s|\s+is)\s+(?:new|happening))\b",
+        user,
+        re.I,
+    ))
+    if current_intent and not re.search(r'\b20\d{2}\b', user):
+        query = re.sub(r'\b20(?:0\d|1\d|2[0-5])\b', str(current_year), query)
     if re.search(r'\bofficial\b', user, re.I) and not re.search(r'\bofficial\b', query, re.I):
         query = f'{query} official source'
     domains = official_domains_for_text(user + ' ' + query)
     if re.search(r'\bofficial\b', user, re.I) and domains and 'site:' not in query:
         query = f'{query} site:{domains[0]}'
-    if (re.search(r'\b(?:latest|recent|current|today|news|updates?)\b', user, re.I)
+    if (
+        re.search(r'\bofficial\b', user, re.I)
+        and re.search(r'\b(?:manual|handbook|pdf)\b', user, re.I)
+        and not re.search(r'(?:filetype:pdf|\.pdf)\b', query, re.I)
+    ):
+        query = f'{query} filetype:pdf'
+    if (current_intent
             and not re.search(r'\b(?:latest|recent|current|today|news|updates?|20\d{2})\b', query, re.I)):
-        query = f'{query} latest {datetime.now(timezone.utc).year}'
+        query = f'{query} latest {current_year}'
+    if current_intent and not normalized.get('time_filter'):
+        if re.search(r'\b(?:version|release|driver)\b', user, re.I):
+            normalized['time_filter'] = 'year'
+        elif re.search(r"\btoday(?:'s)?\b", user, re.I):
+            normalized['time_filter'] = 'day'
+        elif re.search(r'\brecent\b', user, re.I):
+            normalized['time_filter'] = 'month'
+        else:
+            normalized['time_filter'] = 'week'
     normalized['query'] = query
     return normalized
 
@@ -4445,6 +4483,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         )
                         args = preserve_requested_web_recency(
                             name, args, user_text=direct_user_text,
+                            prior_search_intents=successful_search_intents,
                         )
                         args = preserve_requested_email_account(
                             name, args, user_text=direct_user_text,
@@ -5096,6 +5135,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                               and re.search(r'\bofficial\b', direct_user_text, re.I)):
                             if not official_source_retry_attempted and round_number < round_limit:
                                 official_source_retry_attempted = True
+                                force_web_search_next_round = True
                                 round_recovery_messages.append(
                                     'No verifiable official-domain source was returned. Search once more '
                                     'with the official organization or domain made explicit; do not cite '

@@ -1916,6 +1916,61 @@ def test_followup_search_must_change_subject_angle_not_only_freshness():
     )
 
 
+def test_current_search_arguments_repair_stale_year_and_add_freshness():
+    args = preserve_requested_web_recency(
+        'web_search',
+        {'query': 'Norway current events updated 2025'},
+        user_text="What's happening in Norway?",
+    )
+
+    assert '2025' not in args['query']
+    assert str(__import__('datetime').datetime.now(__import__('datetime').timezone.utc).year) in args['query']
+    assert args['time_filter'] == 'week'
+
+
+def test_missing_refinement_query_is_grounded_in_user_request():
+    args = preserve_requested_web_recency(
+        'web_search',
+        {'time_filter': 'day'},
+        user_text='What are the latest important AI developments?',
+        prior_search_intents=['important ai developments'],
+    )
+
+    assert 'AI developments' in args['query']
+    assert 'corroborating analysis' in args['query']
+    assert args['time_filter'] == 'day'
+
+
+def test_official_manual_search_requests_direct_pdf_results():
+    args = preserve_requested_web_recency(
+        'web_search',
+        {'query': 'WIKING Miro stove manual official source'},
+        user_text='Find the official English WIKING Miro stove manual online.',
+    )
+
+    assert args['query'].endswith('filetype:pdf')
+
+
+def test_unknown_official_domain_rejects_reseller_but_accepts_direct_document():
+    raw = '''
+[1] WIKING Miro 4 Wood Burning Stove
+    https://scottishstovecentre.co.uk/product/wiking-miro-4/
+[2] WIKING Miro Installation and User Manual
+    https://www.hwam.com/pub/media/wiking/53-0756_Miro_EN.pdf
+'''
+
+    links = web_source_links(
+        raw, max_items=2, prefer_official=True,
+        query='WIKING Miro stove manual official source filetype:pdf',
+    )
+
+    assert links == [(
+        'https://www.hwam.com/pub/media/wiking/53-0756_Miro_EN.pdf',
+        '[Source: WIKING Miro Installation and User Manual]'
+        '(https://www.hwam.com/pub/media/wiking/53-0756_Miro_EN.pdf)',
+    )]
+
+
 def test_web_fetch_collapses_single_and_batch_url_fields_without_losing_targets():
     tool, args = normalize_preview_function_args('web_fetch', {
         'url': 'https://example.org/a',
