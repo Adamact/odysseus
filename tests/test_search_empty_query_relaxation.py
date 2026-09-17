@@ -23,6 +23,20 @@ def test_empty_document_search_relaxes_scaffolding_then_entity():
     ]
 
 
+def test_manual_relevance_rejects_homonym_without_brand_and_model():
+    query = 'WIKING Miro 3 English manual official source'
+    assert not core._result_has_query_overlap(query, {
+        'title': 'Miro Appliance User Manuals',
+        'url': 'https://shop.mirohome.com/pages/miro-appliance-user-manuals',
+        'snippet': 'Manuals for Miro humidifiers and air purifiers.',
+    })
+    assert core._result_has_query_overlap(query, {
+        'title': 'WIKING Miro 3 Installation and User Manual',
+        'url': 'https://www.hwam.com/manuals/wiking-miro-3.pdf',
+        'snippet': 'Official English installation and user manual.',
+    })
+
+
 def test_search_uses_entity_relaxation_only_after_exact_queries_are_empty(
     monkeypatch, tmp_path,
 ):

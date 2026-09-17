@@ -237,6 +237,28 @@ def _result_has_query_overlap(query: str, result: dict) -> bool:
         )
     result_tokens = set(re.findall(r"[a-z0-9]+", text))
 
+    document_cues = {
+        "manual", "manuals", "guide", "guides", "instructions", "instruction",
+        "documentation", "docs", "pdf", "handbook",
+    }
+    if query_tokens & document_cues:
+        entity_fillers = _SEARCH_QUERY_FILLER | document_cues | {
+            "english", "operator", "owner", "owners", "user", "installation",
+        }
+        ordered_query_tokens = re.findall(r"[a-z0-9]+", str(query or "").lower())
+        entity_terms = [
+            token for token in ordered_query_tokens
+            if token not in entity_fillers and not token.isdigit()
+        ]
+        # Product/manual lookups are especially vulnerable to homonyms. A
+        # result matching only the generic product word and "manual" is not
+        # evidence for the named brand/entity in the request.
+        if entity_terms and entity_terms[0] not in result_tokens:
+            return False
+        model_numbers = {token for token in ordered_query_tokens if token.isdigit()}
+        if model_numbers and not model_numbers.issubset(result_tokens):
+            return False
+
     def lexical_root(word: str) -> str:
         for suffix in ("ation", "ition", "ence", "ance", "ment", "ents", "ent", "ant", "ing", "ed", "es", "s"):
             if word.endswith(suffix) and len(word) - len(suffix) >= 6:
