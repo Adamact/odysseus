@@ -85,6 +85,18 @@ def test_provider_request_messages_strips_internal_metadata_without_mutating_his
     assert history[0]['metadata']['trusted'] is False
 
 
+def test_provider_wire_messages_drops_empty_assistant_placeholder():
+    from src.clean_agent_preview import provider_wire_messages
+
+    history = [
+        {'role': 'assistant', 'content': None},
+        {'role': 'user', 'content': 'Completion check: create the artifact.'},
+    ]
+
+    assert provider_request_messages(history) == history
+    assert provider_wire_messages(history) == [history[1]]
+
+
 def test_private_browser_observations_do_not_advance_page_revision():
     assert private_browser_state_transition({'action': 'snapshot'}, 'https://example.org') == (
         False, 'https://example.org')

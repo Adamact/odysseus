@@ -3733,6 +3733,25 @@ def provider_request_messages(messages):
     return cleaned
 
 
+def provider_wire_messages(messages):
+    """Drop invalid placeholders only at the provider serialization boundary."""
+    cleaned = []
+    for item in provider_request_messages(messages):
+        item.pop('_harness_control', None)
+        # A reasoning-only/contentless model turn may be followed by a
+        # harness-owned completion recovery.  Persisting that empty assistant
+        # placeholder makes strict OpenAI-compatible providers reject the next
+        # request because neither content nor tool_calls is present.
+        if (
+            item.get('role') == 'assistant'
+            and not item.get('content')
+            and not item.get('tool_calls')
+        ):
+            continue
+        cleaned.append(item)
+    return cleaned
+
+
 def record_tool_execution(executions, tool_event):
     """Persist one latest browser preview while live events can show every step."""
     if canonical(tool_event.get('tool', '')) == 'private_browser' and tool_event.get('screenshot'):
@@ -3765,10 +3784,10 @@ async def preview_model_response(client, endpoint_url, headers, request, recover
                 request['messages'], max(1, int(message_context * recovery.get('scale', 1))),
                 reserve_tokens=request['max_tokens'] + context_safety_margin(limit))
         # Server-only provenance guides trimming, not the model's wire schema.
-        provider_request = {**request, 'messages': [
-            {key: value for key, value in message.items() if key != '_harness_control'}
-            for message in request['messages']
-        ]}
+        provider_request = {
+            **request,
+            'messages': provider_wire_messages(request['messages']),
+        }
         response_started = False
         try:
             async with client.stream(
