@@ -29,8 +29,20 @@ print(eval(compile(ast.Expression(assignment.value), '<canonical-system-expressi
 const results = [];
 const placements = (process.env.PLACEMENTS || 'user_evidence,tool_evidence,harness_system').split(',');
 for (const placement of placements) {
-  const messages = [placement === 'harness_system' ? {role:'system',content:harnessSystem} : system, {role:'user', content:turn.prompt}];
-  if (placement === 'user_evidence') {
+  const tracePlacement = ['trace_full', 'trace_no_controls'].includes(placement);
+  const messages = [placement === 'harness_system' || tracePlacement ? {role:'system',content:harnessSystem} : system, {role:'user', content:turn.prompt}];
+  if (tracePlacement) {
+    const trace = structuredClone(turn.runtime_trace || []);
+    if (!trace.length) throw Error('Native runtime trace required');
+    // Remove only the recorded final answer. Both variants keep identical
+    // successful/failed tool observations and earlier assistant messages.
+    if (trace.at(-1)?.role === 'assistant' && !trace.at(-1)?.tool_calls?.length) trace.pop();
+    for (const message of trace) {
+      if (placement === 'trace_no_controls' && message._harness_control) continue;
+      const {role, content, tool_calls, tool_call_id} = message;
+      messages.push({role, content, ...(tool_calls ? {tool_calls} : {}), ...(tool_call_id ? {tool_call_id} : {})});
+    }
+  } else if (placement === 'user_evidence') {
     messages[1].content += '\n\nSEARCH EVIDENCE:\n' + evidence.map(x => x.output).join('\n\n');
   } else {
     for (const [i, item] of evidence.entries()) {
@@ -47,6 +59,7 @@ for (const placement of placements) {
   if (!response.ok) throw Error(`Endpoint HTTP ${response.status}`);
   const data = await response.json();
   const result = {placement,seconds:(performance.now()-started)/1000,
+    message_count:messages.length,
     answer:data.choices[0].message.content,finish_reason:data.choices[0].finish_reason,usage:data.usage};
   results.push(result); console.log(JSON.stringify(result));
 }
