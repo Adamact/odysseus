@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-/** Real 7011 search quality/follow-up checks; stores no fetched page bodies. */
+/** Real 7011 checks; saves bounded public evidence for manual quality review. */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { chromium } from 'playwright';
 
 const root = path.resolve(new URL('..', import.meta.url).pathname);
@@ -20,7 +21,10 @@ const token = Object.entries(sessions).find(([, value]) => value?.username === o
 if (!token) throw Error(`No active ${owner} session`);
 
 const marker = `ody-search-${crypto.randomUUID()}`;
-const report = { run, owner, marker, model, endpointUrl, status: 'running', scenarios: [], turns: [], privacy: 'Public test queries and bounded public tool evidence; no private account data.' };
+const harnessCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+const report = { run, owner, marker, model, endpointUrl, checkout_commit: harnessCommit,
+  provenance_note: 'Checkout commit; confirm deployment separately. Per-turn contract/model are recorded.',
+  status: 'running', scenarios: [], turns: [], privacy: 'Public test queries and bounded public tool evidence; no private account data.' };
 const save = () => fs.writeFileSync(reportPath, JSON.stringify(report, null, 2) + '\n');
 fs.mkdirSync(path.dirname(reportPath), { recursive: true }); save();
 const canonical = value => String(value || '').replace(/^mcp__email__/, '');
@@ -67,6 +71,7 @@ async function send(page, prompt) {
     prompt, seconds: (performance.now() - started) / 1000,
     rounds: metrics?.agent_rounds ?? null,
     actual_model: metrics?.model ?? null,
+    selection_mode: contract?.selection_mode ?? null,
     tools: starts, outputs, final,
     evidence: events.filter(event => event.type === 'tool_output').map(event => ({
       tool: canonical(event.tool), arguments: event.command,
@@ -240,8 +245,13 @@ try {
   }
 } finally { if (browser) await browser.close(); }
 
-report.status = varietyOnly ? 'needs_quality_review' : report.scenarios.length === 3 && report.scenarios.every(x => x.status === 'passed' && x.cleanup?.session_removed) ? 'passed' : 'failed';
-report.summary = { passed: report.scenarios.filter(x => x.status === 'passed').length, total: report.scenarios.length };
+report.status = varietyOnly ? (report.scenarios.some(x => x.status === 'failed') ? 'failed' : 'needs_quality_review') : report.scenarios.length === 3 && report.scenarios.every(x => x.status === 'passed' && x.cleanup?.session_removed) ? 'passed' : 'failed';
+report.summary = {
+  passed: report.scenarios.filter(x => x.status === 'passed').length,
+  failed: report.scenarios.filter(x => x.status === 'failed').length,
+  awaiting_quality_review: report.scenarios.filter(x => x.status === 'needs_quality_review').length,
+  total: report.scenarios.length,
+};
 save();
 console.log(JSON.stringify({ report: path.relative(root, reportPath), status: report.status, summary: report.summary }));
 if (report.status !== 'passed') process.exitCode = 1;
