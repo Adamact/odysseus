@@ -30,7 +30,8 @@ from src.tool_schemas import (
 )
 from src.tool_types import ToolBlock
 from src.turn_contract import (
-    FAMILY_TOOLS, required_read_operation_for_request, targets_bound_editor_request,
+    FAMILY_TOOLS, broad_web_briefing_request, required_read_operation_for_request,
+    targets_bound_editor_request,
 )
 from src.prompt_security import untrusted_context_message
 from src.model_profiles import (
@@ -890,18 +891,7 @@ def contentless_final_response(content):
 
 def broad_current_web_request(user_text):
     """Whether the user requested a broad current-information briefing."""
-    request = str(user_text or '')
-    return bool(
-        (
-            re.search(r'\b(?:latest|recent|current|today(?:\'s)?)\b', request, re.I)
-            and re.search(r'\b(?:info(?:rmation)?|news|nees|updates?)\b', request, re.I)
-        )
-        or re.search(
-            r"\b(?:what(?:'s|\s+is)|anything|something)\s+new\b",
-            request,
-            re.I,
-        )
-    )
+    return broad_web_briefing_request(user_text)
 
 
 def incomplete_broad_web_answer(content, user_text):

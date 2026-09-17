@@ -19,6 +19,39 @@ from src.turn_contract import (
 )
 
 
+@pytest.mark.parametrize('prompt', [
+    "What's new in Sweden?",
+    "What's happening in Sweden?",
+    'Give me an update on Sweden',
+    'Catch me up on Sweden',
+    'What are the top stories in Sweden today?',
+    'What should I know about Sweden right now?',
+    'Latest developments in AI',
+    'Recent AI breakthroughs',
+    'AI news',
+    'Compare the latest AI models',
+    'Best laptops right now',
+    'Recommend a laptop based on current reviews',
+])
+def test_broad_web_briefings_share_one_search_semantic(prompt):
+    from src.turn_contract import broad_web_briefing_request
+
+    assert broad_web_briefing_request(prompt)
+    assert requested_capabilities(prompt) == frozenset({'search_browser'})
+
+
+@pytest.mark.parametrize('prompt', [
+    'What is the latest Python version?',
+    "Who is Sweden's prime minister?",
+    'Find the WIKING Miro manual online',
+    'How does Rust ownership work?',
+])
+def test_narrow_lookups_are_not_misclassified_as_broad_briefings(prompt):
+    from src.turn_contract import broad_web_briefing_request
+
+    assert not broad_web_briefing_request(prompt)
+
+
 def resolve(capabilities=(), *, schemas=FUNCTION_TOOL_SCHEMAS, policy=None, required_tools=(),
             required_capabilities=None, selected_tools=None, warm_tools=()):
     return resolve_turn_contract(capabilities=capabilities, schemas=schemas,

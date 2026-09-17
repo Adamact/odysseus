@@ -3948,6 +3948,35 @@ def recently_read_gallery(history: Iterable, *, user_turns: int = 4) -> bool:
     return False
 
 
+def broad_web_briefing_request(message: str) -> bool:
+    """Recognize requests that need broad, current, multi-source Web evidence."""
+    text = _normalize_request_lead(message)
+    if re.search(
+        r"\b(?:what(?:'s|\s+is)\s+(?:new|happening)|anything\s+new|"
+        r"catch\s+me\s+up|give\s+me\s+(?:an?\s+)?update|"
+        r"what\s+should\s+i\s+know)\b",
+        text,
+        re.I,
+    ):
+        return True
+    if re.search(r"\b(?:news|headlines?|top\s+stories|news\s+roundup)\b", text, re.I):
+        return True
+    if (
+        re.search(r"\b(?:latest|recent|current|today(?:'s)?|right\s+now)\b", text, re.I)
+        and re.search(
+            r"\b(?:developments?|updates?|trends?|breakthroughs?|events?|stories|"
+            r"recommendations?|reviews?|best|compare|comparison)\b",
+            text,
+            re.I,
+        )
+    ):
+        return True
+    return bool(
+        re.search(r"\b(?:recommend|best)\b", text, re.I)
+        and re.search(r"\b(?:current|latest|today|right\s+now|reviews?)\b", text, re.I)
+    )
+
+
 def requested_capabilities(message: str, history: Iterable = (), *, active_document=False, workspace=False) -> frozenset[str]:
     """Classify once; inherit a prior capability only for a referential follow-up."""
     raw_text = str(message or "").strip()
@@ -3956,6 +3985,8 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
         text = lead["request"].strip()
     history = tuple(history)
     concrete_urls = re.findall(r"\bhttps?://[^\s<>\"']+", raw_text, re.I)
+    if broad_web_briefing_request(text):
+        return frozenset({"search_browser"})
     if re.search(r"\b(?:web_search|web_fetch)\b", raw_text, re.I):
         # Explicit native-tool requests are stronger than incidental domain
         # words in the research subject (for example, Git ``pull`` must not
