@@ -3278,6 +3278,17 @@ def requested_web_source_links(user_text):
     ))
 
 
+def source_link_only_request(user_text):
+    """Only bypass synthesis for a complete, explicit link-return command."""
+    return bool(re.fullmatch(
+        r'\s*(?:please\s+)?(?:return|give|show|provide|find)\s+(?:me\s+)?'
+        r'(?:(?:only|just)\s+)?(?:(?:\d+|a|one|two|three|four|five)\s+)?'
+        r'(?:official\s+)?(?:source\s+)?links?'
+        r'(?:\s+(?:for|to)\s+[^\n.!?]+)?[.!?]*\s*',
+        str(user_text or ''), re.I,
+    )) and not re.search(r'\b(?:and|then|explain|compare|summari[sz]e)\b', str(user_text or ''), re.I)
+
+
 def web_source_links(raw, *, max_items=1, prefer_official=False, query=''):
     """Extract stable title/URL pairs from the web tool's source preamble."""
     text = str(raw or '')
@@ -5309,11 +5320,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             prefer_official=official_requested,
                             query=args.get('query', ''),
                         )
-                        source_only_request = not re.search(
-                            r'\b(?:latest|latset|current|recent|today|compare|explain|summari[sz]e)\b',
-                            direct_user_text, re.I,
-                        )
-                        if requested_links and source_links and source_only_request:
+                        if requested_links and source_links and source_link_only_request(direct_user_text):
                             # For an exact requested link count, evidence owns
                             # the final rendering so model prose cannot add a
                             # wrong or duplicate source.

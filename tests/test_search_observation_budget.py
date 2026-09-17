@@ -4,6 +4,20 @@ import json
 import pytest
 
 
+@pytest.mark.parametrize('prompt,only', [
+    ('Return one official source link', True),
+    ('Find two source links for quantum computing', True),
+    ('Give me just one link', True),
+    ('more about the second story, with sources', False),
+    ('why is this important? sources pls', False),
+    ('Find two links and explain the tradeoffs', False),
+    ('Find official English manual for Sony WH-1000XM5', False),
+])
+def test_source_only_rendering_requires_positive_link_only_intent(prompt, only):
+    from src.clean_agent_preview import source_link_only_request
+    assert source_link_only_request(prompt) == only
+
+
 def test_forced_search_dispatch_preserves_schema_without_mutating_request():
     from src.clean_agent_preview import search_tool_choice_request
     search = {'type': 'function', 'function': {'name': 'web_search', 'parameters': {'required': ['query']}}}
@@ -70,7 +84,8 @@ def test_external_edits_are_not_mistaken_for_inline_text(prompt):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('repair_missing_link', [False, True])
-async def test_runtime_does_not_append_unverified_search_result_as_citation(monkeypatch, repair_missing_link):
+@pytest.mark.parametrize('prompt', ['latest Python version? official source please', 'more about the second story, with sources'])
+async def test_runtime_does_not_append_unverified_search_result_as_citation(monkeypatch, repair_missing_link, prompt):
     import src.clean_agent_preview as runtime
     from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
     from src.tool_policy import ToolPolicy
@@ -107,7 +122,7 @@ async def test_runtime_does_not_append_unverified_search_result_as_citation(monk
     contract = resolve_full_inventory_contract(schemas=schemas, policy=ToolPolicy())
     raw = [chunk async for chunk in runtime.stream_preview(
         endpoint_url='http://test', model='test',
-        messages=[{'role': 'user', 'content': 'latest Python version? official source please'}],
+        messages=[{'role': 'user', 'content': prompt}],
         headers={}, turn_contract=contract, session_id='test', owner='test',
         disabled_tools=set(), tool_policy=ToolPolicy(), max_rounds=3 if repair_missing_link else 2,
     )]
