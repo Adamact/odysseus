@@ -570,7 +570,7 @@ class ToolIndex:
         frozenset({"huggingface", "hugging face", "hf search",
                    "find a model", "search models", "search for a model",
                    "models for", "best model for"}):
-            {"search_hf_models", "list_cached_models"},
+            {"search_hf_models", "list_cached_models", "app_api"},
         frozenset({"cached models", "list models", "my models",
                    "what models do i have", "is it downloaded",
                    "do i have", "already downloaded", "on disk"}):
@@ -627,6 +627,21 @@ class ToolIndex:
         # prompts do not drag web schemas into the agent context.
         if self._WEB_RE.search(query):
             base.update({"web_search", "web_fetch"})
+        # Hardware-aware model recommendations are fulfilled by the Cookbook
+        # hwfit API, not by the generic endpoint/model catalog. Keep app_api in
+        # the caller-selected surface for natural variants such as "best model
+        # to run on my hardware", which do not contain the literal keyword
+        # phrase "best model for" above.
+        if (
+            re.search(r"\b(?:best|recommend(?:ed)?|suitable|compatible|fit)\b", ql)
+            and re.search(r"\bmodels?\b", ql)
+            and re.search(
+                r"\b(?:my|this|the|current)\s+(?:hardware|machine|computer|pc|server|system)\b"
+                r"|\b(?:gpu|vram|ram)\b",
+                ql,
+            )
+        ):
+            base.add("app_api")
         if re.search(r"https?://\S+(?:\.pdf\b|/pdf/)|\bPDFs?\b", query, re.I):
             base.add("pdf_extract")
         # Hard steering: when the query is a clear "save info about a specific

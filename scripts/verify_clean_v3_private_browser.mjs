@@ -60,7 +60,7 @@ try {
     const events = parseSSE(await response.text());
     const contract = events.find(x => x.type === 'turn_contract') || {};
     const tools = events.filter(x => x.type === 'tool_start').map(x => bare(x.tool));
-    const outputs = events.filter(x => x.type === 'tool_output').map(x => ({ tool: bare(x.tool), exit_code: x.exit_code ?? null, error: Boolean(x.error) }));
+    const outputs = events.filter(x => x.type === 'tool_output').map(x => ({ tool: bare(x.tool), command: x.command || '', exit_code: x.exit_code ?? null, error: Boolean(x.error) }));
     const final = events.filter(x => x.type === 'final_response').map(x => x.content || '').join('') || events.filter(x => typeof x.delta === 'string').map(x => x.delta).join('');
     return { response, contract, tools, outputs, final };
   };
@@ -68,11 +68,18 @@ try {
   const browserSession = await makeSession('deliberate');
   await openSession(browserSession);
   const opened = await send('Browse https://example.com and take a snapshot. Report the rendered page heading.');
+  await page.locator('.private-browser-preview-img[src^="data:image/"]').last().waitFor({ state: 'visible', timeout: 10000 });
+  const screenshotState = await page.locator('.private-browser-preview-img[src^="data:image/"]').last().evaluate(img => ({
+    complete: img.complete,
+    naturalWidth: img.naturalWidth,
+    sourceLength: img.getAttribute('src')?.length || 0,
+  }));
   const openChecks = {
     http_ok: opened.response.ok(), clean_route: opened.contract.selection_mode === 'clean_compact_v3_preview',
     offered_private_browser: (opened.contract.offered || []).some(x => bare(x) === 'private_browser'),
     browser_only: opened.tools.length >= 1 && opened.tools.every(x => x === 'private_browser'),
     tool_success: opened.outputs.some(x => x.tool === 'private_browser' && !x.error && (x.exit_code == null || x.exit_code === 0)),
+    screenshot_visible: screenshotState.complete && screenshotState.naturalWidth > 0 && screenshotState.sourceLength > 100,
     grounded: /example domain/i.test(opened.final), no_reasoning_leak: noLeak(opened.final),
   };
   report.turns.push({ kind: 'domain-browse-snapshot-web-off', tools: opened.tools, outputs: opened.outputs, offered_private_browser: openChecks.offered_private_browser, checks: openChecks, status: Object.values(openChecks).every(Boolean) ? 'passed' : 'failed' }); save();
@@ -97,6 +104,33 @@ try {
   };
   report.turns.push({ kind: 'typed-evidence-follow-up-web-off', tools: follow.tools, outputs: follow.outputs, offered_private_browser: followChecks.warm_private_browser, offered: (follow.contract.offered || []).map(bare), unavailable: follow.contract.unavailable || [], active_capabilities: follow.contract.active_capabilities || [], checks: followChecks, status: Object.values(followChecks).every(Boolean) ? 'passed' : 'failed' }); save();
 
+  const mapsSession = await makeSession('plain-open-preview');
+  await openSession(mapsSession);
+  const maps = await send('Browse Google Maps and find the closest coffee shop to Todoroki Station.');
+  await page.locator('.private-browser-preview-img[src^="data:image/"]').last().waitFor({ state: 'visible', timeout: 10000 });
+  const mapsScreenshot = await page.locator('.private-browser-preview-img[src^="data:image/"]').last().evaluate(img => ({
+    complete: img.complete,
+    naturalWidth: img.naturalWidth,
+    sourceLength: img.getAttribute('src')?.length || 0,
+  }));
+  const mapsChecks = {
+    http_ok: maps.response.ok(),
+    browser_used: maps.tools.includes('private_browser'),
+    screenshot_visible: mapsScreenshot.complete && mapsScreenshot.naturalWidth > 0 && mapsScreenshot.sourceLength > 100,
+    no_reasoning_leak: noLeak(maps.final),
+  };
+  report.turns.push({ kind: 'plain-open-renders-screenshot', tools: maps.tools, checks: mapsChecks, status: Object.values(mapsChecks).every(Boolean) ? 'passed' : 'failed' }); save();
+
+  const menu = await send('Which one has a grilled cheese sandwich on the menu?');
+  const menuCommands = menu.outputs.map(item => String(item.command || '').toLowerCase());
+  const menuChecks = {
+    http_ok: menu.response.ok(),
+    web_followup_used: menu.tools.some(tool => ['private_browser', 'web_search', 'web_fetch'].includes(tool)),
+    prior_subject_retained: menuCommands.some(command => /todoroki|coffee shop|peak by swell|yeti roastery|toe coffee/.test(command)),
+    no_reasoning_leak: noLeak(menu.final),
+  };
+  report.turns.push({ kind: 'maps-result-property-followup', tools: menu.tools, commands: menuCommands, checks: menuChecks, status: Object.values(menuChecks).every(Boolean) ? 'passed' : 'failed' }); save();
+
   const searchSession = await makeSession('ordinary-web');
   await openSession(searchSession);
   await page.locator('#web-toggle-btn').click();
@@ -120,8 +154,8 @@ try {
   }
   if (browser) await browser.close();
 }
-report.status = report.turns.length === 3 && report.turns.every(x => x.status === 'passed') && report.cleanup.length === sessions.length && report.cleanup.every(x => x.removed) ? 'passed' : 'failed';
-report.summary = { passed: report.turns.filter(x => x.status === 'passed').length, total: 3 };
+report.status = report.turns.length === 5 && report.turns.every(x => x.status === 'passed') && report.cleanup.length === sessions.length && report.cleanup.every(x => x.removed) ? 'passed' : 'failed';
+report.summary = { passed: report.turns.filter(x => x.status === 'passed').length, total: 5 };
 save();
 console.log(JSON.stringify({ report: path.relative(root, reportPath), status: report.status, summary: report.summary }));
 if (report.status !== 'passed') process.exitCode = 1;

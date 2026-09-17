@@ -77,6 +77,59 @@ def test_external_tool_schema_is_scoped_into_model_request(monkeypatch):
     assert all("reasoning_content" not in message for message in observed_messages)
 
 
+def test_local_qwen_external_tool_route_preserves_assistant_reasoning_continuity(monkeypatch):
+    """Qwen's reasoning parser needs the prior tool-call reasoning on replay."""
+    observed_messages = []
+    monkeypatch.setattr(agent_loop, "get_setting", lambda key, default=None: default)
+    monkeypatch.setattr(agent_loop, "get_mcp_manager", lambda: None)
+    monkeypatch.setattr(agent_loop, "estimate_tokens", lambda *args, **kwargs: 10)
+    monkeypatch.setattr(agent_loop, "blocked_tools_for_owner", lambda owner: set())
+
+    async def fake_stream(candidates, messages, **kwargs):
+        observed_messages.extend(messages)
+        yield 'data: {"delta": "complete"}\n\n'
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(agent_loop, "stream_llm_with_fallback", fake_stream)
+
+    _collect(agent_loop.stream_agent_loop(
+        "http://127.0.0.1:19200/v1/chat/completions",
+        "odysseus-qwen3.5-9b-preheretic",
+        [
+            {
+                "role": "assistant",
+                "content": None,
+                "reasoning_content": "choose the declared lookup",
+                "tool_calls": [{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "inspect_state", "arguments": "{}"},
+                }],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": "available"},
+            {"role": "user", "content": "Summarize the observed state."},
+        ],
+        max_rounds=1,
+        owner="pewds",
+        relevant_tools={"inspect_state"},
+        forced_tools={"inspect_state"},
+        fallbacks=[],
+        fallback_on_empty=False,
+        external_tool_schemas=[{
+            "type": "function",
+            "function": {
+                "name": "inspect_state",
+                "description": "Return current state.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }],
+        _is_teacher_run=True,
+    ))
+
+    replayed = [m for m in observed_messages if m.get("role") == "assistant"]
+    assert replayed[0]["reasoning_content"] == "choose the declared lookup"
+
+
 def test_external_tool_schema_can_use_textual_transport_from_first_request(monkeypatch):
     observed_tools = []
     observed_messages = []

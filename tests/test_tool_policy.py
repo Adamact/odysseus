@@ -4,6 +4,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 import src.agent_loop as al
 from src.agent_tools import ToolBlock
 from src.tool_execution import NO_TOOL_SECURITY_CONTEXT, execute_tool_block
@@ -14,6 +16,7 @@ from src.tool_policy import (
     detect_guide_only_turn,
     web_search_enabled_for_turn,
 )
+from src.turn_contract import requested_capabilities
 
 
 def _collect(gen):
@@ -116,6 +119,13 @@ def test_natural_browser_request_is_not_blocked_by_web_search_toggle():
     )
 
 
+def test_exact_url_fetch_only_contract_is_not_reported_as_web_disabled():
+    assert not al._web_search_unavailable_for_turn(
+        {"web"}, {"web_search"},
+        "Summarize https://example.com/report", None, None,
+    )
+
+
 def test_unsubscribe_url_token_does_not_trigger_token_listing():
     assert al._parse_qwen_explicit_admin_request(
         "Use private_browser to open https://example.test/unsubscribe?token=abc123"
@@ -193,6 +203,19 @@ def test_sft_workspace_clamp_does_not_strip_private_web_tools():
     assert "read_file" not in stripped
 
 
+def test_sft_web_session_keeps_workspace_clamp_but_native_terminal_is_exempt():
+    assert al._workspace_tools_disabled_for_request(
+        "sft_alex_creator", {"surface": "web"}
+    )
+    assert not al._workspace_tools_disabled_for_request(
+        "sft_alex_creator",
+        {"surface": "odysseus-native", "terminal_agent": True},
+    )
+    assert not al._workspace_tools_disabled_for_request(
+        "pewds", {"surface": "web"}
+    )
+
+
 def test_compact_prompt_says_current_turn_tools_override_stale_history():
     prompt = al._assemble_prompt({"web_search", "ask_user"}, set(), compact=True)
 
@@ -264,6 +287,62 @@ def test_contextual_web_followup_trusts_topical_model_query():
     assert "current mac chip ai" in block.content
     assert "How much vram or unified memory will be available" in block.content
     assert "vram" in block.content.lower()
+
+
+def test_contextual_browser_discovery_cannot_drop_prior_subject():
+    block = al._contextual_browser_opens_to_web_search(
+        ToolBlock(
+            "private_browser",
+            json.dumps({
+                "action": "batch",
+                "commands": [
+                    ["open", "https://example.com/grilled-cheese-recipe"],
+                    ["open", "https://example.org/best-grilled-cheese"],
+                ],
+            }),
+        ),
+        (
+            "use google maps and find closest coffee shop in todoroki "
+            "which one has grilled cheese sandwich on the menu?"
+        ),
+        "which one has grilled cheese sandwich on the menu?",
+    )
+
+    assert block.tool_type == "web_search"
+    query = json.loads(block.content)["query"].lower()
+    assert "todoroki" in query
+    assert "coffee" in query
+    assert "grilled cheese" in query
+
+
+def test_contextual_browser_current_page_interaction_is_preserved():
+    block = ToolBlock(
+        "private_browser",
+        json.dumps({"action": "click", "target": "@e14"}),
+    )
+
+    assert al._contextual_browser_opens_to_web_search(
+        block,
+        "browse coffee shops in todoroki open the second result",
+        "open the second result",
+    ) == block
+
+
+def test_contextual_browser_open_is_not_rewritten_to_unoffered_web_search():
+    block = ToolBlock(
+        "private_browser",
+        json.dumps({
+            "action": "open",
+            "url": "http://127.0.0.1:7011/static/test-fixtures/browser-catalog.html",
+        }),
+    )
+
+    assert al._contextual_browser_opens_to_web_search(
+        block,
+        "find orange sofas on the catalog page",
+        "try again on that page and compare the prices",
+        allow_web_search=False,
+    ) == block
 
 
 def test_contextual_web_followup_matrix_restores_missing_subject_anchor():
@@ -585,6 +664,41 @@ def test_web_disabled_request_returns_feedback_without_calling_model(monkeypatch
         "content": "Web access is disabled for this turn. Enable web search and resend the request.",
     }]
     assert chunks[-1] == "data: [DONE]\n\n"
+
+
+def test_web_disabled_context_comparison_uses_prior_result_without_new_lookup(monkeypatch):
+    _patch_loop_basics(monkeypatch)
+    model_calls = []
+
+    async def _fake_stream(_candidates, messages, **kwargs):
+        model_calls.append((messages, kwargs.get("tools")))
+        yield _delta_chunk("Cedar costs less.")
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
+
+    chunks = _collect(
+        al.stream_agent_loop(
+            "https://api.openai.com/v1",
+            "gpt-test",
+            [
+                {"role": "user", "content": "Find the orange sofas and their prices."},
+                {"role": "assistant", "content": "Cedar is $219 and Harbor is $349.", "metadata": {
+                    "tool_events": [{"tool": "private_browser", "exit_code": 0}],
+                }},
+                {"role": "user", "content": "Which of those costs less?"},
+            ],
+            max_rounds=1,
+            disabled_tools=set(WEB_ACCESS_TOOL_NAMES),
+        )
+    )
+
+    assert model_calls
+    assert any(event.get("delta") == "Cedar costs less." for event in _events(chunks))
+    assert not any(
+        event.get("content", "").startswith("Web access is disabled")
+        for event in _events(chunks)
+    )
 
 
 def test_web_disabled_mixed_file_intent_still_calls_model(monkeypatch):
@@ -2183,6 +2297,49 @@ def test_recurring_event_lookup_routes_calendar_not_tasks():
     assert "manage_tasks" not in tools
 
 
+def test_recurring_automation_lifecycle_routes_tasks_not_calendar():
+    tools = al._qwen38_router_tool_names(
+        "Set up a recurring task that runs every Monday morning to summarize "
+        "my open notes, then pause it, resume it later, and finally remove it."
+    )
+
+    assert tools == {"manage_tasks"}
+
+
+def test_recurring_meeting_routes_calendar_not_tasks():
+    tools = al._qwen38_router_tool_names(
+        "Schedule a recurring team meeting every Monday morning."
+    )
+
+    assert "manage_calendar" in tools
+    assert "manage_tasks" not in tools
+
+
+def test_document_title_containing_notes_does_not_offer_notes_product():
+    prompt = (
+        "Create a document titled 'Q3 planning feedback notes' with exactly one sentence. "
+        "Then search the document library, suggest a replacement, and delete that document."
+    )
+
+    assert requested_capabilities(prompt) == frozenset({"documents"})
+
+
+def test_compound_document_lifecycle_is_not_single_action_terminal():
+    assert al._request_has_compound_actions(
+        "Create a document, search for it, suggest a revision, then delete it."
+    )
+    assert not al._request_has_compound_actions(
+        "Create a document titled Weekly status."
+    )
+
+
+def test_two_source_comparison_is_not_single_fetch_terminal():
+    assert al._request_has_compound_actions(
+        "Open https://example.com/a and https://example.org/b, compare their "
+        "evidence, and cite both sources."
+    )
+
+
 def test_calendar_lookup_requires_fresh_tool_even_before_schema_is_added():
     assert al._calendar_lookup_requires_fresh_tool(
         "show my recurring trash events",
@@ -2494,6 +2651,21 @@ def test_show_skill_note_memory_requests_do_not_open_panels():
         "ui_control",
         "open_panel gallery",
     )
+
+
+@pytest.mark.parametrize("message,theme", [
+    ("set the theme to dark", "dark"),
+    ("go dark mode pls", "dark"),
+    ("hmm actually switch it back to light", "light"),
+])
+def test_explicit_theme_change_parser_binds_set_action(message, theme):
+    assert al._parse_explicit_theme_change_request(message) == (
+        "ui_control", json.dumps({"action": "set_theme", "name": theme})
+    )
+
+
+def test_explicit_theme_change_parser_does_not_steal_discussion():
+    assert al._parse_explicit_theme_change_request("is dark mode easier on the eyes?") is None
 
 
 def test_personal_task_list_routes_to_task_manager():
@@ -3113,6 +3285,12 @@ def test_explicit_email_search_uses_named_account():
     }
 
 
+def test_email_inventory_projection_is_not_parsed_as_search_query():
+    assert al._parse_explicit_email_search_tool(
+        "List my latest three inbox emails with sender and subject."
+    ) is None
+
+
 def test_email_immediate_send_recognizes_explicit_email_and_reply_wording():
     assert al._email_immediate_send_requested("Send an email now to alex@example.com.")
     assert al._email_immediate_send_requested("Send a reply now to UID 10.")
@@ -3125,6 +3303,37 @@ def test_email_mixed_send_and_review_policy_preserves_drafts():
 
     assert al._email_immediate_send_requested(request)
     assert al._email_draft_review_requested(request)
+
+
+def test_explicit_read_only_email_request_forbids_mutation_tools_only():
+    request = (
+        "Find the most recent inbox message and report its sender. "
+        "Do not send, draft, or modify anything."
+    )
+
+    for tool in (
+        "mcp__email__draft_email_reply",
+        "mcp__email__send_email",
+        "mcp__email__mark_email_read",
+        "mcp__email__delete_email",
+    ):
+        assert al._email_mutation_forbidden(request, tool)
+
+    assert not al._email_mutation_forbidden(request, "mcp__email__list_emails")
+    assert not al._email_mutation_forbidden(request, "mcp__email__read_email")
+    assert not al._email_mutation_forbidden(
+        "Find UID 702 and draft a reply saying thanks; do not send it.",
+        "mcp__email__draft_email_reply",
+    )
+    assert not al._email_mutation_forbidden(
+        "Draft an email suggesting the free slot. Do not modify any calendar event.",
+        "mcp__email__draft_email",
+    )
+    assert not al._email_mutation_forbidden(
+        "Draft an email suggesting the slot. Do not send the email and do not "
+        "create, delete, or modify any calendar event.",
+        "mcp__email__draft_email",
+    )
 
 
 def test_qwen_explicit_session_current_chat_actions_use_manage_session():
@@ -3517,6 +3726,20 @@ def test_qwen_model_registry_still_uses_list_models():
     ) == ("list_models", "")
 
 
+def test_qwen_hardware_model_recommendation_uses_hwfit_scan():
+    tool, content = al._parse_qwen_explicit_admin_request(
+        "Find the best model to run on my hardware"
+    )
+
+    assert tool == "app_api"
+    assert json.loads(content) == {
+        "action": "call",
+        "method": "GET",
+        "path": "/api/hwfit/models",
+        "query": {"fit_only": "true", "limit": 10, "sort": "fit"},
+    }
+
+
 def test_model_endpoints_take_precedence_over_model_catalog():
     assert al._parse_qwen_explicit_admin_request(
         "List configured model endpoints and summarize which ones are enabled."
@@ -3681,7 +3904,8 @@ def test_native_media_workspace_uses_bounded_non_coding_guidance():
     rules = al._native_media_workspace_rules("/workspace")
 
     assert "Workspace media mode" in rules
-    assert "make `inspect_media` your first inspection call" in rules
+    assert "use `extract_text` first" in rules
+    assert "use `inspect_media` first" in rules
     assert "Do not use bash/Python/ffprobe/OpenCV/ffmpeg" in rules
     assert "one bounded overview" in rules
     assert "never call it inaccessible without a failed tool result" in rules
@@ -3702,6 +3926,22 @@ def test_compact_native_media_analysis_removes_coding_noise():
     )
 
     assert selected == {"bash", "inspect_media", "ls", "python", "read_file"}
+
+
+def test_compact_native_media_analysis_clamps_explicit_ocr_to_native_tool():
+    selected = al._compact_native_media_analysis_tools(
+        {
+            "apply_patch", "extract_text", "inspect_media", "ls", "python",
+            "read_file", "transcribe_media", "write_file",
+        },
+        text=(
+            "Use local OCR to extract the exact visible text from "
+            "/workspace/tests/fixtures/vl/quarterly-dashboard.png."
+        ),
+        media_inputs=["/workspace/tests/fixtures/vl/quarterly-dashboard.png"],
+    )
+
+    assert selected == {"extract_text"}
 
 
 def test_native_coding_turn_keeps_coding_workspace_guidance():

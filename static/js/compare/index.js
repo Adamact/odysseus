@@ -35,10 +35,10 @@ import { showScoreboard } from './scoreboard.js?v=20260909voteconfirmalign1';
 
 // ── External dependency imports ──
 import Storage from '../storage.js';
-import uiModule from '../ui.js?v=20260908weekhoverfix1';
+import uiModule from '../ui.js?v=20260916largetoolscroll1';
 import sessionModule from '../sessions.js';
 import spinnerModule from '../spinner.js';
-import themeModule from '../theme.js?v=20260909effectspeed1';
+import themeModule from '../theme.js?v=20260911organsrain1';
 import presetsModule from '../presets.js?v=20260908personaname1';
 import markdownModule from '../markdown.js';
 import { bindMenuDismiss } from '../escMenuStack.js';

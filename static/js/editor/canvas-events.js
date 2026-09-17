@@ -43,7 +43,12 @@ import {
   syncPanCursor,
 } from './canvas-navigation.js';
 
+let canvasWindowBindings;
+
 export function wireCanvasEvents({ canvasArea, beginDraw, continueDraw, endDraw, cancelDraw, updateBrushCursor, updateEyedropperPreview, syncZoomControls, onViewportChange }) {
+  canvasWindowBindings?.abort();
+  canvasWindowBindings = new AbortController();
+  const { signal } = canvasWindowBindings;
   let suppressMouseUntil = 0;
   // Mouse — mousedown stays on the canvas; mousemove/up are bound to
   // the WINDOW so a drag can continue (and end) past the canvas edge.
@@ -56,11 +61,11 @@ export function wireCanvasEvents({ canvasArea, beginDraw, continueDraw, endDraw,
   window.addEventListener('mousemove', (e) => {
     if (Date.now() < suppressMouseUntil) return;
     continueDraw(e);
-  });
+  }, { signal });
   window.addEventListener('mouseup', (e) => {
     if (Date.now() < suppressMouseUntil) return;
     endDraw(e);
-  });
+  }, { signal });
   // Preserve pressure and browser-coalesced samples for pen input.
   // Compatibility mouse events are briefly suppressed to avoid a
   // duplicate stroke after pointerup.
@@ -266,6 +271,21 @@ export function wireCanvasEvents({ canvasArea, beginDraw, continueDraw, endDraw,
   };
   canvasArea.addEventListener('pointerup', endPan);
   canvasArea.addEventListener('pointercancel', endPan);
+  // Treat focus loss as release: preserve the work already drawn, but never
+  // resume the gesture when the user returns without a fresh pointer press.
+  window.addEventListener('blur', () => {
+    if (!state.editorOpen || !canvasArea.contains(state.mainCanvas)) return;
+    endDraw();
+    if (activePenId !== null) {
+      try { state.mainCanvas.releasePointerCapture(activePenId); } catch {}
+      activePenId = null;
+    }
+    multiActive = false;
+    endPan();
+    state.spacePanActive = false;
+    syncPanCursor(state, canvasArea, false);
+    if (state.cursorEl) state.cursorEl.style.display = 'none';
+  }, { signal });
   // Reset offset whenever zoom/fit changes the canvas size.
   canvasArea._resetPan = () => applyOffset(0, 0);
   const navigation = {

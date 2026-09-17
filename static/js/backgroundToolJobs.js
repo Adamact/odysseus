@@ -44,6 +44,18 @@ export function renderResearchCards(box, jobs) {
     region.setAttribute('aria-label', 'Chat research');
     box.append(region);
   }
+  region.classList.toggle('streaming', visible.some(job => researchCardState(job).tone === 'running'));
+
+  // Keep the live rail immediately after the AI's synthesized response that
+  // contains the matching research link. Appending it to the chat history
+  // root can place it above the user's next prompt as the conversation grows.
+  const origin = [...visible].reverse().map(job => {
+    const href = `#research-${job.id}`;
+    return [...box.querySelectorAll('.msg-ai')]
+      .find(message => [...message.querySelectorAll('a[href]')].some(candidate => candidate.getAttribute('href') === href));
+  }).find(Boolean);
+  if (origin) origin.insertAdjacentElement('afterend', region);
+
   const keep = new Set(visible.map(job => job.id));
   for (const card of Array.from(region.children)) if (!keep.has(card.dataset.jobId)) {
     stopResearchSpinner(card);
@@ -55,7 +67,7 @@ export function renderResearchCards(box, jobs) {
       card = document.createElement('article');
       card.dataset.jobId = job.id;
       // Only constant markup; model-authored topics are assigned as text below.
-      card.innerHTML = '<div class="agent-thread-dot" aria-hidden="true"></div><button type="button" class="agent-thread-header" aria-expanded="false"><span class="agent-thread-icon" aria-hidden="true"></span><span class="agent-thread-tool">Research</span><span class="agent-thread-status" data-stage role="status"></span><span class="chat-research-background"><span>BG task</span><span data-research-spinner aria-hidden="true"></span></span><span class="agent-thread-chevron" aria-hidden="true"></span></button><div class="agent-thread-content"><div class="research-job-query"></div><div class="chat-research-detail"></div><a class="chat-research-open">Open research</a></div>';
+      card.innerHTML = '<div class="agent-thread-dot" aria-hidden="true"></div><button type="button" class="agent-thread-header" aria-expanded="false"><span class="agent-thread-icon" aria-hidden="true"></span><span class="agent-thread-tool">Research</span><span class="agent-thread-status chat-research-background">BG task <span data-research-spinner aria-hidden="true"></span></span><span class="agent-thread-status" data-stage role="status"></span><span class="agent-thread-chevron" aria-hidden="true"></span></button><div class="agent-thread-content"><div class="research-job-query"></div><div class="chat-research-detail"></div><a class="chat-research-open">Open research</a></div>';
       const header = card.querySelector('.agent-thread-header');
       const content = card.querySelector('.agent-thread-content');
       content.id = `chat-research-details-${job.id}`;

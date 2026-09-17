@@ -8,6 +8,7 @@ from src.agent_loop import (
     _build_system_prompt, _contract_prompt_domains,
     _contract_allows_early_completion,
     _contract_allows_single_action_terminal, _contract_mutation_signature,
+    _request_forbids_execution_retry,
 )
 
 
@@ -79,7 +80,7 @@ def test_compound_turn_cannot_finish_after_one_family():
     assert _contract_allows_single_action_terminal(None)
 
 
-def test_compound_write_dedupe_preserves_reads_and_distinct_writes():
+def test_write_dedupe_preserves_reads_and_distinct_writes():
     contract = SimpleNamespace(capabilities={"notes", "calendar"})
     def signature(content, tool="manage_notes"):
         return _contract_mutation_signature(SimpleNamespace(tool_type=tool, content=content), contract)
@@ -89,7 +90,39 @@ def test_compound_write_dedupe_preserves_reads_and_distinct_writes():
     assert first != signature('{"action":"add","title":"Dinner"}')
     assert signature('{"action":"list"}') is None
     assert signature('{"action":"create","title":"Lunch"}', "manage_calendar") is not None
-    assert _contract_mutation_signature(SimpleNamespace(tool_type="manage_notes", content='{"action":"add"}'), None) is None
+
+
+@pytest.mark.parametrize("contract", [
+    None,
+    SimpleNamespace(capabilities={"tasks"}),
+])
+def test_exact_mutation_dedupe_applies_to_legacy_and_single_family_turns(contract):
+    block = SimpleNamespace(
+        tool_type="manage_tasks",
+        content='{"action":"delete","task_id":"11111111-1111-1111-1111-111111111111"}',
+    )
+    assert _contract_mutation_signature(block, contract) == (
+        "manage_tasks",
+        '{"action":"delete","task_id":"11111111-1111-1111-1111-111111111111"}',
+    )
+    read = SimpleNamespace(tool_type="manage_tasks", content='{"action":"list"}')
+    assert _contract_mutation_signature(read, contract) is None
+
+
+@pytest.mark.parametrize("text", [
+    "Run this read-only test once and report the result.",
+    "Execute the command one time; show stdout.",
+    "Run this command. Do not retry automatically.",
+    "Try it, but don't rerun the command again.",
+])
+def test_explicit_single_execution_bound_is_detected(text):
+    assert _request_forbids_execution_retry(text)
+
+
+def test_unbounded_execution_request_does_not_invent_retry_limit():
+    assert not _request_forbids_execution_retry(
+        "Run the command and recover if it fails."
+    )
 
 
 def test_tool_success_flags_do_not_terminate_compound_turn():

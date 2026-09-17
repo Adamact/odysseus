@@ -368,6 +368,28 @@ def decode_native_trace(
                 call_id = selected["call_id"]
                 if round_no is None:
                     round_no = selected["round"]
+            elif event.get("execution_attempted") is False:
+                # Preview guards return a protocol-level tool result for a
+                # model-proposed call that was rejected before dispatch (for
+                # example, an exact duplicate).  It is still a real attempted
+                # model action and must have a correlated call in the trace;
+                # treating it as an orphan falsely invalidates otherwise
+                # complete runs.  The explicit marker keeps genuinely
+                # unpaired legacy outputs fail-closed below.
+                call_id = explicit_call_id or f"native-rejected-{len(builder.events)}"
+                builder.add(
+                    TraceKind.TOOL_CALL,
+                    {
+                        "tool_name": tool,
+                        "arguments": command,
+                        "command": command,
+                        "execution_attempted": False,
+                        "rejected_before_execution": True,
+                    },
+                    timestamp_s=timestamp,
+                    round=round_no,
+                    correlation_id=call_id,
+                )
             else:
                 call_id = explicit_call_id or f"native-orphan-{len(builder.events)}"
                 builder.gap("tool_result_call_unmatched", f"{tool}:{call_id}")

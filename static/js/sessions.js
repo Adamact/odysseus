@@ -2,11 +2,11 @@
 // This module handles all session-related operations
 
 import Storage from './storage.js';
-import uiModule, { autoResize, styledPrompt } from './ui.js?v=20260908weekhoverfix1';
-import chatRenderer from './chatRenderer.js?v=20260910streamlinks2';
+import uiModule, { autoResize, styledPrompt } from './ui.js?v=20260916largetoolscroll1';
+import chatRenderer from './chatRenderer.js?v=20260913richdiff1';
 import { providerLogo } from './providers.js';
 import { initModelPicker, updateModelPicker } from './modelPicker.js?v=20260909routeidentity1';
-import themeModule from './theme.js?v=20260909effectspeed1';
+import themeModule from './theme.js?v=20260911organsrain1';
 import spinnerModule from './spinner.js';
 import { actionMenuRank, orderActionMenuItems, SELECT_MENU_ICON } from './actionMenuOrder.js';
 import { registerEscapeLayer, bindMenuDismiss } from './escMenuStack.js';
@@ -361,7 +361,7 @@ function _renderSessionRunState(state, isRunning) {
     state.title = 'Agent is working';
     state.setAttribute('aria-label', 'Agent is working');
   } else {
-    state.textContent = 'Done';
+    state.textContent = '✓';
     state.title = 'Agent finished while you were away';
     state.setAttribute('aria-label', 'Agent finished while you were away');
   }
@@ -2819,7 +2819,7 @@ function _updateResearchDots() {
           listItem.insertBefore(state, menu || null);
         }
         const alreadyRunning = state.classList.contains('is-working') && !!state._whirlpool;
-        const alreadyDone = state.classList.contains('is-done') && state.textContent === 'Done';
+        const alreadyDone = state.classList.contains('is-done') && state.textContent.trim() === '✓';
         if ((isRunning && !alreadyRunning) || (isCompleted && !alreadyDone)) {
           _renderSessionRunState(state, isRunning);
         }

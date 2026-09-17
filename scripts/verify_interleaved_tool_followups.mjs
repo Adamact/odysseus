@@ -12,6 +12,8 @@ const endpointUrl = process.env.ENDPOINT_URL || (() => { throw new Error("ENDPOI
 const model = process.env.MODEL || 'odysseus-qwen3.5-tools-pre-heretic';
 const owner = process.env.OWNER || 'sft_alex_creator';
 const routingMode = process.env.ROUTING_MODE || 'baseline';
+const expectCleanRoute = process.env.EXPECT_CLEAN_ROUTE !== 'false';
+const expectRoutingMetadata = process.env.EXPECT_ROUTING_METADATA !== 'false';
 if (!['baseline', 'recent', 'all', 'default'].includes(routingMode)) throw Error('Invalid routing mode');
 const expectedMode = routingMode === 'default' ? 'recent_model_choice' : routingMode;
 const run = new Date().toISOString().replace(/[:.]/g, '-');
@@ -287,6 +289,7 @@ try {
           const failure_category = ok ? null
             : /not found|no such|unknown (?:uid|id)|does not exist/i.test(detail) ? 'not_found'
             : /invalid|missing|required|argument|json|parse/i.test(detail) ? 'invalid_arguments'
+            : /covered by|obscured by|blocking (?:dialog|overlay)|dismiss or interact with the covering/i.test(detail) ? 'interaction_blocked'
             : /connection|unavailable|timeout|refused/i.test(detail) ? 'backend_unavailable'
             : /permission|not offered|not permitted|denied/i.test(detail) ? 'permission_denied'
             : 'other';
@@ -299,6 +302,30 @@ try {
           previousEmailUids = [...detail.matchAll(/^\s*UID:\s*(\S+)/gmi)].map(match => match[1]);
         }
         const final = events.filter(x => x.type === 'final_response').map(x => x.content || '').join('') || events.filter(x => typeof x.delta === 'string').map(x => x.delta).join('');
+        const recoveredBrowserInteraction = events.some((event, eventIndex) => {
+          if (event.type !== 'tool_output' || bare(event.tool) !== 'private_browser') return false;
+          const detail = String(event.output || event.error_message || '');
+          const blocked = /covered by|obscured by|blocking (?:dialog|overlay)|dismiss or interact with the covering/i.test(detail);
+          if (!blocked) return false;
+          return events.slice(eventIndex + 1).some(later => (
+            later.type === 'tool_output'
+            && bare(later.tool) === 'private_browser'
+            && !later.error
+            && (later.exit_code == null || later.exit_code === 0)
+          ));
+        });
+        const prefetchedWebSources = events
+          .filter(x => x.type === 'web_sources')
+          .flatMap(x => Array.isArray(x.data) ? x.data : [])
+          .filter(source => source?.acquisition === 'automatic_url_fetch');
+        const prefetchedYoutubeSources = events
+          .filter(x => x.type === 'web_sources')
+          .flatMap(x => Array.isArray(x.data) ? x.data : [])
+          .filter(source => source?.acquisition === 'automatic_youtube_context');
+        const exactUrlPrefetched = expected.includes('web_fetch')
+          && prefetchedWebSources.length > 0;
+        const youtubePrefetched = expected.includes('youtube_tool')
+          && prefetchedYoutubeSources.length > 0;
         if (spec.name === 'skills-cookbook-skills' && index === 0) {
           // Compare in memory only: never retain private skill names/content.
           previousSkillRows = events.filter(x => x.type === 'tool_output' && bare(x.tool) === 'manage_skills')
@@ -340,24 +367,25 @@ try {
           nodes.slice(-8).map(node => String(node.className || node.tagName || '').slice(0, 120))
         ) : [];
         const checks = {
-          experiment_selected: contract.routing_experiment === expectedMode,
-          http_ok: response.ok(), terminal: response.ok() && !events.some(x => x.type === 'invalid_sse'), clean_route: contract.selection_mode === 'clean_compact_v3_preview',
-          capability: Boolean(spec.deniedTools?.[index]) || capabilityAvailable(contract, capability, expected)
+          experiment_selected: !expectRoutingMetadata || contract.routing_experiment === expectedMode,
+          http_ok: response.ok(), terminal: response.ok() && !events.some(x => x.type === 'invalid_sse'),
+          clean_route: !expectCleanRoute || contract.selection_mode === 'clean_compact_v3_preview',
+          capability: !expectRoutingMetadata || Boolean(spec.deniedTools?.[index]) || capabilityAvailable(contract, capability, expected)
             || (spec.noToolTurns?.includes(index) && starts.length === 0)
             // An intentionally ambiguous continuation can use the retained
             // family without the classifier guessing a fresh active topic.
             || (!expected.length && index > 0 && routingMode !== 'baseline'
                 && priorCapability === capability && priorFamilyTools.some(name => offered.includes(name))),
-          expected_offered: !expected.length || expected.some(name => offered.includes(name)), expected_called: reusedSkillSummary || reusedSkillDetail || !expected.length || expected.some(name => starts.includes(name)),
+          expected_offered: !expectRoutingMetadata || !expected.length || expected.some(name => offered.includes(name)), expected_called: reusedSkillSummary || reusedSkillDetail || exactUrlPrefetched || youtubePrefetched || !expected.length || expected.some(name => starts.includes(name)),
           expected_execution_outcome: spec.expectedExitCodes?.[index] !== undefined
             ? events.filter(e => e.type === 'tool_output' && expected.includes(bare(e.tool))).length === 1
               && events.some(e => e.type === 'tool_output' && expected.includes(bare(e.tool)) && e.exit_code === spec.expectedExitCodes[index])
-            : reusedSkillSummary || reusedSkillDetail || !expected.length || outputs.some(x => expected.includes(x.tool) && x.ok),
+            : reusedSkillSummary || reusedSkillDetail || exactUrlPrefetched || youtubePrefetched || !expected.length || outputs.some(x => expected.includes(x.tool) && x.ok),
           requested_execution_count: spec.name !== 'shell-failure-recovery' || starts.length === (index === 1 ? 0 : 1),
           failed_execution_provenance: !(spec.expectedExitCodes?.[index] > 0)
             || events.some(e => e.type === 'tool_output' && expected.includes(bare(e.tool))
-              && e.exit_code === spec.expectedExitCodes[index] && e.execution_attempted === true && e.blocked === false),
-          saved_failure_status: !(spec.expectedExitCodes?.[index] > 0)
+              && e.exit_code === spec.expectedExitCodes[index] && e.execution_attempted === true && e.blocked !== true),
+          saved_failure_status: !expectCleanRoute || !(spec.expectedExitCodes?.[index] > 0)
             || (metrics.data?.clean_v3_turn || metrics.clean_v3_turn || []).some(m => {
               if (m.role !== 'tool') return false;
               try { return JSON.parse(m.content).exit_code === spec.expectedExitCodes[index]; } catch { return false; }
@@ -365,7 +393,7 @@ try {
           exact_skill_detail_reference: spec.name !== 'skills-cookbook-skills' || index !== 3
             || reusedSkillDetail || calls.some(call => call.tool === 'manage_skills' && call.skill_action === 'view' && call.skill_matches_second),
           skill_detail_answer_evidence: spec.name !== 'skills-cookbook-skills' || index !== 3 || detailEvidence.covered,
-          no_prior_family_leak: routingMode !== 'baseline' || index === 0 || priorCapability === capability
+          no_prior_family_leak: !expectRoutingMetadata || routingMode !== 'baseline' || index === 0 || priorCapability === capability
             || offered.every(name => !priorFamilyTools.includes(name) || expected.includes(name)),
           one_user_turn: afterUsers === beforeUsers + 1,
           visible_answer: final.trim().length > 0, no_reasoning_leak: noLeak(final),
@@ -373,6 +401,9 @@ try {
           no_tool_errors: outputs.every(item => item.ok || (
             spec.deniedTools?.[index]?.includes(item.tool)
             && item.failure_category === 'permission_denied' && starts.length === 0)
+            || (item.tool === 'private_browser'
+              && item.failure_category === 'interaction_blocked'
+              && recoveredBrowserInteraction)
             || (spec.expectedExitCodes?.[index] > 0 && expected.includes(item.tool)
               && events.some(e => e.type === 'tool_output' && bare(e.tool) === item.tool && e.exit_code === spec.expectedExitCodes[index]))),
           expected_answer_evidence: !spec.expectedAnswers
@@ -398,6 +429,8 @@ try {
           metrics: Object.fromEntries(['input_tokens', 'output_tokens', 'injected_tokens',
             'time_to_first_token', 'response_time'].map(key => [key, metrics[key] ?? metrics.data?.[key] ?? null])),
           user_count_before: beforeUsers, user_count_after: afterUsers,
+          prefetched_web_sources: prefetchedWebSources.length,
+          prefetched_youtube_sources: prefetchedYoutubeSources.length,
           dom_classes_on_user_mismatch: domClasses,
           page_errors: pageErrors.splice(0),
           unavailable: contract.unavailable || [], checks, status: Object.values(checks).every(Boolean) ? 'passed' : 'failed' };

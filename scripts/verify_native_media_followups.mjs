@@ -10,6 +10,8 @@ const endpointId = process.env.ENDPOINT_ID || '1d1022ef';
 const endpointUrl = process.env.ENDPOINT_URL || (() => { throw new Error("ENDPOINT_URL is required"); })();
 const model = process.env.MODEL || 'odysseus-qwen3.5-tools-pre-heretic';
 const owner = 'sft_alex_creator';
+const expectCleanRoute = process.env.EXPECT_CLEAN_ROUTE !== 'false';
+const expectNativeContractMetadata = process.env.EXPECT_NATIVE_CONTRACT_METADATA !== 'false';
 const seconds = value => {
   if (typeof value === 'number') return value;
   const text = String(value ?? '').trim();
@@ -112,9 +114,10 @@ try {
         const expected = starts.filter(event => event.tool === spec.tool);
         const args = parseArgs(expected[0]);
         const checks = {
-          http_ok: response.ok(), clean_route: contract.selection_mode === 'clean_compact_v3_preview',
-          native_workspace: contract.native_workspace === true,
-          expected_offered: (contract.offered || []).includes(spec.tool),
+          http_ok: response.ok(),
+          clean_route: !expectCleanRoute || contract.selection_mode === 'clean_compact_v3_preview',
+          native_workspace: !expectNativeContractMetadata || contract.native_workspace === true,
+          expected_offered: !expectNativeContractMetadata || (contract.offered || []).includes(spec.tool),
           exactly_one_expected_call: starts.length === 1 && expected.length === 1,
           argument_contract: expected.length === 1 && spec.validate(index, args),
           exactly_one_successful_output: successfulOutputs.length === 1,

@@ -2,7 +2,7 @@
  * Gallery Module — photo backup + AI-generated image library.
  */
 
-import uiModule from './ui.js?v=20260908weekhoverfix1';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import { loadPanel } from './panels.js?v=20260909movepicklayer1';
 import spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';

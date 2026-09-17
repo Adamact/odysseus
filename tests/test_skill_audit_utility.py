@@ -125,8 +125,10 @@ def test_task_audit_resolves_the_owners_model_settings(monkeypatch):
 
     seen = {}
 
-    def fake_resolve(owner=None):
+    def fake_resolve(owner=None, model_spec=None, endpoint_url=None):
         seen["owner"] = owner
+        assert model_spec is None
+        assert endpoint_url is None
         return "http://example.test", "audit-model", None, None
 
     async def fake_run(key, skills_manager, names, url, model, headers, teacher, owner, workload="foreground"):

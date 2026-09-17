@@ -3,7 +3,7 @@
  * Renders as a sidebar panel (like document editor), not a modal.
  */
 
-import uiModule from './ui.js?v=20260908weekhoverfix1';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import { spawnConfetti } from './compare/vote.js?v=20260828resendcaldrag1';
 import * as Modals from './modalManager.js';
 import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
@@ -4122,7 +4122,10 @@ function _buildDrawHtml() {
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>
           </button>
         </div>
-        <button type="button" class="note-form-draw-text" title="Add text — click to cycle size">T<span class="note-form-draw-text-badge"></span></button>
+        <button type="button" class="note-form-draw-undo" title="Undo" aria-label="Undo">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"></polyline><path d="M4 9h11a5 5 0 0 1 5 5v0a5 5 0 0 1-5 5H9"></path></svg>
+        </button>
+        <button type="button" class="note-form-draw-text" title="Add text — click to cycle size" aria-label="Add text">T<span class="note-form-draw-text-badge"></span></button>
         <button type="button" class="note-form-draw-line" title="Line — click to cycle size">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="20" x2="20" y2="4"/></svg>
           <span class="note-form-draw-shape-badge"></span>
@@ -4130,9 +4133,6 @@ function _buildDrawHtml() {
         <button type="button" class="note-form-draw-circle" title="Circle — click to cycle size">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg>
           <span class="note-form-draw-shape-badge"></span>
-        </button>
-        <button type="button" class="note-form-draw-undo" title="Undo">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M4 9h11a5 5 0 0 1 5 5v0a5 5 0 0 1-5 5H9"/></svg>
         </button>
       </div>
     </div>
@@ -4257,17 +4257,24 @@ function _wireCanvas(container, initialImageUrl) {
   // on Undo. Cap to 30 to keep memory bounded.
   const _undoStack = [];
   const UNDO_LIMIT = 30;
+  const _syncUndoButton = () => {
+    const available = _undoStack.length > 0;
+    undoBtn?.classList.toggle('has-undo', available);
+    undoBtn?.toggleAttribute('disabled', !available);
+    undoBtn?.setAttribute('aria-disabled', available ? 'false' : 'true');
+  };
   const _markCanvasDirty = () => container.dispatchEvent(new Event('input', { bubbles: true }));
   const _snapshot = () => {
     try {
       const w = canvas.width, h = canvas.height;
       _undoStack.push(ctx.getImageData(0, 0, w, h));
       if (_undoStack.length > UNDO_LIMIT) _undoStack.shift();
+      _syncUndoButton();
     } catch {}
   };
   const _undo = () => {
     const prev = _undoStack.pop();
-    if (!prev) return;
+    if (!prev) { _syncUndoButton(); return; }
     // Restore against the raw backing store: temporarily reset the active
     // ctx scale, paint the snapshot 1:1, then reapply our standard transform.
     ctx.save();
@@ -4275,6 +4282,7 @@ function _wireCanvas(container, initialImageUrl) {
     ctx.putImageData(prev, 0, 0);
     ctx.restore();
     _markCanvasDirty();
+    _syncUndoButton();
   };
 
   const _pos = (e) => {
@@ -4506,6 +4514,7 @@ function _wireCanvas(container, initialImageUrl) {
   lineBtn?.addEventListener('click', () => _setMode(_cycle('line-')));
   circleBtn?.addEventListener('click', () => _setMode(_cycle('circle-')));
   undoBtn?.addEventListener('click', () => _undo());
+  _syncUndoButton();
 
   // Stash so the save handler can read it later without re-resolving DOM.
   canvas._cssW = cssW;

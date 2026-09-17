@@ -208,6 +208,7 @@ def _chat_stream_endpoint(
         captured["agent"] = {
             "primary": (endpoint_url, model, kwargs.get("headers")),
             "fallbacks": kwargs.get("fallbacks"),
+            "thinking_mode": kwargs.get("thinking_mode"),
         }
         if kwargs.get("external_untrusted_context_seen"):
             captured["agent_external_untrusted_context_seen"] = True
@@ -311,7 +312,7 @@ async def test_chat_stream_route_keeps_selected_model_strict_with_legacy_data(mo
     if mode == "chat":
         assert captured == {"chat": [selected]}
     else:
-        assert captured == {"agent": {"primary": selected, "fallbacks": []}}
+        assert captured == {"agent": {"primary": selected, "fallbacks": [], "thinking_mode": "off"}}
 
 
 @pytest.mark.asyncio
@@ -566,7 +567,7 @@ async def test_chat_stream_route_uses_only_new_explicit_fallback_policy(monkeypa
     if mode == "chat":
         assert captured == {"chat": [selected, backup]}
     else:
-        assert captured == {"agent": {"primary": selected, "fallbacks": [backup]}}
+        assert captured == {"agent": {"primary": selected, "fallbacks": [backup], "thinking_mode": "off"}}
 
 
 @pytest.mark.asyncio
@@ -1801,6 +1802,36 @@ async def test_chat_stream_threads_form_endpoint_id_to_descriptor_builder(monkey
         pass
 
     assert seen == ["account-two"]
+
+
+@pytest.mark.asyncio
+async def test_model_reconciliation_clears_stale_thinking_toggle(monkeypatch):
+    captured = {}
+    endpoint = _chat_stream_endpoint(
+        monkeypatch,
+        "agent",
+        captured,
+        session_model="qwen3-thinking",
+    )
+
+    def switch_to_grok(request, session, session_id, form_data, owner=None):
+        session.model = "x-ai/grok-4.5"
+        session.endpoint_url = "https://openrouter.ai/api/v1/chat/completions"
+
+    monkeypatch.setattr(
+        chat_routes,
+        "_reconcile_selected_route_from_request",
+        switch_to_grok,
+    )
+    request = _RouteRequest("agent")
+    request._form["thinking_mode"] = "on"
+
+    response = await endpoint(request)
+    async for _chunk in response.body_iterator:
+        pass
+
+    assert captured["agent"]["primary"][1] == "x-ai/grok-4.5"
+    assert captured["agent"]["thinking_mode"] == "off"
 
 
 @pytest.mark.asyncio
@@ -3722,7 +3753,11 @@ def test_skill_activation_reaches_later_fallback_request_and_pinned_round(monkey
         for schema in round_two_requests[0]["kwargs"]["tools"]
     }
     assert "grep" in primary_schema_names
-    assert round_two_requests[1]["kwargs"]["tools"] is None
+    fallback_schema_names = {
+        schema["function"]["name"]
+        for schema in round_two_requests[1]["kwargs"]["tools"]
+    }
+    assert {"grep", "manage_skills"} <= fallback_schema_names
     fallback_route_prompt = next(
         message.get("content") or ""
         for message in round_two_requests[1]["messages"]

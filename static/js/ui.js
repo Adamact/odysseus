@@ -4,7 +4,7 @@
  * UI utilities for toasts, modals, scrolling, and user feedback
  */
 
-import themeModule from './theme.js?v=20260909effectspeed1';
+import themeModule from './theme.js?v=20260911organsrain1';
 import * as Modals from './modalManager.js';
 import spinnerModule from './spinner.js';
 import { registerMenuDismiss, dismissTopEscapeLayer, dismissOrRemove } from './escMenuStack.js';
@@ -590,12 +590,6 @@ function _smoothScrollStep() {
   const current = box.scrollTop;
   const diff = target - current;
 
-  // If user scrolled up significantly, don't force them down
-  if (diff > 300) {
-    _scrollRafId = null;
-    return;
-  }
-
   if (diff <= 1) {
     box.scrollTop = target;
     _scrollRafId = null;
@@ -633,6 +627,11 @@ export function setAutoScroll(enabled) {
  */
 export function getAutoScroll() {
   return autoScrollEnabled;
+}
+
+/** True while scrollHistory() is actively moving the chat viewport. */
+export function isAutoScrolling() {
+  return !!_scrollRafId;
 }
 
 /**
@@ -753,7 +752,7 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
       cancelBtn.removeEventListener('click', onCancel);
       altBtn.removeEventListener('click', onAlt);
       overlay.removeEventListener('click', onBackdrop);
-      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('keydown', onKey, true);
       try { _prevFocus && _prevFocus.focus && _prevFocus.focus(); } catch {}
       resolve(result);
     }
@@ -787,7 +786,8 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
     altBtn.addEventListener('click', onAlt);
     cancelBtn.addEventListener('click', onCancel);
     overlay.addEventListener('click', onBackdrop);
-    document.addEventListener('keydown', onKey);
+    // Capture Escape before global shortcuts or focused controls can swallow it.
+    document.addEventListener('keydown', onKey, true);
     okBtn.focus();
   });
 }
@@ -985,6 +985,7 @@ const uiModule = {
   restoreHistoryScroll,
   setAutoScroll,
   getAutoScroll,
+  isAutoScrolling,
   autoResize,
   debounce,
   el,

@@ -690,7 +690,11 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                 return False
 
             from src.task_endpoint import resolve_task_candidates
-            candidates = resolve_task_candidates(owner=group_owner or None)
+            candidates = resolve_task_candidates(
+                owner=group_owner or None,
+                override_url=kwargs.get("endpoint_url"),
+                override_model=kwargs.get("model"),
+            )
             if not candidates:
                 return False
 
@@ -1143,6 +1147,8 @@ async def action_summarize_emails(owner: str, **kwargs) -> Tuple[str, bool]:
             do_summary=True,
             do_reply=False,
             account_id=_email_task_account_id(kwargs),
+            override_url=kwargs.get("endpoint_url"),
+            override_model=kwargs.get("model"),
         )
         if _result_is_config_error(result):
             return result, False
@@ -1164,6 +1170,8 @@ async def action_draft_email_replies(owner: str, **kwargs) -> Tuple[str, bool]:
             account_id=_email_task_account_id(kwargs),
             days_back=7,
             progress_cb=kwargs.get("progress_cb"),
+            override_url=kwargs.get("endpoint_url"),
+            override_model=kwargs.get("model"),
         )
         if _result_is_config_error(result):
             return result, False
@@ -1297,20 +1305,37 @@ async def action_email_auto_translate(owner: str, **kwargs) -> Tuple[str, bool]:
                     },
                 ],
                 owner=owner,
+                override_url=kwargs.get("endpoint_url"),
+                override_model=kwargs.get("model"),
                 temperature=0.2,
                 max_tokens=8192,
                 timeout=180,
             )
             content = (content or "").strip()
-            content = _extract_reply(content)
             if "<<<SAME_LANGUAGE>>>" in content:
                 return "", True
-            marker = _re.search(r"<<<TRANSLATION>>>\s*(.*?)\s*<<<END>>>", content, _re.S | _re.I)
-            if marker:
-                content = marker.group(1).strip()
+            # Translation markers are distinct from the reply/summary markers
+            # handled by _extract_reply. Some reasoning-capable models repeat
+            # the opening marker or omit END, so anchor on the first opening
+            # marker and tolerate either response shape.
+            marker_open = _re.search(r"<<<\s*TRANSLATION\s*>>>", content, _re.I)
+            if marker_open:
+                translated_body = content[marker_open.end():]
+                marker_close = _re.search(r"<<<\s*END\s*>>>", translated_body, _re.I)
+                content = translated_body[:marker_close.start()] if marker_close else translated_body
             else:
-                content = _re.sub(r"^\s*<<<TRANSLATION>>>\s*", "", content, flags=_re.I).strip()
-                content = _re.sub(r"\s*<<<END>>>\s*$", "", content, flags=_re.I).strip()
+                content = _extract_reply(content)
+            content = _re.sub(r"<<<\s*(?:TRANSLATION|END)\s*>>>", "", content, flags=_re.I).strip()
+            # Avoid caching duplicated output when a model emits the same
+            # translation twice while repairing its requested format.
+            paragraphs = [p.strip() for p in _re.split(r"\n\s*\n", content) if p.strip()]
+            if len(paragraphs) >= 2 and paragraphs[-1] == paragraphs[-2]:
+                paragraphs.pop()
+                content = "\n\n".join(paragraphs)
+            elif len(content) > 1 and len(content) % 2 == 0:
+                midpoint = len(content) // 2
+                if content[:midpoint].strip() == content[midpoint:].strip():
+                    content = content[:midpoint].strip()
             return content, False
 
         since = (_dt.utcnow() - _td(days=days_back)).strftime("%d-%b-%Y")
@@ -1507,7 +1532,11 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
                 return "No upcoming events to classify", True
 
             from src.task_endpoint import resolve_task_candidates
-            llm_candidates = resolve_task_candidates(owner=owner)
+            llm_candidates = resolve_task_candidates(
+                owner=owner,
+                override_url=kwargs.get("endpoint_url"),
+                override_model=kwargs.get("model"),
+            )
             llm_available = bool(llm_candidates)
 
             # Pull user memories so the LLM has personal context (relationships,
@@ -1594,12 +1623,18 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
                     from src.text_helpers import strip_think as _st
                     raw = _st(raw or "", prose=False, prompt_echo=False)
                     raw = _re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=_re.MULTILINE).strip()
-                    m = _re.search(r"\[.*\]", raw, _re.DOTALL)
-                    if not m:
+                    # Native Qwen/Heretic responses can append a short
+                    # explanation after an otherwise valid JSON array. Decode
+                    # the first complete array instead of using a greedy regex
+                    # that turns the suffix into `json.loads` Extra data.
+                    start = raw.find("[")
+                    if start < 0:
                         logger.warning(f"[classify-llm] no JSON array in response: {raw[:300]!r}")
                         failed += len(batch)
                         continue
-                    arr = _json.loads(m.group())
+                    arr, _end = _json.JSONDecoder().raw_decode(raw[start:])
+                    if not isinstance(arr, list):
+                        raise ValueError("calendar classifier returned a non-array JSON value")
                     by_idx = {x.get("i"): x for x in arr if isinstance(x, dict)}
                     for idx, ev in enumerate(batch):
                         x = by_idx.get(idx)
@@ -1671,6 +1706,8 @@ async def action_extract_email_events(owner: str, **kwargs) -> Tuple[str, bool]:
                         days_back=days_back,
                         account_id=account_id,
                         max_process=max_process,
+                        override_url=kwargs.get("endpoint_url"),
+                        override_model=kwargs.get("model"),
                     ),
                     timeout=timeout,
                 )
@@ -1802,7 +1839,11 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
             return "All sender sigs already cached (or no eligible senders)", True
 
         from src.task_endpoint import resolve_task_candidates
-        candidates = resolve_task_candidates(owner=owner)
+        candidates = resolve_task_candidates(
+            owner=owner,
+            override_url=kwargs.get("endpoint_url"),
+            override_model=kwargs.get("model"),
+        )
         if not candidates:
             return "No LLM endpoint available", False
         model = candidates[0][1]
@@ -2063,7 +2104,11 @@ async def action_test_skills(owner: str, **kwargs) -> Tuple[str, bool]:
             raise TaskNoop("no skills to test")
 
         from src.task_endpoint import resolve_task_candidates
-        candidates = resolve_task_candidates(owner=owner)
+        candidates = resolve_task_candidates(
+            owner=owner,
+            override_url=kwargs.get("endpoint_url"),
+            override_model=kwargs.get("model"),
+        )
         if not candidates:
             return "No Default/Utility model configured — set one in Settings.", False
 
@@ -2194,7 +2239,17 @@ async def action_audit_skills(owner: str, **kwargs) -> Tuple[str, bool]:
         if not names:
             raise TaskNoop("no unaudited skills")
 
-        url, model, headers, teacher = _resolve_audit_models(owner=owner)
+        try:
+            url, model, headers, teacher = _resolve_audit_models(
+                owner=owner,
+                model_spec=kwargs.get("model"),
+                endpoint_url=kwargs.get("endpoint_url"),
+            )
+        except ValueError as e:
+            # A missing Utility/Default model is a temporary configuration
+            # problem, not a completed audit. Let the scheduler retry without
+            # consuming the daily run or advancing the normal schedule.
+            raise TaskDeferred(str(e), delay_seconds=20 * 60) from e
         try:
             from src.llm_core import seconds_since_model_activity
             recent = seconds_since_model_activity(url, model)
@@ -2432,7 +2487,11 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         # gate until after authoritative account cleanup. State retirement must
         # still run when no model is configured.
         from src.task_endpoint import resolve_task_candidates
-        candidates = resolve_task_candidates(owner=owner)
+        candidates = resolve_task_candidates(
+            owner=owner,
+            override_url=kwargs.get("endpoint_url"),
+            override_model=kwargs.get("model"),
+        )
         target_account_id = _email_task_account_id(kwargs)
 
         # ── 1. Enumerate enabled accounts. Match this task's owner AND fall
@@ -2755,10 +2814,15 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                     triage_version=TRIAGE_VERSION,
                     category_tags=CATEGORY_TAGS,
                 )
-                cache.setdefault("uids", {})[item["uid"]] = verdict
-                per_uid_scores[key] = verdict
-                saved_classifications += 1
-                continue
+                # Keep deterministic handling for clearly categorized mail,
+                # but let ambiguous messages reach the configured task model.
+                # The unconditional continue here previously made the LLM
+                # classifier below unreachable for every email.
+                if verdict.get("tags") or verdict.get("reason") != "categorized by email metadata":
+                    cache.setdefault("uids", {})[item["uid"]] = verdict
+                    per_uid_scores[key] = verdict
+                    saved_classifications += 1
+                    continue
                 # ── LLM-classify. JSON-only response; bullet-proof parse.
                 llm_attempts += 1
                 prompt = (

@@ -40,7 +40,7 @@ def forbidden_inference_and_execution(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case", ["calendar", "catalog", "unknown"])
+@pytest.mark.parametrize("case", ["calendar", "catalog"])
 async def test_actual_generator_reports_unavailable_before_inference(
     case, forbidden_inference_and_execution,
 ):
@@ -54,10 +54,6 @@ async def test_actual_generator_reports_unavailable_before_inference(
         selected = contract({"cookbook_admin"}, required_tools={"list_models"},
                             policy=ToolPolicy(disabled_tools=frozenset({"list_models"})))
         missing = "list_models"
-    else:
-        selected = contract({"unknown"})
-        missing = "capability:unknown"
-
     chunks = [chunk async for chunk in stream_agent_loop(
         "https://inference.invalid", "unused-model",
         [{"role": "user", "content": "Perform the requested action"}],
@@ -72,16 +68,21 @@ async def test_actual_generator_reports_unavailable_before_inference(
     }
     failure = json.loads(chunks[1].removeprefix("data: "))
     assert set(failure) == {"delta"}
-    if case == "unknown":
-        assert "Which action" in failure["delta"]
-        assert "haven’t called any tools" in failure["delta"]
-        assert missing in selected.audit()["unavailable"]
-    else:
-        assert "can’t perform" in failure["delta"]
-        assert "unavailable" in failure["delta"]
-        assert missing in failure["delta"]
-        assert "haven’t substituted another tool" in failure["delta"]
+    assert "can’t perform" in failure["delta"]
+    assert "unavailable" in failure["delta"]
+    assert missing in failure["delta"]
+    assert "haven’t substituted another tool" in failure["delta"]
     assert chunks[2] == "data: [DONE]\n\n"
+
+
+def test_unknown_contract_reaches_model_instead_of_forced_clarification():
+    from src.agent_loop import _blocks_before_inference
+
+    assert not _blocks_before_inference(contract({"unknown"}))
+    assert _blocks_before_inference(contract(
+        {"calendar"},
+        policy=ToolPolicy(disabled_tools=frozenset({"manage_calendar"})),
+    ))
 
 
 @pytest.mark.asyncio
@@ -98,7 +99,9 @@ async def test_stream_bridge_binds_contract_for_actual_generator_and_resets(
     outer_bridge = AgentExecutionBridge(transport, frozenset({"bash"}), name="outer")
     inner_bridge = AgentExecutionBridge(transport, frozenset({"web_search"}), name="inner")
     outer = contract({"notes"})
-    selected = contract({"unknown"})
+    # Use an actually unavailable capability to stop before inference.
+    # Unknown intent is deliberately allowed to reach the model.
+    selected = contract({"calendar"}, policy=ToolPolicy(disabled_tools=frozenset({"manage_calendar"})))
     previous = active_turn_contract(), get_active_execution_bridge()
     with bind_turn_contract(outer), bind_execution_bridge(outer_bridge):
         chunks = []
@@ -233,7 +236,8 @@ async def test_direct_agent_caller_binds_contract_and_restores_context(
 ):
     from src.agent_loop import stream_agent_loop
 
-    outer, selected = contract({"notes"}), contract({"unknown"})
+    outer = contract({"notes"})
+    selected = contract({"calendar"}, policy=ToolPolicy(disabled_tools=frozenset({"manage_calendar"})))
     previous = active_turn_contract()
     with bind_turn_contract(outer):
         stream = stream_agent_loop(

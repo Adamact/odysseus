@@ -9,7 +9,20 @@ function markComposerUserEdited() {
   msgInput.dataset.startupPreserveBound = '1';
   msgInput.addEventListener('input', () => {
     window.__odysseusComposerUserEdited = !!msgInput.value;
+    syncComposerModelPicker(msgInput);
   });
+  syncComposerModelPicker(msgInput);
+}
+
+// Keep the model picker while the composer is empty or short. Once the user
+// has enough text for the picker to compete with the input area, hide only
+// the picker so the prompt gets the full row width instead of being clipped.
+function syncComposerModelPicker(msgInput) {
+  const wrap = document.getElementById('model-picker-wrap');
+  if (!wrap || !msgInput) return;
+  const lineHeight = parseFloat(getComputedStyle(msgInput).lineHeight) || 21;
+  const typedEnough = msgInput.value.trim().length >= 64 || msgInput.scrollHeight > lineHeight * 2.2;
+  wrap.classList.toggle('picker-auto-hidden', typedEnough);
 }
 
 function clearFreshComposerRestore() {

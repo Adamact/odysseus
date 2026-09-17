@@ -21,6 +21,17 @@ from src.task_action_policy import (
 logger = logging.getLogger(__name__)
 
 
+def _is_sft_fixture_owner(owner: str | None) -> bool:
+    """Synthetic SFT accounts may manage tasks but must never auto-fire them."""
+    return str(owner or "").strip().lower().startswith("sft_")
+
+
+def _background_owner_filter(column):
+    """SQL predicate matching real/ownerless accounts, excluding SFT fixtures."""
+    from sqlalchemy import or_
+    return or_(column.is_(None), ~column.like("sft\\_%", escape="\\"))
+
+
 def _utcnow() -> datetime:
     """Return naive UTC for task DB fields without using deprecated APIs."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -552,6 +563,7 @@ class TaskScheduler:
                     _ST.status == "active",
                     _ST.next_run.isnot(None),
                     _ST.next_run < now,
+                    _background_owner_filter(_ST.owner),
                 ).all()
                 if overdue:
                     for t in overdue:
@@ -628,6 +640,7 @@ class TaskScheduler:
                     ScheduledTask.status == "active",
                     ScheduledTask.trigger_type == "schedule",
                     ScheduledTask.next_run.isnot(None),
+                    _background_owner_filter(ScheduledTask.owner),
                 ).all()
                 buckets: Dict[str, list] = {}
                 for r in rows:
@@ -713,7 +726,7 @@ class TaskScheduler:
         try:
             owners = set()
             for r in db.query(ScheduledTask.owner).distinct().all():
-                if r[0]:
+                if r[0] and not _is_sft_fixture_owner(r[0]):
                     owners.add(r[0])
             note_q = db.query(Note.owner).filter(
                 Note.due_date.isnot(None),
@@ -721,7 +734,7 @@ class TaskScheduler:
                 Note.archived == False,  # noqa: E712
             ).distinct()
             for r in note_q.all():
-                if r[0]:
+                if r[0] and not _is_sft_fixture_owner(r[0]):
                     owners.add(r[0])
             return sorted(owners)
         except Exception:
@@ -747,6 +760,7 @@ class TaskScheduler:
                     next_run = _db.query(_ST.next_run).filter(
                         _ST.status == "active",
                         _ST.next_run.isnot(None),
+                        _background_owner_filter(_ST.owner),
                     ).order_by(_ST.next_run.asc()).first()
                     if next_run and next_run[0]:
                         delta = (next_run[0] - _utcnow()).total_seconds()
@@ -775,6 +789,7 @@ class TaskScheduler:
                 due = db.query(ScheduledTask).filter(
                     ScheduledTask.status == "active",
                     ScheduledTask.next_run <= now,
+                    _background_owner_filter(ScheduledTask.owner),
                     ScheduledTask.id.notin_(executing_snapshot) if executing_snapshot else True,
                 ).all()
                 to_dispatch = []
@@ -1310,7 +1325,15 @@ class TaskScheduler:
             # through as `command` so action_cookbook_serve can json.loads it.
             elif task.action == "cookbook_serve" and task.prompt:
                 kwargs["command"] = task.prompt
+            # Model-backed actions normally use the shared Utility/Default
+            # chain. A task-level choice is an explicit override and must be
+            # available to actions such as Skills Audit as well.
+            if getattr(task, "model", None):
+                kwargs["model"] = task.model
+                kwargs["endpoint_url"] = getattr(task, "endpoint_url", None)
             result, success = await action_fn(**kwargs)
+            if getattr(task, "model", None):
+                self._last_run_model = task.model
             return result, success
         except TaskNoop:
             # Bubble up so _execute_task_locked can drop the run row silently.
@@ -1926,7 +1949,7 @@ class TaskScheduler:
         headers = {}
         try:
             from core.database import SessionLocal, ModelEndpoint
-            from src.endpoint_resolver import normalize_base, build_headers
+            from src.endpoint_resolver import normalize_base, build_headers, same_endpoint_base
             from src.auth_helpers import owner_filter
             db2 = SessionLocal()
             try:
@@ -1934,7 +1957,7 @@ class TaskScheduler:
                 ep_q = owner_filter(ep_q, ModelEndpoint, task.owner or None)
                 eps = ep_q.all()
                 for ep in eps:
-                    if normalize_base(ep.base_url) in endpoint_url or endpoint_url in normalize_base(ep.base_url):
+                    if same_endpoint_base(endpoint_url, ep.base_url):
                         headers = build_headers(ep.api_key, normalize_base(ep.base_url))
                         break
             finally:
@@ -2102,7 +2125,7 @@ class TaskScheduler:
         # Resolve headers
         try:
             from core.database import ModelEndpoint
-            from src.endpoint_resolver import normalize_base, build_headers
+            from src.endpoint_resolver import normalize_base, build_headers, same_endpoint_base
             from src.auth_helpers import owner_filter
             db2 = db
             if not headers_from_resolver:
@@ -2110,7 +2133,7 @@ class TaskScheduler:
                 ep_q = owner_filter(ep_q, ModelEndpoint, task.owner or None)
                 eps = ep_q.all()
                 for ep in eps:
-                    if normalize_base(ep.base_url) in endpoint_url or endpoint_url in normalize_base(ep.base_url):
+                    if same_endpoint_base(endpoint_url, ep.base_url):
                         headers = build_headers(ep.api_key, normalize_base(ep.base_url))
                         break
         except Exception:

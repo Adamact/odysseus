@@ -3,7 +3,7 @@ import json
 import pytest
 
 from scripts.generate_sft_environment_expansion import validate_case
-from scripts.run_sft_environment_expansion import score_turn
+from scripts.run_sft_environment_expansion import has_unrecovered_tool_failure, score_turn
 
 
 def tool_start(action: str) -> dict:
@@ -55,6 +55,65 @@ def test_mcp_expected_tool_name_matches_runtime_short_name():
     turn = {"prompt": "Search my email.", "expected_tools": ["mcp__email__search_emails"]}
     events = [{"type": "tool_start", "tool": "search_emails", "command": "{}"}]
     assert score_turn(turn, events, "Found it.") == []
+
+
+@pytest.mark.parametrize("expected,observed", [
+    ("edit_document", "update_document"),
+    ("update_document", "edit_document"),
+])
+def test_active_document_writers_are_scored_by_function_not_name(expected, observed):
+    turn = {"prompt": "Expand this active draft.", "expected_tools": [expected]}
+    events = [{"type": "tool_start", "tool": observed, "command": "{}"}]
+    assert score_turn(turn, events, "Updated.") == []
+
+
+def test_corrected_tool_retry_does_not_remain_a_functional_failure():
+    events = [
+        {"type": "tool_output", "tool": "edit_document", "exit_code": 1,
+         "error": True, "output": "Error: malformed arguments"},
+        {"type": "tool_output", "tool": "edit_document", "exit_code": 0,
+         "error": False, "output": '{"action":"edit"}'},
+    ]
+    assert not has_unrecovered_tool_failure(events)
+    assert has_unrecovered_tool_failure(list(reversed(events)))
+
+
+def test_isolated_replay_materializes_inventory_email_rows(tmp_path, monkeypatch):
+    from scripts import run_sft_environment_expansion as runner
+    from core.database import Base
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    inventory = tmp_path / "environments.json"
+    inventory.write_text(json.dumps({"environments": [{
+        "owner": "sft_maya_ops",
+        "profile": {
+            "primary": "maya@example.test",
+            "secondary": "maya-research@example.test",
+            "primary_account": "Primary Inbox",
+            "secondary_account": "Ops Research",
+        },
+        "emails": [
+            {"uid": "1001", "account": "Primary Inbox", "subject": "Review"},
+            {"uid": "1010", "account": "Ops Research", "subject": "Research"},
+        ],
+    }]}), encoding="utf-8")
+    monkeypatch.setattr(runner, "DATA_DIR", tmp_path / "isolated-data")
+    engine = create_engine(f"sqlite:///{tmp_path / 'fixture.db'}")
+    Base.metadata.create_all(engine)
+    monkeypatch.setattr(runner, "SessionLocal", sessionmaker(bind=engine))
+
+    installed = runner.install_fixture_environments(inventory)
+    assert installed["emails"] == 2
+    rows = json.loads(
+        (runner.DATA_DIR / "fixture_email_messages.json").read_text(encoding="utf-8")
+    )["messages"]
+    assert rows[0]["owner"] == "sft_maya_ops"
+    assert rows[0]["account_id"] == "primary-inbox"
+    assert rows[0]["account_email"] == "maya@example.test"
+    assert rows[1]["account_id"] == "secondary-inbox"
+    assert rows[1]["account_email"] == "maya-research@example.test"
+    assert rows[0]["body"].startswith("Fixture message for: Review")
 
 
 def test_generated_case_rejects_multiple_tool_families_in_one_turn():

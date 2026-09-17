@@ -192,6 +192,34 @@ def test_private_browser_batch_normalizes_stable_inspection_action_names() -> No
     ]
 
 
+def test_private_browser_batch_read_selector_matches_top_level_read_semantics() -> None:
+    commands, paths = PrivateBrowserTool()._normalize_batch_screenshots([
+        ["open", "https://example.com"],
+        ["read", "h1"],
+    ])
+
+    assert paths == []
+    assert commands == [
+        ["open", "https://example.com"],
+        ["get", "text", "h1"],
+    ]
+
+
+def test_private_browser_batch_recovers_omitted_wait_selector_with_timeout() -> None:
+    commands, paths = PrivateBrowserTool()._normalize_batch_screenshots([
+        ["fill", "@e2", "orange"],
+        ["wait", None, 2500],
+        ["snapshot"],
+    ])
+
+    assert paths == []
+    assert commands == [
+        ["fill", "@e2", "orange"],
+        ["wait", "2500"],
+        ["snapshot"],
+    ]
+
+
 def test_private_browser_batch_normalizes_object_commands_to_cli_arrays() -> None:
     commands, paths = PrivateBrowserTool()._normalize_batch_screenshots([
         {"action": "open", "url": "https://example.com"},
@@ -1453,7 +1481,7 @@ def test_private_browser_retries_transient_local_browser_bootstrap_failure(
     assert sum(1 for call in calls if call[-1] == page.as_uri()) == 2
 
 
-def test_private_browser_open_defers_screenshot_until_snapshot(monkeypatch, tmp_path) -> None:
+def test_private_browser_open_captures_visual_preview(monkeypatch, tmp_path) -> None:
     png_bytes = b"\x89PNG\r\n\x1a\nauto-browser"
 
     monkeypatch.setattr(web_tools.shutil, "which", lambda name: "/usr/bin/agent-browser")
@@ -1492,8 +1520,19 @@ def test_private_browser_open_defers_screenshot_until_snapshot(monkeypatch, tmp_
         "open",
         "https://example.com",
     ]
-    assert len(calls) == 1
-    assert "images" not in result
+    assert len(calls) == 2
+    assert calls[1][-2] == "screenshot"
+    assert result["images"] == [{
+        "data": base64.b64encode(png_bytes).decode("ascii"),
+        "mimeType": "image/png",
+    }]
+
+
+def test_private_browser_visual_preview_covers_state_changing_actions() -> None:
+    assert {'open', 'batch', 'snapshot', 'click', 'fill', 'press', 'scroll'} <= (
+        PrivateBrowserTool._AUTO_SCREENSHOT_ACTIONS
+    )
+    assert {'read', 'find', 'evaluate', 'wait'} - PrivateBrowserTool._AUTO_SCREENSHOT_ACTIONS
 
 
 def test_youtube_tool_comments_falls_back_to_ytdlp(monkeypatch) -> None:

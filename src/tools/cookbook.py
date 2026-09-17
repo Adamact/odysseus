@@ -1829,7 +1829,11 @@ async def do_list_cached_models(content: str, owner: Optional[str] = None) -> Di
                 resp.raise_for_status()
                 data = resp.json()
                 if isinstance(data, dict) and data.get('error'):
-                    raise ValueError('cache endpoint reported an error')
+                    scan_errors.append({
+                        'host': host_label or 'local',
+                        'reason': str(data.get('error'))[:500],
+                    })
+                    return []
             ms = data.get("models", []) if isinstance(data, dict) else (data or [])
             for m in ms:
                 m["host"] = host_label or "local"
@@ -1885,7 +1889,25 @@ async def do_list_cached_models(content: str, owner: Optional[str] = None) -> Di
                  and (s.get("name") == raw_host or s.get("host") == host or s.get("host") == raw_host)),
                 {},
             )
+            error_start = len(scan_errors)
             models = await _scan_one(raw_host, host, model_dir=_dirs_for(srv))
+            # Friendly Cookbook names commonly double as SSH aliases. If a
+            # saved LAN address goes stale after a reboot/network change,
+            # retry the validated alias before declaring the server offline.
+            # This is read-only and never mutates the saved configuration.
+            if not models and len(scan_errors) > error_start and host != raw_host:
+                try:
+                    alias = validate_remote_host(raw_host)
+                except Exception:
+                    alias = None
+                if alias:
+                    configured_errors = scan_errors[error_start:]
+                    del scan_errors[error_start:]
+                    models = await _scan_one(
+                        raw_host, alias, model_dir=_dirs_for(srv),
+                    )
+                    if not models:
+                        scan_errors[error_start:error_start] = configured_errors
         else:
             # Always include local. Local's saved record is the one with no host.
             local_srv = next((s for s in servers if isinstance(s, dict) and not (s.get("host") or "").strip()), {})

@@ -263,6 +263,24 @@ def normalize_base(url: str) -> str:
     return url
 
 
+def same_endpoint_base(left, right) -> bool:
+    """Allow credential reuse only for the exact API origin and base path."""
+    def identity(value):
+        parsed = urlparse(normalize_base(value))
+        if (parsed.scheme not in {"http", "https"} or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None
+                or parsed.query or parsed.fragment or parsed.params):
+            return None
+        return (parsed.scheme, parsed.hostname.lower(),
+                parsed.port or (443 if parsed.scheme == "https" else 80),
+                parsed.path.rstrip("/"))
+    try:
+        expected = identity(right)
+        return expected is not None and identity(left) == expected
+    except ValueError:
+        return False
+
+
 def _validated_endpoint_base(url: str) -> str:
     """Return a base URL that is safe for endpoint path appends."""
     base = (url or "").strip().rstrip("/")

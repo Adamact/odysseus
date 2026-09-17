@@ -6,7 +6,7 @@
  */
 
 
-import uiModule from './ui.js?v=20260908weekhoverfix1';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import sessionModule from './sessions.js';
 import emojiPicker from './emojiPicker.js';
 import markdownModule from './markdown.js';
@@ -75,6 +75,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
   // covers the doc being explicitly typed svg/xml.)
   const _isRenderLang = (l) => ['html', 'svg', 'xml'].includes((l || '').toLowerCase());
   const _isRichTextLang = (l) => ['richtext', 'rich-text'].includes((l || '').toLowerCase());
+  const _isDocxLang = (l) => (l || '').toLowerCase() === 'docx';
   // Languages that get the segmented Code / Run-or-View toggle in the toolbar
   // (the same UX as markdown's Edit / Preview switch). CSV's "run" view is the
   // table; Python/JS/etc.'s is the code-run output; HTML/SVG/XML render via
@@ -87,7 +88,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       'c', 'cpp', 'c++', 'csharp', 'c#',
       'yaml', 'json', 'css',
       'ini', 'toml',
-    ].includes(lang) || _isRenderLang(lang);
+    ].includes(lang) || _isRenderLang(lang) || _isDocxLang(lang) || _isRichTextLang(lang);
   };
 
   async function _getEmailAccountsCached() {
@@ -294,6 +295,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     }
     const button = root.querySelector('#doc-stats-btn');
     if (button) {
+      button.classList.toggle('doc-stats-selected', source.selected);
       button.title = source.selected
         ? `${stats.words.toLocaleString()} words selected`
         : `${stats.words.toLocaleString()} words in document`;
@@ -573,10 +575,24 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       _richSelectionToolbarButton('insert-image', 'Add image', '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/><path d="M19 5v6M16 8h6"/></svg>'),
       _richSelectionToolbarButton('removeformat', 'Clear formatting', '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16M12 5v14M8 19h8"/><path d="m4 4 16 16"/></svg>')
     );
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'doc-rich-selection-close';
+    closeButton.setAttribute('aria-label', 'Close formatting toolbar');
+    closeButton.title = 'Close';
+    closeButton.innerHTML = '<span aria-hidden="true">×</span>';
+    toolbar.appendChild(closeButton);
     const preserve = event => event.preventDefault();
     toolbar.addEventListener('pointerdown', preserve);
     toolbar.addEventListener('mousedown', preserve);
     toolbar.addEventListener('click', event => {
+      const close = event.target.closest('.doc-rich-selection-close');
+      if (close) {
+        event.preventDefault();
+        event.stopPropagation();
+        _hideRichSelectionToolbar();
+        return;
+      }
       const button = event.target.closest('[data-rich-selection-action]');
       if (!button || !_restoreRichSelectionToolbarRange(rich)) return;
       event.preventDefault();
@@ -1982,6 +1998,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
   // Per-doc last-used line spacing for text annotations. Once the user picks
   // 1.6 for one box, every text box dropped after that defaults to 1.6.
   const _pdfLastLineHeight = new Map(); // docId -> number
+  const _pdfLastFontSize = new Map(); // docId -> number
   let _pdfAnnotationMenuDismissWired = false;
   function _wirePdfAnnotationMenuDismiss() {
     if (_pdfAnnotationMenuDismissWired) return;
@@ -2080,7 +2097,10 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     const docId = activeDocId;
     // Keep the save pill across re-renders by detaching/re-attaching it
     const savedPill = document.getElementById('doc-pdf-save-pill');
-    pane.innerHTML = '<div style="color:#bbb;font-size:13px;text-align:center;padding:40px;">Loading PDF…</div>';
+    pane.innerHTML = '';
+    const pdfLoading = spinnerModule.createLoadingRow('Loading PDF…', 26);
+    pdfLoading.classList.add('pdf-loading-state');
+    pane.appendChild(pdfLoading);
     if (savedPill) pane.appendChild(savedPill);
     let data;
     try {
@@ -2110,6 +2130,15 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         const a = allAnnotations[i];
         if (a.kind === 'text' && a.lineHeight) {
           _pdfLastLineHeight.set(docId, a.lineHeight);
+          break;
+        }
+      }
+    }
+    if (!_pdfLastFontSize.has(docId)) {
+      for (let i = allAnnotations.length - 1; i >= 0; i--) {
+        const a = allAnnotations[i];
+        if (a.kind === 'text' && Number.isFinite(a.fontSize)) {
+          _pdfLastFontSize.set(docId, a.fontSize);
           break;
         }
       }
@@ -2290,7 +2319,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
           // For text drops, inherit the doc's last-used line spacing so the
           // user's "1.6" choice sticks across every new box they place.
           lineHeight: _pdfDropMode === 'text' ? (_pdfLastLineHeight.get(docId) || 1.3) : undefined,
-          fontSize: _pdfDropMode === 'text' ? 11 : undefined,
+          fontSize: _pdfDropMode === 'text' ? (_pdfLastFontSize.get(docId) || 11) : undefined,
         };
         _pushPdfUndoSnapshot(docId);
         const built = _buildAnnotation(pageWrap, ann);
@@ -2365,20 +2394,20 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     // × delete button
     const del = document.createElement('button');
     del.type = 'button';
-    del.textContent = '✖';
+    del.textContent = '×';
     del.title = 'Delete annotation';
-    del.style.cssText = `position:absolute;top:${OFF}px;right:${OFF}px;width:${HS}px;height:${HS}px;padding:0 0 0 1px;border:1px solid var(--accent, var(--red));background:#fff;color:var(--accent, var(--red));border-radius:50%;cursor:pointer;font-size:11px;line-height:1;display:${HIDE};font-weight:bold;touch-action:none;`;
+    del.style.cssText = `position:absolute;top:${OFF}px;right:${OFF}px;width:${HS}px;height:${HS}px;padding:0;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:transparent;color:var(--accent, var(--red));border-radius:50%;cursor:pointer;font-size:20px;line-height:1;display:${HIDE};font-weight:400;touch-action:none;box-sizing:border-box;`;
 
     // ☰ drag handle — same size as the × button.
     const grip = document.createElement('div');
     grip.title = 'Drag to move';
     grip.textContent = '☰';
-    grip.style.cssText = `position:absolute;top:${OFF}px;left:${OFF}px;width:${HS}px;height:${HS}px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:#fff;color:var(--accent, var(--red));border-radius:3px;cursor:move;font-size:11px;line-height:${HS - 2}px;text-align:center;display:${HIDE};touch-action:none;`;
+    grip.style.cssText = `position:absolute;top:${OFF}px;left:${OFF}px;width:${HS}px;height:${HS}px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:transparent;color:var(--accent, var(--red));border-radius:3px;cursor:move;font-size:11px;line-height:${HS}px;text-align:center;display:${HIDE};touch-action:none;box-sizing:border-box;`;
 
     // ↘ resize handle — same size as the × button.
     const resize = document.createElement('div');
     resize.title = 'Drag to resize';
-    resize.style.cssText = `position:absolute;bottom:${OFF}px;right:${OFF}px;width:${HS}px;height:${HS}px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:#fff;color:var(--accent, var(--red));border-radius:3px;cursor:nwse-resize;display:${HIDE};touch-action:none;`;
+    resize.style.cssText = `position:absolute;bottom:${OFF}px;right:${OFF}px;width:${HS}px;height:${HS}px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:transparent;color:var(--accent, var(--red));border-radius:3px;cursor:nwse-resize;display:${HIDE};touch-action:none;box-sizing:border-box;`;
     resize.innerHTML = '<svg width="14" height="14" viewBox="0 0 10 10" style="display:block;margin:auto;height:100%;"><path d="M2 8 L8 2 M5 8 L8 5" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg>';
 
     let menuBtn = null;
@@ -2388,7 +2417,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       menuBtn.className = 'pdf-annotation-menu-btn';
       menuBtn.textContent = '…';
       menuBtn.title = 'Text annotation options';
-      menuBtn.style.cssText = `position:absolute;bottom:${OFF}px;left:${OFF}px;width:${HS}px;height:${HS}px;padding:0;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:#fff;color:var(--accent, var(--red));border-radius:50%;cursor:pointer;font-size:15px;line-height:0.8;display:${HIDE};font-weight:bold;touch-action:none;`;
+      menuBtn.style.cssText = `position:absolute;bottom:${OFF}px;left:${OFF}px;width:${HS}px;height:${HS}px;padding:0;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:transparent;color:var(--accent, var(--red));border-radius:50%;cursor:pointer;font-size:15px;line-height:0.8;display:${HIDE};font-weight:bold;touch-action:none;box-sizing:border-box;`;
     }
 
     // Set handle visibility together; clicking/tapping the annotation itself
@@ -2623,8 +2652,8 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
           <input type="number" class="lh-val pdf-annotation-line-value" min="0.5" max="5" step="0.01" value="${(ann.lineHeight || 1.3).toFixed(2)}" />
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
-          <button type="button" class="pdf-ann-today" style="height:22px;padding:0 7px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);background:color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);color:var(--accent, var(--red));border-radius:4px;cursor:pointer;font-size:10px;font-family:inherit;text-align:left;">Today</button>
-          <button type="button" class="pdf-ann-done" style="height:22px;padding:0 8px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);background:color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);color:var(--accent, var(--red));border-radius:4px;cursor:pointer;font-size:10px;font-family:inherit;display:inline-flex;align-items:center;gap:4px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg><span>Done</span></button>
+          <button type="button" class="pdf-ann-today" style="height:22px;padding:0 7px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);background:color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);color:var(--accent, var(--red));border-radius:4px;cursor:pointer;font-size:10px;font-family:inherit;text-align:left;display:inline-flex;align-items:center;gap:4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"></rect><line x1="8" y1="2" x2="8" y2="6"></line><line x1="16" y1="2" x2="16" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><path d="m8 15 2 2 5-5"></path></svg><span>Today</span></button>
+          <button type="button" class="pdf-ann-done" style="height:22px;padding:0 8px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);background:color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);color:var(--accent, var(--red));border-radius:4px;cursor:pointer;font-size:10px;font-family:inherit;display:inline-flex;align-items:center;gap:4px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg><span>Save</span></button>
         </div>
       `;
       const slider = popover.querySelector('.lh-slider');
@@ -2669,6 +2698,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         }
         v = Math.max(6, Math.min(72, v));
         ref.fontSize = v;
+        _pdfLastFontSize.set(activeDocId, v);
         input.style.fontSize = `${(v * 1.5 / 11).toFixed(3)}cqh`;
         if (fromSlider) fsInput.value = String(Math.round(v));
         else fsSlider.value = String(Math.max(6, Math.min(36, v)));
@@ -2721,6 +2751,10 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         document.querySelectorAll('.pdf-annotation-text-menu').forEach(menu => {
           if (menu !== popover) menu.style.display = 'none';
         });
+        if (opening) {
+          _pdfLastLineHeight.set(activeDocId, ref.lineHeight || 1.3);
+          _pdfLastFontSize.set(activeDocId, ref.fontSize || 11);
+        }
         popover.style.display = opening ? 'flex' : 'none';
         if (!opening) popover.dataset.lhUndoCaptured = '0';
       });
@@ -3097,10 +3131,15 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     const _mdPreview = document.getElementById('doc-md-preview');
     const _csvPreview = document.getElementById('doc-csv-preview');
     const _htmlPreview = document.getElementById('doc-html-preview');
+    const _docxPreview = document.getElementById('doc-docx-preview');
     const _outputPanel = document.getElementById('doc-run-output');
     const _mdActive = _mdPreview && _mdPreview.style.display !== 'none';
     const _csvActive = _csvPreview && _csvPreview.style.display !== 'none';
     const _htmlActive = _htmlPreview && _htmlPreview.style.display !== 'none';
+    const _docxActive = _docxPreview && _docxPreview.style.display !== 'none';
+    const _richPreviewActive = lang === 'richtext' || lang === 'rich-text'
+      ? (_mdPreview && _mdPreview.style.display !== 'none')
+      : false;
     const _outputActive = _outputPanel && _outputPanel.style.display !== 'none';
 
     let show = false;
@@ -3123,7 +3162,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         if (lang === 'csv') {
           icon = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>';
           title = 'Table view';
-        } else if (_isRenderLang(lang)) {
+        } else if (_isRenderLang(lang) || _isDocxLang(lang) || _isRichTextLang(lang)) {
           icon = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
           title = 'Preview';
         } else {
@@ -3131,7 +3170,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
           title = 'Run';
         }
         if (runBtn.dataset.lastIcon !== lang) {
-          const label = lang === 'csv' ? 'Table' : (_isRenderLang(lang) ? 'Preview' : 'Run');
+          const label = lang === 'csv' ? 'Table' : ((_isRenderLang(lang) || _isDocxLang(lang) || _isRichTextLang(lang)) ? 'Preview' : 'Run');
           runBtn.innerHTML = `${icon}<span class="md-view-label">${label}</span>`;
           runBtn.title = title;
           runBtn.dataset.lastIcon = lang;
@@ -3160,6 +3199,8 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       let _viewActive = false;
       if (lang === 'csv') _viewActive = _csvActive;
       else if (_isRenderLang(lang)) _viewActive = _htmlActive;
+      else if (_isDocxLang(lang)) _viewActive = _docxActive;
+      else if (_isRichTextLang(lang)) _viewActive = _richPreviewActive;
       else _viewActive = _outputActive;
       const _codeBtn2 = renderToggle.querySelector('[data-renderview="code"]');
       const _runBtn2 = renderToggle.querySelector('[data-renderview="run"]');
@@ -3186,6 +3227,18 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       if (renderToggle) {
         renderToggle.querySelector('[data-renderview="code"]')?.classList.toggle('active', !_htmlActive);
         renderToggle.querySelector('[data-renderview="run"]')?.classList.toggle('active', _htmlActive);
+      }
+    } else if (_isDocxLang(lang)) {
+      show = false;
+      if (renderToggle) {
+        renderToggle.querySelector('[data-renderview="code"]')?.classList.toggle('active', !_docxActive);
+        renderToggle.querySelector('[data-renderview="run"]')?.classList.toggle('active', _docxActive);
+      }
+    } else if (_isRichTextLang(lang)) {
+      show = false;
+      if (renderToggle) {
+        renderToggle.querySelector('[data-renderview="code"]')?.classList.toggle('active', !_richPreviewActive);
+        renderToggle.querySelector('[data-renderview="run"]')?.classList.toggle('active', _richPreviewActive);
       }
     } else if (canRun) {
       show = true;
@@ -3526,6 +3579,10 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     catch (_) { return _emailPlainTextToHtml(raw); }
   }
 
+  function _richTextContentToPlain(content) {
+    return _normalizeRichStatsText(_emailHtmlToPlainText(_richTextContentToHtml(content)));
+  }
+
   function _emailQuoteMarkerMatch(text) {
     const raw = String(text || '');
     return raw.match(/(?:<p[^>]*>\s*)?-{5,}\s*Previous message\s*-{5,}(?:\s*<\/p>)?/i)
@@ -3589,6 +3646,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       const html = _sanitizedRichTextHtml(rich);
       ta.value = html;
       doc.content = html;
+      _syncRichEmptyImport(rich);
       return;
     }
     ta.value = rich.innerText;
@@ -3606,6 +3664,20 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         document.getElementById('doc-email-bcc')?.value || fields.bcc || '',
       );
     }
+  }
+
+  function _syncRichEmptyImport(rich = document.getElementById('doc-email-richbody')) {
+    const action = document.getElementById('doc-rich-empty-import');
+    if (!action) return;
+    const doc = activeDocId && docs.get(activeDocId);
+    const empty = !!(
+      rich &&
+      rich.style.display !== 'none' &&
+      doc && _isRichTextLang(doc.language) &&
+      !rich.textContent.trim() &&
+      !rich.querySelector('img, table, hr, iframe')
+    );
+    action.style.display = empty ? 'flex' : 'none';
   }
   function _scheduleEmailRichbodySave() {
     const doc = activeDocId && docs.get(activeDocId);
@@ -4232,12 +4304,28 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       _scheduleRichSelectionToolbar(rich);
     });
     rich.addEventListener('scroll', () => _scheduleRichSelectionToolbar(rich), { passive: true });
+    rich.addEventListener('cut', () => {
+      const selection = window.getSelection?.();
+      const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+      if (!range || range.collapsed || !rich.contains(range.commonAncestorContainer)) return;
+      const caretRange = range.cloneRange();
+      caretRange.collapse(true);
+      setTimeout(() => {
+        try {
+          rich.focus();
+          const current = window.getSelection?.();
+          current?.removeAllRanges();
+          current?.addRange(caretRange);
+        } catch (_) {}
+      }, 0);
+    });
     rich.addEventListener('paste', (e) => {
       const doc = activeDocId && docs.get(activeDocId);
       if (!doc || !_isRichTextLang(doc.language)) return;
       const images = Array.from(e.clipboardData?.files || []).filter(_isMarkdownImageFile);
       if (images.length) {
         e.preventDefault();
+        e.stopPropagation();
         const selection = window.getSelection();
         if (selection?.rangeCount && rich.contains(selection.getRangeAt(0).commonAncestorContainer)) {
           _richImageInsertRange = selection.getRangeAt(0).cloneRange();
@@ -4257,6 +4345,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       else document.execCommand('insertText', false, text);
       _syncEmailRichbody(rich);
       _scheduleEmailRichbodySave();
+      e.stopPropagation();
     });
     rich.addEventListener('dragover', (e) => {
       const doc = activeDocId && docs.get(activeDocId);
@@ -4271,6 +4360,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       const images = Array.from(e.dataTransfer?.files || []).filter(_isMarkdownImageFile);
       if (!images.length) return;
       e.preventDefault();
+      e.stopPropagation();
       const range = document.caretRangeFromPoint?.(e.clientX, e.clientY);
       _richImageInsertRange = range && rich.contains(range.commonAncestorContainer) ? range.cloneRange() : null;
       _uploadMarkdownImages(images);
@@ -4462,6 +4552,9 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     document.execCommand('styleWithCSS', false, false);
     source.style.display = 'none';
     rich.style.display = '';
+    // Keep the plain-text mirror available to save/send code, but never show
+    // its second "Start writing" surface alongside the rich editor.
+    if (textarea) textarea.style.display = 'none';
     rich.classList.add('richtext-mode');
     // The rich editor is a formatting surface, not a browser spellcheck
     // field. Disable native red underlines, which are especially distracting
@@ -4474,6 +4567,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     _normalizeRichInlineCode(rich);
     _wireEmailRichbody(rich);
     _syncEmailRichbody(rich);
+    _syncRichEmptyImport(rich);
     if (textarea) textarea.spellcheck = true;
   }
 
@@ -4943,6 +5037,9 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     }
     if (textarea) {
       textarea.value = fields.body;
+      // The textarea remains the plain-text mirror for email send/draft
+      // handling; the visible editing surface is the rich body only.
+      textarea.style.display = 'none';
       // Store original body for change detection on close
       if (doc) doc._originalBody = fields.body;
       syncHighlighting();
@@ -4954,6 +5051,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     const _srcWrap = document.getElementById('doc-editor-wrap');
     if (_rich && _srcWrap) {
       _srcWrap.style.display = 'none';
+      if (textarea) textarea.style.display = 'none';
       _rich.style.display = '';
       if (_emailStreamAnimFrame) cancelAnimationFrame(_emailStreamAnimFrame);
       _emailStreamAnimFrame = null;
@@ -6088,6 +6186,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     }
     const _srcWrap = document.getElementById('doc-editor-wrap');
     if (_srcWrap) _srcWrap.style.display = '';
+    document.getElementById('doc-editor-textarea')?.style.removeProperty('display');
     // Drop the email-mode class so editors return to monospace monochrome
     document.getElementById('doc-editor-textarea')?.classList.remove('email-mode');
     document.getElementById('doc-editor-code')?.classList.remove('email-mode');
@@ -6292,7 +6391,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         _clearMissingAttachmentWarnings();
         // The send endpoint appends the message to Sent, but an already-open
         // email library needs an explicit fresh load to show it immediately.
-        import('./emailLibrary.js?v=20260910replyactions1').then(mod => {
+        import('./emailLibrary.js?v=20260915trashmove2').then(mod => {
           const refresh = mod.refreshEmailLibrary || (mod.default && mod.default.refreshEmailLibrary);
           if (refresh) return refresh();
           return undefined;
@@ -6304,7 +6403,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
             toastClass: 'toast-message-sent',
             action: 'View Message',
             onAction: async () => {
-        import('./emailLibrary.js?v=20260910replyactions1').then(async mod => {
+        import('./emailLibrary.js?v=20260915trashmove2').then(async mod => {
                 const open = mod.openEmailLibrary || (mod.default && mod.default.openEmailLibrary);
                 const refresh = mod.refreshEmailLibrary || (mod.default && mod.default.refreshEmailLibrary);
                 if (open) open({
@@ -6357,7 +6456,6 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
           fetch(`${API_BASE}/api/document/${sendDocId}`, { method: 'DELETE' }).catch(() => {});
           const wasActiveSentDoc = isOpen && activeDocId === sendDocId;
           docs.delete(sendDocId);
-          if (isLibraryOpen()) closeLibrary();
           if (wasActiveSentDoc) {
             activeDocId = null;
             const nextId = _visibleDocIdsForCurrentSession().find(id => docs.has(id));
@@ -6687,7 +6785,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
           uid: sourceUid,
           folder: sourceFolder,
           account_id: sourceAccountId,
-          fast: true,
+          fast: mode === 'ai-reply-fast',
           user_hint: noteHint || '',
         }),
       });
@@ -7030,6 +7128,8 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
 
     // Exit HTML preview on switch
     exitHtmlPreview();
+    const docxPreview = document.getElementById('doc-docx-preview');
+    if (docxPreview) { docxPreview.style.display = 'none'; docxPreview.replaceChildren(); }
 
     // Show/hide email fields. Markdown preview uses the same editor wrapper
     // as email source mode, so clear it before showing the rich email body;
@@ -7050,8 +7150,13 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       } else {
         const wantsMarkdownPreview = !isPdf && (doc.language || 'markdown') === 'markdown' && doc._markdownPreviewActive === true;
         _setMarkdownPreviewActive(wantsMarkdownPreview, { remember: false });
+        if (_isDocxLang(doc.language)) {
+          requestAnimationFrame(() => _setDocxPreviewActive(doc._docxPreviewActive !== false, { remember: false }));
+        }
       }
     }
+
+    _syncRichEmptyImport();
 
     // Hide version panel on switch
     const vp = document.getElementById('doc-version-panel');
@@ -7088,7 +7193,10 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
   async function closeTab(docId) {
     // Save current editor content to map so the check below uses fresh data
     saveCurrentToMap();
-    _detachDocFromSession(docId, { toast: true });
+    // Closing the tab is a quiet detach action. The document-close
+    // notification is reserved for closing the document surface itself;
+    // showing it here makes a tab close look like a full document close.
+    _detachDocFromSession(docId);
     // Find next tab in the current session
     const curSession = sessionModule?.getCurrentSessionId() || '';
     let nextId = null;
@@ -7326,6 +7434,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
           <option value="css">css</option>
           <option value="richtext">Rich Text</option>
           <option value="markdown">markdown</option>
+          <option value="docx">Word / DOCX</option>
           <option value="json">json</option>
           <option value="yaml">yaml</option>
           <option value="bash">bash</option>
@@ -7477,6 +7586,12 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
            the email's HTML part. Its plain text is mirrored into the textarea so
            the existing send/draft/change-detection paths keep working. -->
       <div id="doc-email-richbody" class="doc-email-richbody" contenteditable="true" spellcheck="false" style="display:none" data-no-swipe-dismiss></div>
+      <div id="doc-rich-empty-import" class="doc-rich-empty-import" style="display:none" aria-live="polite">
+        <button type="button" class="doc-preview-hover-edit doc-rich-empty-import-btn" title="Import a document" aria-label="Import a document">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M12 12v6"></path><path d="m9 15 3 3 3-3"></path></svg>
+          <span>Import document</span>
+        </button>
+      </div>
       <div id="doc-email-actions" class="doc-email-actions" style="display:none">
         <button id="doc-email-discard-btn" class="email-discard-btn" title="Close email" style="display:inline-flex;align-items:center;gap:5px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg><span>Close</span></button>
         <span style="flex:1"></span>
@@ -7491,6 +7606,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         </div>
       </div>
       <div id="doc-md-preview" class="doc-md-preview" style="display:none"></div>
+      <div id="doc-docx-preview" class="doc-docx-preview" style="display:none"></div>
       <div id="doc-csv-preview" class="doc-csv-preview" style="display:none"></div>
       <iframe id="doc-html-preview" class="doc-html-preview" sandbox="allow-scripts allow-modals" style="display:none"></iframe>
       <div id="doc-pdf-view" style="display:none;width:100%;flex:1;min-height:0;overflow:auto;background:#525659;padding:20px 0;position:relative;">
@@ -7515,7 +7631,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         </span>
         <span class="email-send-split" id="doc-copy-export-split">
           <button type="button" id="doc-footer-copy-btn" class="email-send-btn email-send-main doc-save-button" title="All changes saved (Ctrl+S)" data-mode="save" data-save-state="saved" aria-label="Saved" aria-live="polite">
-            <svg class="doc-save-state-icon doc-save-state-dirty" width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="5"/></svg>
+            <svg class="doc-save-state-icon doc-save-state-dirty" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3h12l4 4v14H4z"/><path d="M8 3v6h8V3"/><path d="M8 21v-6h8v6"/><path d="m16 3 6 6m0-6-6 6" stroke="var(--fg)" stroke-width="3"/></svg>
             <svg class="doc-save-state-icon doc-save-state-saving" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.2-8.56"/></svg>
             <svg class="doc-save-state-icon doc-save-state-saved" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
             <svg class="doc-save-state-icon doc-save-state-error" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><line x1="12" y1="7" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
@@ -7601,6 +7717,19 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
           }
           _renderDocumentStats();
           statsPopover.hidden = false;
+          // The editor pane clips overflow, so a footer-anchored absolute
+          // popover can disappear underneath the document. Float it against
+          // the viewport and place it above the stats button.
+          const buttonRect = statsButton.getBoundingClientRect();
+          const popoverHeight = statsPopover.offsetHeight;
+          const popoverWidth = statsPopover.offsetWidth;
+          const left = Math.max(8, Math.min(
+            window.innerWidth - popoverWidth - 8,
+            buttonRect.right - popoverWidth,
+          ));
+          const above = buttonRect.top - popoverHeight - 7;
+          statsPopover.style.left = `${Math.round(left)}px`;
+          statsPopover.style.top = `${Math.round(above >= 8 ? above : buttonRect.bottom + 7)}px`;
           statsButton.setAttribute('aria-expanded', 'true');
           bindMenuDismiss(
             statsPopover,
@@ -7802,6 +7931,11 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     document.getElementById('doc-close-btn')?.addEventListener('click', () => closePanel('down'));
     document.getElementById('doc-footer-close-btn')?.addEventListener('click', () => { if (activeDocId) closeTab(activeDocId); });
     document.getElementById('doc-import-btn')?.addEventListener('click', () => openLibrary());
+    document.getElementById('doc-rich-empty-import')?.querySelector('button')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      _importFromDevice();
+    });
     document.getElementById('doc-footer-copy-btn')?.addEventListener('click', (e) => {
       if (e.currentTarget.dataset.mode === 'reply') { if (activeDocId) _sendSignedReply(activeDocId); }
       else saveDocument({ silent: false, forceVersion: true });
@@ -8048,6 +8182,11 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       if (lang !== 'markdown') {
         _setMarkdownPreviewActive(false);
       }
+      if (_isDocxLang(lang)) {
+        _setDocxPreviewActive(true);
+      } else {
+        _setDocxPreviewActive(false);
+      }
       // If switching away from CSV, exit table preview
       if (lang !== 'csv') {
         const csvPreview = document.getElementById('doc-csv-preview');
@@ -8073,6 +8212,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       } else {
         _hideEmailFields();
       }
+      _syncRichEmptyImport();
       // Sync header action buttons for new language
       _syncHeaderActions();
     });
@@ -8407,6 +8547,14 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         const htmlPrev = document.getElementById('doc-html-preview');
         const isOn = htmlPrev && htmlPrev.style.display !== 'none';
         if (wantRun !== isOn) toggleHtmlPreview();
+      } else if (_isDocxLang(lang)) {
+        const docxPrev = document.getElementById('doc-docx-preview');
+        const isOn = docxPrev && docxPrev.style.display !== 'none';
+        if (wantRun !== isOn) toggleDocxPreview();
+      } else if (_isRichTextLang(lang)) {
+        const richPrev = document.getElementById('doc-md-preview');
+        const isOn = richPrev && richPrev.style.display !== 'none';
+        if (wantRun !== isOn) toggleRichTextPreview();
       } else {
         // Runnable language (python / js / ts / bash …) — clicking Run is
         // a one-shot execute; clicking Code dismisses the output pane.
@@ -8608,6 +8756,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         const files = Array.from(e.clipboardData?.files || []).filter(_isMarkdownImageFile);
         if (!files.length) return;
         e.preventDefault();
+        e.stopPropagation();
         _uploadMarkdownImages(files);
       });
       ta.addEventListener('dragover', (e) => {
@@ -8621,6 +8770,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         const files = Array.from(e.dataTransfer?.files || []).filter(_isMarkdownImageFile);
         if (!files.length) return;
         e.preventDefault();
+        e.stopPropagation();
         _uploadMarkdownImages(files);
       });
       ta.addEventListener('scroll', () => {
@@ -8635,6 +8785,15 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
           const _q = document.getElementById('doc-find-input')?.value || '';
           if (_q) renderFindRects(_findMatches.map(s => [s, s + _q.length]), _findIdx);
         }
+      });
+      ta.addEventListener('cut', () => {
+        const start = ta.selectionStart;
+        const end = ta.selectionEnd;
+        if (start === end) return;
+        setTimeout(() => {
+          ta.focus();
+          ta.selectionStart = ta.selectionEnd = Math.min(start, ta.value.length);
+        }, 0);
       });
       // Tab key inserts a real tab; Escape clears selection
       ta.addEventListener('keydown', (e) => {
@@ -9127,6 +9286,8 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
 
   /** Apply markdown formatting to the textarea selection */
   let _lastMdFormat = { action: null, t: 0 };
+  let _savedFormatTextareaSelection = null;
+  let _savedFormatRichRange = null;
   function _normalizeRichLinkUrl(rawUrl) {
     let url = String(rawUrl || '').trim();
     if (!url) return '';
@@ -9833,17 +9994,18 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     const _rich = _emailRichbodyActive();
     if (_rich) {
       let _richFormatRange = null;
-      if (isPaletteAction) {
-        const _selection = window.getSelection?.();
-        const _range = _selection?.rangeCount ? _selection.getRangeAt(0) : null;
-        if (_range && !_range.collapsed && _rich.contains(_range.commonAncestorContainer)) {
-          _richFormatRange = _range.cloneRange();
-        }
+      const _selection = window.getSelection?.();
+      const _range = _savedFormatRichRange || (_selection?.rangeCount ? _selection.getRangeAt(0) : null);
+      if (_range && !_range.collapsed && _rich.contains(_range.commonAncestorContainer)) {
+        // Toolbar clicks can move focus away from the contenteditable and
+        // collapse the browser range before execCommand runs. Preserve every
+        // formatting selection, not only color-palette selections.
+        _richFormatRange = _range.cloneRange();
       }
+      _savedFormatRichRange = null;
       _rich.focus();
-      if (_richFormatRange) {
+      if (_richFormatRange && _selection) {
         try {
-          const _selection = window.getSelection();
           _selection.removeAllRanges();
           _selection.addRange(_richFormatRange.cloneRange());
         } catch (_) {}
@@ -9975,6 +10137,11 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     }
     const ta = document.getElementById('doc-editor-textarea');
     if (!ta) return;
+    if (_savedFormatTextareaSelection && ta.selectionStart === ta.selectionEnd) {
+      ta.selectionStart = _savedFormatTextareaSelection.start;
+      ta.selectionEnd = _savedFormatTextareaSelection.end;
+    }
+    _savedFormatTextareaSelection = null;
     const start = ta.selectionStart;
     const end = ta.selectionEnd;
     const val = ta.value;
@@ -11119,18 +11286,32 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         if (!prompt) return;
         let configuredStyle = '';
         if (action === 'style') {
-          const accountId = String(window.__odysseusActiveEmailAccount || '').trim();
-          const suffix = accountId ? `?account_id=${encodeURIComponent(accountId)}` : '';
+          const activeDocument = activeDocId ? docs.get(activeDocId) : null;
+          const isEmailDocument = activeDocument?.language === 'email';
           try {
-            const styleResponse = await fetch(`/api/email/style${suffix}`, { credentials: 'same-origin' });
-            const styleData = await styleResponse.json().catch(() => ({}));
-            configuredStyle = String(styleData.style || '').trim();
-            if (!styleResponse.ok || !configuredStyle) {
+            const accountId = String(window.__odysseusActiveEmailAccount || '').trim();
+            const suffix = accountId ? `?account_id=${encodeURIComponent(accountId)}` : '';
+            const generalResponse = await fetch('/api/auth/settings', { credentials: 'same-origin' });
+            const generalData = await generalResponse.json().catch(() => ({}));
+            const generalStyle = String(generalData.document_writing_style || '').trim();
+            let emailStyle = '';
+            if (isEmailDocument) {
+              const emailResponse = await fetch(`/api/email/style${suffix}`, { credentials: 'same-origin' });
+              const emailData = await emailResponse.json().catch(() => ({}));
+              if (emailResponse.ok) emailStyle = String(emailData.style || '').trim();
+            }
+            configuredStyle = isEmailDocument
+              ? [
+                  generalStyle && `GENERAL WRITING STYLE:\n${generalStyle}`,
+                  emailStyle && `EMAIL CONVENTIONS:\n${emailStyle}`,
+                ].filter(Boolean).join('\n\n')
+              : generalStyle;
+            if (!generalResponse.ok || !configuredStyle) {
               uiModule?.showToast?.('You haven\'t set up a writing style yet.', {
                 duration: 7000,
                 action: 'Set up in Settings',
-                actionHint: 'Email → Writing Style',
-                onAction: () => window.adminModule?.open?.('email'),
+                actionHint: isEmailDocument ? 'Email → Writing Style' : 'AI Defaults → Writing Style',
+                onAction: () => window.adminModule?.open?.(isEmailDocument ? 'email' : 'ai'),
               });
               return;
             }
@@ -11138,8 +11319,8 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
             uiModule?.showToast?.('You haven\'t set up a writing style yet.', {
               duration: 7000,
               action: 'Set up in Settings',
-              actionHint: 'Email → Writing Style',
-              onAction: () => window.adminModule?.open?.('email'),
+              actionHint: isEmailDocument ? 'Email → Writing Style' : 'AI Defaults → Writing Style',
+              onAction: () => window.adminModule?.open?.(isEmailDocument ? 'email' : 'ai'),
             });
             return;
           }
@@ -11224,6 +11405,34 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     });
   }
 
+  function _saveFormatSelection(event) {
+    const target = event.target.closest?.('[data-md], .md-dd-toggle');
+    if (!target) return false;
+
+    // A fresh pointer press starts a new formatting action. Clear a previous
+    // saved range so an old dropdown selection cannot be reused accidentally.
+    if (event.type === 'pointerdown') {
+      _savedFormatTextareaSelection = null;
+      _savedFormatRichRange = null;
+    }
+
+    const textarea = document.getElementById('doc-editor-textarea');
+    if (textarea && textarea.selectionStart !== textarea.selectionEnd) {
+      _savedFormatTextareaSelection = {
+        start: textarea.selectionStart,
+        end: textarea.selectionEnd,
+      };
+    }
+
+    const rich = _emailRichbodyActive();
+    const selection = window.getSelection?.();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    if (rich && range && !range.collapsed && rich.contains(range.commonAncestorContainer)) {
+      _savedFormatRichRange = range.cloneRange();
+    }
+    return true;
+  }
+
   function initMdToolbar() {
     const toolbar = document.getElementById('doc-md-toolbar');
     if (!toolbar) return;
@@ -11244,6 +11453,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     toolbar.addEventListener('pointerdown', (e) => {
       const dd = e.target.closest('.md-dd-toggle');
       if (dd) dd._mdDdActivationToken = ++_mdDdActivationSerial;
+      _saveFormatSelection(e);
     });
 
     // Click handler for format buttons + the grouped dropdown toggles. The menu
@@ -11256,7 +11466,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     // any dropdown that just opened. Preventing the default mousedown keeps the
     // textarea focused, so formatting hits the live selection and menus stay up.
     toolbar.addEventListener('mousedown', (e) => {
-      if (e.target.closest('[data-md], .md-dd-toggle, .emoji-picker-btn, .md-toolbar-attach-btn, .doc-ai-writing-btn, #doc-find-toolbar-btn, #doc-outline-toolbar-btn')) e.preventDefault();
+      if (_saveFormatSelection(e)) e.preventDefault();
     });
 
     toolbar.addEventListener('click', (e) => {
@@ -12807,12 +13017,37 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     const labels = _selections.map(s => s.kind === 'rich'
       ? 'Text'
       : (s.startLine === s.endLine ? `L${s.startLine}` : `L${s.startLine}-${s.endLine}`));
-    const label = _selections.length === 1
-      ? `${labels[0]} selected`
-      : `${_selections.length} selections (${labels.join(', ')})`;
-    badge.innerHTML = `${label}<button class="doc-selection-clear" title="Clear all selections">&times;</button>`;
+    badge.replaceChildren();
+    if (_selections.length === 1) {
+      badge.append(document.createTextNode(`${labels[0]} selected`));
+    } else {
+      badge.append(document.createTextNode(`${_selections.length} selections`));
+      labels.forEach((selectionLabel, index) => {
+        const chip = document.createElement('span');
+        chip.className = 'doc-selection-chip';
+        chip.textContent = selectionLabel;
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'doc-selection-chip-clear';
+        remove.title = `Remove ${selectionLabel} selection`;
+        remove.setAttribute('aria-label', `Remove ${selectionLabel} selection`);
+        remove.textContent = '×';
+        remove.addEventListener('click', (e) => {
+          e.stopPropagation();
+          clearSelectionAt(index);
+        });
+        chip.appendChild(remove);
+        badge.appendChild(chip);
+      });
+    }
+    const clearAll = document.createElement('button');
+    clearAll.className = 'doc-selection-clear doc-selection-chip-clear';
+    clearAll.title = 'Clear Selection';
+    clearAll.setAttribute('aria-label', 'Clear Selection');
+    clearAll.textContent = 'Clear Selection';
+    badge.appendChild(clearAll);
     badge.style.display = '';
-    badge.querySelector('.doc-selection-clear').addEventListener('click', (e) => {
+    clearAll.addEventListener('click', (e) => {
       e.stopPropagation();
       clearSelection();
     });
@@ -12899,6 +13134,11 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
   }
 
   function renderAllSelectionHighlights() {
+    document.querySelectorAll('.doc-selection-rich-clear').forEach(el => el.remove());
+    // Delete the persistent CSS highlight before checking whether any
+    // selections remain; otherwise clearing the last selection leaves the
+    // painted range visible until the next render.
+    try { CSS.highlights?.delete(_richSelectionHighlightName); } catch (_) {}
     const wrap = document.getElementById('doc-editor-wrap');
     if (!wrap) return;
     // Remove old overlays
@@ -12912,7 +13152,6 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     // shifted (undo, programmatic edits, etc.) so the overlays never
     // draw on the wrong region.
     _validateSelections(text);
-    try { CSS.highlights?.delete(_richSelectionHighlightName); } catch (_) {}
     const rich = _emailRichbodyActive();
     const richRanges = rich
       ? _selections.filter(s => s.kind === 'rich').map(s => _richRangeFromOffsets(rich, s.start, s.end)).filter(Boolean)
@@ -12923,6 +13162,27 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
           CSS.highlights.set(_richSelectionHighlightName, new Highlight(...richRanges));
         }
       } catch (_) {}
+      const richSelections = _selections.filter(s => s.kind === 'rich');
+      richRanges.forEach((range, rangeIndex) => {
+        const rects = Array.from(range.getClientRects());
+        const rect = rects[rects.length - 1];
+        if (!rect || (!rect.width && !rect.height)) return;
+        const clearBtn = document.createElement('button');
+        clearBtn.type = 'button';
+        clearBtn.className = 'doc-selection-rich-clear';
+        clearBtn.title = 'Remove this selection';
+        clearBtn.setAttribute('aria-label', 'Remove this selection');
+        clearBtn.textContent = '×';
+        clearBtn.style.left = `${Math.max(4, rect.right - 10)}px`;
+        clearBtn.style.top = `${Math.max(4, rect.top - 6)}px`;
+        const selectionIndex = _selections.indexOf(richSelections[rangeIndex]);
+        clearBtn.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          clearSelectionAt(selectionIndex);
+        });
+        document.body.appendChild(clearBtn);
+      });
     }
     const sourceSelections = _selections.filter(s => s.kind !== 'rich');
     if (_selections.length === 0) { showSelectionBadge(); return; }
@@ -12963,6 +13223,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     const scrollTop = textarea.scrollTop;
 
     for (const sel of sourceSelections) {
+      const selectionIndex = _selections.indexOf(sel);
       if (codeDoc) {
         // Line-based: span every line that contains any selected char.
         const beforeStart = text.substring(0, sel.start);
@@ -12986,6 +13247,18 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         overlay.style.left = paddingLeft + 'px';
         overlay.style.right = '0';
         overlay.style.height = height + 'px';
+        const clearBtn = document.createElement('button');
+        clearBtn.type = 'button';
+        clearBtn.className = 'doc-selection-overlay-clear';
+        clearBtn.title = 'Remove this selection';
+        clearBtn.setAttribute('aria-label', 'Remove this selection');
+        clearBtn.textContent = '×';
+        clearBtn.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          clearSelectionAt(selectionIndex);
+        });
+        overlay.appendChild(clearBtn);
         wrap.appendChild(overlay);
       } else {
         // Character-precise: measure the actual selection start/end via
@@ -12996,7 +13269,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         const endPos = _measurePos(mirror, text, sel.end);
         mirror.innerHTML = '';
 
-        const addRect = (top, left, width, height) => {
+        const addRect = (top, left, width, height, withClear = false) => {
           const overlay = document.createElement('div');
           overlay.className = 'doc-selection-overlay';
           overlay.style.top = (paddingTop + top - scrollTop) + 'px';
@@ -13004,15 +13277,29 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
           if (width != null) overlay.style.width = width + 'px';
           else overlay.style.right = '0';
           overlay.style.height = height + 'px';
+          if (withClear) {
+            const clearBtn = document.createElement('button');
+            clearBtn.type = 'button';
+            clearBtn.className = 'doc-selection-overlay-clear';
+            clearBtn.title = 'Remove this selection';
+            clearBtn.setAttribute('aria-label', 'Remove this selection');
+            clearBtn.textContent = '×';
+            clearBtn.addEventListener('click', (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              clearSelectionAt(selectionIndex);
+            });
+            overlay.appendChild(clearBtn);
+          }
           wrap.appendChild(overlay);
         };
 
         if (Math.abs(endPos.y - startPos.y) < 1) {
           // Single visual line.
-          addRect(startPos.y, startPos.x, endPos.x - startPos.x, lineHeight);
+          addRect(startPos.y, startPos.x, endPos.x - startPos.x, lineHeight, true);
         } else {
           // First line: from selection start to right edge.
-          addRect(startPos.y, startPos.x, null, lineHeight);
+          addRect(startPos.y, startPos.x, null, lineHeight, true);
           // Middle lines (if any): full-width band between the two.
           const middleTop = startPos.y + lineHeight;
           const middleHeight = endPos.y - middleTop;
@@ -13034,10 +13321,39 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
   function clearSelection() {
     _selections = [];
     try { CSS.highlights?.delete(_richSelectionHighlightName); } catch (_) {}
+    document.querySelectorAll('.doc-selection-rich-clear').forEach(el => el.remove());
+    // A restored rich-text reference also creates a native browser range so
+    // the referenced text is visibly selected. Clear that range with the
+    // pinned selection; otherwise document stats keep reporting "selected"
+    // after the badge's X has cleared the actual AI-edit context.
+    const rich = _emailRichbodyActive();
+    const browserSelection = window.getSelection?.();
+    if (rich && browserSelection?.rangeCount
+        && (rich.contains(browserSelection.anchorNode) || rich.contains(browserSelection.focusNode))) {
+      browserSelection.removeAllRanges();
+    }
     const badge = document.getElementById('doc-selection-badge');
     if (badge) badge.style.display = 'none';
     const wrap = document.getElementById('doc-editor-wrap');
     if (wrap) wrap.querySelectorAll('.doc-selection-overlay').forEach(el => el.remove());
+    _scheduleDocumentStats();
+  }
+
+  function clearSelectionAt(index) {
+    if (index < 0 || index >= _selections.length) return;
+    const removed = _selections[index];
+    _selections.splice(index, 1);
+    if (removed?.kind === 'rich') {
+      const rich = _emailRichbodyActive();
+      const browserSelection = window.getSelection?.();
+      if (rich && browserSelection?.rangeCount
+          && (rich.contains(browserSelection.anchorNode) || rich.contains(browserSelection.focusNode))) {
+        browserSelection.removeAllRanges();
+      }
+    }
+    renderAllSelectionHighlights();
+    showSelectionBadge();
+    _scheduleDocumentStats();
   }
 
   /**
@@ -13062,6 +13378,89 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     const ctx = [..._selections];
     clearSelection();
     return ctx;
+  }
+
+  /** Restore a document selection referenced by a chat bubble. */
+  export async function restoreSelectionReference(reference, options = {}) {
+    const requestedDocId = String(options.documentId || '').trim();
+    if (requestedDocId) await loadDocument(requestedDocId);
+    if (!activeDocId || !docs.has(activeDocId)) return false;
+
+    _ensureDocPaneMounted();
+    const doc = docs.get(activeDocId);
+    const rich = _isRichTextLang(doc.language) ? _emailRichbodyActive() : null;
+    const textarea = document.getElementById('doc-editor-textarea');
+    const source = rich ? _richRootText(rich) : (textarea?.value || doc.content || '');
+    const supplied = Array.isArray(options.selections)
+      ? options.selections
+      : (options.selections ? [options.selections] : []);
+    const restored = [];
+
+    for (const selection of supplied) {
+      const selectedText = String(selection?.text || '');
+      if (!selectedText) continue;
+      const start = source.indexOf(selectedText);
+      if (start < 0) continue;
+      const end = start + selectedText.length;
+      restored.push({
+        kind: rich ? 'rich' : undefined,
+        text: selectedText,
+        start,
+        end,
+        startLine: source.slice(0, start).split('\n').length,
+        endLine: source.slice(0, end).split('\n').length,
+      });
+    }
+
+    if (!restored.length) {
+      const lineMatches = Array.from(String(reference || '').matchAll(/(?:L|lines?)\s*(\d+)(?:\s*[-–]\s*(\d+))?/gi));
+      const lines = source.split('\n');
+      const lineStart = lineNumber => {
+        let offset = 0;
+        for (let index = 1; index < lineNumber && index <= lines.length; index++) {
+          offset += lines[index - 1].length + 1;
+        }
+        return offset;
+      };
+      for (const match of lineMatches) {
+        const startLine = Math.max(1, Math.min(lines.length, Number(match[1]) || 1));
+        const endLine = Math.max(startLine, Math.min(lines.length, Number(match[2]) || startLine));
+        const start = lineStart(startLine);
+        const end = lineStart(endLine) + (lines[endLine - 1] || '').length;
+        if (end <= start) continue;
+        restored.push({
+          kind: rich ? 'rich' : undefined,
+          text: source.slice(start, end),
+          start,
+          end,
+          startLine,
+          endLine,
+        });
+      }
+    }
+    if (!restored.length) return false;
+
+    _selections = restored;
+    showSelectionBadge();
+    renderAllSelectionHighlights();
+    const first = restored[0];
+    if (rich) {
+      const range = _richRangeFromOffsets(rich, first.start, first.end);
+      const browserSelection = window.getSelection?.();
+      if (range && browserSelection) {
+        browserSelection.removeAllRanges();
+        browserSelection.addRange(range);
+        range.startContainer.parentElement?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+      }
+      rich.focus({ preventScroll: true });
+    } else if (textarea) {
+      textarea.focus({ preventScroll: true });
+      textarea.setSelectionRange(first.start, first.end, 'forward');
+      const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight) || 18;
+      textarea.scrollTop = Math.max(0, (first.startLine - 2) * lineHeight);
+      syncSelectionOverlay();
+    }
+    return true;
   }
 
   // ── Inline Suggestion Comments (Google Docs style) ──
@@ -14088,6 +14487,16 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         return;
       }
 
+      // A pinned text selection is the user's most local Escape target. Clear
+      // it before closing any menu, toolbar, or the document itself.
+      if (_selections.length > 0) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation?.();
+        clearSelection();
+        return;
+      }
+
       const versionPanel = document.getElementById('doc-version-panel');
       if (versionPanel && !versionPanel.classList.contains('hidden')) {
         e.preventDefault();
@@ -14140,12 +14549,6 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         e.stopImmediatePropagation?.();
         _hideRichSelectionToolbar();
         return;
-      }
-      if (_selections.length > 0) {
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation?.();
-        clearSelection();
       }
     }, true);
   }
@@ -14261,6 +14664,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     if (lang === 'markdown') { previewIcon = 'MD'; previewLabel = _mdActive ? 'Edit' : 'Preview'; }
     else if (lang === 'csv') { previewIcon = '⊞'; previewLabel = _csvActive ? 'Edit' : 'Table View'; }
     else if (_isRenderLang(lang)) { previewIcon = '▶'; previewLabel = _htmlActive ? 'Edit' : 'Run / Preview'; }
+    else if (_isDocxLang(lang)) { previewIcon = 'W'; previewLabel = 'Word Preview'; }
 
     const _di = (svg) => `<span class="dropdown-icon">${svg}</span>`;
     const _saveIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>';
@@ -14336,6 +14740,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
             if (lang === 'markdown') toggleMarkdownPreview();
             else if (lang === 'csv') toggleCsvPreview();
             else if (_isRenderLang(lang)) toggleHtmlPreview();
+            else if (_isDocxLang(lang)) toggleDocxPreview();
             break;
           case 'download': {
             const btn = document.getElementById('doc-fontsize-btn') || document.getElementById('doc-language-select');
@@ -14639,6 +15044,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       const baseTitle = dotIdx > 0 ? name.slice(0, dotIdx) : name;
       const isSpreadsheet = ['.xlsx','.xls','.ods'].includes(ext);
       const isPdf = ext === '.pdf';
+      const isDocx = ext === '.docx';
       // Spreadsheets need the library's per-sheet split — defer to it.
       if (isSpreadsheet) {
         openLibrary();
@@ -14656,6 +15062,15 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
           if (!r.ok) throw new Error('PDF import failed');
           const j = await r.json();
           docId = j.doc_id || j.id;
+        } else if (isDocx) {
+          const fd = new FormData();
+          fd.append('file', file);
+          const sid = (sessionModule && sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId()) || _lastSessionId || '';
+          if (sid) fd.append('session_id', sid);
+          const r = await fetch(`${API_BASE}/api/documents/import-docx`, { method: 'POST', body: fd, credentials: 'same-origin' });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(j.detail || 'DOCX import failed');
+          docId = j.id || j.doc_id;
         } else {
           const content = await new Promise((res, rej) => {
             const reader = new FileReader();
@@ -14767,11 +15182,27 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       options.push({ label: 'Preview Visual Report', fn: previewVisualReport });
       options.push({ label: 'Export as Visual Report', fn: exportAsVisualReport });
     }
-    // Word and visual-report exports are document formats. Source code gets
-    // only its native source download plus a printable PDF view.
-    options.push({ label: 'Print as PDF', fn: exportAsPdf });
+    if (_isDocxLang(lang)) {
+      options.push({ label: 'Convert to Rich Text', fn: _convertDocxToRichText });
+      options.push({ label: 'Sign / annotate (PDF)', fn: convertOriginalToPdfForSigning });
+    }
+    // Keep document-format conversions explicit. DOCX is rendered through the
+    // white paper preview; PDF is converted from its extracted text into an
+    // editable DOCX in the browser.
+    // PDF-backed documents already have a lossless filled-PDF export above.
+    // Running the generic html2pdf path would rebuild the extracted text and
+    // destroy the original page layout, images, and form structure.
+    if (!isForm) {
+      options.push({
+        label: _isDocxLang(lang) ? 'Convert to PDF' : 'Print as PDF',
+        fn: _isDocxLang(lang) ? () => convertOriginalDocument('pdf') : exportAsPdf,
+      });
+    }
+    if (lang === 'pdf') {
+      options.push({ label: 'Convert to Word (.docx)', fn: () => convertOriginalDocument('docx') });
+    }
     if (!isSourceCode && !isCsv && !_isRichTextLang(lang) && lang !== 'markdown') {
-      options.push({ label: 'Export as Word', fn: exportAsDocx });
+      if (lang !== 'pdf') options.push({ label: 'Export as Word', fn: exportAsDocx });
     } else if (_isRichTextLang(lang) || lang === 'markdown') {
       options.push({ label: 'Export as Word', fn: exportAsDocx });
     }
@@ -14938,6 +15369,9 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     let html;
     if (_isRichTextLang(lang)) {
       html = text;
+    } else if (_isDocxLang(lang)) {
+      html = document.querySelector('#doc-docx-preview .doc-docx-paper')?.innerHTML ||
+        '<pre style="white-space:pre-wrap">' + text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>';
     } else if (lang === 'markdown' && markdownModule?.mdToHtml) {
       html = markdownModule.mdToHtml(text, { shortcodes: false }); // export: keep :shortcodes: literal
     } else {
@@ -15393,7 +15827,12 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       if (uiModule) uiModule.showError('Failed to load DOCX library');
       return;
     }
-    const text = textarea.value || '';
+    // PDF/DOCX documents carry an internal upload pointer for their native
+    // preview. It is useful to the app, but should never appear in a
+    // converted editable Word file.
+    const text = (textarea.value || '')
+      .replace(/^\s*<!--\s*(?:pdf|pdf_form|docx)_source\s+upload_id="[^"]+"\s*-->\s*/i, '')
+      .replace(/^\s*<!--\s*docx_source\s+upload_id="[^"]+"\s*-->\s*/i, '');
     const lang = document.getElementById('doc-language-select')?.value || '';
     const children = _isRichTextLang(lang)
       ? await _richTextToDocxChildren(text, window.docx)
@@ -15410,6 +15849,81 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     a.click();
     URL.revokeObjectURL(a.href);
     if (uiModule) uiModule.showToast('Exported as DOCX');
+  }
+
+  async function convertOriginalDocument(target) {
+    if (!activeDocId) return;
+    try {
+      const response = await fetch(
+        `${API_BASE}/api/document/${encodeURIComponent(activeDocId)}/convert-original/${target}`,
+        { credentials: 'same-origin' },
+      );
+      if (!response.ok) {
+        let message = `Conversion failed (HTTP ${response.status})`;
+        try {
+          const data = await response.json();
+          if (data?.detail) message = data.detail;
+        } catch (_) {}
+        throw new Error(message);
+      }
+      const blob = await response.blob();
+      const disposition = response.headers.get('Content-Disposition') || '';
+      const match = disposition.match(/filename="?([^";]+)"?/i);
+      const filename = match?.[1] || `${_getExportBaseName()}.${target}`;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      if (uiModule) uiModule.showToast(`Converted original file to ${target.toUpperCase()}`);
+    } catch (error) {
+      if (uiModule) uiModule.showError(error.message || String(error));
+    }
+  }
+
+  async function convertOriginalToPdfForSigning() {
+    if (!activeDocId) return;
+    try {
+      const response = await fetch(
+        `${API_BASE}/api/document/${encodeURIComponent(activeDocId)}/convert-original/pdf`,
+        { credentials: 'same-origin' },
+      );
+      if (!response.ok) {
+        let message = `Conversion failed (HTTP ${response.status})`;
+        try {
+          const data = await response.json();
+          if (data?.detail) message = data.detail;
+        } catch (_) {}
+        throw new Error(message);
+      }
+      const blob = await response.blob();
+      const source = docs.get(activeDocId);
+      const name = `${source?.title || 'document'}.pdf`;
+      const file = new File([blob], name, { type: 'application/pdf' });
+      const form = new FormData();
+      form.append('file', file);
+      const sessionId = (sessionModule?.getCurrentSessionId?.() || _lastSessionId || '');
+      if (sessionId) form.append('session_id', sessionId);
+      const imported = await fetch(`${API_BASE}/api/documents/import-pdf`, {
+        method: 'POST',
+        body: form,
+        credentials: 'same-origin',
+      });
+      const payload = await imported.json().catch(() => ({}));
+      if (!imported.ok) throw new Error(payload.detail || 'Could not open converted PDF');
+      const docId = payload.doc_id || payload.id;
+      if (!docId) throw new Error('Converted PDF did not return a document');
+      const fullResponse = await fetch(`${API_BASE}/api/document/${encodeURIComponent(docId)}`, { credentials: 'same-origin' });
+      const full = fullResponse.ok ? await fullResponse.json() : payload;
+      addDocToTabs(full, full.session_id || sessionId);
+      switchToDoc(full.id || docId);
+      if (uiModule) uiModule.showToast('PDF opened — signature and annotation tools are ready');
+    } catch (error) {
+      if (uiModule) uiModule.showError(error.message || String(error));
+    }
   }
 
   /** Delete the active document */
@@ -15500,11 +16014,22 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     const preview = document.getElementById('doc-md-preview');
     const wrap = document.getElementById('doc-editor-wrap');
     const textarea = document.getElementById('doc-editor-textarea');
+    const emptyImport = document.getElementById('doc-rich-empty-import');
     if (!preview || !wrap || !textarea) return;
 
     if (active) {
+      // The import action belongs to the empty editor, not the preview. Keep
+      // the preview surface to a single Edit action.
+      if (emptyImport) emptyImport.style.display = 'none';
       const md = textarea.value || '';
-      if (markdownModule && markdownModule.mdToHtml) {
+      const richMode = _isRichTextLang(document.getElementById('doc-language-select')?.value || '');
+      if (richMode) {
+        const safe = markdownModule?.sanitizeAllowedHtml
+          ? markdownModule.sanitizeAllowedHtml(md)
+          : md;
+        preview.classList.add('doc-rich-preview');
+        preview.innerHTML = safe || '<p class="doc-rich-preview-empty">No preview yet.</p>';
+      } else if (markdownModule && markdownModule.mdToHtml) {
         preview.innerHTML = markdownModule.mdToHtml(md, { shortcodes: false }); // doc preview: keep :shortcodes: literal
       } else {
         preview.innerHTML = md.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g, '<br>');
@@ -15518,17 +16043,33 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       _installMarkdownPreviewEditButton(preview);
       preview.style.display = '';
       wrap.style.display = 'none';
+      const rich = document.getElementById('doc-email-richbody');
+      if (richMode && rich) rich.style.display = 'none';
     } else {
       preview.style.display = 'none';
       preview.innerHTML = '';
+      preview.classList.remove('doc-rich-preview');
       const isEmailDoc = docs.get(activeDocId)?.language === 'email';
       const richEmailBody = document.getElementById('doc-email-richbody');
-      if (!(isEmailDoc && richEmailBody && richEmailBody.style.display !== 'none')) {
+      const currentLang = document.getElementById('doc-language-select')?.value || '';
+      const richMode = _isRichTextLang(currentLang);
+      if (richMode && richEmailBody) {
+        richEmailBody.style.display = '';
+      }
+      if (richMode) {
+        // Rich Text edits through the contenteditable surface; its mirrored
+        // textarea and line-number wrapper must stay hidden when returning
+        // from preview.
+        wrap.style.display = 'none';
+      } else if (!(isEmailDoc && richEmailBody && richEmailBody.style.display !== 'none')) {
         wrap.style.display = '';
       }
+      _syncRichEmptyImport(richEmailBody);
     }
     if (remember && activeDocId && docs.has(activeDocId)) {
-      docs.get(activeDocId)._markdownPreviewActive = !!active;
+      const currentLang = document.getElementById('doc-language-select')?.value || '';
+      if (_isRichTextLang(currentLang)) docs.get(activeDocId)._richPreviewActive = !!active;
+      else docs.get(activeDocId)._markdownPreviewActive = !!active;
     }
     _syncHeaderActions();
   }
@@ -15536,6 +16077,81 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
   function toggleMarkdownPreview() {
     const preview = document.getElementById('doc-md-preview');
     _setMarkdownPreviewActive(!(preview && preview.style.display !== 'none'));
+  }
+
+  function toggleRichTextPreview() {
+    const preview = document.getElementById('doc-md-preview');
+    _setMarkdownPreviewActive(!(preview && preview.style.display !== 'none'));
+  }
+
+  let _docxPreviewRequest = 0;
+  async function _setDocxPreviewActive(active, { remember = true } = {}) {
+    const requestId = ++_docxPreviewRequest;
+    const docId = activeDocId;
+    const isCurrent = () => requestId === _docxPreviewRequest && activeDocId === docId;
+    const preview = document.getElementById('doc-docx-preview');
+    const wrap = document.getElementById('doc-editor-wrap');
+    if (!preview || !wrap) return;
+    if (!active) {
+      preview.style.display = 'none';
+      preview.replaceChildren();
+      wrap.style.display = '';
+      if (remember && activeDocId && docs.has(activeDocId)) docs.get(activeDocId)._docxPreviewActive = false;
+      _syncHeaderActions();
+      return;
+    }
+    preview.style.display = '';
+    wrap.style.display = 'none';
+    preview.innerHTML = '<div class="doc-docx-preview-loading">Loading Word preview…</div>';
+    try {
+      const response = await fetch(`${API_BASE}/api/document/${encodeURIComponent(docId)}/render-docx`, { credentials: 'same-origin' });
+      const payload = await response.json().catch(() => ({}));
+      if (!isCurrent()) return;
+      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      const raw = String(payload.html || '');
+      const safe = markdownModule.sanitizeAllowedHtml
+        ? markdownModule.sanitizeAllowedHtml(raw)
+        : _escHtml(raw);
+      preview.innerHTML = `<article class="doc-docx-paper">${safe || '<p>No preview content.</p>'}</article>`;
+      if (remember && activeDocId && docs.has(activeDocId)) docs.get(activeDocId)._docxPreviewActive = true;
+    } catch (error) {
+      if (!isCurrent()) return;
+      preview.innerHTML = `<div class="doc-docx-preview-error">Could not render Word preview: ${_escHtml(error.message || error)}</div>`;
+    }
+    _syncHeaderActions();
+  }
+
+  function toggleDocxPreview() {
+    const preview = document.getElementById('doc-docx-preview');
+    _setDocxPreviewActive(!(preview && preview.style.display !== 'none'));
+  }
+
+  async function _convertDocxToRichText() {
+    const docId = activeDocId;
+    const doc = docs.get(docId);
+    if (!doc || !_isDocxLang(doc.language)) return;
+    const originalContent = doc.content;
+    try {
+      const response = await fetch(`${API_BASE}/api/document/${encodeURIComponent(docId)}/render-docx`, { credentials: 'same-origin' });
+      const payload = await response.json().catch(() => ({}));
+      // A conversion must not replace another tab, concurrent edits, or a
+      // document that was closed while the server was rendering it.
+      if (activeDocId !== docId || docs.get(docId) !== doc
+          || doc.content !== originalContent || !_isDocxLang(doc.language)) return;
+      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      const html = String(payload.html || '');
+      if (!html.trim()) throw new Error('The DOCX contained no readable content');
+      doc.content = html;
+      doc.language = 'richtext';
+      doc._docxPreviewActive = false;
+      const textarea = document.getElementById('doc-editor-textarea');
+      if (textarea) textarea.value = html;
+      switchToDoc(activeDocId);
+      await saveDocument({ silent: true, forceVersion: true });
+      if (uiModule?.showToast) uiModule.showToast('Converted DOCX to Rich Text');
+    } catch (error) {
+      if (uiModule?.showError) uiModule.showError(`DOCX conversion failed: ${error.message || error}`);
+    }
   }
 
   /** Parse CSV text into a 2D array (handles quoted fields) */
@@ -16048,6 +16664,72 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
 
   /** Simulate streaming effect for doc edits */
   let _editAnimFrame = null;
+  let _richEditDiffTimer = null;
+
+  /** Show AI changes over the visible rich editor without exposing stored HTML. */
+  function _animateRichTextEdit(oldContent, newContent, updatedDoc) {
+    _showRichTextEditor(updatedDoc);
+    const rich = _emailRichbodyActive();
+    if (!rich) return;
+
+    const oldText = _richTextContentToPlain(oldContent);
+    const newText = _richTextContentToPlain(newContent);
+    const diff = lineDiff(oldText, newText);
+    if (!diff || !diff.some(line => line.type !== 'same')) return;
+
+    clearTimeout(_richEditDiffTimer);
+    document.querySelectorAll('.doc-rich-diff-overlay').forEach(node => node.remove());
+
+    const overlay = document.createElement('div');
+    overlay.className = 'doc-diff-overlay doc-rich-diff-overlay';
+    overlay.setAttribute('aria-label', 'Document changes');
+    const deleted = diff.filter(line => line.type === 'del').length;
+    const added = diff.filter(line => line.type === 'add').length;
+    const stats = document.createElement('div');
+    stats.className = 'doc-diff-stats';
+    stats.innerHTML = `<span class="diff-stat-del">−${deleted}</span><span class="diff-stat-add">+${added}</span>`;
+    overlay.appendChild(stats);
+
+    const content = document.createElement('div');
+    content.className = 'doc-diff-content';
+    let skipped = 0;
+    diff.forEach((line, index) => {
+      const nearChange = line.type !== 'same'
+        || diff.slice(Math.max(0, index - 2), index + 3).some(item => item.type !== 'same');
+      if (!nearChange) { skipped++; return; }
+      if (skipped) {
+        const separator = document.createElement('div');
+        separator.className = 'doc-diff-sep';
+        separator.textContent = `⋯ ${skipped} unchanged`;
+        content.appendChild(separator);
+        skipped = 0;
+      }
+      const row = document.createElement('div');
+      row.className = `doc-diff-line ${line.type}`;
+      row.textContent = line.type === 'del'
+        ? `− ${line.text || '\u00a0'}`
+        : line.type === 'add'
+          ? `+ ${line.text || '\u00a0'}`
+          : (line.text || '\u00a0');
+      content.appendChild(row);
+    });
+    overlay.appendChild(content);
+
+    const pane = rich.closest('.doc-editor-pane') || rich.parentElement;
+    if (!pane) return;
+    overlay.style.top = `${rich.offsetTop}px`;
+    overlay.style.right = `${Math.max(0, pane.clientWidth - rich.offsetLeft - rich.offsetWidth)}px`;
+    overlay.style.bottom = `${Math.max(0, pane.clientHeight - rich.offsetTop - rich.offsetHeight)}px`;
+    overlay.style.left = `${rich.offsetLeft}px`;
+    pane.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('visible'));
+    _richEditDiffTimer = setTimeout(() => {
+      overlay.classList.remove('visible');
+      overlay.classList.add('fading');
+      setTimeout(() => overlay.remove(), 400);
+    }, 2500);
+  }
+
   function _animateDocEdit(textarea, newContent) {
     if (_editAnimFrame) cancelAnimationFrame(_editAnimFrame);
     const indicator = document.getElementById('doc-stream-indicator');
@@ -16390,11 +17072,15 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     if (docLang && langSelect) langSelect.value = docLang;
     if (!docLang) attemptAutoDetect();
     const isEmailUpdate = (docLang || '').toLowerCase() === 'email';
+    const isRichTextUpdate = _isRichTextLang(docLang);
     const markdownPreviewWasVisible = _isMarkdownPreviewVisible();
 
     // Animate content update for edits; apply directly for creates/streaming
-    const isEdit = !isEmailUpdate && isExistingDoc && oldContent && oldContent !== newContent && !streamingId;
-    if (isEdit && textarea) {
+    const isEdit = !isEmailUpdate && !isRichTextUpdate && isExistingDoc && oldContent && oldContent !== newContent && !streamingId;
+    const updatedDocForRichText = isRichTextUpdate ? docs.get(docId) : null;
+    if (isRichTextUpdate && updatedDocForRichText) {
+      _animateRichTextEdit(oldContent, newContent, updatedDocForRichText);
+    } else if (isEdit && textarea) {
       // Count changed lines to decide between animation and diff mode
       const oldLines = oldContent.split('\n');
       const newLines = newContent.split('\n');
@@ -16780,8 +17466,27 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
   }
 
   export function getChatDocumentId() {
-    // A minimized editor remains attached to this chat; a closed tab does not.
-    const id = isOpen ? activeDocId : _minimizedDocId;
+    // A minimized document remains the document linked to this conversation.
+    // On mobile, minimizing the sheet is the only way to reach the composer;
+    // treating that layout action as unlinking erased the document exactly
+    // when the user tried to say "edit this". A real tab close clears
+    // `_minimizedDocId` and removes the document from `docs`.
+    const pane = document.getElementById('doc-editor-pane');
+    const style = pane ? window.getComputedStyle(pane) : null;
+    const visiblyOpen = !!(
+      activeDocId
+      && pane?.isConnected
+      && !(Modals.isRegistered('doc-panel') && Modals.isMinimized('doc-panel'))
+      && style?.display !== 'none'
+      && style?.visibility !== 'hidden'
+      && style?.opacity !== '0'
+    );
+    const minimizedId = (
+      Modals.isRegistered('doc-panel')
+      && Modals.isMinimized('doc-panel')
+      && _minimizedDocId
+    ) ? _minimizedDocId : null;
+    const id = visiblyOpen ? activeDocId : minimizedId;
     return id && docs.has(id) ? id : null;
   }
 
@@ -16852,6 +17557,7 @@ const documentModule = {
   moveActiveDocumentToNewChat,
   findEmailDocId,
   getSelectionContext,
+  restoreSelectionReference,
   clearSelection,
   clearAll,
   openLibrary,

@@ -2,7 +2,7 @@
  * Gallery Editor — canvas-based image editor with layers, brush, eraser, text, crop, inpaint mask.
  */
 
-import uiModule from './ui.js?v=20260908weekhoverfix1';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import dragSortModule from './dragSort.js';
 import spinnerModule from './spinner.js';
 import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
@@ -244,6 +244,19 @@ function _galleryEditMounted() {
 if (!window.__galleryEditEscHardGuardInstalled) {
   window.__galleryEditEscHardGuardInstalled = true;
   window.addEventListener('keydown', (e) => {
+    if (_activeFilterPrompt) {
+      _activeFilterPrompt.handleKey(e);
+      return;
+    }
+    if (_rasterizePromptPending && (e.key === 'Escape' || e.key === 'Enter')) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const target = e.key === 'Escape' ? 'styled-confirm-cancel'
+        : (e.target?.id === 'styled-confirm-cancel' ? 'styled-confirm-cancel' : 'styled-confirm-ok');
+      document.getElementById(target)?.click();
+      return;
+    }
+    if (e.target?.closest?.('#styled-confirm-overlay')) return;
     const isSamCancel = !!_samAbortController
       && (e.key === 'Escape' || ((e.ctrlKey || e.metaKey) && String(e.key || '').toLowerCase() === 'c'));
     if (isSamCancel) {
@@ -1498,8 +1511,13 @@ function _refreshSelectionOverlay() {
   else _ensureSelectionAnimation();
 }
 
+let _layerPreviewTimer;
 function _finishComposite(render, documentCanvas) {
   if (!render.isCurrent()) return;
+  clearTimeout(_layerPreviewTimer);
+  _layerPreviewTimer = setTimeout(() => {
+    if (render.isCurrent() && !state.drawing) _layerPanelRenderer.refreshPreviews();
+  }, 100);
   state.documentRenderReady = true;
   if (!state.compareBaselineCanvas && !state.compareActive && documentCanvas.width && documentCanvas.height) {
     state.compareBaselineCanvas = document.createElement('canvas');
@@ -1930,9 +1948,19 @@ function _writeActiveEditorSession() {
 function _setDraftStatus(label, stateName = '') {
   const el = document.getElementById('ge-draft-status');
   if (!el) return;
-  el.textContent = label;
+  const normalizedState = stateName === 'saved' ? 'saved' : 'dirty';
+  const normalizedLabel = normalizedState === 'saved' ? 'Saved' : 'Unsaved';
+  el.textContent = normalizedLabel;
   el.dataset.state = stateName;
-  el.title = stateName === 'error' ? 'Draft autosave needs attention' : `Draft status: ${label}`;
+  const iconHost = el.closest('#ge-save-menu-btn');
+  iconHost?.querySelectorAll('.ge-save-state-icon').forEach(icon => {
+    icon.hidden = !icon.classList.contains(`ge-save-state-${normalizedState}`);
+  });
+  const saveButton = document.getElementById('ge-save-menu-btn');
+  if (saveButton) {
+    saveButton.title = normalizedState === 'error' ? 'Draft autosave needs attention' : `Draft status: ${normalizedLabel}`;
+    saveButton.setAttribute('aria-label', normalizedLabel);
+  }
 }
 
 function _clearActiveEditorSession() {
@@ -2801,6 +2829,41 @@ const _refreshHistoryPanelIfOpen = _historyPanel.refreshHistoryPanelIfOpen;
 
 // ── Drawing ──
 
+let _rasterizePromptPending = false;
+const _pixelPaintTools = new Set(['brush', 'eraser', 'clone', 'heal', 'smudge', 'dodge', 'burn', 'gradient']);
+
+async function _offerRasterizeForTool(tool = state.tool) {
+  const layer = activeLayer() || _activeParentLayer();
+  if (!_pixelPaintTools.has(tool) || _getActiveMaskLayer() || state.quickMaskActive ||
+      !['text', 'shape', 'placed'].includes(layer?.kind)) return false;
+  return _confirmRasterizeLayer(layer);
+}
+
+async function _confirmRasterizeLayer(layer) {
+  if (_rasterizePromptPending || _isLayerPixelLocked(state, layer)) return false;
+  _rasterizePromptPending = true;
+  try {
+    const accepted = await uiModule.styledConfirm(
+      `Rasterize "${layer.name || layer.kind}" to edit its pixels? You can undo this change.`,
+      { title: 'Rasterize layer', confirmText: 'Rasterize', cancelText: 'Cancel' },
+    );
+    // The document or active target may have changed while the dialog was open.
+    if (!accepted || !state.editorOpen || !state.layers.includes(layer) ||
+        (activeLayer() || _activeParentLayer()) !== layer || _getActiveMaskLayer() ||
+        _isLayerPixelLocked(state, layer)) return false;
+    _saveState(`Rasterize "${layer.name}"`);
+    _rasterizeTextLayer(layer);
+    _rasterizeShapeLayer(layer);
+    _rasterizePlacedLayer(layer);
+    composite();
+    _renderLayerPanel();
+    _schedulePersist();
+  } finally {
+    _rasterizePromptPending = false;
+  }
+  return true;
+}
+
 function _beginDraw(e) {
   // Move always follows the object under the pointer. Selecting it before the
   // drag starts keeps the active layer, layer panel, and dragged pixels aligned.
@@ -2817,6 +2880,11 @@ function _beginDraw(e) {
   // Fall back to the parent resolver so a stale activeLayerId doesn't
   // block strokes when there ARE layers present.
   const layer = activeLayer() || _activeParentLayer();
+  if (_pixelPaintTools.has(state.tool) && !_getActiveMaskLayer() && !state.quickMaskActive &&
+      ['text', 'shape', 'placed'].includes(layer?.kind)) {
+    void _offerRasterizeForTool();
+    return;
+  }
   // Transform-tool drag (handle grab or move-fallback) — handler in
   // editor/tools/transform-drag.js.
   if (_transformDragTool.tryBegin(e)) return;
@@ -2830,10 +2898,6 @@ function _beginDraw(e) {
   if (state.tool === 'eyedropper') return _eyedropperTool.pick(e);
   if (state.tool === 'gradient') return _gradientTool.begin(e);
   if (state.tool === 'marquee') return _marqueeTool.begin(e);
-  if (['text', 'shape'].includes(layer?.kind) && ['brush', 'eraser', 'clone', 'heal', 'smudge', 'dodge', 'burn', 'gradient'].includes(state.tool) && !_getActiveMaskLayer()) {
-    uiModule.showToast(`Rasterize the ${layer.kind} layer before painting on its pixels`);
-    return;
-  }
   // Inpaint can create its own layer + mask on the fly, so skip the
   // "no active layer → bail" gate for it specifically.
   const activeMask = _getActiveMaskLayer();
@@ -4610,26 +4674,97 @@ function _hasMaskPixels() {
   return false;
 }
 
-function _canMutateLayerPixels(layer, action = 'editing pixels') {
-  if (!layer || !['placed', 'text', 'shape'].includes(layer.kind)) return true;
-  uiModule?.showToast(`Rasterize ${layer.name || `the ${layer.kind} layer`} before ${action}`);
-  return false;
+async function _canMutateLayerPixels(layer, action = 'editing pixels') {
+  if (!layer) return false;
+  if (layer.kind === 'adjustment') {
+    uiModule?.showToast(`Select a pixel layer or mask before ${action}`);
+    return false;
+  }
+  if (!['placed', 'text', 'shape'].includes(layer.kind)) return true;
+  return _confirmRasterizeLayer(layer);
 }
 
-function _wandDeleteSelection({ saveHistory = true, message = 'Selection deleted' } = {}) {
-  if (!state.wandMask) return;
-  const layer = activeLayer();
-  if (!layer || _isLayerPixelLocked(state, layer) || _isLayerTransparencyLocked(state, layer)) {
-    uiModule?.showToast('Unlock image and transparent pixels before erasing');
-    return;
+function _readPixelTarget() {
+  const parent = activeLayer();
+  const mask = _getActiveMaskLayer();
+  const surface = mask || parent;
+  if (!surface?.canvas) return null;
+  const parentOffset = state.layerOffsets.get(parent?.id) || { x: 0, y: 0 };
+  const offset = mask
+    ? (mask.mode === 'layer' && mask.space !== 'document'
+      ? { x: parentOffset.x + (mask.offset?.x || 0), y: parentOffset.y + (mask.offset?.y || 0) }
+      : { x: 0, y: 0 })
+    : parentOffset;
+  return { parent, mask, canvas: surface.canvas, ctx: surface.ctx || surface.canvas.getContext('2d'), offset };
+}
+
+async function _preparePixelTarget(action, { erase = false } = {}) {
+  const parent = activeLayer();
+  const mask = _getActiveMaskLayer();
+  const group = (state.layerGroups || []).find(item => item.id === state.activeGroupId);
+  const ownerLocked = group && mask?.mode === 'group'
+    ? group.locked || _groupAncestors(state, group).some(item => item.locked)
+    : _isLayerEffectivelyLocked(state, parent);
+  if (!parent && !mask) { uiModule?.showToast('Select a layer or mask first'); return null; }
+  if (ownerLocked || mask?.locked || (!mask && _isLayerPixelLocked(state, parent))) {
+    uiModule?.showToast('Unlock the selected layer or mask first'); return null;
   }
-  if (!_canMutateLayerPixels(layer, 'erasing pixels')) return;
+  if (!mask && erase && _isLayerTransparencyLocked(state, parent)) {
+    uiModule?.showToast('Unlock transparent pixels before erasing'); return null;
+  }
+  if (!mask && !await _canMutateLayerPixels(parent, action)) return null;
+  if (activeLayer() !== parent || _getActiveMaskLayer() !== mask) return null;
+  return _readPixelTarget();
+}
+
+function _captureSelectedPixels(target) {
+  const selection = _selectionMaskAsDocument({ materializeLasso: true });
+  const canvas = document.createElement('canvas');
+  canvas.width = target.canvas.width;
+  canvas.height = target.canvas.height;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(target.canvas, 0, 0);
+  if (selection) {
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.drawImage(_selectionMaskForLayer(selection, 'document', target.offset, canvas.width, canvas.height), 0, 0);
+  }
+  return canvas;
+}
+
+async function _copyPixelsToClipboard({ cut = false } = {}) {
+  const target = cut ? await _preparePixelTarget('cutting pixels', { erase: true }) : _readPixelTarget();
+  if (!target) return;
+  const canvas = _captureSelectedPixels(target);
+  state.internalClipboard = canvas;
+  state.internalClipboardOffset = { ...target.offset };
+  if (cut) {
+    if (state.wandMask) await _wandDeleteSelection({ message: 'Selection cut' });
+    else {
+      _saveState('Cut pixels');
+      target.ctx.clearRect(0, 0, target.canvas.width, target.canvas.height);
+      composite();
+      _renderLayerPanel();
+    }
+  }
+  canvas.toBlob(blob => {
+    if (blob && navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
+      navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+        .then(() => uiModule?.showToast(cut ? 'Cut to clipboard' : 'Copied to clipboard'))
+        .catch(() => uiModule?.showToast(cut ? 'Cut (editor only)' : 'Copied (editor only)'));
+    } else uiModule?.showToast(cut ? 'Cut (editor only)' : 'Copied (editor only)');
+  }, 'image/png');
+}
+
+async function _wandDeleteSelection({ saveHistory = true, message = 'Selection deleted' } = {}) {
+  if (!state.wandMask) return;
+  const selection = _selectionMaskAsDocument({ materializeLasso: true });
+  const layer = await _preparePixelTarget('erasing pixels', { erase: true });
+  if (!layer || !selection) return;
   if (saveHistory) _saveState();
-  const off = state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
   const layerMask = _selectionMaskForLayer(
-    state.wandMask,
-    state.wandMaskSpace || 'layer',
-    off,
+    selection,
+    'document',
+    layer.offset,
     layer.canvas.width,
     layer.canvas.height,
   );
@@ -4639,35 +4774,26 @@ function _wandDeleteSelection({ saveHistory = true, message = 'Selection deleted
   layer.ctx.drawImage(layerMask, 0, 0);
   layer.ctx.restore();
   _deselectSelection({ saveHistory: false, remember: false });
+  _renderLayerPanel();
   uiModule?.showToast(message);
 }
 
 function _wandCopyToNewLayer({ saveHistory = true, activate = true, announce = true } = {}) {
-  if (!state.wandMask) return;
-  const src = activeLayer();
+  if (!_selectionMaskAsDocument({ materializeLasso: true })) return;
+  const src = _readPixelTarget();
   if (!src) return;
   if (saveHistory) _saveState();
-  // Clip the source by the mask, put it on a new layer.
-  const tmp = document.createElement('canvas');
-  tmp.width = src.canvas.width;
-  tmp.height = src.canvas.height;
-  const tCtx = tmp.getContext('2d');
-  tCtx.drawImage(src.canvas, 0, 0);
-  tCtx.globalCompositeOperation = 'destination-in';
-  const srcOff = state.layerOffsets.get(src.id) || { x: 0, y: 0 };
-  tCtx.drawImage(_selectionMaskForLayer(
-    state.wandMask,
-    state.wandMaskSpace || 'layer',
-    srcOff,
-    src.canvas.width,
-    src.canvas.height,
-  ), 0, 0);
-  const newLayer = createLayer('Wand copy', src.canvas.width, src.canvas.height);
+  const tmp = _captureSelectedPixels(src);
+  const newLayer = createLayer('Selection', src.canvas.width, src.canvas.height);
   newLayer.ctx.drawImage(tmp, 0, 0);
-  state.layerOffsets.set(newLayer.id, { ...srcOff });
-  const idx = state.layers.findIndex(l => l.id === src.id);
+  state.layerOffsets.set(newLayer.id, { ...src.offset });
+  const idx = state.layers.findIndex(l => l.id === src.parent?.id);
   state.layers.splice(idx + 1, 0, newLayer);
-  if (activate) state.activeLayerId = newLayer.id;
+  if (activate) {
+    state.activeLayerId = newLayer.id;
+    state.selectedLayerIds = [newLayer.id];
+    state.activeGroupId = null;
+  }
   composite();
   _renderLayerPanel();
   _revealLayerPanel();
@@ -4675,78 +4801,13 @@ function _wandCopyToNewLayer({ saveHistory = true, activate = true, announce = t
   return newLayer;
 }
 
-function _lassoDeleteSelection() {
-  const layer = activeLayer();
-  if (!layer || state.lassoPoints.length < 3) return;
-  if (_isLayerPixelLocked(state, layer) || _isLayerTransparencyLocked(state, layer)) {
-    uiModule?.showToast('Unlock image and transparent pixels before erasing');
-    return;
-  }
-  if (!_canMutateLayerPixels(layer, 'erasing pixels')) return;
-  const feather = parseInt(document.getElementById('ge-lasso-feather')?.value || '0');
-  const grow = parseInt(document.getElementById('ge-lasso-grow')?.value || '0');
-  _saveState();
-  const off = state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
-  const w = layer.canvas.width, h = layer.canvas.height;
-
-  const mask = _buildLassoMask(w, h, off.x, off.y, feather, grow);
-  const maskData = mask.getContext('2d').getImageData(0, 0, w, h);
-  const imgData = layer.ctx.getImageData(0, 0, w, h);
-
-  for (let i = 0; i < w * h; i++) {
-    const maskVal = maskData.data[i * 4]; // red channel
-    if (maskVal > 0) {
-      const fade = maskVal / 255;
-      imgData.data[i * 4 + 3] = Math.round(imgData.data[i * 4 + 3] * (1 - fade));
-    }
-  }
-  layer.ctx.putImageData(imgData, 0, 0);
-
-  state.lassoPoints = [];
-  composite();
-  uiModule.showToast('Selection deleted');
+async function _lassoDeleteSelection() {
+  if (!_selectionMaskAsDocument({ materializeLasso: true })) return;
+  return _wandDeleteSelection();
 }
 
 function _lassoCopyToLayer() {
-  const layer = activeLayer();
-  if (!layer || state.lassoPoints.length < 3) return;
-  const feather = parseInt(document.getElementById('ge-lasso-feather')?.value || '0');
-  const grow = parseInt(document.getElementById('ge-lasso-grow')?.value || '0');
-  _saveState();
-  const off = state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
-  const w = layer.canvas.width, h = layer.canvas.height;
-
-  const mask = _buildLassoMask(w, h, off.x, off.y, feather, grow);
-  // Keep the copied pixels in the source layer's coordinate space. A
-  // document-sized layer at (0, 0) makes selections from moved layers jump
-  // when the new layer becomes active.
-  const newLayer = createLayer('Selection', w, h);
-  state.layerOffsets.set(newLayer.id, { ...off });
-
-  // Copy layer pixels masked by the selection
-  const srcData = layer.ctx.getImageData(0, 0, w, h);
-  const maskData = mask.getContext('2d').getImageData(0, 0, w, h);
-  const outData = newLayer.ctx.createImageData(w, h);
-
-  for (let i = 0; i < w * h; i++) {
-    const maskVal = maskData.data[i * 4];
-    if (maskVal > 0) {
-      const fade = maskVal / 255;
-      outData.data[i * 4] = srcData.data[i * 4];
-      outData.data[i * 4 + 1] = srcData.data[i * 4 + 1];
-      outData.data[i * 4 + 2] = srcData.data[i * 4 + 2];
-      outData.data[i * 4 + 3] = Math.round(srcData.data[i * 4 + 3] * fade);
-    }
-  }
-  newLayer.ctx.putImageData(outData, 0, 0);
-
-  state.layers.push(newLayer);
-  state.activeLayerId = newLayer.id;
-  state.lassoPoints = [];
-  _renderLayerPanel();
-  _revealLayerPanel();
-  composite();
-  uiModule.showToast('Selection copied to new layer');
+  return _wandCopyToNewLayer();
 }
 
 function _lassoToMask() {
@@ -4796,9 +4857,20 @@ function _lassoToMask() {
 // with the final values; Cancel / Esc resolves with null. The caller
 // is responsible for snapshotting state BEFORE opening (so Cancel can
 // restore the layer's pixels).
-function _filterSliderPrompt(title, params, onPreview) {
+let _activeFilterPrompt = null;
+
+function _filterSliderPrompt(title, params, onPreview, onCancel) {
+  _activeFilterPrompt?.cancel();
   return new Promise((resolve) => {
     if (!state.container) { resolve(null); return; }
+    const session = state.editorSessionToken;
+    const parent = _activeParentLayer();
+    const mask = _getActiveMaskLayer();
+    const groupId = state.activeGroupId;
+    const previousFocus = document.activeElement;
+    const isCurrent = () => state.editorOpen && state.editorSessionToken === session
+      && _activeParentLayer() === parent && _getActiveMaskLayer() === mask
+      && state.activeGroupId === groupId;
     const overlay = document.createElement('div');
     overlay.className = 'ge-filter-overlay';
     let rows = '';
@@ -4817,7 +4889,7 @@ function _filterSliderPrompt(title, params, onPreview) {
       `;
     }
     overlay.innerHTML = `
-      <div class="ge-filter-modal">
+      <div class="ge-filter-modal" role="dialog" aria-modal="true" aria-label="${title}">
         <div class="ge-filter-modal-head">${title}</div>
         ${rows}
         <div class="ge-filter-modal-actions">
@@ -4833,6 +4905,7 @@ function _filterSliderPrompt(title, params, onPreview) {
     try { onPreview(values); } catch {}
     overlay.querySelectorAll('input[data-key]').forEach(inp => {
       inp.addEventListener('input', (e) => {
+        if (!isCurrent()) { cleanup(null); return; }
         const k = e.target.dataset.key;
         const param = params.find(p => p.key === k);
         const v = param?.type === 'color' ? e.target.value : parseFloat(e.target.value);
@@ -4842,16 +4915,38 @@ function _filterSliderPrompt(title, params, onPreview) {
         try { onPreview(values); } catch {}
       });
     });
+    let settled = false;
     const cleanup = (result) => {
+      if (settled) return;
+      settled = true;
+      const current = isCurrent();
+      if (result === null || !current) onCancel?.();
+      observer.disconnect();
       try { overlay.remove(); } catch {}
-      document.removeEventListener('keydown', onKey, true);
-      resolve(result);
+      if (_activeFilterPrompt === prompt) _activeFilterPrompt = null;
+      if (current && previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+      resolve(current ? result : null);
     };
     const onKey = (e) => {
-      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cleanup(null); }
-      else if (e.key === 'Enter') { e.preventDefault(); cleanup(values); }
+      e.stopImmediatePropagation();
+      if (e.key === 'Escape') { e.preventDefault(); cleanup(null); }
+      else if (e.key === 'Enter') {
+        e.preventDefault();
+        cleanup(e.target?.dataset.action === 'cancel' ? null : values);
+      } else if (e.key === 'Tab') {
+        const fields = [...overlay.querySelectorAll('input, button')];
+        const index = fields.indexOf(document.activeElement);
+        e.preventDefault();
+        fields[(index + (e.shiftKey ? -1 : 1) + fields.length) % fields.length]?.focus();
+      }
     };
-    document.addEventListener('keydown', onKey, true);
+    const prompt = { handleKey: onKey, cancel: () => cleanup(null) };
+    _activeFilterPrompt = prompt;
+    const observer = new MutationObserver(() => {
+      if (!overlay.isConnected || !isCurrent()) cleanup(null);
+    });
+    observer.observe(state.container, { childList: true, subtree: true });
+    overlay.querySelector('input, button')?.focus({ preventScroll: true });
     overlay.querySelector('[data-action="apply"]').addEventListener('click', () => cleanup(values));
     overlay.querySelector('[data-action="cancel"]').addEventListener('click', () => cleanup(null));
     // Click outside the modal (on the dim backdrop) = cancel.
@@ -4859,45 +4954,39 @@ function _filterSliderPrompt(title, params, onPreview) {
   });
 }
 
-// Generic helper for live-preview blur filters. Saves the PRE-blur
-// state to the undo stack first (so Ctrl-Z reverts cleanly), snapshots
-// the layer for re-rendering, applies `renderer(snap, values)` into
-// the layer on every slider change for instant feedback. Apply keeps
-// the result; Cancel / Esc restores the snapshot AND pops the undo
-// entry we pre-saved so the canceled run leaves no trace.
+// Preview from a fixed source; only acceptance creates a history entry.
 async function _applyLiveBlur({ title, params, label, renderer }) {
-  const layer = activeLayer();
-  if (!layer || _isLayerPixelLocked(state, layer)) { if (uiModule) uiModule.showToast('Unlock image pixels before applying a filter'); return; }
-  if (!_canMutateLayerPixels(layer, 'applying a pixel filter')) return;
+  const layer = await _preparePixelTarget('applying a pixel filter');
+  if (!layer) return;
   const w = layer.canvas.width, h = layer.canvas.height;
   const snap = document.createElement('canvas');
   snap.width = w; snap.height = h;
   snap.getContext('2d').drawImage(layer.canvas, 0, 0);
-  // Save state BEFORE any preview — the undo stack now holds the
-  // pre-blur pixels. Apply leaves it; Cancel pops it.
-  _saveState(label);
+  const session = state.editorSessionToken;
+  const isCurrent = () => state.editorOpen && state.editorSessionToken === session
+    && _readPixelTarget()?.canvas === layer.canvas;
   const draw = (values) => {
+    if (!isCurrent()) return;
     layer.ctx.clearRect(0, 0, w, h);
     try { renderer(snap, values, layer.ctx); } catch (_) { layer.ctx.drawImage(snap, 0, 0); }
     composite();
   };
-  const result = await _filterSliderPrompt(title, params, draw);
-  if (result === null) {
+  const restore = () => {
     layer.ctx.clearRect(0, 0, w, h);
     layer.ctx.drawImage(snap, 0, 0);
-    composite();
-    // Drop the snapshot we pushed — there's nothing to undo to.
-    if (state.undoStack.length) state.undoStack.pop();
-    _refreshHistoryPanelIfOpen();
+  };
+  const result = await _filterSliderPrompt(title, params, draw, restore);
+  restore();
+  if (result === null || !isCurrent()) {
+    if (state.editorSessionToken === session) composite();
     return;
   }
+  _saveState(label);
   // Final render from snapshot for a clean commit.
   layer.ctx.clearRect(0, 0, w, h);
   renderer(snap, result, layer.ctx);
-  const rasterized = _rasterizeTextLayer(layer);
-  const shapeRasterized = _rasterizeShapeLayer(layer);
   composite();
-  if (rasterized || shapeRasterized) _renderLayerPanel();
+  _renderLayerPanel();
   if (uiModule) uiModule.showToast(label + ' applied');
 }
 
@@ -5210,8 +5299,9 @@ function _applyMotionBlur() {
   });
 }
 
-function _applyEdgeFeather(layer, width, hardDelete) {
-  if (!_canMutateLayerPixels(layer, 'feathering pixels')) return false;
+async function _applyEdgeFeather(layer, width, hardDelete) {
+  if (!await _canMutateLayerPixels(layer, 'feathering pixels')) return false;
+  _saveState(hardDelete ? 'Delete edges' : 'Feather edges');
   const w = layer.canvas.width;
   const h = layer.canvas.height;
   const imgData = layer.ctx.getImageData(0, 0, w, h);
@@ -5455,6 +5545,8 @@ function _buildEditor(container) {
     },
     onSelectTool: (toolId, _btn, toolbarEl) => {
       if (state.tool !== toolId) {
+        // Finish a paint gesture before its tool identity changes.
+        if (state.drawing) _strokeTool.tryEnd();
         _cropTool.cancel('tool-switch');
         _marqueeTool.cancel('tool-switch');
         if (state.gradientActive) _gradientTool.cancel();
@@ -5469,10 +5561,11 @@ function _buildEditor(container) {
       // controls live in the right panel.
       const reactivated = state.tool === toolId;
       state.tool = toolId;
+      void _offerRasterizeForTool(toolId);
       state.hoveredHandle = null;
       const controls = document.getElementById('ge-controls') || document.querySelector('.ge-controls');
       if (controls) {
-        if (reactivated) controls.classList.toggle('dismissed');
+        if (reactivated && window.innerWidth <= 820) controls.classList.toggle('dismissed');
         else controls.classList.remove('dismissed');
       }
       // On mobile, picking a tool that's about to SHOW its controls
@@ -6019,41 +6112,27 @@ function _buildEditor(container) {
   //     the mask (uses mask alpha as a stencil).
   //   - lasso closed → fills the polygon area on the active layer.
   //   - wand selection → fills the wand mask area on the active layer.
-  function _doFillSelection() {
-    const layer = activeLayer();
-    if (!layer || _isLayerPixelLocked(state, layer)) {
-      uiModule?.showToast('Unlock image pixels before filling');
-      return;
-    }
-    if (!_canMutateLayerPixels(layer, 'filling pixels')) return;
-    const off = state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
+  async function _doFillSelection() {
+    const selection = _selectionMaskAsDocument({ materializeLasso: true });
+    const layer = await _preparePixelTarget('filling pixels');
+    if (!layer) return;
+    const off = layer.offset;
     const w = layer.canvas.width;
     const h = layer.canvas.height;
-    const mask = _getActiveMaskLayer();
-    const hasLasso = state.lassoPoints.length >= 3 && !state.lassoActive;
     const stencil = document.createElement('canvas');
     stencil.width = w; stencil.height = h;
     const sctx = stencil.getContext('2d');
-    if (mask) {
-      if (mask.mode === 'layer') {
-        sctx.drawImage(mask.canvas, mask.offset?.x || 0, mask.offset?.y || 0);
-      } else {
-        sctx.drawImage(mask.canvas, -off.x, -off.y);
-      }
-    } else if (hasLasso) {
-      const feather = parseInt(document.getElementById('ge-lasso-feather')?.value || '0');
-      const grow = parseInt(document.getElementById('ge-lasso-grow')?.value || '0');
-      sctx.drawImage(_buildLassoMask(w, h, off.x, off.y, feather, grow), 0, 0);
-    } else if (state.wandMask) {
+    if (selection) {
       sctx.drawImage(_selectionMaskForLayer(
-        state.wandMask,
-        state.wandMaskSpace || 'layer',
+        selection,
+        'document',
         off,
         w,
         h,
       ), 0, 0);
     } else {
-      return;
+      sctx.fillStyle = '#fff';
+      sctx.fillRect(0, 0, w, h);
     }
     _saveState('Fill selection');
     sctx.globalCompositeOperation = 'source-in';
@@ -6061,7 +6140,7 @@ function _buildEditor(container) {
     sctx.fillRect(0, 0, w, h);
     sctx.globalCompositeOperation = 'source-over';
     layer.ctx.save();
-    if (_isLayerTransparencyLocked(state, layer)) layer.ctx.globalCompositeOperation = 'source-atop';
+    if (!layer.mask && _isLayerTransparencyLocked(state, layer.parent)) layer.ctx.globalCompositeOperation = 'source-atop';
     layer.ctx.drawImage(stencil, 0, 0);
     layer.ctx.restore();
     composite();
@@ -6323,6 +6402,7 @@ function _buildEditor(container) {
   // accidentally close the gallery modal.
   document.addEventListener('keydown', (e) => {
     if (!state.editorOpen) return;
+    if (e.target?.closest?.('#styled-confirm-overlay')) return;
     // Inline layer renaming owns Escape so it can restore the original name
     // without the editor-wide guard swallowing the event first.
     const renameInput = e.key === 'Escape' && e.target?.closest?.('.ge-layer-name-input');
@@ -6385,6 +6465,7 @@ function _buildEditor(container) {
   // Keyboard shortcuts — full implementation in
   // editor/keyboard-shortcuts.js.
   wireKeyboardShortcuts({
+    copyPixelsToClipboard: _copyPixelsToClipboard,
     toolbar, toolKeyMap: _toolKeyMap,
     composite, saveState: _saveState, undo, redo,
     toggleShortcuts: _toggleShortcuts,
@@ -6510,6 +6591,7 @@ const _layerPanelRenderer = createLayerPanelRenderer({
 });
 function _renderLayerPanel() {
   const result = _layerPanelRenderer.render();
+  _layerPanelRenderer.refreshPreviews();
   _syncTextControls();
   _syncShapeControls();
   _layerGeometry.sync();
@@ -7140,6 +7222,7 @@ function _unmountEditorLoading() {
 }
 
 export function openEditor(imageUrl, imageId, presetSize, displayName, draftId) {
+  _activeFilterPrompt?.cancel();
   _setEditTabLabel(displayName || (presetSize ? 'New canvas' : 'Untitled'));
   state.imageId = imageId || null;
   // Track original file extension so save-over-original can re-encode in the
@@ -7430,6 +7513,7 @@ export function closeEditor(options = {}) {
     try { uiModule.showToast('Close the edit tab first'); } catch {}
     return false;
   }
+  _activeFilterPrompt?.cancel();
   if (_textEditor?.isOpen()) _textEditor.close(true);
   // Flush any pending debounced persist + fire one final save so closing
   // the editor mid-stroke doesn't lose work. The call is fire-and-forget;

@@ -51,3 +51,12 @@ def test_tasks_completed_view_exposes_active_paused_shortcuts():
     assert "_taskStatusFilter = value;" in src
     assert "_switchTab('tasks');" in src
     assert "if (_activeTab === 'completed') _renderCompletedTaskStatusShortcuts();" in src
+
+
+def test_completed_task_preview_links_research_runs_to_visual_report():
+    src = (ROOT / "static/js/tasks.js").read_text()
+
+    assert "entry.researchId" in src
+    assert "task-completed-report-btn" in src
+    assert "api/research/report/${encodeURIComponent(entry.researchId)}" in src
+    assert "task-completed-report-btn').forEach" in src

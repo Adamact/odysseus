@@ -10,7 +10,10 @@ const endpointId = process.env.ENDPOINT_ID || '1d1022ef';
 const endpointUrl = process.env.ENDPOINT_URL || (() => { throw new Error("ENDPOINT_URL is required"); })();
 const model = process.env.MODEL || 'odysseus-qwen3.5-tools-pre-heretic';
 const owner = 'sft_alex_creator';
-const routingMode = 'recent_model_choice';
+const routingMode = process.env.ROUTING_MODE || 'recent';
+const expectedRoutingMode = routingMode === 'recent' ? 'recent_model_choice' : routingMode;
+const expectCleanRoute = process.env.EXPECT_CLEAN_ROUTE !== 'false';
+const expectExactRouting = process.env.EXPECT_EXACT_ROUTING !== 'false';
 const run = new Date().toISOString().replace(/[:.]/g, '-');
 const reportPath = path.resolve(process.env.REPORT_PATH || path.join(root, `reports/mobile-active-editor-followups-${run}.json`));
 if (!reportPath.startsWith(path.join(root, 'reports') + path.sep) || fs.existsSync(reportPath)) throw Error('Report path must be new and under reports/');
@@ -115,8 +118,9 @@ try {
         const fetched = await context.request.get(`${base}/api/document/${encodeURIComponent(docId)}`);
         const current = fetched.ok() ? String((await fetched.json()).current_content || '') : '';
         const checks = {
-          http_ok: response.ok(), clean_route: contract.selection_mode === 'clean_compact_v3_preview',
-          exact_runtime: contract.routing_experiment === routingMode,
+          http_ok: response.ok(),
+          clean_route: !expectCleanRoute || contract.selection_mode === 'clean_compact_v3_preview',
+          exact_runtime: !expectExactRouting || contract.routing_experiment === expectedRoutingMode,
           request_has_fixture_editor: response.request().postData()?.includes(docId) || false,
           documents_capability: (contract.active_capabilities || contract.capabilities || []).includes('documents'),
           same_open_editor: await page.evaluate(id => window.documentModule?.getChatDocumentId?.() === id, docId),

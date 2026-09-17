@@ -106,6 +106,26 @@ try {
       const removed = await send(`Delete the second ${family === 'tasks' ? 'task' : 'event'} from that list.`);
       const deleteOutputs = removed.events.filter(event => event.type === 'tool_output');
       const deleteStarts = removed.events.filter(event => event.type === 'tool_start');
+      const mutationActions = new Set(['delete', 'delete_event', 'remove', 'cancel']);
+      const pendingStarts = new Map();
+      const successfulDeleteOutputs = [];
+      for (const event of removed.events) {
+        if (event.type === 'tool_start') {
+          const queue = pendingStarts.get(event.tool) || [];
+          queue.push(event);
+          pendingStarts.set(event.tool, queue);
+          continue;
+        }
+        if (event.type !== 'tool_output') continue;
+        const start = (pendingStarts.get(event.tool) || []).shift();
+        if (!start || event.error || (event.exit_code != null && event.exit_code !== 0)) continue;
+        try {
+          const command = typeof start.command === 'string' ? JSON.parse(start.command) : start.command;
+          if (mutationActions.has(String(command?.action || '').toLowerCase())) {
+            successfulDeleteOutputs.push(event);
+          }
+        } catch (_) {}
+      }
       const remaining = [];
       for (const id of seeded) {
         const response = await context.request.get(`${base}${family === 'tasks' ? '/api/tasks/' : '/api/calendar/events/'}${encodeURIComponent(id)}`);
@@ -114,7 +134,7 @@ try {
       item.turns.push({ name: 'delete-second', target_id: target, tools: deleteStarts.map(event => event.tool), tool_events: removed.events.filter(event => ['tool_start', 'tool_output'].includes(event.type)).map(event => ({ type: event.type, tool: event.tool, command: event.command, output: event.output, exit_code: event.exit_code, error: event.error })), checks: {
         target_resolved: expectedSet.has(target), http_ok: removed.response.ok(),
         correct_capability: (removed.contract.active_capabilities || []).includes(family),
-        one_successful_delete: deleteOutputs.filter(event => !event.error && (event.exit_code == null || event.exit_code === 0)).length === 1,
+        one_successful_delete: successfulDeleteOutputs.length === 1,
         second_item_deleted: !!target && !remaining.includes(target),
         other_item_preserved: seeded.filter(id => id !== target).every(id => remaining.includes(id)),
         no_stream_error: !removed.events.some(event => ['error', 'invalid_sse'].includes(event.type)),

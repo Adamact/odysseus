@@ -16,6 +16,20 @@ from src.upload_handler import reserve_upload_references
 logger = logging.getLogger(__name__)
 
 
+def _search_tokens(value: str) -> list[str]:
+    """Normalize lightweight singular/plural variants without fuzzy matching."""
+    tokens = []
+    for token in re.findall(r"[a-z0-9]+", str(value or "").lower()):
+        if token in {"the", "a", "an", "note", "notes", "checklist", "list", "todo", "todos"}:
+            continue
+        if len(token) > 4 and token.endswith("ies"):
+            token = token[:-3] + "y"
+        elif len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
+            token = token[:-1]
+        tokens.append(token)
+    return tokens
+
+
 async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
     """Handle manage_notes tool calls: CRUD on notes and checklists."""
     import uuid as _uuid
@@ -206,19 +220,16 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                     or ""
                 ).strip().lower()
                 if query:
-                    query_terms = [
-                        term
-                        for term in re.findall(r"[a-z0-9]+", query)
-                        if term not in {"the", "a", "an", "note", "notes", "checklist", "list", "todo", "todos"}
-                    ]
+                    query_terms = _search_tokens(query)
                     filtered = []
                     for n in notes:
                         haystack = " ".join(
                             str(part or "")
                             for part in (n.title, n.content, n.label, n.items)
                         ).lower()
+                        haystack_terms = set(_search_tokens(haystack))
                         if query in haystack or (
-                            query_terms and all(term in haystack for term in query_terms)
+                            query_terms and all(term in haystack_terms for term in query_terms)
                         ):
                             filtered.append(n)
                     notes = filtered

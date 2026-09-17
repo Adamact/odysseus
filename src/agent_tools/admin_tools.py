@@ -560,7 +560,8 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
             "hard max": "agent_input_token_hard_max",
             "token budget cap": "agent_input_token_hard_max",
             "input budget cap": "agent_input_token_hard_max",
-            "writing style": "email_writing_style", "email writing style": "email_writing_style",
+            "writing style": "document_writing_style", "document writing style": "document_writing_style",
+            "email writing style": "email_writing_style",
             "reply writing style": "email_writing_style", "email reply writing style": "email_writing_style",
         }
         def _resolve(k):

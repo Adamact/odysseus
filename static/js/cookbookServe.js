@@ -4,10 +4,10 @@
 // command building, preset slots, launch logic
 // ============================================
 
-import uiModule from './ui.js?v=20260908weekhoverfix1';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import spinnerModule from './spinner.js';
 import { providerLogo } from './providers.js';
-import { modelColor } from './chatRenderer.js?v=20260910streamlinks2';
+import { modelColor } from './chatRenderer.js?v=20260913richdiff1';
 import {
   bindMenuDismiss,
   dismissOrRemove,

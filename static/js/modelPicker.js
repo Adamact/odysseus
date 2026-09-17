@@ -2,7 +2,7 @@
 // Extracted from sessions.js
 
 import { providerLogo } from './providers.js';
-import uiModule from './ui.js?v=20260908weekhoverfix1';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import settingsModule from './settings.js?v=20260909defaultmodelfix1';
 import { sortModelObjects } from './modelSort.js';
 import spinnerModule from './spinner.js';
@@ -952,7 +952,7 @@ export function updateModelPicker() {
     : normalizeRouteUrl(item.url) === normalizeRouteUrl(selectedUrl));
   const routeName = s?.endpoint_name || selectedEndpoint?.endpoint_name;
   if (routeName) {
-    displayName = `${routeName} · ${displayName}`;
+    displayName = `${displayName} · ${routeName}`;
   }
   // The header indicator clips long names with ellipsis; show the full model
   // identifier on hover (#1982). No tooltip on the "Select model" placeholder.

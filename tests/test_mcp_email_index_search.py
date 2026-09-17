@@ -97,3 +97,14 @@ def test_fixture_account_selector_accepts_display_label_with_email(monkeypatch):
     }
 
     assert es._fixture_row_matches_account(row, "Research Mail (alex.research@rowan.studio)")
+
+
+def test_fixture_account_selector_accepts_primary_and_default_aliases():
+    row = {
+        "account": "Primary Inbox",
+        "account_email": "alex@example.com",
+        "account_id": "primary-inbox",
+    }
+
+    assert es._fixture_row_matches_account(row, "primary")
+    assert es._fixture_row_matches_account(row, "default")

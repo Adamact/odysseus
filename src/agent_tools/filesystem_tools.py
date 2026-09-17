@@ -20,6 +20,10 @@ _CODENAV_MAX_LINE = 400
 _STRUCTURED_DOCUMENT_SUFFIXES = frozenset({
     ".doc", ".docx", ".epub", ".pdf", ".pptx", ".xls", ".xlsx",
 })
+_BINARY_ARTIFACT_SUFFIXES = _STRUCTURED_DOCUMENT_SUFFIXES | frozenset({
+    ".bmp", ".gif", ".ico", ".jpeg", ".jpg", ".mp3", ".mp4", ".ogg",
+    ".png", ".wav", ".webm", ".webp", ".zip",
+})
 
 
 def _glob_to_regex(pat: str) -> "re.Pattern":
@@ -274,6 +278,20 @@ class WriteFileTool:
                     "bash/python instead."
                 ),
                 "exit_code": 1,
+            }
+        # write_file is a UTF-8 text writer. Refuse to silently destroy an
+        # existing PDF, image, archive, or media artifact produced by a
+        # format-aware tool, especially after the agent has verified it.
+        suffix = os.path.splitext(path)[1].casefold()
+        if suffix in _BINARY_ARTIFACT_SUFFIXES:
+            target_existed = os.path.isfile(path)
+            return {
+                "error": (
+                    f"write_file: refusing UTF-8 text for binary artifact path {path}. "
+                    "Use Python or a format-specific creation tool, then inspect the result."
+                ),
+                "exit_code": 1,
+                "binary_artifact_preserved": target_existed,
             }
         try:
             def _write():

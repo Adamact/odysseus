@@ -83,6 +83,18 @@ Return ONLY a JSON array of query strings, nothing else.
 Example: ["query one", "query two", "query three"]
 """
 
+SMALL_MODEL_QUERY_GEN_PROMPT = """\
+You choose web searches for a research task.
+
+Today: {today}
+Question: {question}
+Round: {round_num}
+
+Return ONLY a JSON array containing {num_queries} short search-query strings.
+Use the question's exact topic. Do not explain your answer.
+Example: ["topic latest news", "topic official sources"]
+"""
+
 RESEARCH_ACTION_PROMPT = """\
 You are controlling a bounded research navigator. Choose the next actions that will best answer the user's question.
 
@@ -354,6 +366,7 @@ class DeepResearcher:
     ):
         self.llm_endpoint = llm_endpoint
         self.llm_model = llm_model
+        self.simple_research_mode = self._looks_like_small_local_model(llm_model)
         self.llm_headers = llm_headers
         self.search_provider_override = search_provider
         self.category = category
@@ -396,6 +409,29 @@ class DeepResearcher:
         """Request cooperative cancellation of the research loop."""
         self._cancelled = True
 
+    @staticmethod
+    def _looks_like_small_local_model(model: str) -> bool:
+        """Recognize model names that commonly need a lower-complexity loop."""
+        name = str(model or "").lower()
+        for match in re.finditer(r"(?<![\w.])(\d+(?:\.\d+)?)\s*b(?!\w)", name):
+            try:
+                if 0 < float(match.group(1)) <= 10:
+                    return True
+            except ValueError:
+                continue
+        return bool(
+            any(marker in name for marker in ("odysseus", "heretic", "trial55"))
+        )
+
+    @staticmethod
+    def _looks_like_simple_fact_question(question: str) -> bool:
+        """Recognize questions that do not need iterative report writing."""
+        text = re.sub(r"\s+", " ", str(question or "").strip().lower())
+        return bool(re.match(
+            r"^(?:where is|what is|who is|when was|when is|how many|how far is)\b",
+            text,
+        ))
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -415,20 +451,44 @@ class DeepResearcher:
             prior_urls: URLs already visited (won't be re-fetched).
         """
         self._start_time = time.time()
+        self.fast_fact_mode = (
+            self.simple_research_mode and self._looks_like_simple_fact_question(question)
+        )
+        if self.fast_fact_mode:
+            # A small local model spends most of its time on synthesis rather
+            # than retrieval for simple factual questions. One search round
+            # with a compact deterministic report is both faster and safer.
+            self.max_rounds = min(self.max_rounds, 1)
+            self.min_rounds = 1
+            self.extraction_concurrency = min(self.extraction_concurrency, 2)
+            logger.info("Using fast factual research path for small model %s", self.llm_model)
         findings: List[Dict] = list(prior_findings) if prior_findings else []
         report = prior_report or ""
 
         # PLAN: Analyze the question and create a research strategy
         if not prior_report:
             self._emit(phase="planning")
-            self.research_plan = await self._create_plan(question)
+            if self.simple_research_mode:
+                self.research_plan = (
+                    "Use direct web searches for the user's question and gather "
+                    "current, source-backed evidence."
+                )
+                logger.info("Using simplified research loop for model %s", self.llm_model)
+            else:
+                self.research_plan = await self._create_plan(question)
             logger.info(f"Research plan: {self.research_plan[:200]}")
         else:
             # Continuation — plan around the follow-up
             self._emit(phase="planning")
-            self.research_plan = await self._create_plan(question)
+            if self.simple_research_mode:
+                self.research_plan = (
+                    "Use direct web searches for the user's question and gather "
+                    "current, source-backed evidence."
+                )
+            else:
+                self.research_plan = await self._create_plan(question)
             logger.info(f"Continuation plan: {self.research_plan[:200]}")
-        if not self.category and not prior_report:
+        if not self.category and not prior_report and not self.simple_research_mode:
             self.category = await self._classify_category(question, self.research_plan)
             if self.category:
                 logger.info(f"Auto-detected category: {self.category}")
@@ -501,6 +561,10 @@ class DeepResearcher:
 
             # SYNTHESIZE
             if findings:
+                if self.fast_fact_mode:
+                    report = self._compact_fact_report(question, findings)
+                    self.evolving_report = report
+                    break
                 self._emit(phase="analyzing", round=round_num,
                            total_sources=len(self.urls_fetched),
                            total_findings=len(findings),
@@ -541,6 +605,13 @@ class DeepResearcher:
             return "No information could be gathered for this question."
 
         self.evolving_report = report  # preserve pre-synthesis report
+        if self.fast_fact_mode:
+            # The compact factual path is already the final report. Sending it
+            # through _final_report would add another slow generation pass on
+            # small local models and can make a successful lookup appear to
+            # hang or fail.
+            logger.info("Research complete via fast factual report")
+            return report
         final = await self._final_report(question, report)
         elapsed = time.time() - self._start_time
         logger.info(
@@ -663,20 +734,28 @@ class DeepResearcher:
                 "that the report doesn't yet cover well."
             )
 
-        prompt = current_date_context() + QUERY_GEN_PROMPT.format(
-            question=question,
-            research_plan=self.research_plan or "(No plan — search broadly.)",
-            report=report or "(No findings yet.)",
-            round_num=round_num,
-            num_queries=num_queries,
-            round_instruction=round_instruction,
-        )
+        if getattr(self, "simple_research_mode", False):
+            prompt = SMALL_MODEL_QUERY_GEN_PROMPT.format(
+                today=datetime.now().astimezone().strftime("%Y-%m-%d"),
+                question=question,
+                round_num=round_num,
+                num_queries=num_queries,
+            )
+        else:
+            prompt = current_date_context() + QUERY_GEN_PROMPT.format(
+                question=question,
+                research_plan=self.research_plan or "(No plan — search broadly.)",
+                report=report or "(No findings yet.)",
+                round_num=round_num,
+                num_queries=num_queries,
+                round_instruction=round_instruction,
+            )
 
         try:
             response = await self._llm(
                 [{"role": "user", "content": prompt}],
                 temperature=0.5,
-                max_tokens=4096,
+                max_tokens=512 if getattr(self, "simple_research_mode", False) else 4096,
                 timeout=getattr(self, "query_timeout", 120),
             )
             queries = self._parse_json_array(response)
@@ -685,6 +764,33 @@ class DeepResearcher:
                 q for q in queries
                 if q not in self.queries_used and not _is_meta_search_query(q)
             ]
+            # A weak/local model can return an empty response or malformed
+            # JSON even when the question is perfectly searchable. Never let
+            # that silently terminate research with zero sources: the user's
+            # question is a valid broad discovery query and gives the next
+            # stage a chance to recover.
+            if not new_queries:
+                fallback = self._deterministic_search_topic(question)
+                fallback_queries = [
+                    fallback,
+                    f"{fallback} fact check",
+                    f"{fallback} reliable sources",
+                ]
+                new_queries = [
+                    query for query in fallback_queries
+                    if query and not _is_meta_search_query(query)
+                    and query not in self.queries_used
+                ][:num_queries]
+                if new_queries:
+                    logger.warning(
+                        "Round %s query planner returned no usable queries; "
+                        "using deterministic fallback searches: %s",
+                        round_num, new_queries,
+                    )
+                    self._emit(
+                        phase="warning",
+                        message="Search planning returned no usable queries; trying fallback searches.",
+                    )
             self.queries_used.update(new_queries)
             logger.info(f"Round {round_num} queries: {new_queries}")
             return new_queries
@@ -696,6 +802,11 @@ class DeepResearcher:
     async def _plan_research_actions(self, question: str, report: str,
                                      round_num: int) -> List[ResearchAction]:
         """Let the model choose bounded search/fetch/browser actions."""
+        if getattr(self, "simple_research_mode", False):
+            # Small local models are much more reliable at producing a short
+            # query list than a nested tool/action protocol. The caller will
+            # use _generate_queries instead.
+            return []
         try:
             from src.settings import get_setting
 
@@ -861,7 +972,74 @@ class DeepResearcher:
         parsed = urllib.parse.urlparse(str(url or ""))
         return (parsed.netloc or parsed.path.split("/", 1)[0]).lower().removeprefix("www.")
 
-    def _prioritize_search_results(self, results: List[Dict], *, limit: int) -> List[Dict]:
+    @staticmethod
+    def _topic_terms(question: str) -> Set[str]:
+        """Return meaningful topic anchors from a research question.
+
+        Search engines frequently return pages that match only a generic word
+        such as ``best`` or ``Boston``.  Those pages are especially dangerous
+        for small models: the extractor can turn an unrelated page into a
+        plausible-looking answer.  Keep this deliberately conservative and
+        use the same anchors for search-result and fetched-page gates.
+        """
+        stopwords = {
+            "a", "about", "an", "and", "are", "be", "can", "does", "for",
+            "from", "how", "in", "is", "it", "latest", "of", "on", "or",
+            "prone", "should", "the", "this", "to", "was", "were", "what",
+            "when", "where", "which", "why", "with", "would",
+        }
+        return {
+            token for token in re.findall(r"[^\W_]+", str(question or "").casefold())
+            if len(token) >= 2 and token not in stopwords
+        }
+
+    @classmethod
+    def _topic_overlap(cls, question: str, text: str) -> int:
+        """Count distinct question anchors present in text."""
+        terms = cls._topic_terms(question)
+        haystack = str(text or "").lower()
+        overlap = 0
+        for term in terms:
+            variants = [term]
+            if term.endswith("s") and len(term) > 3:
+                variants.append(term[:-1])
+            if any(re.search(rf"(?<![a-z0-9]){re.escape(variant)}(?![a-z0-9])", haystack)
+                   for variant in variants):
+                overlap += 1
+        return overlap
+
+    @classmethod
+    def _topic_relevant(cls, question: str, text: str) -> bool:
+        """Require enough topical overlap to let a page reach the model."""
+        # This English lexical heuristic cannot decide cross-language
+        # relevance or segment unspaced scripts. Defer those to extraction.
+        if not str(question or "").isascii() or not str(text or "").isascii():
+            return True
+        terms = cls._topic_terms(question)
+        if not terms:
+            return True
+        overlap = cls._topic_overlap(question, text)
+        # A one-word topic such as "Sweden" is sufficient on its own. For
+        # multi-anchor questions, one shared word is not evidence of relevance
+        # ("Boston safety" must not qualify for Boston Terrier neurology).
+        return overlap >= (1 if len(terms) <= 1 else 2)
+
+    @staticmethod
+    def _deterministic_search_topic(question: str) -> str:
+        """Turn a failed planner question into a clean search topic."""
+        topic = re.sub(r"\s+", " ", str(question or "").strip())
+        topic = re.sub(
+            r"^(?:please\s+)?(?:what is|what are|where is|where are|who is|"
+            r"when was|when is|how does|how do|can you explain)\s+",
+            "",
+            topic,
+            flags=re.IGNORECASE,
+        )
+        topic = re.sub(r"[?!.,;:]+$", "", topic).strip()
+        return topic or re.sub(r"[?!.,;:]+$", "", str(question or "").strip())
+
+    def _prioritize_search_results(self, results: List[Dict], *, limit: int,
+                                   question: str = "") -> List[Dict]:
         """Prefer stronger and more diverse search hits before extraction.
 
         Search providers often rank broad SEO pages above primary sources. This
@@ -872,6 +1050,17 @@ class DeepResearcher:
             return []
 
         candidates = []
+        stopwords = {
+            "about", "after", "also", "best", "between", "could", "does",
+            "from", "have", "into", "most", "only", "people", "should",
+            "still", "that", "their", "there", "these", "this", "what",
+            "when", "where", "which", "with", "would", "your", "common",
+        }
+        definition_question = bool(re.search(
+            r"\b(?:define|definition|meaning|mean|what is)\b",
+            str(question or "").lower(),
+        ))
+        question_terms = self._topic_terms(question)
         seen_urls = set()
         for idx, result in enumerate(results or []):
             if not isinstance(result, dict):
@@ -879,18 +1068,38 @@ class DeepResearcher:
             url = str(result.get("url") or "").strip()
             if not url or url in seen_urls or url in self.urls_fetched:
                 continue
+            host = self._result_host(url)
+            if not definition_question and any(token in host for token in (
+                "dictionary", "wiktionary", "merriam-webster", "collinsdictionary",
+            )):
+                continue
             seen_urls.add(url)
             title = str(result.get("title") or "")
             summary = str(result.get("content") or result.get("snippet") or "")
+            searchable_text = " ".join((title, summary, url)).lower()
+            result_terms = set(re.findall(r"[a-z0-9]+", searchable_text))
+            relevance = len(question_terms & result_terms)
             assessment = assess_source(url, title=title, summary=summary)
             candidates.append({
                 "idx": idx,
-                "host": self._result_host(url),
+                "host": host,
                 "assessment": assessment,
+                "relevance": relevance,
                 "result": result,
             })
 
-        candidates.sort(key=lambda c: (-c["assessment"].score, c["host"], c["idx"]))
+        # If the provider returned at least one topic-relevant hit, do not
+        # spend extraction slots on generic dictionary/listicle results that
+        # only matched a word such as "best". If every hit lacks metadata or
+        # overlap, retain the old quality-based behavior rather than returning
+        # nothing.
+        relevant = [candidate for candidate in candidates if self._topic_relevant(
+            question,
+            " ".join((candidate["result"].get("title") or "", candidate["result"].get("content") or candidate["result"].get("snippet") or "", candidate["result"].get("url") or "")),
+        )]
+        if relevant:
+            candidates = relevant
+        candidates.sort(key=lambda c: (-c["relevance"], -c["assessment"].score, c["host"], c["idx"]))
         picked = []
         picked_ids = set()
         used_hosts = set()
@@ -970,7 +1179,9 @@ class DeepResearcher:
                     raw_search_hits.append(r)
 
         search_limit = self.max_urls_per_round * max(1, len(queries))
-        for r in self._prioritize_search_results(raw_search_hits, limit=search_limit):
+        for r in self._prioritize_search_results(
+            raw_search_hits, limit=search_limit, question=question
+        ):
             url = str(r.get("url") or "").strip()
             if not url or url in self.urls_fetched:
                 continue
@@ -1092,6 +1303,29 @@ class DeepResearcher:
                 page = browser_page
             else:
                 return None
+
+        # Do this before asking the LLM to extract anything. A weak local
+        # model may confidently answer the goal from an unrelated page even
+        # when the page itself says it contains no relevant information.
+        page_topic_text = " ".join((page.title or title or "", page.content or "", url))
+        if (getattr(self, "simple_research_mode", False)
+                and not self._topic_relevant(question, page_topic_text)
+                and page.retrieval != "browser"):
+            browser_page = await self._browser_fallback(url, title, page)
+            if browser_page and browser_page.success and browser_page.content:
+                page = browser_page
+                page_topic_text = " ".join((page.title or title or "", page.content or "", url))
+        if (getattr(self, "simple_research_mode", False)
+                and not self._topic_relevant(question, page_topic_text)):
+            logger.info("Skipping topically unrelated research page %s", url)
+            self._record_navigation(
+                "browser_read" if page.retrieval == "browser" else requested_tool,
+                url=url,
+                title=title or page.title,
+                status="topic_mismatch",
+                retrieval=page.retrieval,
+            )
+            return None
 
         tried_browser_after_weak_extract = False
         while True:
@@ -1714,6 +1948,17 @@ class DeepResearcher:
             f"{len(findings)} finding(s) gathered during research._\n\n"
             f"{self._format_findings(findings)}"
         )
+
+    def _compact_fact_report(self, question: str, findings: List[Dict]) -> str:
+        """Build a useful answer without a second slow local-model pass."""
+        rows = []
+        for finding in findings[:4]:
+            title = finding.get("title") or finding.get("url") or "Source"
+            summary = finding.get("summary") or finding.get("evidence") or ""
+            url = finding.get("url") or ""
+            if summary:
+                rows.append(f"- **{title}**: {summary.strip()} [{url}]({url})")
+        return f"## {question.strip()}\n\n" + "\n\n".join(rows)
 
     def get_stats(self) -> Dict:
         """Return research statistics."""

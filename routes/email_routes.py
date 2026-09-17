@@ -548,7 +548,7 @@ def _uid_bytes(uid: str | bytes) -> bytes:
     return uid if isinstance(uid, bytes) else str(uid).encode()
 
 
-def _uid_exists(conn, uid: str) -> bool:
+def _uid_exists(conn, uid: str, *, strict: bool = False) -> bool:
     try:
         status, data = conn.uid("FETCH", _uid_bytes(uid), "(UID)")
         if status == "OK":
@@ -560,9 +560,35 @@ def _uid_exists(conn, uid: str) -> bool:
         # A few IMAP servers do not return UID metadata for a FETCH probe,
         # while their UID SEARCH implementation is reliable.
         status, data = conn.uid("SEARCH", None, f"UID {uid}")
+        if strict and status != "OK":
+            raise RuntimeError("Email UID lookup failed")
         return status == "OK" and bool(data and data[0] and _uid_bytes(uid) in data[0].split())
     except Exception:
+        if strict:
+            raise
         return False
+
+
+def _resolve_current_email_uid(conn, uid: str, message_id: str | None = None) -> str:
+    """Resolve a stale cached UID by the message's stable RFC Message-ID."""
+    uid = str(uid or "").strip()
+    if uid and _uid_exists(conn, uid, strict=True):
+        return uid
+    message_id = str(message_id or "").strip()
+    if not message_id:
+        return ""
+    try:
+        status, data = _imap_uid_search(conn, f"(HEADER Message-ID {_imap_search_quote(message_id)})")
+        if status != "OK":
+            raise RuntimeError("Email Message-ID lookup failed")
+        if status == "OK" and data and data[0]:
+            matches = data[0].split()
+            if matches:
+                return matches[-1].decode(errors="ignore") if isinstance(matches[-1], bytes) else str(matches[-1])
+    except Exception:
+        logger.debug("Could not resolve stale email UID by Message-ID", exc_info=True)
+        raise
+    return ""
 
 
 def _imap_uid_search(conn, criteria: str):
@@ -2136,7 +2162,7 @@ def setup_email_routes():
             return False
         rows = payload.get("messages") if isinstance(payload, dict) else payload
         if not isinstance(rows, list):
-            return False
+            return None
         for i, row in enumerate(rows, start=1):
             if not isinstance(row, dict):
                 continue
@@ -2155,7 +2181,11 @@ def setup_email_routes():
                     row[key] = value
             path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
             return True
-        return False
+        # Fixture mode may be enabled for a small set of synthetic messages
+        # while the visible mailbox is still backed by IMAP. Do not turn a
+        # live UID that is absent from the fixture into a false “not found”;
+        # callers must fall through to the real mailbox operation.
+        return None
 
     def _list_emails_sync(folder, limit, offset, filter_, account_id, from_addr=None, has_attachments_only=False, owner="", refresh=False, date_from="", date_to=""):
         """Sync IMAP work — call from async handler via asyncio.to_thread so
@@ -4598,26 +4628,50 @@ def setup_email_routes():
             return {"success": False, "error": "Mail operation failed"}
 
     @router.delete("/delete/{uid}")
-    async def delete_email(uid: str, folder: str = Query("INBOX"), account_id: str | None = Query(None), owner: str = Depends(require_owner)):
+    async def delete_email(uid: str, folder: str = Query("INBOX"), account_id: str | None = Query(None), message_id: str | None = Query(None), owner: str = Depends(require_owner)):
         """Move email to Trash."""
+        logger.info(
+            "Email delete requested uid=%s folder=%s account=%s message_id=%s fixture=%s",
+            uid, folder, account_id or "default", bool(message_id), bool(_fixture_email_enabled()),
+        )
         fixture_ok = _fixture_email_update(uid, owner, source_folder=folder, folder="Trash")
         if fixture_ok is not None:
+            logger.info("Email delete fixture result uid=%s success=%s", uid, fixture_ok)
             return {"success": bool(fixture_ok), **({} if fixture_ok else {"error": "Email not found"})}
         try:
             with _imap(account_id, owner=owner) as conn:
                 select_status, _ = conn.select(_q(folder), readonly=False)
                 if select_status != "OK":
                     return {"success": False, "error": "Could not open email folder"}
-                if not _move_email_message(conn, uid, "Trash", role="trash"):
-                    # Some providers advertise Trash but reject MOVE/COPY.
-                    # We have already verified the exact UID, so permanently
-                    # delete that message rather than leaving a phantom card
-                    # that returns after the next mailbox refresh.
-                    if not _store_email_flag(conn, uid, "\\Deleted", add=True):
-                        return {"success": False, "error": "Email could not be deleted"}
-                    conn.expunge()
-                    logger.warning(f"Trash move failed; permanently deleted verified UID {uid} from {folder}")
-            _email_index_delete(owner, account_id, folder, uid)
+                resolved_uid = _resolve_current_email_uid(conn, uid, message_id)
+                if not resolved_uid:
+                    logger.info("Email delete already absent uid=%s folder=%s message_id=%s", uid, folder, bool(message_id))
+                    # Delete is intentionally idempotent. A stale library row
+                    # can point at a UID that was already moved by a previous
+                    # click or by another mailbox client; it is already gone
+                    # from the requested folder, so do not trap the UI on a
+                    # permanent “Email not found” error.
+                    _email_index_delete(owner, account_id, folder, str(uid))
+                    _invalidate_list_cache(account_id, folder)
+                    return {"success": True, "already_deleted": True}
+                trash_folder = _resolve_mail_folder(conn, "Trash", "trash")
+                # A few providers expose no special-use Trash mailbox. Create
+                # the conventional folder before attempting the move so the
+                # kebab action still means “move to Trash”, never “delete
+                # permanently as a fallback”.
+                _, folder_names = _list_imap_folders(conn)
+                if trash_folder not in folder_names:
+                    try:
+                        if conn.create(_q("Trash"))[0] == "OK":
+                            trash_folder = "Trash"
+                    except Exception:
+                        pass
+                if not _move_email_message(conn, resolved_uid, trash_folder, role="trash"):
+                    logger.warning("Email delete Trash move failed uid=%s resolved_uid=%s folder=%s trash=%s", uid, resolved_uid, folder, trash_folder)
+                    return {"success": False, "error": "Could not move email to Trash"}
+            _email_index_delete(owner, account_id, folder, resolved_uid)
+            if resolved_uid != str(uid):
+                _email_index_delete(owner, account_id, folder, str(uid))
             _invalidate_list_cache(account_id)
             return {"success": True}
         except Exception as e:
@@ -6133,18 +6187,33 @@ def setup_email_routes():
                     _c.close()
                     if _row and _row[0]:
                         cached_reply = _apply_email_style_mechanics(_extract_reply(_row[0] or ""))
-                        if cached_reply:
+                        # Older failures could be cached as a one-word
+                        # fragment (for example "and"). Never surface that
+                        # as a finished draft; let the current model generate
+                        # a fresh reply instead.
+                        cached_reply_is_usable = (
+                            len(cached_reply.split()) >= 4
+                            or len(original_body.split()) <= 3
+                        )
+                        if cached_reply and cached_reply_is_usable:
                             return {
                                 "success": True,
                                 "reply": cached_reply,
                                 "model_used": _row[1] or "cached",
                                 "cached": True,
                             }
+                        if cached_reply:
+                            logger.warning(
+                                "Ignoring unusable cached AI reply message_id=%s words=%s",
+                                message_id,
+                                len(cached_reply.split()),
+                            )
                 except Exception as e:
                     logger.warning(f"AI reply cache lookup failed: {e}")
 
             settings = _load_settings()
             style = _get_email_writing_style_for_account(settings, account_id)
+            general_style = str(settings.get("document_writing_style") or "").strip()
 
             # Try session's endpoint first if session_id provided
             url = None
@@ -6246,8 +6315,10 @@ def setup_email_routes():
                     logger.warning(f"sender-thread-context failed: {_e}")
 
             system_prompt = _EMAIL_REPLY_SYS_PROMPT_BASE
+            if general_style:
+                system_prompt += f"\n\nGENERAL WRITING STYLE:\n{general_style}"
             if style:
-                system_prompt += f"\n\nWRITING STYLE TO MATCH:\n{style}"
+                system_prompt += f"\n\nEMAIL CONVENTIONS:\n{style}"
             if context_snippets:
                 system_prompt += "\n\nRELEVANT CONTEXT FROM PAST EMAILS AND CONTACTS:\n" + "\n\n---\n\n".join(context_snippets[:5])
             if referenced:
@@ -6317,8 +6388,8 @@ def setup_email_routes():
                     _candidates,
                     messages=_messages,
                     temperature=0.7,
-                    max_tokens=1024 if fast_reply else 6144,
-                    timeout=60 if fast_reply else 180,
+                    max_tokens=1536 if fast_reply else 6144,
+                    timeout=120 if fast_reply else 180,
                 )
             except Exception as e:
                 detail = getattr(e, "detail", None) or str(e)
@@ -6326,19 +6397,26 @@ def setup_email_routes():
                 return {"success": False, "error": f"All endpoints failed ({_attempted}): {detail}. Check your API keys in Settings → Services."}
 
             reply = _apply_email_style_mechanics(_extract_reply(reply_raw or ""))
-            if not reply:
+            # Small/local models sometimes satisfy the format request with a
+            # one-word acknowledgement ("Thanks.") even though the email
+            # needs an actual draft. Treat that as an unusable result and
+            # give the retry prompt a chance to produce a complete reply.
+            reply_is_too_short = bool(reply) and len(reply.split()) < 4
+            if not reply or reply_is_too_short:
+                allow_short_reply = reply_is_too_short and len(original_body.split()) <= 3
                 logger.warning(
-                    "AI reply returned empty usable text on first pass model=%s raw_len=%s; retrying candidates",
+                    "AI reply returned %s usable text on first pass model=%s raw_len=%s; retrying candidates",
+                    "too-short" if reply_is_too_short else "empty",
                     model,
                     len(reply_raw or ""),
                 )
                 retry_system = (
                     system_prompt
-                    + "\n\nRETRY BECAUSE PREVIOUS OUTPUT WAS EMPTY: You MUST return a non-empty email reply body. "
-                    "If unsure, write a short, honest reply using only the facts in the original email and user instructions. "
+                    + "\n\nRETRY BECAUSE THE PREVIOUS OUTPUT WAS NOT USABLE: You MUST return a complete email reply body of at least 2 sentences (unless the original email itself is only a greeting). "
+                    "Use the saved writing style and write a short, honest reply using only the facts in the original email and user instructions. "
                     "Still use the exact <<<REPLY>>> and <<<END>>> markers."
                 )
-                retry_user = user_msg + "\n\nReturn a usable, non-empty reply now. Do not return an empty marker block."
+                retry_user = user_msg + "\n\nReturn a complete usable reply now. Do not return a one-word acknowledgement or an empty marker block."
                 retry_messages = [
                     {"role": "system", "content": retry_system},
                     {"role": "user", "content": retry_user},
@@ -6351,12 +6429,12 @@ def setup_email_routes():
                             retry_messages,
                             headers=cand_headers,
                             temperature=0.3,
-                            max_tokens=1536 if fast_reply else 4096,
-                            timeout=45 if fast_reply else 120,
+                            max_tokens=2048 if fast_reply else 4096,
+                            timeout=90 if fast_reply else 120,
                             max_retries=1,
                         )
                         retry_reply = _apply_email_style_mechanics(_extract_reply(raw_retry or ""))
-                        if retry_reply:
+                        if retry_reply and (len(retry_reply.split()) >= 4 or allow_short_reply):
                             reply = retry_reply
                             model = cand_model
                             break
@@ -6367,6 +6445,8 @@ def setup_email_routes():
                         )
                     except Exception as retry_exc:
                         logger.warning("AI reply retry failed model=%s: %s", cand_model, retry_exc)
+                if reply_is_too_short and not allow_short_reply and len(reply.split()) < 4:
+                    reply = ""
             if not reply:
                 _attempted = ", ".join(f"{m}@{u.split('/')[2] if '/' in u else u}" for u, m, _ in _candidates) or "no candidates"
                 return {"success": False, "error": f"AI reply returned blank text after retrying: {_attempted}"}

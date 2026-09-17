@@ -4,6 +4,7 @@ from pathlib import Path
 from src.agent_loop import (
     _classify_agent_request,
     _contextual_link_followup_topic,
+    _is_ambiguous_short_low_signal,
     _is_contextual_link_followup,
     _is_terse_link_request,
     _minimal_recent_notes_tool_context_message,
@@ -169,6 +170,28 @@ def test_tui_bridge_does_not_block_low_signal_clarification_direct_path() -> Non
     assert _should_use_direct_low_signal_path(**args)
 
 
+def test_complete_fresh_domain_free_request_does_not_lose_agent_tools() -> None:
+    """A natural request is not a fragment merely because routing found no keyword."""
+    args = dict(
+        low_signal_turn=True, casual_low_signal_turn=False,
+        ambiguous_short_turn=False, standalone_link_fragment_turn=False,
+        existing_conversation=False, qwen38_tool_router=False,
+        continuation=False, plan_mode=False, approved_plan=False,
+        guide_only=False, active_document_relevant=False, active_email=None,
+        workspace=None, has_domains=False, forced_tools=False,
+        relevant_tools=None, client_active_skills=False,
+        terminal_agent_mode=False, has_tui_host_bridge=False,
+    )
+
+    assert not _should_use_direct_low_signal_path(**args)
+
+
+def test_typo_heavy_product_problem_is_complete_not_ambiguous_fragment() -> None:
+    text = "I have a miro 3 wiking by hwam and smoke isn't exiting properly its brand new"
+
+    assert not _is_ambiguous_short_low_signal(text)
+
+
 def test_standalone_link_fragment_gets_clarification_path() -> None:
     from pathlib import Path
 
@@ -242,6 +265,8 @@ def test_qwen35_tool_router_uses_broad_compact_map() -> None:
 
     assert _is_qwen38_tool_router("odysseus-qwen3.5-9b-tool-router-v4-q4")
     assert _is_qwen38_tool_router("odysseus-qwen3.5-tools-pre-heretic")
+    assert _is_qwen38_tool_router("ajax_c375")
+    assert _is_qwen38_tool_router("openai/ajax_c375")
     assert "manage_notes: notes/checklists" in _QWEN38_TOOL_ROUTER_PROMPT
     assert "mcp__email__list_emails" in _QWEN38_TOOL_ROUTER_PROMPT
     assert "mcp__email__search_emails" in _QWEN38_TOOL_ROUTER_PROMPT
@@ -259,6 +284,7 @@ def test_qwen_tool_router_preserves_explicit_artifact_output_budget() -> None:
     assert _allow_visual_tool_evidence_for_model(
         "odysseus-qwen3.5-tools-pre-heretic"
     )
+    assert _allow_visual_tool_evidence_for_model("ajax_c375")
     assert not _allow_visual_tool_evidence_for_model(
         "qwen35-9b-tool-router-v4-firstaction-noschema-adapter"
     )
@@ -324,6 +350,32 @@ def test_private_browser_product_catalog_requires_multiple_comparable_items() ->
     assert not _private_browser_product_catalog_ready(
         'Showing results for "chair". StaticText "Price $ 15.00"'
     )
+
+
+def test_interactive_browser_has_room_for_navigation_and_overlay_recovery() -> None:
+    from src.clean_agent_preview import (
+        INTERACTIVE_BROWSER_TOOL_CALL_LIMIT,
+        INTERACTIVE_TOOL_CALL_LIMIT,
+    )
+
+    assert INTERACTIVE_BROWSER_TOOL_CALL_LIMIT > INTERACTIVE_TOOL_CALL_LIMIT
+    assert INTERACTIVE_TOOL_CALL_LIMIT == 18
+    assert INTERACTIVE_BROWSER_TOOL_CALL_LIMIT == 30
+
+
+def test_email_account_transport_outage_is_not_treated_as_empty_inbox() -> None:
+    from src.clean_agent_preview import email_account_backend_unavailable
+
+    assert email_account_backend_unavailable({
+        "stdout": (
+            "[EMAIL ACCOUNT ERRORS: Primary: [Errno 111] Connection refused]\n"
+            "No unread/unresponded emails found."
+        ),
+        "exit_code": 0,
+    })
+    assert not email_account_backend_unavailable({
+        "stdout": "No unread/unresponded emails found.", "exit_code": 0,
+    })
 
 
 def test_private_browser_open_without_dom_refs_queues_snapshot() -> None:
@@ -917,6 +969,16 @@ def test_late_tool_summary_fallback_preserves_synthesized_answers() -> None:
     assert "if _visible_response_text(full_response):\n                    break" in src
 
 
+def test_read_only_shell_is_a_canonical_terminal_renderer() -> None:
+    from src.agent_loop import _ody_qwen_terminal_tool_summary
+
+    assert _ody_qwen_terminal_tool_summary({
+        "tool": "bash",
+        "command": '{"command":"pwd"}',
+        "output": "/workspace",
+    }) == "```text\n/workspace\n```"
+
+
 def test_calendar_list_relative_range_args_become_iso_dates() -> None:
     from src.agent_loop import _normalize_calendar_list_range_args
 
@@ -930,6 +992,28 @@ def test_calendar_list_relative_range_args_become_iso_dates() -> None:
         "action": "list_events",
         "start": "2026-08-24",
         "end": "2026-08-31",
+    }
+
+
+def test_broad_calendar_list_discards_model_invented_range_and_query() -> None:
+    from src.agent_loop import _normalize_calendar_list_range_args
+
+    normalized, changed = _normalize_calendar_list_range_args(
+        {
+            "action": "list_events",
+            "start": "2026-09-11T15:00:00Z",
+            "end": "2026-09-11T18:00:00Z",
+            "query": "Today's schedule: 15:30 Meeting, 16:00 Call",
+        },
+        today="2026-09-11",
+        user_text="whats on my calendar? just three titles and times",
+    )
+
+    assert changed
+    assert normalized == {
+        "action": "list_events",
+        "start": "2026-09-11",
+        "end": "2026-10-11",
     }
 
 
@@ -1244,6 +1328,9 @@ def test_qwen_explicit_note_delete_extracts_exact_title() -> None:
     assert _parse_qwen_explicit_calendar_delete(
         "Delete only the temporary calendar event titled Fixture-123."
     ) == "Fixture-123"
+    assert _parse_qwen_explicit_calendar_delete(
+        "Delete the second event from that list."
+    ) is None
     assert _parse_qwen_explicit_calendar_absence_verify(
         "Verify that calendar event Fixture-123 is absent. Search the 2030-01-02 range; do not create anything."
     ) == {

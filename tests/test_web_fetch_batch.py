@@ -4,6 +4,7 @@ import json
 from src.agent_tools.web_tools import WebFetchTool
 from src.search import content as content_mod
 from src.tool_schemas import FUNCTION_TOOL_SCHEMAS, function_call_to_tool_block
+from src.clean_agent_preview import normalize_preview_function_args
 from src.tool_execution import _active_workspace
 
 
@@ -92,11 +93,38 @@ def test_web_fetch_schema_and_native_parser_accept_urls_batch():
     assert block.tool_type == "web_fetch"
 
 
-def test_web_fetch_parser_normalizes_empty_label_batch_pairs_only():
+def test_web_fetch_parser_normalizes_labeled_url_batch_pairs():
     block = function_call_to_tool_block(
         "web_fetch",
-        json.dumps({"urls": [["https://example.com/a", ""]]}),
+        json.dumps({"urls": [
+            ["https://example.com/a", "Primary documentation"],
+            ["https://example.com/b", ""],
+        ]}),
     )
 
     assert block is not None
-    assert json.loads(block.content)["urls"] == ["https://example.com/a"]
+    assert json.loads(block.content)["urls"] == [
+        "https://example.com/a",
+        "https://example.com/b",
+    ]
+
+
+def test_web_fetch_parser_rejects_ambiguous_nested_batch_shapes():
+    assert function_call_to_tool_block(
+        "web_fetch",
+        json.dumps({"urls": [["https://example.com/a", "label", "extra"]]}),
+    ) is None
+
+
+def test_clean_preview_normalizes_labeled_urls_before_schema_validation():
+    tool_type, args = normalize_preview_function_args(
+        "web_fetch",
+        {"urls": [["https://example.com/a", "Primary docs"]]},
+    )
+
+    assert tool_type == "web_fetch"
+    assert args == {"urls": ["https://example.com/a"]}
+    assert function_call_to_tool_block(
+        "web_fetch",
+        json.dumps({"urls": [["not-a-url", "label"]]}),
+    ) is None

@@ -93,6 +93,21 @@ def test_rich_text_paste_uses_document_allowlist_and_drops_embedded_media():
     assert "keepLink" in paste_cleaner
 
 
+def test_document_image_paste_and_drop_stop_global_chat_attachment_handlers():
+    rich_handlers = DOC_JS.split("function _wireEmailRichbody", 1)[1].split(
+        "function _richSelectionElement", 1
+    )[0]
+    markdown_handlers = DOC_JS.split("ta.addEventListener('paste'", 1)[1].split(
+        "ta.addEventListener('scroll'", 1
+    )[0]
+
+    assert "e.stopPropagation();" in rich_handlers
+    assert "e.stopPropagation();" in markdown_handlers
+    app_js = (ROOT / "static/app.js").read_text(encoding="utf-8")
+    assert "e.defaultPrevented || e.target?.closest?.('#doc-editor-pane, [contenteditable=\"true\"]')" in app_js
+    assert "e.target?.closest?.('#doc-editor-pane')" in app_js
+
+
 def test_empty_table_is_preserved_and_visually_editable():
     assert "rich.querySelector('img, hr, table')" in DOC_JS
     assert "clone.insertRow(-1)" in DOC_JS

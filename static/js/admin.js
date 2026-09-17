@@ -1,7 +1,7 @@
 // static/js/admin.js — Admin panel module (ES6)
 // Admin-only: users, endpoints, MCP, RAG, embeddings, tokens, webhooks, features
 
-import uiModule from './ui.js?v=20260908weekhoverfix1';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import settingsModule from './settings.js?v=20260909defaultmodelfix1';
 import { providerLogo, providerLogoFromUrl } from './providers.js';
 import { sortModelObjects } from './modelSort.js';
@@ -20,6 +20,31 @@ const _selectedEndpointIds = new Set();
 
 function el(id) { return document.getElementById(id); }
 function esc(s) { return uiModule.esc(s); }
+
+// Clipboard API is unavailable on the HTTP LAN URL; keep copy actions usable
+// there with the browser's synchronous fallback.
+async function copyNotificationText(value) {
+  const text = String(value ?? '');
+  try {
+    if (navigator.clipboard?.writeText && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (_) {}
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;font-size:16px;';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  try { textarea.setSelectionRange(0, text.length); } catch (_) {}
+  let copied = false;
+  try { copied = document.execCommand('copy'); } catch (_) {}
+  textarea.remove();
+  return copied;
+}
 
 /* ═══════════════════════════════════════════
    USERS TAB
@@ -848,18 +873,19 @@ async function loadEndpoints() {
             </div>${warningHtml}${showSearch ? `<input type="search" class="mcp-tools-search" placeholder="Search ${sortedModels.length} models..." data-ep-search="${epId}">` : ''}<div class="mcp-tools-list">` + sortedModels.map(m => {
               const mode = ['none', 'compact', 'full'].includes(String(m.tool_mode || '').toLowerCase())
                 ? String(m.tool_mode).toLowerCase()
-                : 'full';
+                : '';
               return `<div title="${esc(m.id)}" data-ep-model-row data-search="${esc((m.display + ' ' + m.id).toLowerCase())}" class="adm-model-row" style="display:flex;align-items:center;gap:8px;">
                 <label style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;">
                   <input type="checkbox" class="adm-cb-hidden" data-ep-model-id="${esc(m.id)}" ${(usesPinnedPicker ? m.is_pinned : !m.is_hidden) ? 'checked' : ''}>
                   <span class="adm-check-dot" aria-hidden="true"></span>
                   <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(m.display)}</span>
                 </label>
-                <span title="Controls how much native tool/function schema this model receives" style="font-size:10px;opacity:0.45;flex-shrink:0;">Tools</span>
-                <select class="adm-model-tool-mode" data-ep-model-id="${esc(m.id)}" data-original-tool-mode="${esc(m.tool_mode || '')}" data-tool-mode-touched="0" title="Native tools sent to this model: no tools, compact schemas for smaller models, or full schemas" style="height:24px;font-size:11px;max-width:112px;flex-shrink:0;">
-                  <option value="none" ${mode === 'none' ? 'selected' : ''}>No tools</option>
-                  <option value="compact" ${mode === 'compact' ? 'selected' : ''}>Compact tools</option>
-                  <option value="full" ${mode === 'full' ? 'selected' : ''}>Full tools</option>
+                <span title="Select the tool schema profile for this model" style="font-size:10px;opacity:0.45;flex-shrink:0;">Tools</span>
+                <select class="adm-model-tool-mode" data-ep-model-id="${esc(m.id)}" data-original-tool-mode="${esc(m.tool_mode || '')}" data-tool-mode-touched="0" title="Auto uses Odysseus compact for Odysseus/Ajax names and Regular tools for every other model" style="height:24px;font-size:11px;max-width:170px;flex-shrink:0;">
+                  <option value="" ${mode === '' ? 'selected' : ''}>Auto</option>
+                  <option value="full" ${mode === 'full' ? 'selected' : ''}>Regular tools</option>
+                  <option value="compact" ${mode === 'compact' ? 'selected' : ''}>Odysseus compact</option>
+                  <option value="none" ${mode === 'none' ? 'selected' : ''}>Tools off</option>
                 </select>
               </div>`;
             }
@@ -3314,9 +3340,10 @@ function renderNotificationLogs() {
       copyBtn.setAttribute('aria-label', 'Copy notification');
       const copyIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
       copyBtn.innerHTML = copyIcon;
-      copyBtn.addEventListener('click', async () => {
+      copyBtn.addEventListener('click', async (event) => {
+        event.stopPropagation();
         try {
-          await navigator.clipboard.writeText(String(note.body));
+          if (!await copyNotificationText(note.body)) throw new Error('copy failed');
           copyBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
           copyBtn.classList.add('copied');
           setTimeout(() => { copyBtn.innerHTML = copyIcon; copyBtn.classList.remove('copied'); }, 1400);

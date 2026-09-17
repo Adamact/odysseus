@@ -2,8 +2,8 @@
 import Storage from '../storage.js';
 import state from './state.js';
 import { VOTES_STORAGE_KEY } from './icons.js?v=20260908compareprompts1';
-import themeModule from '../theme.js?v=20260909effectspeed1';
-import uiModule from '../ui.js?v=20260908weekhoverfix1';
+import themeModule from '../theme.js?v=20260911organsrain1';
+import uiModule from '../ui.js?v=20260916largetoolscroll1';
 
 const escapeHtml = uiModule.esc;
 

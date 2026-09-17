@@ -48,6 +48,7 @@ try:
         _web_search_topic_text,
         _parse_qwen_explicit_email_topic_bulk_action_request,
         _email_bulk_blocks_from_search_output,
+        _turn_targets_active_document,
     )
     _IMPORTED_AGENT_LOOP = sys.modules.get("src.agent_loop")
 finally:
@@ -55,6 +56,34 @@ finally:
         _drop_module_if_same("src.agent_loop", _IMPORTED_AGENT_LOOP)
     for _mod, _stub in _INJECTED_IMPORT_STUBS.items():
         _drop_module_if_same(_mod, _stub)
+
+
+def test_what_im_writing_targets_the_visible_document():
+    active_document = MagicMock(
+        current_content="A draft that needs verification.",
+        title="Well,",
+        language="richtext",
+    )
+
+
+def test_unrelated_fact_check_does_not_target_a_stale_visible_document():
+    active_document = MagicMock(
+        current_content="A draft left open in the editor.",
+        title="Old draft",
+        language="richtext",
+    )
+
+    assert not _turn_targets_active_document(
+        {"domains": set()},
+        "fact check today's stock market claim",
+        active_document,
+    )
+
+    assert _turn_targets_active_document(
+        {"domains": set()},
+        "can you fact check what Im writing",
+        active_document,
+    )
 
 
 def test_import_stubs_do_not_leak_into_later_tests():
@@ -205,6 +234,51 @@ def test_web_search_normalizer_trusts_model_chosen_contextual_query():
     assert _web_search_query_from_block(out) == "Gustav III Sweden dancing masquerade ball"
 
 
+def test_web_search_normalizer_removes_leaked_prior_chat_prefix():
+    block = ToolBlock(
+        "web_search",
+        '{"query":"hello looks like testing chat latest AI news","time_filter":"week"}',
+    )
+
+    out = _normalize_web_search_block_query(
+        block,
+        "latest ai news?",
+        current_user_text="latest ai news?",
+    )
+
+    assert json.loads(out.content) == {
+        "query": "latest AI news",
+        "time_filter": "week",
+    }
+
+
+def test_web_search_normalizer_keeps_refinement_after_leaked_chat_prefix():
+    block = ToolBlock(
+        "web_search",
+        "Hello, it looks like you're testing the chat: OpenAI Anthropic Google model release news",
+    )
+
+    out = _normalize_web_search_block_query(
+        block,
+        "latest ai news?",
+        current_user_text="latest ai news?",
+    )
+
+    assert _web_search_query_from_block(out) == "OpenAI Anthropic Google model release news"
+
+
+def test_web_search_normalizer_keeps_legitimate_model_enrichment():
+    block = ToolBlock("web_search", "AI industry announcements September 2026")
+
+    out = _normalize_web_search_block_query(
+        block,
+        "latest ai news?",
+        current_user_text="latest ai news?",
+    )
+
+    assert _web_search_query_from_block(out) == "AI industry announcements September 2026"
+
+
 def test_web_search_normalizer_removes_action_wrapper_and_leads_with_subject():
     block = ToolBlock(
         "web_search",
@@ -267,6 +341,39 @@ def test_web_search_normalizer_trusts_json_query_and_preserves_time_filter():
         "query": "Gustav III Sweden dancing masquerade ball",
         "time_filter": "year",
     }
+
+
+def test_web_search_followup_keeps_prior_browser_subject_anchor():
+    block = ToolBlock(
+        "web_search",
+        '{"query":"grilled cheese sandwich menu"}',
+    )
+
+    out = _normalize_web_search_block_query(
+        block,
+        (
+            "use google maps and find closest coffee shop in todoroki "
+            "which one has grilled cheese sandwich on the menu?"
+        ),
+        current_user_text="which one has grilled cheese sandwich on the menu?",
+    )
+
+    query = json.loads(out.content)["query"].lower()
+    assert "todoroki" in query
+    assert "coffee" in query
+    assert "grilled cheese sandwich" in query
+
+
+def test_web_search_terse_followup_still_trusts_inferred_entity():
+    block = ToolBlock("web_search", "Gustav III Sweden dancing masquerade ball")
+
+    out = _normalize_web_search_block_query(
+        block,
+        "which swedish king liked to dance the most can you search",
+        current_user_text="can you search",
+    )
+
+    assert _web_search_query_from_block(out) == "Gustav III Sweden dancing masquerade ball"
 
 
 # ---------------------------------------------------------------------------

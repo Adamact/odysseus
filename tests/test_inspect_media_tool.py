@@ -808,6 +808,42 @@ def test_inspect_media_names_unconfined_export_field(tmp_path: Path, monkeypatch
     }
 
 
+def test_inspect_media_falls_back_to_imagemagick_for_svg(tmp_path: Path, monkeypatch):
+    from src.agent_tools import media_tools
+
+    (tmp_path / "source.svg").write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>',
+        encoding="utf-8",
+    )
+    commands = []
+
+    def which(name):
+        return "/usr/bin/convert" if name == "convert" else None
+
+    def render(command, timeout):
+        commands.append(command)
+        Image.new("RGB", (10, 10), "white").save(command[-1])
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(media_tools.shutil, "which", which)
+    monkeypatch.setattr(media_tools, "_run", render)
+    token = _active_workspace.set(str(tmp_path))
+    try:
+        result = asyncio.run(InspectMediaTool().execute(json.dumps({
+            "path": "/workspace/source.svg",
+            "output_path": "/workspace/rendered.png",
+        }), {}))
+    finally:
+        _active_workspace.reset(token)
+
+    assert result["exit_code"] == 0
+    assert commands == [[
+        "/usr/bin/convert", str(tmp_path / "source.svg"),
+        str(tmp_path / "rendered.png"),
+    ]]
+    assert (tmp_path / "rendered.png").read_bytes().startswith(b"\x89PNG")
+
+
 @pytest.mark.skipif(not shutil.which("rsvg-convert"), reason="rsvg-convert required")
 def test_inspect_media_renders_svg_to_png(tmp_path: Path):
     (tmp_path / "floorplan.svg").write_text(

@@ -37,9 +37,18 @@ def test_openrouter_does_not_disable_mandatory_grok_45_reasoning():
     assert "reasoning" not in payload
 
 
-def test_stream_transport_suppresses_reasoning_when_thinking_is_off():
+def test_stream_transport_only_keeps_required_protocol_reasoning_when_off():
+    import ast
     source = open(llm_core.__file__, encoding="utf-8").read()
-    assert 'if reasoning and _normalize_thinking_mode(thinking_mode) != "off":' in source
+    condition = next(node.test for node in ast.walk(ast.parse(source))
+                     if isinstance(node, ast.If) and isinstance(node.test, ast.BoolOp)
+                     and isinstance(node.test.values[0], ast.Name)
+                     and node.test.values[0].id == "reasoning")
+    expression = compile(ast.Expression(condition), "reasoning-policy", "eval")
+    for model, mode, expected in [("generic", "off", False), ("generic", "on", True),
+                                  ("deepseek-v4", "off", True)]:
+        assert bool(eval(expression, {"reasoning": "analysis", "thinking_mode": mode,
+                                      "model": model, "_normalize_thinking_mode": llm_core._normalize_thinking_mode})) is expected
 
 
 def test_response_cache_is_partitioned_by_thinking_mode():
@@ -55,8 +64,10 @@ def test_chat_backend_reads_thinking_mode_from_active_prompt_preset():
 
 def test_email_writing_style_is_agent_manageable_and_routable():
     assert settings.DEFAULT_SETTINGS["email_writing_style"] == ""
+    assert settings.DEFAULT_SETTINGS["document_writing_style"] == ""
     source = open(admin_tools.__file__, encoding="utf-8").read()
-    assert '"writing style": "email_writing_style"' in source
+    assert '"writing style": "document_writing_style"' in source
+    assert '"email writing style": "email_writing_style"' in source
     assert any(
         "writing style" in triggers and "manage_settings" in tools
         for triggers, tools in agent_loop._QWEN38_ROUTER_KEYWORD_TOOLS

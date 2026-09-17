@@ -3,16 +3,16 @@
 // ES6 module — entry point, no exports (wires all modules together)
 // ============================================
 import Storage from './js/storage.js';
-import uiModule from './js/ui.js?v=20260908weekhoverfix1';
+import uiModule from './js/ui.js?v=20260916largetoolscroll1';
 import workspaceModule from './js/workspace.js';
 import fileHandlerModule from './js/fileHandler.js?v=20260909mobileattachmentedit1';
 import modelsModule from './js/models.js';
 import ragModule from './js/rag.js';
 import presetsModule from './js/presets.js?v=20260908personaname1';
 import searchModule from './js/search.js';
-import chatModule from './js/chat.js?v=20260910shelltoggle1';
+import chatModule from './js/chat.js?v=20260916largetoolscroll2';
 import compareModule from './js/compare/index.js?v=20260909mobilepaneaddscroll1';
-import documentModule from './js/document.js?v=20260910minimizedcontext1';
+import documentModule from './js/document.js?v=20260916docctx2';
 import searchChatModule from './js/search-chat.js';
 import { makeWindowDraggable } from './js/windowDrag.js';
 import {
@@ -22,7 +22,7 @@ import {
   settleSessionHydration
 } from './js/startupShell.js';
 import markdownModule from './js/markdown.js';
-import chatRenderer from './js/chatRenderer.js?v=20260910streamlinks2';
+import chatRenderer from './js/chatRenderer.js?v=20260914pdfstrip1';
 // Keep this specifier identical to every consumer (especially chat.js).
 // Different query strings create separate ES-module instances with separate
 // current-session state, so the picker can display one model while chat sends
@@ -34,18 +34,18 @@ import voiceRecorderModule from './js/voiceRecorder.js';
 import censorModule from './js/censor.js';
 import galleryModule from './js/gallery.js?v=20260910promptcopy1';
 import { UI_VIS_DEFAULT_OFF, resolveVisibility } from './js/ui_visibility.js?v=20260829chatstyle12';
-import tasksModule from './js/tasks.js?v=20260910tasksortpicker6';
-import calendarModule from './js/calendar.js?v=20260903weekscrollstable1';
+import tasksModule from './js/tasks.js?v=20260914taskmodel1';
+import calendarModule from './js/calendar.js?v=20260914emailsource11';
 import notesModule from './js/notes.js?v=20260911notesselectioncancel1';
-import adminModule from './js/admin.js?v=20260908notificationcopy1';
-import settingsModule from './js/settings.js?v=20260909defaultmodelfix1';
+import adminModule from './js/admin.js?v=20260914toolschemaprofiles1';
+import settingsModule from './js/settings.js?v=20260912writingstyle3';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
 import './js/modalManager.js';
 import './js/chipScroll.js?v=20260903calendarchips1';
 import './js/mobileBulkSelect.js?v=20260910selecthold1';
 // Desktop window tiling — drag a modal near an edge/corner to snap.
 import './js/tileManager.js?v=20260910responsivebounds1';
-import themeModule from './js/theme.js?v=20260909effectspeed1';
+import themeModule from './js/theme.js?v=20260911organsrain1';
 // IMPORTANT: import cookbook.js with NO ?v= query — the same plain specifier
 // every other importer (cookbook-hwfit.js / cookbook-diagnosis.js) uses. A query
 // mismatch makes the browser load cookbook.js twice as separate modules (two
@@ -53,7 +53,7 @@ import themeModule from './js/theme.js?v=20260909effectspeed1';
 // unversioned so this can't recur.
 import cookbookModule from './js/cookbook.js';
 import groupModule from './js/group.js';
-import * as researchPanelModule from './js/research/panel.js?v=20260910researchdeeplink1';
+import * as researchPanelModule from './js/research/panel.js?v=20260913researchrailerrors1';
 import ttsModule from './js/tts-ai.js';
 import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js?v=20260829chatstyle12';
@@ -298,6 +298,9 @@ function initializeEventListeners() {
 
   // Paste handler
   window.addEventListener('paste', async (e)=>{
+    // Document editors own image paste. The global chat attachment listener
+    // must not stage the same clipboard file a second time.
+    if (e.defaultPrevented || e.target?.closest?.('#doc-editor-pane, [contenteditable="true"]')) return;
     if (!e.clipboardData) return;
     let changed = false;
     for (const item of e.clipboardData.items){
@@ -337,6 +340,12 @@ function initializeEventListeners() {
   // Scrolling
   el('chat-history').addEventListener('scroll', uiModule.debounce(() => {
     const box = el('chat-history');
+    // scrollHistory() advances in several animation frames.  Its early frames
+    // are intentionally not at the bottom yet, so treating those events as a
+    // user scroll cancels the animation before a synthesis below a large tool
+    // trace can become visible.  Wheel/touch handlers still disable follow
+    // mode immediately for real user input.
+    if (uiModule.isAutoScrolling?.()) return;
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
     uiModule.setAutoScroll(atBottom);
   }, 100));
@@ -412,10 +421,11 @@ function initializeEventListeners() {
       const deleteItem = exportMenu.querySelector('#export-delete-btn');
       if (deleteItem) exportMenu.insertBefore(settingsItem, deleteItem);
       else exportMenu.appendChild(settingsItem);
-      settingsItem.addEventListener('click', (e) => {
+      settingsItem.addEventListener('click', async (e) => {
         e.stopPropagation();
         exportMenu.classList.remove('open');
-        if (window.chatModule?.openContextSettings && window.chatModule.openContextSettings()) return;
+        if (window.chatModule?.openContextSettings
+            && await window.chatModule.openContextSettings()) return;
         if (typeof settingsModule !== 'undefined' && settingsModule?.open) settingsModule.open();
         else if (typeof adminModule !== 'undefined' && adminModule?.open) adminModule.open();
         else if (window.settingsModule?.open) window.settingsModule.open();
@@ -3382,8 +3392,8 @@ function initializeEventListeners() {
         uiModule?.styledConfirm
           ? await uiModule.styledConfirm('Bring open document to new chat?', {
               title: 'New chat',
-              confirmText: 'OK',
-              cancelText: 'No',
+              confirmText: 'Bring →',
+              cancelText: 'Drop',
             })
           : window.confirm('Bring open document to new chat?')
       );
@@ -4257,12 +4267,14 @@ function startOdysseusApp() {
   }
 
   chatContainer.addEventListener('dragover', (e) => {
+    if (e.target?.closest?.('#doc-editor-pane')) return;
     e.preventDefault();
     e.stopPropagation();
     _showDropHighlight();
   });
 
   chatContainer.addEventListener('drop', async (e) => {
+    if (e.target?.closest?.('#doc-editor-pane')) return;
     e.preventDefault();
     e.stopPropagation();
     _hideDropHighlight();

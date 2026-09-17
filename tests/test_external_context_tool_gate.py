@@ -699,6 +699,18 @@ def test_multiplexed_non_destructive_actions_do_not_claim_destructive_effect(
     assert ToolEffect.DESTRUCTIVE not in capabilities.effects
 
 
+@pytest.mark.parametrize("tool_name,action", [
+    ("manage_endpoints", "list"),
+    ("manage_mcp", "list"),
+    ("manage_mcp", "list_tools"),
+    ("manage_tokens", "list"),
+    ("manage_webhooks", "list"),
+])
+def test_admin_inventory_reads_are_classified_as_private_reads(tool_name, action):
+    capabilities = capabilities_for_action(tool_name, {"action": action})
+    assert capabilities.effects == frozenset({ToolEffect.READ_PRIVATE})
+
+
 def test_ambiguous_private_manager_action_fails_high():
     capabilities = capabilities_for_action("manage_notes", "not json")
 

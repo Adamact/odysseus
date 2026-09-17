@@ -21,6 +21,36 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.repair_sft_corpus_with_kimi import endpoint, parse_json  # noqa: E402
+from src.tool_schemas import FUNCTION_TOOL_SCHEMAS  # noqa: E402
+
+
+ALL_TOOL_NAMES = frozenset(
+    str(schema.get("function", {}).get("name") or "")
+    for schema in FUNCTION_TOOL_SCHEMAS
+    if schema.get("function", {}).get("name") and schema.get("function", {}).get("name") != "host_shell"
+)
+
+
+def compact_tool_catalog() -> list[dict[str, Any]]:
+    """Expose the complete product tool vocabulary to the scenario author."""
+    catalog = []
+    for schema in FUNCTION_TOOL_SCHEMAS:
+        function = schema.get("function") or {}
+        name = str(function.get("name") or "")
+        if not name or name == "host_shell":
+            continue
+        parameters = function.get("parameters") or {}
+        properties = parameters.get("properties") or {}
+        entry: dict[str, Any] = {
+            "name": name,
+            "purpose": str(function.get("description") or "")[:700],
+            "required": list(parameters.get("required") or []),
+        }
+        action = properties.get("action") if isinstance(properties, dict) else None
+        if isinstance(action, dict) and isinstance(action.get("enum"), list):
+            entry["actions"] = action["enum"]
+        catalog.append(entry)
+    return catalog
 
 OWNERS = ["sft_maya_ops", "sft_jules_research", "sft_nora_design", "sft_omar_finance"]
 EFFECTFUL_WITHOUT_DRY_RUN = {
@@ -107,7 +137,8 @@ For each case return:
 - cleanup: fixture types that must be restored or removed
 
 Rules:
-- The source is a behavioral seed, not text to paraphrase. Preserve its useful tool strategy and outcome while changing scenario, entities, wording, and follow-up style.
+- The source is behavioral evidence, not text to paraphrase and not an allowlist. Use the complete tool catalog to independently identify the best intended tool for each new turn. Preserve the useful outcome while changing scenario, entities, wording, and follow-up style.
+- Distinguish tools with overlapping names by their documented purpose and required arguments. If the source used a less suitable tool, choose the catalog tool that actually fulfills the new prompt.
 - Make the turns one coherent conversation. Later turns should naturally build on earlier tool results.
 - Use exact IDs/titles/UIDs from the target inventory for read/update/delete workflows, or create a marker-scoped object first. Never invent an existing object.
 - Give temporary objects ordinary, project-specific names that a real user might choose. Keep them distinct from supplied inventory names, but never expose run IDs, markers, fixtures, tests, audits, or cleanup mechanics to the user.
@@ -127,7 +158,7 @@ Rules:
 """
     if STYLE_CONTRACT.exists():
         system += "\nApply this speaking-style contract to every generated conversation:\n\n" + STYLE_CONTRACT.read_text(encoding="utf-8")
-    allowed_tools = sorted({tool for tool in seed["tools"]} | {"ask_user", "ui_control"})
+    allowed_tools = sorted(ALL_TOOL_NAMES | set(seed["tools"]))
     payload = {
         "model": ep["model"],
         "messages": [
@@ -136,6 +167,7 @@ Rules:
                 "seed": compact_seed(seed),
                 "current_date": date.today().isoformat(),
                 "allowed_tools": allowed_tools,
+                "tool_catalog": compact_tool_catalog(),
                 "targets": [compact_environment(target) for target in targets],
             }, ensure_ascii=False)},
         ],
@@ -176,7 +208,7 @@ def validate_case(
     turns = raw.get("turns")
     if not isinstance(turns, list) or not 3 <= len(turns) <= 4:
         raise ValueError("case must contain 3-4 turns")
-    allowed = set(seed["tools"]) | {"ask_user", "ui_control"}
+    allowed = set(ALL_TOOL_NAMES) | set(seed["tools"])
     clean_turns = []
     normalized = set()
     for index, turn in enumerate(turns, 1):

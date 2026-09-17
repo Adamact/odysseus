@@ -14,8 +14,10 @@ from pathlib import Path
 from typing import Any
 
 from cryptography.fernet import Fernet
+from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(ROOT / ".env")
 
 
 def decrypt(value: str) -> str:
@@ -26,7 +28,13 @@ def decrypt(value: str) -> str:
 
 
 def endpoint(endpoint_id: str, model: str) -> dict[str, str]:
-    con = sqlite3.connect(ROOT / "data" / "app.db")
+    # Honor the same configured data directory as the live Odysseus service.
+    # Eval worktrees commonly keep only source under ROOT while 7011 points at
+    # the canonical shared database via ODYSSEUS_DATA_DIR.
+    from src.constants import DATA_DIR
+
+    data_dir = Path(DATA_DIR)
+    con = sqlite3.connect(data_dir / "app.db")
     con.row_factory = sqlite3.Row
     row = con.execute(
         "SELECT base_url,api_key FROM model_endpoints WHERE id=? AND is_enabled=1",
@@ -34,7 +42,10 @@ def endpoint(endpoint_id: str, model: str) -> dict[str, str]:
     ).fetchone()
     if row is None:
         raise RuntimeError(f"Enabled endpoint not found: {endpoint_id}")
-    return {"base_url": row["base_url"], "api_key": decrypt(row["api_key"]), "model": model}
+    value = str(row["api_key"] or "")
+    if value.startswith("enc:"):
+        value = Fernet((data_dir / ".app_key").read_bytes()).decrypt(value[4:].encode()).decode()
+    return {"base_url": row["base_url"], "api_key": value, "model": model}
 
 
 def parse_json(text: str) -> dict[str, Any]:

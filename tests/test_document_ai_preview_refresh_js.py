@@ -51,3 +51,17 @@ def test_doc_update_refreshes_preview_instead_of_hidden_editor_animation():
     assert refresh in body
     assert body.index(refresh) < body.index(animate)
     assert "_refreshMarkdownPreviewIfVisible(docId, newContent);" in body
+
+
+def test_doc_update_shows_a_plain_text_diff_before_refreshing_rich_text():
+    body = _function_body("handleDocUpdate")
+
+    assert "const isRichTextUpdate = _isRichTextLang(docLang);" in body
+    assert "if (isRichTextUpdate && updatedDocForRichText)" in body
+    assert "_animateRichTextEdit(oldContent, newContent, updatedDocForRichText);" in body
+
+    rich_diff = _function_body("_animateRichTextEdit")
+    assert "_richTextContentToPlain(oldContent)" in rich_diff
+    assert "_richTextContentToPlain(newContent)" in rich_diff
+    assert "lineDiff(oldText, newText)" in rich_diff
+    assert "_showRichTextEditor(updatedDoc);" in rich_diff

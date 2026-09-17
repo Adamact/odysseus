@@ -13,6 +13,7 @@
  * }} deps
  */
 import { state } from '../state.js';
+import { selectionModeForEvent } from '../selection-modifiers.js';
 import { canvasCoords } from '../canvas-coords.js';
 import { buildLassoMask } from './lasso-mask.js';
 
@@ -23,9 +24,7 @@ export function createLassoTool({
   let pendingMode = 'replace';
   return {
     begin(e) {
-      pendingMode = state.wandMode || 'replace';
-      if (e.shiftKey) pendingMode = 'add';
-      else if (e.altKey) pendingMode = 'subtract';
+      pendingMode = selectionModeForEvent(e, state.wandMode || 'replace');
       state.lassoPoints = [];
       state.lassoActive = true;
       const coords = canvasCoords(e, state.mainCanvas);

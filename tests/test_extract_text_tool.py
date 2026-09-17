@@ -69,6 +69,59 @@ def test_extract_text_is_workspace_confined(monkeypatch, tmp_path: Path):
     assert escaped["exit_code"] == 1 and "workspace" in escaped["error"]
 
 
+def test_extract_text_accepts_workspace_uri_alias_without_weakening_confinement(monkeypatch, tmp_path: Path):
+    Image.new("RGB", (20, 20), "white").save(tmp_path / "source.png")
+    monkeypatch.setattr(ocr_engine, "extract_image_text", lambda _path, **_kwargs: {
+        "lines": [{"t": "VISIBLE", "p": 1.0, "xy": [10.0, 10.0]}],
+    })
+    token = _active_workspace.set(str(tmp_path))
+    try:
+        result = asyncio.run(ExtractTextTool().execute(json.dumps({
+            "path": "odysseus://workspace/source.png",
+        }), {}))
+        escaped = asyncio.run(ExtractTextTool().execute(json.dumps({
+            "path": "odysseus://workspace/../outside.png",
+        }), {}))
+    finally:
+        _active_workspace.reset(token)
+
+    assert result["exit_code"] == 0
+    assert result["ocr"]["lines"][0]["t"] == "VISIBLE"
+    assert escaped["exit_code"] == 1
+
+
+def test_extract_text_renders_and_ocr_scans_pdf_pages(monkeypatch, tmp_path: Path):
+    source = tmp_path / "scan.pdf"
+    pages = [Image.new("RGB", (40, 40), "white") for _ in range(2)]
+    pages[0].save(source, "PDF", save_all=True, append_images=pages[1:])
+    calls = []
+
+    def fake_ocr(path, **_kwargs):
+        calls.append(Path(path).name)
+        return {
+            "count": 1,
+            "returned": 1,
+            "truncated": False,
+            "lines": [{"t": "VISIBLE", "p": 1.0, "xy": [10.0, 10.0]}],
+        }
+
+    monkeypatch.setattr(ocr_engine, "extract_image_text", fake_ocr)
+    token = _active_workspace.set(str(tmp_path))
+    try:
+        result = asyncio.run(ExtractTextTool().execute(
+            json.dumps({"path": "/workspace/scan.pdf"}),
+            {},
+        ))
+    finally:
+        _active_workspace.reset(token)
+
+    assert result["exit_code"] == 0
+    assert result["ocr"]["page_count"] == 2
+    assert result["ocr"]["pages_processed"] == 2
+    assert [line["page"] for line in result["ocr"]["lines"]] == [1, 2]
+    assert len(calls) == 2
+
+
 def test_inspect_media_auto_augments_exact_text_queries_only(monkeypatch, tmp_path: Path):
     Image.new("RGB", (20, 20), "white").save(tmp_path / "source.png")
     monkeypatch.setattr(ocr_engine, "extract_image_text", lambda _path, **_kwargs: {

@@ -495,6 +495,17 @@ class ChatProcessor:
                         f"Content from {url}:\n\n{content}",
                         provenance_origin="external",
                     ))
+                    # Automatic exact-URL reads are real network evidence even
+                    # though they happen before the agent loop.  Publish the
+                    # source through the same provenance channel as web search
+                    # so the UI and persisted message do not make a grounded
+                    # answer look like an unsupported no-tool response.
+                    if not any(source.get("url") == url for source in web_sources):
+                        web_sources.append({
+                            "url": url,
+                            "title": str(result.get("title") or url),
+                            "acquisition": "automatic_url_fetch",
+                        })
                 else:
                     # A failed automatic URL fetch is context too. Never pass
                     # exception text or response-controlled diagnostics back to

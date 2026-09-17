@@ -158,7 +158,7 @@ def internal_api_base() -> str:
     running server over HTTP. Resolution order:
       1. ODYSSEUS_INTERNAL_BASE  - explicit override (e.g. behind a TLS proxy).
       2. APP_PORT                - http://127.0.0.1:$APP_PORT (docker-compose).
-      3. Fallback http://127.0.0.1:7000 - legacy default.
+      3. Fallback http://127.0.0.1:7011 - matches app.py's bind default.
 
     127.0.0.1 (not "localhost") avoids IPv6/DNS ambiguity for a strictly-local
     call. Without this, loopback tools fail with "All connection attempts
@@ -167,4 +167,4 @@ def internal_api_base() -> str:
     override = os.environ.get("ODYSSEUS_INTERNAL_BASE")
     if override:
         return override.rstrip("/")
-    return f"http://127.0.0.1:{os.environ.get('APP_PORT', '7000')}"
+    return f"http://127.0.0.1:{os.environ.get('APP_PORT', '7011')}"

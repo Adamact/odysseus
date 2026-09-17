@@ -1,5 +1,6 @@
 from src.tool_routing_experiment import experiment_mode, select_experiment_inventory
-from src.turn_contract import resolve_turn_contract, resolve_full_inventory_contract
+from src.turn_contract import RequiredReadOperation, resolve_turn_contract, resolve_full_inventory_contract
+from dataclasses import replace
 from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
 from src.tool_policy import ToolPolicy
 from src.clean_agent_preview import sealed_read_arguments
@@ -58,6 +59,172 @@ def test_url_offers_page_and_video_readers_without_forcing_a_call(prompt):
     assert not result.permits('web_fetch') and not result.permits('youtube_tool')
 
 
+def test_model_choice_preserves_router_sealed_safe_read_only():
+    from src.tool_routing_experiment import MODEL_CHOICE_MODE
+    from src.turn_contract import RequiredReadOperation
+
+    policy = ToolPolicy()
+    inventory = resolve_full_inventory_contract(
+        schemas=FUNCTION_TOOL_SCHEMAS, policy=policy,
+    )
+    operation = RequiredReadOperation(
+        'manage_skills', {'action': 'search', 'query': 'email or docs'}, 3,
+    )
+    routed = resolve_turn_contract(
+        capabilities={'skills'}, schemas=FUNCTION_TOOL_SCHEMAS, policy=policy,
+        required_read_operation=operation,
+    )
+    model_choice = select_experiment_inventory(
+        inventory, routed, [], MODEL_CHOICE_MODE,
+        user_text='any skills about email or docs?',
+    )
+    assert model_choice.required_read_operation == operation
+    assert sealed_read_arguments(
+        model_choice,
+        'manage_skills',
+        {'action': 'list', 'command': 'limit 3'},
+    ) == {'action': 'search', 'query': 'email or docs'}
+
+    # Other ablation modes retain their original unforced semantics.
+    recent = select_experiment_inventory(inventory, routed, [], 'recent')
+    assert recent.required_read_operation is None
+
+
+def test_model_choice_preserves_explicit_single_image_editor_requirement():
+    from src.tool_routing_experiment import MODEL_CHOICE_MODE
+    policy = ToolPolicy()
+    inventory = resolve_full_inventory_contract(
+        schemas=FUNCTION_TOOL_SCHEMAS, policy=policy,
+    )
+    routed = resolve_turn_contract(
+        capabilities={'image_editing'}, schemas=FUNCTION_TOOL_SCHEMAS, policy=policy,
+    )
+    gallery_history = [{'role': 'assistant', 'metadata': {'tool_events': [{
+        'tool': 'app_api',
+        'command': {'action': 'call', 'method': 'GET', 'path': '/api/gallery/library'},
+        'exit_code': 0,
+    }]}}]
+    result = select_experiment_inventory(
+        inventory, routed, gallery_history, MODEL_CHOICE_MODE,
+        user_text='upscale that image 2x',
+    )
+    assert result.required == {'edit_image'}
+    assert result.permits('edit_image')
+
+
+def test_model_choice_preserves_explicit_cookbook_lifecycle_requirement():
+    from src.tool_routing_experiment import MODEL_CHOICE_MODE
+    policy = ToolPolicy()
+    inventory = resolve_full_inventory_contract(
+        schemas=FUNCTION_TOOL_SCHEMAS, policy=policy,
+    )
+    routed = resolve_turn_contract(
+        capabilities={'cookbook_admin'}, schemas=FUNCTION_TOOL_SCHEMAS,
+        policy=policy, selected_tools={'serve_preset'},
+        required_tools={'serve_preset'},
+    )
+    result = select_experiment_inventory(
+        inventory, routed, [], MODEL_CHOICE_MODE,
+        user_text='Launch my SD3.5 preset.',
+    )
+    assert result.required == {'serve_preset'}
+    assert result.permits('serve_preset')
+
+
+@pytest.mark.parametrize('tool,prompt', [
+    ('web_fetch', 'open that link and tell me the main heading'),
+    ('web_search', 'cross-check it with another credible source and cite the URL'),
+])
+def test_model_choice_preserves_resolved_web_read_requirement(tool, prompt):
+    from src.tool_routing_experiment import MODEL_CHOICE_MODE
+    policy = ToolPolicy()
+    inventory = resolve_full_inventory_contract(
+        schemas=FUNCTION_TOOL_SCHEMAS, policy=policy,
+    )
+    routed = resolve_turn_contract(
+        capabilities={'search_browser'}, schemas=FUNCTION_TOOL_SCHEMAS,
+        policy=policy, selected_tools={tool}, required_tools={tool},
+    )
+    result = select_experiment_inventory(
+        inventory, routed, [], MODEL_CHOICE_MODE, user_text=prompt,
+    )
+    assert result.required == {tool}
+    expected = {tool, 'private_browser'}
+    if tool == 'web_search':
+        expected.add('web_fetch')
+    assert result.offered == expected
+
+
+def test_model_choice_preserves_explicit_cross_model_call_requirement():
+    from src.tool_routing_experiment import MODEL_CHOICE_MODE
+    policy = ToolPolicy()
+    inventory = resolve_full_inventory_contract(
+        schemas=FUNCTION_TOOL_SCHEMAS, policy=policy,
+    )
+    routed = resolve_turn_contract(
+        capabilities={'sessions'}, schemas=FUNCTION_TOOL_SCHEMAS,
+        policy=policy, selected_tools={'chat_with_model'},
+        required_tools={'chat_with_model'},
+    )
+    result = select_experiment_inventory(
+        inventory, routed, [], MODEL_CHOICE_MODE,
+        user_text='ask model anthropic/claude-sonnet-4.5 to review this',
+    )
+    assert result.required == {'chat_with_model'}
+    assert result.offered == {'chat_with_model'}
+
+
+def test_model_choice_preserves_explicit_chat_history_search_requirement():
+    from src.tool_routing_experiment import MODEL_CHOICE_MODE
+    policy = ToolPolicy()
+    inventory = resolve_full_inventory_contract(
+        schemas=FUNCTION_TOOL_SCHEMAS, policy=policy,
+    )
+    routed = resolve_turn_contract(
+        capabilities={'memory'}, schemas=FUNCTION_TOOL_SCHEMAS,
+        policy=policy, selected_tools={'search_chats'},
+        required_tools={'search_chats'},
+    )
+    result = select_experiment_inventory(
+        inventory, routed, [], MODEL_CHOICE_MODE,
+        user_text='search my old chats for tool grounding',
+    )
+    assert result.required == {'search_chats'}
+    assert result.offered == {'search_chats'}
+
+
+def test_gallery_recheck_does_not_confuse_upscaled_noun_with_a_new_edit():
+    from src.tool_routing_experiment import MODEL_CHOICE_MODE
+    policy = ToolPolicy()
+    inventory = resolve_full_inventory_contract(
+        schemas=FUNCTION_TOOL_SCHEMAS, policy=policy,
+    )
+    operation = RequiredReadOperation('app_api', {
+        'action': 'call', 'method': 'GET', 'path': '/api/gallery/library',
+    })
+    routed = resolve_turn_contract(
+        capabilities={'cookbook_admin'}, schemas=FUNCTION_TOOL_SCHEMAS, policy=policy,
+        required_read_operation=operation,
+    )
+    routed = replace(
+        routed, capabilities=frozenset({'image_editing'}),
+        active_capabilities=frozenset({'image_editing'}),
+    )
+    history = [{'role': 'assistant', 'metadata': {'tool_events': [{
+        'tool': 'app_api',
+        'command': {'action': 'call', 'method': 'GET', 'path': '/api/gallery/library'},
+        'exit_code': 0,
+    }]}}]
+    result = select_experiment_inventory(
+        inventory, routed, history, MODEL_CHOICE_MODE,
+        user_text='list the gallery again and confirm the new upscaled record shows up',
+    )
+    assert result.required_read_operation == operation
+    assert result.required == {'app_api'}
+    assert result.permits('app_api')
+    assert 'edit_image' not in result.required
+
+
 def test_recognized_browser_request_survives_empty_family_classification():
     from src.tool_routing_experiment import MODEL_CHOICE_MODE
     policy = ToolPolicy(disabled_tools=frozenset({'web_search', 'web_fetch'}))
@@ -75,7 +242,10 @@ def test_recognized_browser_request_survives_empty_family_classification():
         browser_requested=True).permits('private_browser')
 
 
-@pytest.mark.parametrize('text', ['person@example.org', '/workspace/local/report.pdf', '3.14159'])
+@pytest.mark.parametrize('text', [
+    'person@example.org', '/workspace/local/report.pdf', '3.14159',
+    'shellcheck.txt', 'notes.md', 'results.json',
+])
 def test_web_reference_does_not_match_email_local_path_or_decimal(text):
     from src.tool_routing_experiment import WEB_REFERENCE
     assert not WEB_REFERENCE.search(text)
@@ -256,7 +426,12 @@ async def test_experiment_request_uses_compact_tools_auto_choice_and_no_thinking
     )]
     assert len(requests) == 1
     assert requests[0]['chat_template_kwargs'] == {'enable_thinking': False}
-    assert 'tool_choice' not in requests[0]
+    if mode == 'recent_model_choice':
+        assert requests[0]['tool_choice'] == {
+            'type': 'function', 'function': {'name': 'manage_notes'},
+        }
+    else:
+        assert 'tool_choice' not in requests[0]
     instruction = requests[0]['messages'][0]['content']
     assert ('URL words and titles are not page evidence' in instruction) == (mode == 'recent_model_choice')
     expected = {'manage_notes', 'manage_calendar'} if mode == 'all' else {'manage_notes'}

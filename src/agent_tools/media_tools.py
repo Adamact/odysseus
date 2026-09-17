@@ -433,6 +433,12 @@ class ExtractTextTool:
             return {"error": "extract_text unknown argument(s): " + ", ".join(unknown), "exit_code": 1}
         try:
             raw_path = str(args.get("path") or '')
+            # Some native-schema models serialize a workspace path using the
+            # same URI shape as uploads.  This alias grants no extra access:
+            # convert it back to /workspace and let the normal confinement
+            # resolver enforce the active root.
+            if raw_path.startswith('odysseus://workspace/'):
+                raw_path = '/workspace/' + raw_path[len('odysseus://workspace/'):]
             if raw_path.startswith('odysseus://'):
                 # Upload access is independent of a filesystem workspace and
                 # must never inherit an administrator's cross-owner override.
@@ -450,8 +456,9 @@ class ExtractTextTool:
                 path = _resolve_media_path(raw_path, tool_name="extract_text")
         except ValueError as exc:
             return {"error": str(exc), "exit_code": 1}
-        if path.suffix.casefold() not in _IMAGE_SUFFIXES:
-            return {"error": "extract_text currently supports local image files", "exit_code": 1}
+        suffix = path.suffix.casefold()
+        if suffix not in _IMAGE_SUFFIXES | _PDF_SUFFIXES:
+            return {"error": "extract_text supports local image and PDF files", "exit_code": 1}
         mode = str(args.get("mode") or "all").strip().casefold()
         try:
             minimum, maximum = float(args.get("min_confidence", .5)), int(args.get("max_results", 512))
@@ -461,7 +468,56 @@ class ExtractTextTool:
             return {"error": "invalid extract_text mode or bounds", "exit_code": 1}
         try:
             from .ocr_engine import extract_image_text
-            evidence = await asyncio.to_thread(extract_image_text, path, include_layout=bool(args.get("include_layout", False)), numeric_only=mode == "numbers", min_confidence=minimum, max_results=maximum)
+            if suffix in _PDF_SUFFIXES:
+                def _extract_pdf_pages():
+                    try:
+                        import pypdfium2 as pdfium
+                    except ImportError as exc:
+                        raise RuntimeError(
+                            "PDF OCR requires the optional pypdfium2 package"
+                        ) from exc
+                    document = pdfium.PdfDocument(str(path))
+                    page_count = len(document)
+                    lines, accepted = [], 0
+                    # Keep one OCR call bounded while covering ordinary
+                    # documents completely. Larger PDFs can be inspected in
+                    # page ranges with inspect_media.
+                    rendered_count = min(page_count, 12)
+                    with tempfile.TemporaryDirectory(prefix="odysseus-pdf-ocr-") as temp_dir:
+                        for index in range(rendered_count):
+                            rendered = document[index].render(scale=2.0).to_pil().convert("RGB")
+                            image_path = Path(temp_dir) / f"page-{index + 1}.png"
+                            rendered.save(image_path, "PNG")
+                            remaining = max(1, maximum - len(lines))
+                            page_evidence = extract_image_text(
+                                image_path,
+                                include_layout=bool(args.get("include_layout", False)),
+                                numeric_only=mode == "numbers",
+                                min_confidence=minimum,
+                                max_results=remaining,
+                            )
+                            accepted += int(page_evidence.get("count") or 0)
+                            for line in page_evidence.get("lines") or []:
+                                if len(lines) >= maximum:
+                                    break
+                                lines.append({"page": index + 1, **line})
+                    return {
+                        "legend": {
+                            "page": "one-based PDF page",
+                            "t": "text",
+                            "p": "confidence",
+                            "xy": "pixel center",
+                        },
+                        "page_count": page_count,
+                        "pages_processed": rendered_count,
+                        "count": accepted,
+                        "returned": len(lines),
+                        "truncated": accepted > len(lines) or page_count > rendered_count,
+                        "lines": lines,
+                    }
+                evidence = await asyncio.to_thread(_extract_pdf_pages)
+            else:
+                evidence = await asyncio.to_thread(extract_image_text, path, include_layout=bool(args.get("include_layout", False)), numeric_only=mode == "numbers", min_confidence=minimum, max_results=maximum)
         except Exception as exc:
             return {"error": f"extract_text failed: {exc}", "exit_code": 1}
         return {"output": json.dumps(evidence, ensure_ascii=False, separators=(",", ":")), "exit_code": 0, "ocr": evidence}
@@ -715,9 +771,16 @@ class InspectMediaTool:
         suffix = path.suffix.lower()
         if suffix in _SVG_SUFFIXES:
             renderer = shutil.which("rsvg-convert")
+            renderer_kind = "rsvg"
+            if not renderer:
+                renderer = shutil.which("convert")
+                renderer_kind = "imagemagick"
             if not renderer:
                 return {
-                    "error": "inspect_media SVG rendering requires rsvg-convert",
+                    "error": (
+                        "inspect_media SVG rendering requires rsvg-convert "
+                        "or ImageMagick convert"
+                    ),
                     "exit_code": 1,
                 }
             raw_output = str(args.get("output_path") or "").strip()
@@ -740,7 +803,11 @@ class InspectMediaTool:
                     output = Path(temporary.name)
                 rendered = await asyncio.to_thread(
                     _run,
-                    [renderer, "--output", str(output), str(path)],
+                    (
+                        [renderer, "--output", str(output), str(path)]
+                        if renderer_kind == "rsvg"
+                        else [renderer, str(path), str(output)]
+                    ),
                     60,
                 )
                 if rendered.returncode != 0 or not output.is_file() or output.stat().st_size == 0:

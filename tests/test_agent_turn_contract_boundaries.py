@@ -38,7 +38,9 @@ def test_contract_work_cannot_finish_through_single_action_shortcut(families):
 @pytest.mark.parametrize("policy", [None, SimpleNamespace(blocks=lambda _: False)])
 def test_contract_rejection_needs_no_legacy_denial(policy):
     reason = load_function("_tool_rejection_reason")
-    assert "outside" in reason("bash", {"bash"}, policy, contract("calendar"))
+    rejected = reason("bash", {"bash"}, policy, contract("calendar"))
+    assert "outside" in rejected
+    assert "Available tool for this turn: manage_calendar." in rejected
     assert "disabled" in reason("bash", {"bash"}, policy)
 
 
@@ -47,7 +49,7 @@ def test_contract_rejection_needs_no_legacy_denial(policy):
     ("", False, False, []),
     ("", True, True, []),
     ("compact", True, True, ["manage_calendar"]),
-    ("full", True, False, ["manage_calendar"]),
+    ("full", True, False, ["manage_calendar", "bash"]),
 ])
 def test_contract_schema_transport(surface, is_api, router, expected):
     fn = schema_function()
@@ -58,17 +60,26 @@ def test_contract_schema_transport(surface, is_api, router, expected):
 def route(surface="compact", is_api=True, router=False):
     return {"mcp_schemas": [], "relevant_tools": {"bash"},
             "qwen38_tool_router": router, "tool_surface": surface,
-            "is_api_model": is_api}
+            "is_api_model": is_api, "ody_qwen_finetune_model": False}
 
 
 def schema_function(force_answer=False, keep_artifacts=False, guide_only=False):
     namespace = {
+        "FUNCTION_TOOL_SCHEMAS": [
+            {"type": "function", "function": {"name": name}}
+            for name in ("manage_calendar", "bash")
+        ],
+        "normalized_external_tool_schemas": [], "disabled_tools": set(),
+        "_pure_web_turn": False, "_native_artifact_runtime": False,
+        "_drop_legacy_email_alias_schemas_when_mcp_available": lambda schemas: schemas,
+        "_filter_route_tool_schemas": lambda schemas: schemas,
         "turn_contract": contract("calendar"), "guide_only": guide_only,
         "_force_answer": force_answer, "_artifact_recovery_enabled": False,
         "_artifact_creation_requested": False, "_artifact_finish_nudge_sent": False,
         "_artifact_finish_correction_seen": False,
         "_artifact_finish_post_correction_tool_used": False,
         "_artifact_finish_post_correction_mutation_seen": False,
+        "_artifact_finish_convergence_sent": False,
         "_post_correction_verification_available": lambda **_: False,
         "_force_answer_keeps_artifact_tools": lambda **_: keep_artifacts,
         "_normalize_model_tool_surface": lambda value: value,

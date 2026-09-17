@@ -8,6 +8,7 @@ tools.
 tool_implementations.py and are pulled back function-locally where needed.
 """
 import re
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from src.constants import DEEP_RESEARCH_DIR
@@ -92,9 +93,15 @@ async def do_manage_research(content: str, owner: Optional[str] = None) -> Dict:
     # the `research-` UI prefix, while action=read expects the underlying file
     # stem. Exposing the exact id prevents agents from guessing or retrying
     # alternate spellings after a list call.
+    def _completed_label(value):
+        try:
+            return datetime.fromtimestamp(float(value), timezone.utc).isoformat().replace('+00:00', 'Z')
+        except (TypeError, ValueError, OSError):
+            return 'completion time unavailable'
+
     rows = "\n".join(
-        f"- [{q or '(untitled)'}](#research-{sid}) — id: {sid} — {n} sources"
-        for _, sid, q, n in items[:50]
+        f"- [{q or '(untitled)'}](#research-{sid}) — id: {sid} — completed {_completed_label(completed)} — {n} sources"
+        for completed, sid, q, n in items[:50]
     )
     return {"output": f"Research library ({len(items)} item{'s' if len(items) != 1 else ''}):\n{rows}", "exit_code": 0}
 

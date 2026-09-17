@@ -15,7 +15,12 @@
  */
 import { state } from './state.js';
 
+let disposeTopbar;
+
 export function wireTopbarOverflow({ container }) {
+  disposeTopbar?.();
+  const cleanups = [];
+  disposeTopbar = () => cleanups.forEach(cleanup => cleanup());
   // Canvas-size badge updater (kept simple — it lives in the topbar).
   const sizeLabel = document.getElementById('ge-canvas-size');
   function updateSizeLabel() {
@@ -30,33 +35,53 @@ export function wireTopbarOverflow({ container }) {
     container.querySelector('#ge-ai-model'),
     ...container.querySelectorAll('.ge-topbar span[style*="font-size:9px"]'),
   ].filter(Boolean);
-  let lastWidth = 0;
+
+  // Native popovers keep the existing DOM/event ownership while escaping
+  // the toolbar's horizontal scroll clip and the editor's stacking context.
+  topbar?.querySelectorAll('.dropdown[hidden]').forEach(menu => {
+    if (!menu.showPopover) return;
+    const anchor = menu.parentElement.querySelector('button');
+    if (!anchor) return;
+    menu.setAttribute('popover', 'manual');
+    const position = () => {
+      const rect = anchor.getBoundingClientRect();
+      menu.style.top = `${rect.bottom + 4}px`;
+      menu.style.right = `${Math.max(8, window.innerWidth - rect.right)}px`;
+      menu.style.left = 'auto';
+    };
+    const sync = () => {
+      if (menu.hidden) {
+        if (menu.matches(':popover-open')) menu.hidePopover();
+      } else if (menu.isConnected) {
+        position();
+        if (!menu.matches(':popover-open')) menu.showPopover();
+      }
+    };
+    const observer = new MutationObserver(sync);
+    observer.observe(menu, { attributes: true, attributeFilter: ['hidden'] });
+    topbar.addEventListener('scroll', position, { passive: true });
+    window.addEventListener('resize', position);
+    cleanups.push(() => {
+      observer.disconnect();
+      topbar.removeEventListener('scroll', position);
+      window.removeEventListener('resize', position);
+      if (menu.matches(':popover-open')) menu.hidePopover();
+    });
+  });
 
   function syncOverflow() {
     if (!topbar) return;
-    // The reflow changes the topbar height but not its width. Ignore that
-    // follow-up ResizeObserver notification so the class does not oscillate.
-    const width = topbar.clientWidth;
-    if (width === lastWidth && topbar.classList.contains('ge-topbar-overflow')) return;
-    lastWidth = width;
-    topbar.classList.remove('ge-topbar-overflow');
     aiGroup.forEach(el => { el.style.display = ''; });
     if (topbar.scrollWidth > topbar.clientWidth) {
       // Hide AI group first — bulky and least essential at narrow widths.
       aiGroup.forEach(el => { el.style.display = 'none'; });
-      // If the essential controls still do not fit, make the right side a
-      // second row instead of letting Save and its menu fall outside the
-      // editor window.
-      const isMobile = window.matchMedia?.('(max-width: 700px)').matches;
-      if (!isMobile && topbar.scrollWidth > topbar.clientWidth) {
-        topbar.classList.add('ge-topbar-overflow');
-      }
     }
   }
 
   if (topbar && window.ResizeObserver) {
     const ro = new ResizeObserver(() => syncOverflow());
     ro.observe(topbar);
+    cleanups.push(() => ro.disconnect());
   }
   // Initial pass after layout settles.
   requestAnimationFrame(syncOverflow);

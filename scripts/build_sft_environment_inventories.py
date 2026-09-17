@@ -10,11 +10,15 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
+
 ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(ROOT / ".env")
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.database import CalendarCal, CalendarEvent, Document, Memory, Note, ScheduledTask, Session, SessionLocal, UserTool  # noqa: E402
+from src.constants import DATA_DIR  # noqa: E402
 from scripts.sft_email_overseer import PROFILES  # noqa: E402
 OWNERS = ["sft_maya_ops", "sft_jules_research", "sft_nora_design", "sft_omar_finance"]
 
@@ -25,7 +29,7 @@ def clip(value: Any, limit: int = 180) -> str:
 
 
 def email_inventory() -> dict[str, list[dict[str, Any]]]:
-    payload = json.loads((ROOT / "data/fixture_email_messages.json").read_text(encoding="utf-8"))
+    payload = json.loads((Path(DATA_DIR) / "fixture_email_messages.json").read_text(encoding="utf-8"))
     rows = payload.get("messages") if isinstance(payload, dict) else payload
     out = {owner: [] for owner in OWNERS}
     for row in rows or []:

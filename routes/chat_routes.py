@@ -26,6 +26,7 @@ from src.llm_core import (
 )
 from src.agent_loop import (
     stream_agent_loop,
+    _configured_model_tool_surface,
     _local_media_needs_browser_render,
     _looks_like_workspace_coding_request,
 )
@@ -80,10 +81,16 @@ from src.tool_policy import (
 from src.tool_approvals import tool_approval_store
 from src.workspace_paths import backend_workspace_path
 from src.client_tool_contract import TUI_CLIENT_TOOL_NAMES
+from src.model_profiles import (
+    ODYSSEUS_COMPACT_TOOL_SCHEMA_PROFILE,
+    tool_schema_profile,
+)
 from src.tool_execution import AgentExecutionBridge, bind_execution_bridge
 from src.turn_contract import (
-    bind_turn_contract, requested_capabilities, resolve_turn_contract,
-    requires_external_web_verification, selected_tools_for_request,
+    bind_turn_contract, preserve_bound_editor_selected_tools,
+    requested_capabilities, resolve_turn_contract,
+    requests_independent_web_source, requires_external_web_verification,
+    selected_tools_for_request,
 )
 
 logger = logging.getLogger(__name__)
@@ -96,21 +103,34 @@ _active_streams: Dict[str, dict] = {}
 # contract instead of a second, smaller coding-specific ceiling.
 _TUI_AGENT_ROUND_CAP = 20
 _INVISIBLE_RESPONSE_CHARS = "\u2063\u200b\u200c\u200d\ufeff"
-_CLEAN_V3_MODEL = "odysseus-qwen3.5-tools-pre-heretic"
 _CLEAN_V3_ENDPOINT_ALIASES = frozenset({"cleanv3", "preheret"})
 
 
-def _clean_v3_route_for_model(model: str | None) -> bool:
-    """Give the trained Odysseus tool model one harness across endpoint aliases."""
-    return str(model or "").strip() == _CLEAN_V3_MODEL
+def _clean_v3_route_for_model(
+    model: str | None,
+    configured_mode: str | None = None,
+) -> bool:
+    """Select compact runtime by explicit setting, then model-name default."""
+    mode = str(configured_mode or "").strip().lower()
+    if mode:
+        return mode in {"compact", "odysseus_compact"}
+    return tool_schema_profile(model) == ODYSSEUS_COMPACT_TOOL_SCHEMA_PROFILE
 
 
 def _turn_contract_enabled(*, exact_tool_approval, runtime_surface,
-                           native_workspace_contract, clean_v3_route):
-    """Keep clean-v3 ownership on a validated native workspace turn."""
+                           native_workspace_contract, clean_v3_route,
+                           full_schema_route=False):
+    """Use immutable capability contracts only for compact/native routes.
+
+    Regular/full-schema models are intentionally allowed to choose from the
+    complete enabled tool inventory.  Applying the compact turn classifier to
+    those models made an omitted family indistinguishable from an explicit
+    denial, so a misspelled web follow-up could silently lose browsing.
+    """
     return bool(
         exact_tool_approval is None
         and runtime_surface != "odysseus-tui"
+        and not full_schema_route
         and (not native_workspace_contract or clean_v3_route)
     )
 
@@ -210,10 +230,19 @@ def _explicitly_denies_web_lookup(text: str) -> bool:
     return bool(
         re.search(
             r"\b(?:no\s+web|do\s+not\s+search|don'?t\s+search|without\s+looking\s+it\s+up|"
-            r"without\s+searching|answer\s+from\s+memory\s+only|from\s+memory)\b",
+            r"without\s+searching|answer\s+from\s+memory\s+only|from\s+memory|"
+            r"no\s+tools?|do\s+not\s+use\s+(?:any\s+)?tools?|don'?t\s+use\s+(?:any\s+)?tools?)\b",
             str(text or "").lower(),
         )
     )
+
+
+def _explicitly_denies_tool_use(text: str) -> bool:
+    return bool(re.search(
+        r"\b(?:no\s+tools?|do\s+not\s+use\s+(?:any\s+)?tools?|"
+        r"don'?t\s+use\s+(?:any\s+)?tools?)\b",
+        str(text or ""), re.I,
+    ))
 
 
 _EXPLICIT_URL_TARGET = re.compile(
@@ -227,12 +256,40 @@ def _contains_explicit_url_target(text: str) -> bool:
     return bool(_EXPLICIT_URL_TARGET.search(str(text or "")))
 
 
+def _authorizes_exact_url_fetch(text: str) -> bool:
+    """Treat a pasted public URL as authority to read that URL, not search.
+
+    The Web toggle controls open-ended discovery.  A concrete URL is already
+    the user's chosen network target, so reading it does not need the broader
+    search grant. Interactive navigation remains owned by ``private_browser``;
+    YouTube links remain owned by ``youtube_tool``.
+    """
+    value = str(text or "")
+    if _explicitly_denies_web_lookup(value) or _is_explicit_browser_automation_request(value):
+        return False
+    urls = re.findall(r"\bhttps?://[^\s<>\"']+", value, re.IGNORECASE)
+    return any(
+        not re.match(r"https?://(?:www\.)?(?:youtube\.com|youtu\.be)(?:/|$)", url, re.IGNORECASE)
+        for url in urls
+    )
+
+
 def _is_explicit_browser_automation_request(text: str) -> bool:
     """Distinguish interactive navigation from ordinary URL/PDF retrieval."""
     return bool(re.search(
-        r"\b(browser|browse|visit|go\s+to|navigate\s+to|"
+        r"\b(brow(?:ser|esr|sr)|browse|visit|go\s+to|navigate\s+to|"
         r"open\s+(?:the\s+)?(?:site|page|url|link)|click|fill(?:\s+out)?|"
         r"submit|send\s+(?:the\s+)?form|contact\s+form|form\s+submission)\b",
+        str(text or ""),
+        re.IGNORECASE,
+    ))
+
+
+def _is_external_discovery_request(text: str) -> bool:
+    """Recognize requests to locate an authoritative public web source."""
+    return bool(re.search(
+        r"\b(?:find|locate|get)\s+(?:me\s+)?(?:the\s+|an?\s+)?"
+        r"(?:official\s+)?(?:announcement|press\s+release|article|source|web\s*page|website|site)\b",
         str(text or ""),
         re.IGNORECASE,
     ))
@@ -1346,16 +1403,20 @@ def _ensure_current_request_is_latest_user(messages: List[Dict[str, Any]], curre
 
 
 _WEB_FOLLOWUP_RE = re.compile(
-    r"^\s*(?:(?:can|could|would|will)\s+you\s+)?"
+    r"^\s*(?:now\s+)?(?:(?:can|could|would|will)\s+you\s+)?"
     r"(?:check|try\s+again|look(?:\s+now|\s+it\s+up)?|search(?:\s+now|\s+online|\s+it)?|"
+    r"grab\s+(?:the\s+)?(?:top|first|second|third|next)\s+(?:story|result|link|article)\s+and\s+(?:open|read|summarize)\s+it|"
+    r"(?:pull|get|read|check)\s+.{1,160}\b(?:off|from)\s+(?:that|this|the)\s+(?:link|page|result)|"
     r"tell\s+me\s+more(?:\s+about\s+.{1,120})?|more\s+about\s+.{1,120}|"
+    r"what\s+else(?:\s+did\s+(?:it|this|that)\s+say)?(?:\s+about\s+.{1,120})?|"
+    r"what\s+(?:did|does)\s+(?:it|this|that)\s+say(?:\s+about\s+.{1,120})?|"
     r"do\s+it|again|approved|approve(?:d)?|yes|ok(?:ay)?|proceed|go\s+ahead|"
     r"send(?:\s+it)?|submit(?:\s+it)?|email(?:\s+them|\s+it)?)\??\s*$",
     re.I,
 )
 _RECENT_WEB_CONTEXT_RE = re.compile(
     r"\b(?:weather|forecast|rain|raining|hourly|news|headlines|rate|exchange|currency|"
-    r"price|current|latest|search|look\s+up|online)\b",
+    r"price|current|latest|search|look\s+up|online|fetch|https?://)\b",
     re.I,
 )
 _RECENT_BROWSER_CONTEXT_RE = re.compile(
@@ -1368,7 +1429,9 @@ _BROWSER_STATE_FOLLOWUP_RE = re.compile(
     r"\b(?:what|which|show|read|check|inspect|open|click|tell)\b.{0,100}"
     r"\b(?:this|that|the|current|same)\s+(?:page|site|tab|link|button|form)\b"
     r"|\b(?:this|that|the|current|same)\s+(?:page|site|tab)\b.{0,100}"
-    r"\b(?:show|read|check|inspect|open|click|visible|heading|title|link|button|form)\b",
+    r"\b(?:show|read|check|inspect|open|click|visible|heading|title|link|button|form)\b"
+    r"|\b(?:try|do|run)\s+(?:it\s+)?again\b.{0,100}"
+    r"\b(?:this|that|the|current|same)\s+(?:page|site|tab)\b",
     re.I,
 )
 _BROWSER_MCP_TOOLS = {
@@ -1409,6 +1472,46 @@ def _is_contextual_web_followup(message: str, sess) -> bool:
 
 def _has_recent_web_tool_event(sess, limit: int = 4) -> bool:
     """Require recorded web execution before inheriting web on a follow-up."""
+    return _most_recent_successful_web_tool(sess, limit=limit) is not None
+
+
+def _successful_session_tool_names(sess) -> frozenset[str]:
+    """Return exact tools that completed successfully earlier in this chat.
+
+    Routing can add tools, but must not retract a capability already exercised
+    by the conversation. Authorization remains enforced later by the effective
+    policy and executable-inventory intersection.
+    """
+    history = getattr(sess, "history", None) or getattr(sess, "_history", None) or []
+    names: set[str] = set()
+    for msg in history:
+        metadata = getattr(msg, "metadata", None)
+        if metadata is None and isinstance(msg, dict):
+            metadata = msg.get("metadata")
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except (TypeError, json.JSONDecodeError):
+                metadata = {}
+        if not isinstance(metadata, dict):
+            continue
+        for event in metadata.get("tool_events") or []:
+            if not isinstance(event, dict):
+                continue
+            name = str(event.get("tool") or "").strip()
+            status = str(event.get("status") or "done").casefold()
+            if (
+                name
+                and event.get("error") is not True
+                and event.get("exit_code") in (None, 0)
+                and status not in {"failed", "error", "denied", "cancelled", "canceled"}
+            ):
+                names.add(name)
+    return frozenset(names)
+
+
+def _most_recent_successful_web_tool(sess, limit: int = 4) -> Optional[str]:
+    """Return the latest successfully executed public-web tool, if any."""
     history = getattr(sess, "history", None) or getattr(sess, "_history", None) or []
     for msg in reversed(history[-limit:]):
         metadata = getattr(msg, "metadata", None)
@@ -1419,11 +1522,15 @@ def _has_recent_web_tool_event(sess, limit: int = 4) -> bool:
                 metadata = json.loads(metadata)
             except (TypeError, json.JSONDecodeError):
                 metadata = {}
-        for event in (metadata or {}).get("tool_events") or []:
+        for event in reversed((metadata or {}).get("tool_events") or []):
             tool = str(event.get("tool") or "").rsplit("__", 1)[-1]
-            if tool in WEB_TOOL_NAMES:
-                return True
-    return False
+            if (
+                tool in WEB_TOOL_NAMES
+                and event.get("error") is not True
+                and event.get("exit_code") in (None, 0)
+            ):
+                return tool
+    return None
 
 
 def _has_recent_private_browser_success(sess, limit: int = 6) -> bool:
@@ -1976,6 +2083,9 @@ def setup_chat_routes(
         session_mode = str(getattr(sess, "thinking_mode", "") or "off").lower()
         if session_mode in {"on", "off"}:
             thinking_mode = session_mode
+        from src.model_profiles import supports_user_thinking_toggle
+        if not supports_user_thinking_toggle(sess.model):
+            thinking_mode = "off"
         owner = effective_user(request)
         if _clear_orphaned_session_endpoint(sess, owner=owner):
             raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
@@ -2248,9 +2358,12 @@ def setup_chat_routes(
         _explicit_web_intent = False
         _explicit_personal_store_intent = False
         _explicit_web_target = False
+        _exact_url_fetch_intent = False
         _explicit_browser_intent = False
+        _external_discovery_intent = False
         _explicit_private_browser_intent = False
         _clean_v3_private_browser_warm = False
+        _contextual_browser_turn_followup = False
         _local_browser_render_intent = False
         if isinstance(message, str):
             _msg_l = message.lower()
@@ -2271,11 +2384,15 @@ def setup_chat_routes(
             _explicit_browser_intent = _is_explicit_browser_automation_request(
                 _msg_l
             )
+            _external_discovery_intent = _is_external_discovery_request(_msg_l)
+            if _external_discovery_intent:
+                _explicit_web_intent = True
+            _exact_url_fetch_intent = _authorizes_exact_url_fetch(_msg_l)
             # Browser automation is distinct from open-ended web search. This
             # is also used by reviewed email flows whose prompt contains an
             # exact unsubscribe URL and explicitly names private_browser.
             _explicit_private_browser_intent = bool(re.search(
-                r"\bprivate[_ -]?browser\b",
+                r"\bprivate[_ -]?brow(?:ser|esr|sr)\b",
                 _msg_l,
             )) or bool(re.search(
                 r"\bagent\s+unsubscribe\b.*\bhttps?://",
@@ -2357,7 +2474,11 @@ def setup_chat_routes(
             auto_escalated = True
             logger.info("chat→agent auto-escalation: explicit private browser workflow")
         active_doc_id = form_data.get("active_doc_id", "").strip()
-        logger.info(f"[doc-inject] chat_mode={chat_mode}, active_doc_id={active_doc_id!r}")
+        active_doc_state = form_data.get("active_doc_state", "").strip().casefold()
+        logger.info(
+            "[doc-inject] chat_mode=%s, active_doc_id=%r, active_doc_state=%r",
+            chat_mode, active_doc_id, active_doc_state,
+        )
 
         # Active email reader — when the user has an email open in the UI, the
         # frontend passes its uid/folder/account so "reply", "summarize this",
@@ -2434,8 +2555,16 @@ def setup_chat_routes(
             _verify_session_owner(request, session)
             sess = session_manager.get_session(session)
             session_mode = str(getattr(sess, "thinking_mode", "") or "off").lower()
-            if session_mode in {"on", "off"}:
+            # An explicit request-scoped mode (headless eval, API client, or
+            # UI override) wins over the persisted session default. The old
+            # unconditional assignment made `thinking_mode=off` impossible
+            # for an existing session and silently changed evaluation/model
+            # contracts.
+            if thinking_mode is None and session_mode in {"on", "off"}:
                 thinking_mode = session_mode
+            from src.model_profiles import supports_user_thinking_toggle
+            if not supports_user_thinking_toggle(sess.model):
+                thinking_mode = "off"
             if getattr(sess, "temperature_override", None) is not None:
                 temperature_override = float(sess.temperature_override)
             # A resumed session may omit workspace/cwd from the new request.
@@ -2551,11 +2680,25 @@ def setup_chat_routes(
                 )
             if not (getattr(sess, "endpoint_url", "") or "").strip():
                 raise HTTPException(400, "Selected model endpoint is not configured")
+            # Route reconciliation above can switch models after the request's
+            # generation settings were parsed. Do not carry a stale thinking
+            # toggle from the previously selected model into one that does not
+            # expose that control (notably OpenRouter Grok 4.5, where enabling
+            # reasoning can put the complete answer in reasoning_content).
+            from src.model_profiles import supports_user_thinking_toggle
+            if not supports_user_thinking_toggle(sess.model):
+                thinking_mode = "off"
             # Both picker entries point at the same fine-tuned model. Clean
             # harness ownership follows that model, not the endpoint alias;
             # every other model continues through the legacy RAG path.
+            _effective_tool_schema_mode = _configured_model_tool_surface(
+                getattr(sess, "endpoint_url", ""),
+                getattr(sess, "model", ""),
+                owner,
+            )
             _clean_v3_route_requested = _clean_v3_route_for_model(
-                getattr(sess, "model", "")
+                getattr(sess, "model", ""),
+                _effective_tool_schema_mode,
             )
             _clean_v3_private_browser_warm = bool(
                 _clean_v3_route_requested and _has_recent_private_browser_success(sess)
@@ -2586,7 +2729,11 @@ def setup_chat_routes(
                     _tool_intent.category,
                     _tool_intent.reason,
                 )
-            if isinstance(message, str) and _is_contextual_browser_followup(message, sess):
+            _contextual_browser_turn_followup = bool(
+                isinstance(message, str)
+                and _is_contextual_browser_followup(message, sess)
+            )
+            if _contextual_browser_turn_followup:
                 _explicit_browser_intent = True
                 if chat_mode == "chat":
                     chat_mode = "agent"
@@ -2697,8 +2844,12 @@ def setup_chat_routes(
 
         _research_flags = {"do": do_research}  # Mutable container for generator scope
 
-        # Query active document — prefer explicit ID from frontend, fall back to session lookup
+        # Browser turns explicitly declare whether the editor is visible. The
+        # visible active tab is authoritative; a minimized/closed editor must
+        # not be resurrected from session or process-global state. Legacy API
+        # clients that omit active_doc_state retain the old fallback behavior.
         active_doc = None
+        legacy_active_doc_fallback = not active_doc_state
         _doc_db = SessionLocal()
         try:
             if active_doc_id:
@@ -2723,11 +2874,12 @@ def setup_chat_routes(
                         # != current chat session — but that broke the common
                         # case of "open an email draft from one chat, ask a
                         # different chat to write into it". The frontend only
-                        # sends active_doc_id for docs currently visible in
+                        # sends active_doc_id only for the currently visible
+                        # active editor tab,
                         # the UI, and we already owner-checked above, so trust
                         # the explicit signal. We just log the mismatch and
-                        # re-bind the doc to the current session so future
-                        # turns find it via the session-fallback path too.
+                        # re-bind the doc to the current session for ownership
+                        # and document-history continuity.
                         if doc_session and doc_session != session:
                             logger.info(
                                 "[doc-inject] cross-session active_doc_id %s (was session %s, now %s) — accepting and rebinding",
@@ -2742,7 +2894,7 @@ def setup_chat_routes(
                         logger.info(f"[doc-inject] found by ID: title={active_doc.title!r}, lang={active_doc.language!r}, is_active={active_doc.is_active}, content_len={len(active_doc.current_content or '')}")
                 else:
                     logger.warning(f"[doc-inject] NOT FOUND by ID {active_doc_id}")
-            if not active_doc:
+            if not active_doc and legacy_active_doc_fallback:
                 _email_doc_q = _doc_db.query(DBDocument).filter(
                     DBDocument.session_id == session,
                     DBDocument.is_active == True,
@@ -2751,7 +2903,7 @@ def setup_chat_routes(
                 active_doc = _owner_session_filter(_email_doc_q, ctx.user).order_by(DBDocument.updated_at.desc()).first()
                 if active_doc:
                     logger.info(f"[doc-inject] found email draft by session fallback: title={active_doc.title!r}")
-            if not active_doc:
+            if not active_doc and legacy_active_doc_fallback:
                 _session_doc_q = _doc_db.query(DBDocument).filter(
                     DBDocument.session_id == session,
                     DBDocument.is_active == True
@@ -2765,7 +2917,7 @@ def setup_chat_routes(
             # neither lookup above can associate them with this conversation,
             # so the agent never sees what it just wrote. Guarded so we never
             # leak a doc that belongs to a DIFFERENT session.
-            if not active_doc:
+            if not active_doc and legacy_active_doc_fallback:
                 try:
                     from src.agent_tools.document_tools import get_active_document
                     _mem_id = get_active_document()
@@ -2836,12 +2988,22 @@ def setup_chat_routes(
             runtime_surface=_runtime_surface,
             native_workspace_contract=_native_workspace_contract,
             clean_v3_route=_clean_v3_route_requested,
+            full_schema_route=(_effective_tool_schema_mode == "full"),
         )
         _turn_history = getattr(sess, "history", []) or []
         _turn_capabilities = requested_capabilities(
             message, _turn_history,
             active_document=bool(active_doc), workspace=bool(workspace),
         ) if _use_turn_contract else frozenset()
+        if _use_turn_contract and _explicit_browser_intent:
+            # Interactive navigation is already an unambiguous request for
+            # the browser family.  The lexical family classifier intentionally
+            # stays conservative, so phrases such as "go to IKEA's site" can
+            # otherwise produce an empty contract despite the browser router
+            # having classified them correctly.
+            _turn_capabilities = _turn_capabilities | {"search_browser"}
+        if _use_turn_contract and _external_discovery_intent:
+            _turn_capabilities = _turn_capabilities | {"search_browser"}
         if (
             _use_turn_contract
             and not _turn_capabilities
@@ -2905,10 +3067,17 @@ def setup_chat_routes(
             and _has_recent_web_tool_event(sess)
             and not _explicitly_denies_web_lookup(message)
         )
+        _clean_v3_web_intent = bool(
+            _clean_v3_route_requested
+            and "search_browser" in _turn_capabilities
+            and not _explicitly_denies_web_lookup(message)
+        )
         if (
-            (_explicit_web_intent or _contextual_web_link_followup or _contextual_web_turn_followup)
+            (_explicit_web_intent or _contextual_web_link_followup
+             or _contextual_web_turn_followup or _clean_v3_web_intent)
             and web_intent_may_enable_for_turn(
-                None if _contextual_web_turn_followup else allow_web_search,
+                None if (_contextual_web_turn_followup or _clean_v3_web_intent)
+                else allow_web_search,
                 message_denies_lookup=_explicitly_denies_web_lookup(message),
             )
         ):
@@ -2920,7 +3089,15 @@ def setup_chat_routes(
                 disabled_tools.add("youtube_tool")
             if not (_explicit_browser_intent or _local_browser_render_intent):
                 disabled_tools.add("private_browser")
-        if _explicit_web_intent and not _use_turn_contract:
+        if _exact_url_fetch_intent:
+            # A pasted URL grants only the exact-target reader. Keep broad
+            # search and interactive browsing behind their normal toggles.
+            disabled_tools.discard("web_fetch")
+        if (
+            _explicit_web_intent
+            and not _use_turn_contract
+            and _effective_tool_schema_mode != "full"
+        ):
             # A direct lookup/search request should not drift into personal
             # tools or shell fallbacks. A combined web+workspace deliverable
             # is the exception: it still needs native file/Python tools after
@@ -3057,7 +3234,33 @@ def setup_chat_routes(
             disabled_tools=disabled_tools,
             last_user_message=message,
         )
+        if str(_user or "").startswith("sft_"):
+            logger.info(
+                "[sft-policy-audit] owner=%s personal_disabled=%s "
+                "compare=%s explicit_web=%s privileges=%s global_disabled=%s",
+                _user,
+                sorted(set(disabled_tools) & {"manage_notes", "manage_calendar", "manage_tasks"}),
+                bool(compare_mode),
+                bool(_explicit_web_intent),
+                _privs,
+                _global_disabled,
+            )
         disabled_tools = tool_policy.all_disabled_names()
+        # ui_control executes server-side, while these interactive toggles are
+        # resolved from this request. Carry the effective, sanitized booleans
+        # into the agent runtime so a get_toggles call reports real turn state
+        # instead of claiming the backend cannot see the client.
+        client_runtime_context = dict(client_runtime_context or {})
+        client_runtime_context["web_ui_state"] = {
+            "web": "web_search" not in disabled_tools,
+            "bash": "bash" not in disabled_tools,
+            "rag": str(use_rag if use_rag is not None else "true").lower() != "false",
+            "research": str(form_data.get("use_research") or "").lower() == "true",
+            "incognito": bool(incognito),
+            "document_editor": not {
+                "manage_documents", "create_document", "edit_document", "update_document",
+            }.issubset(disabled_tools),
+        }
         _turn_contract = None
         if _use_turn_contract and chat_mode == "agent":
             from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
@@ -3084,12 +3287,87 @@ def setup_chat_routes(
                 disabled_tools.update(_SFT_DISABLED_WORKSPACE_TOOLS)
             if _contract_mgr and not plan_mode and not tool_policy.disable_mcp and not _owner_blocked:
                 _contract_schemas.extend(_contract_mgr.get_all_openai_schemas(_load_mcp_disabled_map()))
+            if _explicitly_denies_tool_use(message):
+                disabled_tools.update(
+                    schema["function"]["name"] for schema in _contract_schemas
+                )
             _contract_policy = build_effective_tool_policy(
                 disabled_tools=disabled_tools | set(_owner_blocked),
                 last_user_message=message,
             )
+            _warm_tools = _successful_session_tool_names(sess)
             _selected_tools = selected_tools_for_request(message)
+            if _selected_tools is None and _contextual_browser_turn_followup:
+                # A referential retry targets the browser state established by
+                # typed successful execution. Keep the exact browser tool;
+                # do not broaden the turn to web search/fetch merely because
+                # the wording no longer repeats the original URL.
+                _selected_tools = frozenset({"private_browser"})
             _required_tools = set(_selected_tools or ())
+            _selected_tools = preserve_bound_editor_selected_tools(
+                message,
+                _selected_tools,
+                active_document=bool(active_doc),
+            )
+            _explicit_fixture_personal_tools = (
+                set(_selected_tools or ())
+                & {"manage_notes", "manage_calendar", "manage_tasks"}
+            ) - disabled_tools - set(_owner_blocked)
+            if (
+                str(_user or "").startswith("sft_")
+                and _explicit_fixture_personal_tools
+            ):
+                _fixture_tool_families = {
+                    "manage_notes": "notes",
+                    "manage_calendar": "calendar",
+                    "manage_tasks": "tasks",
+                }
+                # Explicit permitted personal tools may restore a family,
+                # but never override disabled tools or owner restrictions.
+                # Do not erase other
+                # domains already detected for a causal multi-store request
+                # (for example calendar -> email -> calendar).
+                _turn_capabilities = frozenset(
+                    set(_turn_capabilities)
+                    | {
+                        _fixture_tool_families[name]
+                        for name in _explicit_fixture_personal_tools
+                    }
+                )
+                _active_turn_capabilities = _turn_capabilities
+                _contract_policy = build_effective_tool_policy(
+                    disabled_tools=disabled_tools | set(_owner_blocked),
+                    last_user_message=message,
+                )
+                logger.info(
+                    "[sft-policy-audit] explicit personal contract tools=%s capabilities=%s",
+                    sorted(_explicit_fixture_personal_tools),
+                    sorted(_turn_capabilities),
+                )
+            if (
+                _selected_tools == {"web_search"}
+                and requests_independent_web_source(message)
+                and _most_recent_successful_web_tool(sess) in {"web_search", "web_fetch"}
+            ):
+                # Candidate URLs already exist in typed web evidence. A second
+                # source is a different page read, not the cached search again.
+                _selected_tools = {"web_fetch"}
+            _exact_selected_native_chain = bool(
+                _selected_tools
+                and {"write_file", "read_file"}.issubset(_selected_tools)
+                and set(_selected_tools).intersection({"inspect_media", "extract_text"})
+                and set(_selected_tools).issubset(
+                    {"inspect_media", "extract_text", "write_file", "read_file"}
+                )
+            )
+            if _selected_tools is None and _contextual_web_turn_followup:
+                # A referential follow-up should retain the proven web route,
+                # not reopen every search/browser schema. Besides reducing
+                # ambiguity, this avoids one unrelated provider-incompatible
+                # schema invalidating an otherwise valid follow-up request.
+                _recent_web_tool = _most_recent_successful_web_tool(sess)
+                if _recent_web_tool:
+                    _selected_tools = {_recent_web_tool}
             if (_selected_tools is None and active_email_ctx
                     and active_email_ctx.get("uid") and "email" in _turn_capabilities):
                 # The review UI is a declared dependency, not permission to
@@ -3101,8 +3379,13 @@ def setup_chat_routes(
                 policy=_contract_policy, required_tools=_required_tools,
                 required_capabilities=_active_turn_capabilities,
                 selected_tools=_selected_tools,
+                warm_tools=_warm_tools,
                 message=message, history=getattr(sess, "history", []) or [],
             )
+            # Resolution already applies user, owner, and global policy. An
+            # admitted tool must not later be rejected by the stale
+            # pre-contract disabled snapshot during execution.
+            disabled_tools.difference_update(_turn_contract.offered)
             _routed_turn_contract = _turn_contract
             if _clean_v3_preview:
                 from dataclasses import replace
@@ -3111,6 +3394,7 @@ def setup_chat_routes(
                     scope_preview_contract, tool_family,
                 )
                 from src.turn_contract import resolve_full_inventory_contract
+                _warm_canonical = {canonical(name) for name in _warm_tools}
                 _clean_runtime_tools = PREVIEW_TOOLS | (
                     NATIVE_WORKSPACE_TOOLS
                     if _native_workspace_contract else frozenset()
@@ -3128,28 +3412,39 @@ def setup_chat_routes(
                     _preview_schemas = [
                         s for s in _preview_schemas
                         if canonical(s['function']['name']) != 'bash'
+                        or canonical(s['function']['name']) in _warm_canonical
                     ]
                 # Browser automation is a deliberate capability, not a side
                 # effect of merely enabling ordinary Web search. Once a clean
                 # turn successfully uses it, typed execution evidence keeps it
-                # warm for a bounded history window so referential follow-ups
-                # can inspect the same page.
-                if _explicit_browser_intent:
+                # warm for the conversation so referential follow-ups can
+                # inspect the same page.
+                if (
+                    _explicit_browser_intent
+                    and not set(_selected_tools or ()).intersection(
+                        {'web_search', 'web_fetch'}
+                    )
+                ):
                     # Navigation and interaction are browser operations.  Do
                     # not make the model choose between a site browser and the
                     # search/fetch APIs after the request has already made
-                    # that distinction.  A later turn can explicitly ask for
-                    # Web search as a fallback.
+                    # that distinction. An explicitly named brokered search or
+                    # fetch tool is stronger than the generic URL/open signal;
+                    # preserving it also prevents the browser-only filter from
+                    # intersecting an exact web_fetch contract down to zero
+                    # tools. A later turn can explicitly ask for Web search as
+                    # a fallback.
                     _preview_schemas = [
                         s for s in _preview_schemas
                         if tool_family(s['function']['name']) != 'search_browser'
                         or canonical(s['function']['name']) in (
                             {'private_browser'} | NATIVE_WORKSPACE_TOOLS
                         )
+                        or canonical(s['function']['name']) in _warm_canonical
                     ]
                 elif not _clean_v3_private_browser_warm and not (
                     _native_workspace_contract and _local_browser_render_intent
-                ):
+                ) and 'private_browser' not in _warm_canonical:
                     _preview_schemas = [
                         s for s in _preview_schemas
                         if canonical(s['function']['name']) != 'private_browser'
@@ -3165,12 +3460,22 @@ def setup_chat_routes(
                     # including on referential turns such as "undo that".
                     # scope_preview_contract still intersects the policy-filtered
                     # executable inventory; this cannot restore denied tools.
+                    # A fully specified media -> artifact operation already
+                    # has an exact routed contract. Adding the whole native
+                    # workspace inventory here reintroduced overlapping PDF
+                    # readers and caused the model to abandon the selected
+                    # OCR operation. Exact operations therefore stay exact;
+                    # ordinary native turns retain warm and workspace tools.
                     extra_tools=(
-                        NATIVE_WORKSPACE_TOOLS | (
-                            {"private_browser"} if _local_browser_render_intent else frozenset()
+                        frozenset()
+                        if _exact_selected_native_chain
+                        else _warm_tools | (
+                            NATIVE_WORKSPACE_TOOLS | (
+                                {"private_browser"} if _local_browser_render_intent else frozenset()
+                            )
+                            if _native_workspace_contract
+                            else frozenset()
                         )
-                        if _native_workspace_contract
-                        else frozenset()
                     ),
                 )
                 from src.tool_routing_experiment import experiment_mode, select_experiment_inventory
@@ -3195,6 +3500,14 @@ def setup_chat_routes(
                 s["function"]["name"] for s in _contract_schemas
                 if not _turn_contract.permits(s["function"]["name"])
             )
+            # Contract resolution is the final policy-and-routing authority.
+            # Some legacy/API-model paths arrive with a stale disabled snapshot
+            # assembled before routing.  The scope-denial pass above may retain
+            # an admitted name through aliases or an earlier inventory view;
+            # never let that stale snapshot reject a tool the final immutable
+            # contract explicitly offers.  User/global denials cannot be
+            # restored here because resolve_turn_contract filtered them out.
+            disabled_tools.difference_update(_turn_contract.offered)
             tool_policy = build_effective_tool_policy(
                 disabled_tools=disabled_tools, last_user_message=message,
             )
@@ -3980,6 +4293,16 @@ def setup_chat_routes(
                         if _forced_tools is None:
                             _forced_tools = set()
                         _forced_tools.update({"bash", "ls", "manage_bg_jobs"})
+                    if _turn_contract is None:
+                        _explicit_selected_tools = selected_tools_for_request(message)
+                        if _explicit_selected_tools:
+                            # Full-schema/API models normally retain broad
+                            # freedom, but a complete request that explicitly
+                            # names a bounded native tool chain should not be
+                            # drowned out by lexical RAG (for example, the word
+                            # "report" selecting research instead of the named
+                            # OCR/write/read workflow).
+                            _forced_tools = set(_explicit_selected_tools)
                     if _turn_contract is not None:
                         _forced_tools = set(_turn_contract.offered)
 

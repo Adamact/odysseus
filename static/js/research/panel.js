@@ -2,33 +2,13 @@
  * Deep Research side panel — open/close, form, job rendering, library.
  */
 import * as jobs from './jobs.js?v=20260910researcherrorpersist1';
-import themeModule from '../theme.js?v=20260909effectspeed1';
+import themeModule from '../theme.js?v=20260911organsrain1';
 import createResearchSynapse from '../researchSynapse.js?v=20260910roundlabels2';
 import spinnerModule from '../spinner.js';
 import { sortModelIds } from '../modelSort.js';
 import { searchProviderLogo } from '../searchProviderIcons.js';
 import { orderActionMenuItems, actionMenuRank, SELECT_MENU_ICON } from '../actionMenuOrder.js';
 import { bindMenuDismiss } from '../escMenuStack.js';
-
-// Rotating research textarea placeholders — pick one at random each
-// time the panel is rendered so the example keeps feeling fresh.
-const _RESEARCH_HINTS = [
-  "e.g. Trace Odysseus's ten-year journey home from Troy — every island, monster, and detour, and why each one cost him",
-  "e.g. Compare Rust and Go for building a high-throughput web API in 2026",
-  "e.g. Fact-check whether honey actually never spoils",
-  "e.g. How to roast a duck so the skin stays crispy",
-  "e.g. The collapse of Bronze Age civilizations — leading theories and the evidence behind each",
-  "e.g. Best M.2 NVMe SSDs under $200 for a home AI workstation",
-  "e.g. Why do cats knead with their paws? Cover the leading behavioural explanations",
-  "e.g. Side effects and benefits of long-term creatine supplementation",
-  "e.g. How does end-to-end encryption work in Signal, step by step",
-  "e.g. The history of the printing press in East Asia, 700 CE → 1600 CE",
-];
-function _pickResearchHint() {
-  const i = Math.floor(Math.random() * _RESEARCH_HINTS.length);
-  // Escape double-quotes so we can safely splice into a placeholder="…" attribute.
-  return _RESEARCH_HINTS[i].replace(/"/g, '&quot;');
-}
 
 // jobId -> { synapse, status } — survives across _renderJobs() rebuilds so
 // the SVG keeps its accumulated nodes/edges between progress events.
@@ -41,6 +21,7 @@ const _vizCollapseIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="
 const _vizExpandIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
 
 let _open = false;
+let _researchRailUnread = false;
 let _onDocKeydown = null;
 let _apiBase = '';
 let _endpoints = [];
@@ -123,7 +104,9 @@ function _syncResearchRail() {
   } catch { return; }
   const railBtn = document.getElementById('rail-research');
   const toolBtn = document.getElementById('tool-research-btn');
-  const active = running > 0 || errored > 0;
+  // Historical failures belong in Research history; they must not keep the
+  // mini-sidebar notification lit after the panel has been opened.
+  const active = running > 0 || _researchRailUnread;
   // Shared flag so sessions.js:_updateRailNotifs (which lights the same
   // rail button for INLINE research mode) ORs with us instead of
   // clobbering — otherwise a session re-render would clear our dot.
@@ -131,7 +114,7 @@ function _syncResearchRail() {
   if (railBtn) {
     railBtn.classList.remove('rail-notify', 'rail-notify-success', 'rail-notify-error', 'research-notif-active');
     if (active) {
-      railBtn.classList.add('rail-notify', errored ? 'rail-notify-error' : 'rail-notify-success', 'research-notif-active');
+      railBtn.classList.add('rail-notify', errored && running > 0 ? 'rail-notify-error' : 'rail-notify-success', 'research-notif-active');
     }
   }
   if (toolBtn) {
@@ -226,7 +209,13 @@ export function init(apiBase, markdownMod, sessionMod) {
   _sessionModule = sessionMod;
   jobs.init(apiBase);
   jobs.setRenderCallback(_renderJobs);
-  jobs.onComplete(() => { if (!_open) _showBadge(); });
+  jobs.onComplete(() => {
+    if (!_open) {
+      _researchRailUnread = true;
+      _showBadge();
+      _syncResearchRail();
+    }
+  });
 }
 
 export function isOpen() { return _open; }
@@ -259,6 +248,8 @@ export function openPanel(focusJobId) {
     return;
   }
   _open = true;
+  _researchRailUnread = false;
+  _syncResearchRail();
   _researchTab = 'research';
 
   const container = document.getElementById('chat-container');
@@ -407,7 +398,7 @@ function _buildPanelHTML() {
         <p class="memory-desc doclib-desc research-new-job-desc">
           <span>Multi-step web research with an LLM-in-the-loop agent</span>
         </p>
-        <textarea id="research-query" class="research-query" placeholder="${_pickResearchHint()}" rows="4"></textarea>
+        <textarea id="research-query" class="research-query" placeholder="Set sail on a question — Odysseus will chart the course." rows="4"></textarea>
         <button id="research-settings-toggle" class="research-settings-toggle${chevronCls}">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;opacity:0.85;flex-shrink:0;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings<span class="research-settings-chevron">${_chevronIcon}</span>
         </button>
@@ -996,6 +987,18 @@ function _renderJobs() {
   _renderHistoryFilters(past);
   _syncResearchTabs(allJobs);
 
+  // Active cards are rebuilt on every progress event. Preserve an open
+  // overflow menu across that rebuild so live research updates do not make
+  // the kebab appear to open and immediately close.
+  const openActiveOverflowIds = new Set(
+    [...activeList.querySelectorAll('.research-job-overflow.open')]
+      .map(overflow => overflow.closest('[data-job-id]')?.dataset.jobId)
+      .filter(Boolean),
+  );
+  activeList.querySelectorAll('.research-job-overflow.open').forEach((overflow) => {
+    overflow.querySelector('.research-job-more')?.click();
+  });
+
   activeList.innerHTML = '';
   pastList.innerHTML = '';
 
@@ -1044,6 +1047,9 @@ function _renderJobs() {
   };
   appendCards(activeList, active, 'No active research.');
   appendCards(pastList, visiblePast, past.length ? 'No research matches your filters.' : 'No research history yet.');
+  openActiveOverflowIds.forEach((jobId) => {
+    activeList.querySelector(`[data-job-id="${CSS.escape(jobId)}"] .research-job-more`)?.click();
+  });
   if (_historyCascadePending && _researchTab === 'history') _playHistoryCascade();
 }
 

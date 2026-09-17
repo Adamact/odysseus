@@ -1,0 +1,20 @@
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_selection_overlays_have_individual_clear_controls():
+    js = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+    css = (ROOT / "static/style.css").read_text(encoding="utf-8")
+
+    assert "function clearSelectionAt(index)" in js
+    assert "className = 'doc-selection-overlay-clear'" in js
+    assert "clearSelectionAt(selectionIndex);" in js
+    assert "const removed = _selections[index];" in js
+    assert "browserSelection.removeAllRanges();" in js
+    assert "Delete the persistent CSS highlight before checking whether any" in js
+    assert "doc-selection-rich-clear" in js
+    assert ".doc-selection-overlay-clear" in css
+    assert ".doc-selection-rich-clear" in css
+    assert "pointer-events: auto;" in css

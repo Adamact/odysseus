@@ -112,6 +112,16 @@ def _repair_function_arg_aliases(tool_type: str, args: dict[str, Any]) -> dict[s
             args["url"] = path
             args.pop("path", None)
             args.pop("file_path", None)
+    if tool_type == "manage_documents" and "limit" not in args and "max_results" in args:
+        # Collection APIs use both names across the native tool surface. The
+        # document contract calls this integer ``limit``.
+        args["limit"] = args.pop("max_results")
+    if tool_type == "manage_tasks" and str(args.get("action") or "").casefold() == "list":
+        # manage_tasks has no backend result-limit argument; the canonical
+        # renderer applies the user's visible cap. Drop only these familiar
+        # collection aliases so they cannot invalidate an otherwise safe read.
+        args.pop("max_results", None)
+        args.pop("limit", None)
     return args
 
 
@@ -362,11 +372,7 @@ FUNCTION_TOOL_SCHEMAS = [
                     "path": {"type": "string", "description": "Task-local /workspace/*.pdf path; use url for an online PDF"},
                     "query": {"type": "string", "description": "Required focused terms, including the target model and every requested metric/table heading"}
                 },
-                "required": ["query"],
-                "anyOf": [
-                    {"required": ["url"]},
-                    {"required": ["path"]}
-                ]
+                "required": ["query"]
             }
         }
     },
@@ -656,7 +662,11 @@ FUNCTION_TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "title": {"type": "string", "description": "Document title"},
-                    "language": {"type": "string", "description": "Programming language or format. Use richtext for formatted prose/articles the user should edit visually; use html only when the user explicitly asks for HTML source/code or a runnable HTML page (e.g. python, javascript, markdown, richtext, text, html)."},
+                    "language": {
+                        "type": "string",
+                        "enum": ["python", "javascript", "typescript", "html", "css", "richtext", "markdown", "json", "yaml", "bash", "sql", "rust", "go", "java", "c", "cpp", "xml", "toml", "ini", "ruby", "php", "csv", "email", "text", "plain", "svg"],
+                        "description": "Editor language or format. This is not a human-language code: use richtext for formatted prose/articles and markdown or text for plain prose; use html only for requested HTML source or a runnable page."
+                    },
                     "content": {"type": "string", "description": "The document content"}
                 },
                 "required": ["title", "content"]
@@ -696,7 +706,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "suggest_document",
-            "description": "Suggest improvements to the active document WITHOUT editing it. Creates inline comment bubbles the user can accept or reject. Use when the user asks for suggestions, review, improvements, or feedback.",
+            "description": "Suggest improvements to the active document WITHOUT editing it. Creates inline comment bubbles the user can accept or reject. Use when the user asks for suggestions, review, improvements, or feedback. Every replacement must materially differ from its exact source text; never emit a no-op suggestion.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -707,7 +717,7 @@ FUNCTION_TOOL_SCHEMAS = [
                             "type": "object",
                             "properties": {
                                 "find": {"type": "string", "description": "Exact text in the document to suggest changing"},
-                                "replace": {"type": "string", "description": "Suggested replacement text"},
+                                "replace": {"type": "string", "description": "Suggested replacement text; MUST be materially different from find"},
                                 "reason": {"type": "string", "description": "Brief explanation of why this change helps"}
                             },
                             "required": ["find", "replace", "reason"]
@@ -871,7 +881,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "list_models",
-            "description": "List all available AI models across configured endpoints. Optionally filter by keyword.",
+            "description": "List AI models across configured endpoints. A normal filter matches model IDs. Use filter='recommended' to detect this machine's GPU/VRAM/RAM/CPU and return ranked compatible models.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -885,13 +895,14 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "ui_control",
-            "description": "Control the user interface. Actions: toggle (turn tools on/off), open_panel (open a modal: documents/library, gallery, calendar/schedule, email, sessions, notes, memories/brain, skills, settings, theme, cookbook; calendar also supports `open_panel calendar month|week|year|agenda [YYYY-MM or YYYY-MM-DD]`; for 'that month/week' after a calendar listing, carry over the listed range, e.g. `open_panel calendar month 2026-09`), open_email_reply (legacy UI-only reply opener; prefer email MCP draft_email_reply for assistant-written reply drafts so a normal document-backed email draft is created), set_mode, switch_model, set_theme (built-in presets: dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute), create_theme (CREATE any custom theme with a name + colors object — pick distinctive, evocative hex colors that match the requested aesthetic, NOT generic defaults. The theme auto-applies after creation). When a user asks for ANY theme not in the built-in preset list, ALWAYS use create_theme.",
+            "description": "Control the user interface. Actions: toggle (turn tools on/off), open_panel (open a modal: documents/library, gallery, calendar/schedule, email, sessions, notes, memories/brain, skills, settings, theme, cookbook; calendar supports month/week/year/agenda plus a date; Cookbook supports models/download, launch/serve, active/running, dependencies, and settings views), open_email_reply (legacy UI-only reply opener; prefer email MCP draft_email_reply for assistant-written reply drafts so a normal document-backed email draft is created), set_mode, switch_model, set_theme (built-in presets: dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute), create_theme (CREATE any custom theme with a name + colors object — pick distinctive, evocative hex colors that match the requested aesthetic, NOT generic defaults. The theme auto-applies after creation), get_theme, and get_toggles. When a user asks for ANY theme not in the built-in preset list, ALWAYS use create_theme.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["toggle", "open_panel", "open_email_reply", "set_mode", "switch_model", "set_theme", "create_theme", "get_toggles"],
+                    "action": {"type": "string", "enum": ["toggle", "open_panel", "open_email_reply", "set_mode", "switch_model", "set_theme", "create_theme", "get_theme", "get_toggles"],
                                "description": "The UI action. Use set_theme for presets, create_theme to build a custom theme with any hex colors"},
-                    "name": {"type": "string", "description": "For toggle: web, bash, research, incognito, document_editor (aliases: shell, search, deepresearch, documents). For open_panel: documents, gallery, calendar/schedule, email, sessions, notes, brain/memories, skills, settings, theme/themes, cookbook. For open_email_reply: email UID. For set_theme: a preset theme name. For create_theme: the custom theme name."},
+                    "name": {"type": "string", "description": "For toggle: web, bash, research, incognito, document_editor (aliases: shell, search, deepresearch, documents). For open_panel: documents, gallery, calendar/schedule, email, sessions, notes, brain/memories, skills, settings, theme/themes, cookbook; models and serve are Cookbook-view aliases. For open_email_reply: email UID. For set_theme: a preset theme name. For create_theme: the custom theme name."},
+                    "view": {"type": "string", "description": "Optional open_panel subview: calendar day/week/month/year/agenda, or Cookbook models/download, launch/serve, active/running, dependencies, settings."},
                     "value": {"type": "string", "description": "Value: on/off for toggle, agent/chat for set_mode, model name for switch_model, theme name for set_theme, or folder for open_email_reply"},
                     "uid": {"type": "string", "description": "Email UID for open_email_reply"},
                     "folder": {"type": "string", "description": "Email folder for open_email_reply (default INBOX)"},
@@ -1443,7 +1454,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "app_api",
-            "description": "Generic loopback to allowed internal Odysseus endpoints. Use this when there's no named tool for what the user wants. Hits the same routes the UI buttons hit (cookbook, gallery, library/documents, memory, notes, calendar, tasks, settings, themes, research, compare, etc.). action='endpoints' returns the OpenAPI surface (use `filter` to narrow). action='call' (default) takes method+path+body. Sensitive auth/user/admin/shell paths and host-control Cookbook mutation routes are blocked for safety. Do not use for shell commands; use named command tooling instead. Do not use for package installs, engine rebuilds, PID signalling, or email account discovery; use list_email_accounts for email accounts because /api/email/accounts is owner-filtered in tool context.",
+            "description": "Generic loopback to allowed internal Odysseus endpoints. Use this when there's no named tool for what the user wants. For 'best model for my hardware', call GET /api/hwfit/models with query {fit_only:true,limit:10,sort:'fit'}; it detects GPU/VRAM/RAM/CPU and returns ranked compatible models. Hits the same routes the UI buttons hit (cookbook, gallery, library/documents, memory, notes, calendar, tasks, settings, themes, research, compare, etc.). action='endpoints' returns the OpenAPI surface (use `filter` to narrow). action='call' (default) takes method+path+body. Sensitive auth/user/admin/shell paths and host-control Cookbook mutation routes are blocked for safety. Do not use for shell commands; use named command tooling instead. Do not use for package installs, engine rebuilds, PID signalling, or email account discovery; use list_email_accounts for email accounts because /api/email/accounts is owner-filtered in tool context.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -2043,18 +2054,23 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
     tool_type, args = normalize_native_function_args(name, args)
 
     if tool_type == "web_fetch" and isinstance(args.get("urls"), list):
-        # Some compact-model calls encode a URL as [url, ""] (an empty label
-        # slot) inside the batch. This is unambiguous, so normalize it without
-        # accepting arbitrary nested shapes.
+        # Some compact-model calls encode a URL as [url, label] inside the
+        # batch. The first value is still an explicit HTTP(S) URL and the
+        # second is display-only prose, so this two-string shape is
+        # unambiguous. Normalize it without accepting arbitrary nested data.
         normalized_urls = []
         for item in args["urls"]:
             if (
                 isinstance(item, list)
-                and item
+                and len(item) in (1, 2)
                 and isinstance(item[0], str)
-                and all(not str(value or "").strip() for value in item[1:])
+                and item[0].strip().lower().startswith(("http://", "https://"))
+                and (len(item) == 1 or isinstance(item[1], str))
             ):
                 normalized_urls.append(item[0])
+            elif isinstance(item, list):
+                logger.warning("Rejecting ambiguous nested web_fetch URL item: %r", item)
+                return None
             else:
                 normalized_urls.append(item)
         args["urls"] = normalized_urls
@@ -2129,15 +2145,19 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
     elif tool_type == "python":
         content = args.get("code", "")
     elif tool_type == "web_search":
+        # ``query`` is the canonical schema field.  Some native wrappers also
+        # include ``command": "web_search"`` as transport metadata; treating
+        # that metadata as the query silently searches for the tool's name.
+        # Keep legacy aliases only as fallbacks when the canonical field is
+        # absent.
+        content = args.get("query", "")
         queries = args.get("queries")
-        if isinstance(queries, list) and queries:
+        if not content and isinstance(queries, list) and queries:
             content = str(queries[0])
-        elif queries:
+        elif not content and queries:
             content = str(queries)
-        elif args.get("command"):
+        elif not content and args.get("command"):
             content = args.get("command", "")
-        else:
-            content = args.get("query", "")
         # Preserve the model-requested freshness filter — the web_search schema
         # advertises time_filter and the executor parses {"query","time_filter"},
         # but a bare query string dropped it. Mirrors the read_file JSON idiom.
@@ -2164,8 +2184,14 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         content = json.dumps(args)
     elif tool_type == "create_document":
         parts = [args.get("title", "Untitled")]
-        if args.get("language"):
-            parts.append(args["language"])
+        language = str(args.get("language") or "").strip().casefold()
+        # A common model slip is treating this editor-format field as a human
+        # language and emitting ``en``/``English``.  The legacy line transport
+        # interpreted an unknown second line as document content, visibly
+        # prepending it to the user's prose.  Preserve the document body and
+        # let the executor's content sniffer select markdown instead.
+        if language not in {"en", "eng", "english"} and language:
+            parts.append(language)
         parts.append(args.get("content", ""))
         content = "\n".join(parts)
     elif tool_type == "edit_document":
@@ -2281,6 +2307,8 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
             content = f"toggle {name} {value}"
         elif action == "open_panel":
             content = f"open_panel {name or value}"
+            if args.get("view"):
+                content += f" {args['view']}"
         elif action == "open_email_reply":
             uid = args.get("uid") or name
             folder = args.get("folder") or value or "INBOX"

@@ -1024,6 +1024,9 @@ def test_visual_text_extraction_is_distinct_from_speech_transcription():
     assert _visual_text_extraction_requested(
         "Extract all flashing English words shown on screen from 0:25 to 0:30."
     )
+    assert _visual_text_extraction_requested(
+        "Run OCR on that same image again, returning only numbers."
+    )
     assert _visual_text_extraction_requested("识别视频画面中的文字。")
     assert not _visual_text_extraction_requested(
         "Transcribe everything the speaker says from 0:25 to 0:30."
@@ -1033,16 +1036,15 @@ def test_visual_text_extraction_is_distinct_from_speech_transcription():
     )
 
 
-def test_local_media_routes_remove_transcriber_for_visual_only_text():
-    import re
-
+def test_local_media_routes_select_dedicated_ocr_for_visual_text():
     source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
 
-    assert len(re.findall(
-        r'if _visual_text_extraction_requested\(_last_user\):\n'
-        r'\s+_local_media_tools\.discard\("transcribe_media"\)',
-        source,
-    )) == 3
+    assert source.count(
+        "_ocr_requested = _visual_text_extraction_requested(_last_user)"
+    ) == 3
+    assert source.count(
+        '{"extract_text"}\n                if _ocr_requested'
+    ) == 3
 
 
 def test_workspace_paths_split_on_chinese_list_punctuation():

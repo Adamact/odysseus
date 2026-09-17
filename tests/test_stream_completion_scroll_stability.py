@@ -48,6 +48,47 @@ def test_scroll_restoration_cancels_the_stale_smooth_scroll_target():
     assert "overflow-anchor: none" in STYLE
 
 
+def test_large_tool_output_does_not_abort_enabled_auto_scroll():
+    """Expanded browser/tool cards may add far more than 300px at once.
+
+    User intent is represented by ``autoScrollEnabled`` (wheel/touch/scroll
+    handlers turn it off).  Geometry growth is not evidence that the user
+    scrolled away, so synthesis below a large tool timeline must still be
+    brought into view.
+    """
+    smooth_step = UI.split("function _smoothScrollStep()", 1)[1].split(
+        "/**\n * Instant scroll to bottom", 1
+    )[0]
+
+    assert "!autoScrollEnabled" in smooth_step
+    assert "diff > 300" not in smooth_step
+    assert "box.scrollTop = current + diff * factor" in smooth_step
+
+
+def test_programmatic_smooth_scroll_does_not_disable_itself():
+    """The scroll event emitted by the lerp is not user intent."""
+    app = (ROOT / "static/app.js").read_text(encoding="utf-8")
+    listener = app.split(
+        "el('chat-history').addEventListener('scroll', uiModule.debounce", 1
+    )[1].split("}, 100));", 1)[0]
+
+    assert "uiModule.isAutoScrolling?.()" in listener
+    assert listener.index("uiModule.isAutoScrolling?.()") < listener.index(
+        "uiModule.setAutoScroll(atBottom)"
+    )
+    assert "export function isAutoScrolling()" in UI
+
+
+def test_large_tool_scroll_fix_is_served_under_a_fresh_chat_module_key():
+    """The fixed ui module is imported by chat.js, so stale chat.js is stale UI."""
+    app = (ROOT / "static/app.js").read_text(encoding="utf-8")
+    index = (ROOT / "static/index.html").read_text(encoding="utf-8")
+    key = "chat.js?v=20260916largetoolscroll2"
+
+    assert key in app
+    assert index.count(key) == 2
+
+
 def test_stream_completion_does_not_focus_behind_open_document():
     assert "else if (!document.getElementById('doc-editor-pane'))" in CHAT
     assert "messageInput.focus({ preventScroll: true })" in CHAT

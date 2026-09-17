@@ -1516,13 +1516,21 @@ async def _execute_tool_block_impl(
             "exit_code": 1,
             "failure_kind": "turn_contract_denied",
         }
-    if disabled_tools and not policy_names.isdisjoint(disabled_tools):
+    # A turn contract narrows the offered tool inventory; it is not an
+    # authorization grant overriding explicit execution-time restrictions.
+    if (
+        disabled_tools
+        and not policy_names.isdisjoint(disabled_tools)
+    ):
         desc = f"{tool}: BLOCKED"
         result = {"error": f"Tool '{tool}' is disabled by user.", "exit_code": 1}
         logger.info(f"Tool blocked by user: {tool}")
         return desc, result
 
-    if tool_policy and any(tool_policy.blocks(name) for name in policy_names):
+    if (
+        tool_policy
+        and any(tool_policy.blocks(name) for name in policy_names)
+    ):
         desc = f"{tool}: BLOCKED"
         result = {
             "error": f"Execution of tool '{tool}' is forbade by the active guide-only policy.",

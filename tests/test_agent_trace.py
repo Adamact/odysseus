@@ -158,6 +158,35 @@ def test_native_codec_records_unmatched_tool_result_as_gap():
     assert trace.summary()["observation_gaps"] == ["tool_result_call_unmatched", "trace_end_unavailable"]
 
 
+def test_native_codec_links_explicit_preexecution_rejection():
+    trace = decode_native_trace(
+        [
+            _sse({
+                "type": "tool_output",
+                "tool": "inspect_media",
+                "command": '{"path":"/workspace/result.png"}',
+                "output": "This exact successful call already returned evidence.",
+                "exit_code": 1,
+                "error": True,
+                "execution_attempted": False,
+                "blocked": True,
+                "round": 4,
+            }),
+            {"sse": "data: [DONE]\n\n"},
+        ],
+        run_id="preexecution-rejection",
+    )
+
+    summary = trace.summary()
+    assert summary["tool_linkage_valid"] is True
+    assert summary["observation_gaps"] == []
+    [call] = [event for event in trace.events if event.kind == TraceKind.TOOL_CALL]
+    [result] = [event for event in trace.events if event.kind == TraceKind.TOOL_RESULT]
+    assert call.correlation_id == result.correlation_id
+    assert call.payload["execution_attempted"] is False
+    assert call.payload["rejected_before_execution"] is True
+
+
 def test_native_codec_preserves_model_response_reference():
     trace = decode_native_trace(
         [

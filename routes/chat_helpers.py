@@ -29,6 +29,31 @@ logger = logging.getLogger(__name__)
 _INVISIBLE_RESPONSE_CHARS = "\u2063\u200b\u200c\u200d\ufeff"
 
 
+def youtube_prefetch_sources(message: str, transcripts: list) -> list[dict[str, str]]:
+    """Expose successful automatic YouTube acquisition as answer provenance."""
+    evidence = "\n".join(str(item or "") for item in transcripts)
+    has_transcript = "[YOUTUBE VIDEO TRANSCRIPT]" in evidence
+    has_comments = "[YOUTUBE VIDEO COMMENTS" in evidence
+    if not (has_transcript or has_comments):
+        return []
+    title_match = re.search(r"(?m)^Title:\s*(.+?)\s*$", evidence)
+    sources = []
+    for raw in re.findall(r"https?://[^\s<>\"']+", str(message or ""), re.I):
+        url = raw.rstrip(".,;:!?)]}")
+        if not re.match(r"https?://(?:www\.)?(?:youtube\.com|youtu\.be)(?:/|$)", url, re.I):
+            continue
+        if any(source["url"] == url for source in sources):
+            continue
+        sources.append({
+            "url": url,
+            "title": title_match.group(1).strip() if title_match else "YouTube video",
+            "acquisition": "automatic_youtube_context",
+            "evidence": "transcript+comments" if has_transcript and has_comments
+                        else "transcript" if has_transcript else "comments",
+        })
+    return sources
+
+
 def _skill_run_is_complex(agent_rounds: int, agent_tool_calls: int) -> bool:
     """Keep one-off TUI edit loops out of automatic skill extraction."""
     return agent_tool_calls >= 4 or (agent_rounds >= 5 and agent_tool_calls >= 3)
@@ -1015,7 +1040,12 @@ async def build_chat_context(
     casual_low_signal = _is_casual_low_signal(context_message)
 
     # Memory enabled?
-    mem_enabled = not incognito and not no_memory and uprefs.get("memory_enabled", True)
+    mem_enabled = (
+        not incognito
+        and not no_memory
+        and uprefs.get("memory_enabled", True)
+        and getattr(sess, "memory_injection_enabled", True) is not False
+    )
     # Skills injection respects its own enable toggle (mirrors memory_enabled).
     # When off, the "Available skills" index is not added to the prompt.
     skills_enabled = (
@@ -1099,6 +1129,11 @@ async def build_chat_context(
     # YouTube transcripts
     for transcript in preprocessed.youtube_transcripts:
         preface.append(untrusted_context_message("youtube transcript", transcript))
+    for source in youtube_prefetch_sources(
+        preprocessed.text_for_context, preprocessed.youtube_transcripts
+    ):
+        if not any(existing.get("url") == source["url"] for existing in web_sources):
+            web_sources.append(source)
 
     # Normalize model ID. Prefer cached endpoint models so group chat does not
     # re-hit slow local /models endpoints on every participant turn.

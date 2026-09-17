@@ -124,7 +124,9 @@ class CompletionDecision:
 
 _ARTIFACT_PATH = r"(?:/|\./|\.\./)?[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\.[A-Za-z0-9]{1,12}"
 _ARTIFACT_REQUEST_RE = re.compile(
-    rf"\b(?:write|create|make|save|produce|generate|export|edit|modify|update|fix|put|place)\b"
+    rf"\b(?:writ(?:e|ten)|creat(?:e|ed)|make|made|sav(?:e|ed)|produc(?:e|ed)|"
+    rf"generat(?:e|ed)|export(?:ed)?|edit(?:ed)?|modif(?:y|ied)|updat(?:e|ed)|"
+    rf"fix(?:ed)?|put|plac(?:e|ed))\b"
     rf"[^\n]{{0,80}}?(?P<path>{_ARTIFACT_PATH})",
     re.IGNORECASE,
 )
@@ -133,7 +135,7 @@ _OUTPUT_PATH_RE = re.compile(
     re.IGNORECASE,
 )
 _EXPLICIT_OUTPUT_FILE_RE = re.compile(
-    rf"\b(?:to|at|as)\s+(?:the\s+)?(?:file|path)\s+(?P<path>{_ARTIFACT_PATH})",
+    rf"\b(?:to|at|as|into)\s+(?:the\s+|a\s+)?(?:single\s+)?(?:file|path)\s+(?P<path>{_ARTIFACT_PATH})",
     re.IGNORECASE,
 )
 _NAMED_OUTPUT_FILE_RE = re.compile(
@@ -141,8 +143,9 @@ _NAMED_OUTPUT_FILE_RE = re.compile(
     re.IGNORECASE,
 )
 _EXPLICIT_OUTPUT_DIRECTORY_RE = re.compile(
-    r"\b(?:save|write|create|make|produce|generate|export|put|place)\b"
-    r"[^\n]{0,100}?\b(?:into|to|under|inside)\s+"
+    r"\b(?:sav(?:e|ed)|writ(?:e|ten)|creat(?:e|ed)|make|made|produc(?:e|ed)|"
+    r"generat(?:e|ed)|export(?:ed)?|put|plac(?:e|ed))\b"
+    r"[^\n]{0,100}?\b(?:in|into|to|under|inside)\s+"
     r"[`'\"]?(?P<path>/(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+/?)"
     r"(?=[`'\"\s.,;:]|$)",
     re.IGNORECASE,
@@ -208,6 +211,34 @@ def _is_prose_abbreviation(value: str) -> bool:
     return _clean_path(value).lower() in {"e.g", "i.e"}
 
 
+def _artifact_match_is_negated(instruction: str, match: re.Match[str]) -> bool:
+    """Reject paths attached to an explicitly negated mutation verb."""
+
+    prefix = instruction[max(0, match.start() - 32):match.start()]
+    return bool(re.search(r"(?:do\s+not|don't|must\s+not|never)\s+$", prefix, re.IGNORECASE))
+
+
+def _artifact_match_is_callable(instruction: str, match: re.Match[str], path: str) -> bool:
+    """Reject dotted callable names such as ``json.dumps(...)`` as artifacts."""
+
+    if "/" in path or "\\" in path:
+        return False
+    if instruction[match.end("path"):].startswith("("):
+        return True
+    # Procedural prompts often name existence helpers without parentheses,
+    # e.g. "verify with os.path.exists or ls". They are code references, not
+    # output filenames, even though the generic path regex sees an extension.
+    return bool(re.fullmatch(r"(?:os\.path|pathlib\.Path|Path)\.[A-Za-z_]\w*", path))
+
+
+def _artifact_match_is_email_host(instruction: str, match: re.Match[str]) -> bool:
+    """Reject the domain portion of an email address as an output path."""
+
+    start = match.start("path")
+    prefix = instruction[max(0, start - 80):start]
+    return bool(re.search(r"[A-Za-z0-9_.+-]+@$", prefix))
+
+
 def infer_completion_requirements(
     instruction: str,
     *,
@@ -216,6 +247,7 @@ def infer_completion_requirements(
 ) -> CompletionRequirements:
     """Infer only explicitly requested output/edit paths from an instruction."""
 
+    text = str(instruction or "")
     paths: list[str] = []
     for pattern in (
         _ARTIFACT_REQUEST_RE,
@@ -226,8 +258,14 @@ def infer_completion_requirements(
         _EXPLICIT_OUTPUT_DIRECTORY_RE,
         _LOCALIZED_OUTPUT_DIRECTORY_RE,
     ):
-        for match in pattern.finditer(str(instruction or "")):
+        for match in pattern.finditer(text):
             path = _clean_path(match.group("path"))
+            if _artifact_match_is_negated(text, match):
+                continue
+            if _artifact_match_is_callable(text, match, path):
+                continue
+            if _artifact_match_is_email_host(text, match):
+                continue
             if path and not _is_prose_abbreviation(path) and path not in paths:
                 paths.append(path)
     paths = [path.rstrip("/") if path != "/" else path for path in paths]
@@ -249,6 +287,13 @@ def infer_completion_requirements(
             if path in explicit_directories
             or any(path.startswith(directory.rstrip("/") + "/") for directory in explicit_directories)
         ]
+        explicit_files = [path for path in paths if Path(path).suffix]
+        if explicit_files:
+            paths = [
+                path for path in paths
+                if path not in explicit_directories
+                or not any(file.startswith(path.rstrip("/") + "/") for file in explicit_files)
+            ]
     cleaned_verifier_commands = tuple(dict.fromkeys(
         str(command or "").strip()
         for command in verifier_commands
@@ -335,6 +380,14 @@ def _artifact_path_matches_required(artifact_path: str, required_path: str) -> b
 
 def _explicit_tool_paths(tool: str, command: str) -> list[str]:
     if tool == "write_file":
+        try:
+            args = json.loads(command or "{}")
+        except (TypeError, json.JSONDecodeError):
+            args = None
+        if isinstance(args, Mapping):
+            path = _clean_path(str(args.get("path") or ""))
+            return [path] if path else []
+        # Keep compatibility with the legacy ``path\ncontent`` transport.
         path = _clean_path(str(command or "").splitlines()[0] if command else "")
         return [path] if path else []
     if tool == "edit_file":

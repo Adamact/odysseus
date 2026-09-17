@@ -7,6 +7,7 @@ from src.agent_tools.document_tools import (
     _owned_document_query,
     set_active_document,
 )
+from types import SimpleNamespace
 
 
 class _Column:
@@ -46,6 +47,7 @@ class _Query:
         return self
 
     def limit(self, *args):
+        self.requested_limit = args[0]
         return self
 
     def all(self):
@@ -101,6 +103,35 @@ def test_manage_documents_list_filters_to_calling_owner(monkeypatch):
 
     assert result["documents"] == []
     assert ("owner", "eq", "alice") in query.filters
+    assert query.requested_limit == 50
+
+
+def test_manage_documents_search_broadens_to_any_term_after_no_strict_match(monkeypatch):
+    docs = [
+        SimpleNamespace(
+            id="tennis-doc", title="Tennis on Tuesday?", language="email",
+            current_content="Let's play tennis.", updated_at=None, created_at=None,
+        ),
+        SimpleNamespace(
+            id="dinner-doc", title="Dinner plans", language="text",
+            current_content="Choose a dinner date.", updated_at=None, created_at=None,
+        ),
+        SimpleNamespace(
+            id="other-doc", title="Quarterly budget", language="text",
+            current_content="Finance review.", updated_at=None, created_at=None,
+        ),
+    ]
+    query = _Query(docs=docs)
+    _install_database_stub(monkeypatch, "core.database", query)
+
+    result = asyncio.run(
+        TOOL_HANDLERS["manage_documents"](
+            '{"action":"list","search":"tennis dinner"}', {"owner": "alice"}
+        )
+    )
+
+    ids = {item["id"] for item in result["documents"]}
+    assert ids == {"tennis-doc", "dinner-doc"}
 
 
 def test_manage_documents_read_filters_to_calling_owner(monkeypatch):
@@ -133,6 +164,44 @@ def test_update_document_active_id_filters_to_calling_owner(monkeypatch):
     assert "Requested document not found" in result["error"]
     assert ("id", "eq", "doc-bob") in query.filters
     assert ("owner", "eq", "alice") in query.filters
+
+
+def test_update_document_rejects_unchanged_content(monkeypatch):
+    doc = SimpleNamespace(
+        id="doc-alice", owner="alice", title="Draft", language="markdown",
+        current_content="Exactly the same.", version_count=1,
+    )
+    _install_database_stub(monkeypatch, "src.database", _Query(first_doc=doc))
+    set_active_document("doc-alice")
+    try:
+        result = asyncio.run(
+            TOOL_HANDLERS["update_document"]("Exactly the same.", {"owner": "alice"})
+        )
+    finally:
+        set_active_document(None)
+
+    assert result["exit_code"] == 1
+    assert "unchanged" in result["error"]
+    assert doc.version_count == 1
+
+
+def test_edit_document_rejects_noop_find_replace(monkeypatch):
+    doc = SimpleNamespace(
+        id="doc-alice", owner="alice", title="Draft", language="markdown",
+        current_content="Exactly the same.", version_count=1,
+    )
+    _install_database_stub(monkeypatch, "src.database", _Query(first_doc=doc))
+    set_active_document("doc-alice")
+    try:
+        result = asyncio.run(TOOL_HANDLERS["edit_document"](
+            "<<<FIND>>>\nExactly the same.\n<<<REPLACE>>>\nExactly the same.\n<<<END>>>",
+            {"owner": "alice"},
+        ))
+    finally:
+        set_active_document(None)
+
+    assert "No edits applied" in result["error"]
+    assert doc.version_count == 1
 
 
 def test_suggest_document_active_id_filters_to_calling_owner(monkeypatch):

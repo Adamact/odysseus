@@ -4,7 +4,7 @@
  * File attachment and upload handling
  */
 
-import uiModule from './ui.js?v=20260908weekhoverfix1';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import spinnerModule from './spinner.js';
 
 let pendingFiles = [];

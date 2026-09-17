@@ -17,10 +17,17 @@ from src.action_intents import classify_tool_intent
 from routes.chat_routes import _is_personal_data_search_without_web_target
 from routes.chat_routes import _explicitly_denies_web_lookup
 from routes.chat_routes import _contains_explicit_url_target
+from routes.chat_routes import _authorizes_exact_url_fetch
 from routes.chat_routes import _is_explicit_browser_automation_request
+from routes.chat_routes import _is_external_discovery_request
 from routes.chat_routes import _prefers_structured_document_tools
-from routes.chat_routes import _has_recent_private_browser_success
+from routes.chat_routes import (
+    _has_recent_private_browser_success,
+    _is_contextual_browser_followup,
+)
+from routes.chat_routes import _most_recent_successful_web_tool
 from routes.chat_routes import _is_contextual_browser_followup
+from routes.chat_routes import _is_contextual_web_followup
 from src.tool_policy import (
     WEB_ACCESS_TOOL_NAMES,
     WEB_TOOL_NAMES,
@@ -65,6 +72,37 @@ def test_plain_pdf_url_is_retrieval_not_browser_automation():
     assert _is_explicit_browser_automation_request(
         "Open the page https://example.com/report and click the details link"
     )
+    assert _is_explicit_browser_automation_request(
+        "Open https://example.com with the private browesr"
+    )
+
+
+def test_authoritative_source_discovery_is_web_intent():
+    assert _is_external_discovery_request(
+        "Find the official announcement and tell me the date."
+    )
+    assert _is_external_discovery_request("Locate the press release")
+    assert not _is_external_discovery_request("Find my announcement note")
+
+
+def test_exact_public_url_authorizes_fetch_without_broad_search():
+    assert _authorizes_exact_url_fetch(
+        "Summarize https://example.com/reports/quarterly"
+    )
+    assert not _authorizes_exact_url_fetch(
+        "Open https://example.com and click the details link"
+    )
+    assert not _authorizes_exact_url_fetch(
+        "Summarize https://youtu.be/example"
+    )
+    assert not _authorizes_exact_url_fetch(
+        "Do not search or fetch https://example.com/private"
+    )
+
+
+def test_agent_loop_treats_fetch_only_contract_as_web_capable():
+    source = (Path(__file__).resolve().parent.parent / "src" / "agent_loop.py").read_text(encoding="utf-8")
+    assert 'and not turn_contract.permits("web_fetch")' in source
 
 
 def test_external_paper_tables_prefer_structured_tools_over_shell():
@@ -221,6 +259,17 @@ def test_clean_private_browser_warmth_requires_typed_success():
     assert not _has_recent_private_browser_success(prose_only)
 
 
+def test_retry_on_that_page_is_a_contextual_browser_followup():
+    session = type("Session", (), {"history": [
+        {"role": "user", "content": "Go to example.com in the browser."},
+        {"role": "assistant", "content": "Opened the page."},
+    ]})()
+
+    assert _is_contextual_browser_followup(
+        "Try again on that page and compare the prices.", session,
+    )
+
+
 def test_contextual_browser_followup_recognizes_current_page_inspection():
     session = type("Session", (), {"history": [{
         "role": "user",
@@ -246,6 +295,51 @@ def test_clean_preview_only_offers_browser_for_explicit_or_typed_warm_turns():
     assert "tool_family(s['function']['name']) != 'search_browser'" in source
     assert "elif not _clean_v3_private_browser_warm and not (" in source
     assert "_native_workspace_contract and _local_browser_render_intent" in source
+
+
+def test_explicit_web_fetch_is_not_erased_by_generic_browser_intent():
+    source = _CHAT_ROUTES.read_text(encoding="utf-8")
+    assert "and not set(_selected_tools or ()).intersection(" in source
+    assert "{'web_search', 'web_fetch'}" in source
+
+
+def test_web_followup_grammar_covers_article_detail_questions():
+    from routes.chat_routes import _WEB_FOLLOWUP_RE
+
+    assert _WEB_FOLLOWUP_RE.fullmatch("What else did it say about Miro?")
+    assert _WEB_FOLLOWUP_RE.fullmatch("What did it say about pricing?")
+    assert _WEB_FOLLOWUP_RE.fullmatch("grab the top story and read it")
+    assert _WEB_FOLLOWUP_RE.fullmatch(
+        "now pull the page title and last-updated date off that link"
+    )
+
+
+def test_contextual_web_followup_recognizes_referential_result_open():
+    session = type("Session", (), {"history": [{
+        "role": "user",
+        "content": "look up what's happening in germany rn",
+    }]})()
+
+    assert _is_contextual_web_followup("grab the top story and read it", session)
+
+
+def test_web_followup_retains_only_latest_successful_public_web_tool():
+    session = type("Session", (), {"history": [
+        {"role": "assistant", "metadata": {"tool_events": [
+            {"tool": "web_search", "exit_code": 0},
+            {"tool": "web_fetch", "exit_code": 0},
+        ]}},
+    ]})()
+    assert _most_recent_successful_web_tool(session) == "web_fetch"
+
+
+def test_failed_web_tool_is_not_retained_for_followup():
+    session = type("Session", (), {"history": [
+        {"role": "assistant", "metadata": {"tool_events": [
+            {"tool": "web_fetch", "exit_code": 1, "error": True},
+        ]}},
+    ]})()
+    assert _most_recent_successful_web_tool(session) is None
 
 
 def test_site_navigation_forces_private_browser_with_search_enabled():
@@ -448,6 +542,23 @@ def test_explicit_false_disables_web_despite_prompt_web_intent(message):
     )
     assert "web_search" in disabled
     assert "web_fetch" in disabled
+
+
+def test_trained_odysseus_route_uses_explicit_web_intent_without_ui_toggle_gate():
+    """The exact trained model owns intent routing; other models retain the gate."""
+    source = _CHAT_ROUTES.read_text(encoding="utf-8")
+    assert "_clean_v3_web_intent = bool(" in source
+    assert "_clean_v3_route_requested" in source
+    assert 'and "search_browser" in _turn_capabilities' in source
+    assert "or _clean_v3_web_intent" in source
+    assert "or _contextual_web_turn_followup or _clean_v3_web_intent" in source
+    assert "and not _explicitly_denies_web_lookup(message)" in source
+
+
+def test_browser_intent_is_promoted_to_search_browser_capability():
+    source = _CHAT_ROUTES.read_text(encoding="utf-8")
+    assert "if _use_turn_contract and _explicit_browser_intent:" in source
+    assert '_turn_capabilities = _turn_capabilities | {"search_browser"}' in source
 
 
 def test_prompt_web_intent_enables_web_without_frontend_toggle():

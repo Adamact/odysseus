@@ -150,7 +150,7 @@ export function wireTopbar(deps) {
   });
 
   // Edge popup — Width input + Feather / Delete action buttons.
-  function applyEdgeAction(hardDelete) {
+  async function applyEdgeAction(hardDelete) {
     const layer = activeLayer();
     if (!layer || isLayerPixelLocked(state, layer) || isLayerTransparencyLocked(state, layer)) {
       uiModule.showToast('Unlock image and transparent pixels before changing edges');
@@ -159,8 +159,7 @@ export function wireTopbar(deps) {
     const widthInput = document.getElementById('ge-edge-width');
     const width = parseInt(widthInput?.value || '8');
     if (isNaN(width) || width < 1) { uiModule.showToast('Invalid width'); return; }
-    saveState();
-    applyEdgeFeather(layer, width, hardDelete);
+    if (!await applyEdgeFeather(layer, width, hardDelete)) return;
     composite();
     uiModule.showToast(hardDelete ? `Edges deleted ${width}px` : `Edges feathered ${width}px`);
   }

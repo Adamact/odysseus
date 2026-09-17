@@ -341,6 +341,11 @@ _PRIVATE_ACTION_READS: Mapping[str, frozenset[str]] = MappingProxyType(
         "manage_skills": frozenset({"list", "index", "view", "view_ref", "search"}),
         "manage_tasks": frozenset({"list"}),
         "manage_email_state": frozenset({"list_blocked"}),
+        "manage_endpoints": frozenset({"list"}),
+        "manage_mcp": frozenset({"list", "list_tools"}),
+        "manage_tokens": frozenset({"list"}),
+        "manage_webhooks": frozenset({"list"}),
+        "manage_settings": frozenset({"list", "get", "list_tools"}),
     }
 )
 
@@ -380,6 +385,13 @@ _PRIVATE_ACTION_WRITES: Mapping[str, frozenset[str]] = MappingProxyType(
                 "unblock_sender",
             }
         ),
+        "manage_endpoints": frozenset({"add", "delete", "enable", "disable"}),
+        "manage_mcp": frozenset({"add", "delete", "enable", "disable", "reconnect"}),
+        "manage_settings": frozenset(
+            {"set", "delete", "reset", "disable_tool", "enable_tool"}
+        ),
+        "manage_tokens": frozenset({"create", "delete"}),
+        "manage_webhooks": frozenset({"add", "delete", "enable", "disable"}),
     }
 )
 

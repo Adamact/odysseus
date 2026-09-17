@@ -270,6 +270,32 @@ class WebSearchTool:
                     timeout=30,
                 )
         except asyncio.TimeoutError:
+            # Comprehensive search also downloads several result pages. A
+            # slow or hostile publisher must not erase the ranked search
+            # evidence that was already available. Fall back to the metadata
+            # path so the agent can choose a source and continue with
+            # web_fetch/private_browser. Keep this bounded independently: the
+            # abandoned executor thread may still be winding down.
+            try:
+                results = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        lambda: searxng_search_results(query, max_pages),
+                    ),
+                    timeout=12,
+                )
+                text, sources = _format_search_metadata(query, results)
+                if sources:
+                    output = text[:MAX_OUTPUT_CHARS] if len(text) > MAX_OUTPUT_CHARS else text
+                    output += "\n\n<!-- SOURCES:" + json.dumps(sources) + " -->"
+                    return {
+                        "output": output,
+                        "exit_code": 0,
+                        "evidence_status": "available",
+                        "degraded_mode": "metadata_after_content_timeout",
+                    }
+            except Exception:
+                pass
             return {
                 "error": f"web_search timed out after 30s: {query[:200]}",
                 "exit_code": 1,
@@ -2190,8 +2216,13 @@ class PrivateBrowserTool:
         "batch",
     }
     _AUTO_SCREENSHOT_ACTIONS = {
+        "open",
         "snapshot",
         "batch",
+        "click",
+        "fill",
+        "press",
+        "scroll",
     }
 
     @staticmethod
@@ -2972,6 +3003,15 @@ class PrivateBrowserTool:
         for command in commands:
             if isinstance(command, list) and command:
                 action = str(command[0]).strip().lower()
+                if action == "wait":
+                    # Compact/OpenAI schemas sometimes preserve an omitted
+                    # selector as null and put the timeout in the next slot:
+                    # ["wait", null, 2500]. agent-browser accepts only arrays
+                    # of strings, so recover the intended timeout instead of
+                    # rejecting the whole browser batch.
+                    wait_args = [value for value in command[1:] if value is not None]
+                    normalized.append(["wait", *[str(value) for value in wait_args]])
+                    continue
                 if action in {"open", "read"} and len(command) >= 2:
                     candidate_url = str(command[1] or "").strip()
                     if (
@@ -2984,6 +3024,15 @@ class PrivateBrowserTool:
                             self._resolve_local_file_url(candidate_url),
                             *command[2:],
                         ])
+                        continue
+                    if action == "read" and not re.match(
+                        r"^(?:https?|file)://", candidate_url, re.IGNORECASE
+                    ):
+                        # The top-level read action treats target/selector as
+                        # DOM text extraction. Keep batch semantics identical;
+                        # agent-browser's bare `read h1` instead interprets h1
+                        # as a URL/path and fails before the model can answer.
+                        normalized.append(["get", "text", candidate_url])
                         continue
                 if action == "evaluate":
                     normalized.append(["eval", *command[1:]])

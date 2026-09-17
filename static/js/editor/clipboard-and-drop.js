@@ -29,15 +29,21 @@
 import { state } from './state.js';
 import { createPlacedData, renderPlacedLayer } from './placed-layer.js';
 
+let clipboardBindings;
+
 export function wireClipboardAndDrop({
   container, saveState, createLayer, renderLayerPanel, composite,
   handleImportedImage, uiModule,
 }) {
+  clipboardBindings?.abort();
+  clipboardBindings = new AbortController();
+  const { signal } = clipboardBindings;
   // ── Paste ──
   window.addEventListener('paste', (e) => {
-    if (!state.editorOpen) return;
+    if (!state.editorOpen || state.container !== container || e.defaultPrevented) return;
+    if (e.target?.isContentEditable || e.target?.closest?.('input, textarea, select, [role="dialog"]')) return;
 
-    function pasteAsLayer(imgSource, label) {
+    function pasteAsLayer(imgSource, label, offset = { x: 0, y: 0 }) {
       if (!state.editorOpen) return; // user closed mid-paste
       saveState();
       const layer = createLayer(label || 'Pasted', imgSource.width, imgSource.height);
@@ -45,14 +51,15 @@ export function wireClipboardAndDrop({
       // Keep it source-backed with an identity matrix so future transforms do
       // not repeatedly resample the pasted pixels.
       layer.kind = 'placed';
-      layer.placed = createPlacedData(imgSource, [1, 0, 0, 1, 0, 0], label || 'Pasted');
+      layer.placed = createPlacedData(imgSource, [1, 0, 0, 1, offset.x, offset.y], label || 'Pasted');
       const rendered = renderPlacedLayer(layer);
       state.layerOffsets.set(layer.id, rendered.offset);
       state.layers.push(layer);
       state.activeLayerId = layer.id;
-      state.tool = 'move';
+      state.selectedLayerIds = [layer.id];
+      state.activeGroupId = null;
       const tb = state.container?.querySelector('.ge-toolbar');
-      if (tb) tb.querySelectorAll('.ge-tool-btn').forEach(b => b.classList.toggle('active', b.dataset.tool === 'move'));
+      tb?.querySelector('[data-tool="move"]')?.click();
       renderLayerPanel();
       composite();
       uiModule.showToast('Pasted as new layer');
@@ -62,7 +69,7 @@ export function wireClipboardAndDrop({
     if (state.internalClipboard) {
       e.preventDefault();
       e.stopImmediatePropagation();
-      pasteAsLayer(state.internalClipboard, 'Pasted Selection');
+      pasteAsLayer(state.internalClipboard, 'Pasted Selection', state.internalClipboardOffset || { x: 0, y: 0 });
       return;
     }
 
@@ -83,7 +90,7 @@ export function wireClipboardAndDrop({
       img.src = url;
       break;
     }
-  }, true);  // capture phase so we beat chat input
+  }, { capture: true, signal });
 
   // ── Drag-and-drop ──
   // Visual drop-zone overlay appears mid-drag; routes via

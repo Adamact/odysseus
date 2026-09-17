@@ -11,6 +11,38 @@ from src.upload_handler import reserve_upload_references
 logger = logging.getLogger(__name__)
 
 
+_DOCUMENT_SEARCH_STOPWORDS = frozenset({
+    'a', 'an', 'and', 'any', 'about', 'document', 'documents', 'for', 'in',
+    'my', 'of', 'on', 'or', 'plans', 'the', 'to',
+})
+
+
+def _document_search_tokens(value: str) -> list[str]:
+    return [
+        token for token in re.findall(r'[a-z0-9]+', str(value or '').lower())
+        if token not in _DOCUMENT_SEARCH_STOPWORDS
+    ]
+
+
+def _rank_document_search(docs, search_text: str):
+    """Prefer phrase/all-term matches, then broaden to any meaningful term."""
+    query = str(search_text or '').strip().lower()
+    terms = _document_search_tokens(query)
+    scored = []
+    for position, doc in enumerate(docs):
+        haystack = ' '.join((
+            str(getattr(doc, 'title', '') or ''),
+            str(getattr(doc, 'current_content', '') or ''),
+        )).lower()
+        haystack_terms = set(_document_search_tokens(haystack))
+        matched = sum(term in haystack_terms for term in terms)
+        strict = bool(query and query in haystack) or bool(terms and matched == len(terms))
+        scored.append((doc, strict, matched, position))
+    strict_matches = [row for row in scored if row[1]]
+    candidates = strict_matches or [row for row in scored if row[2] > 0]
+    return [row[0] for row in sorted(candidates, key=lambda row: (-row[2], row[3]))]
+
+
 def _missing_document_upload(owner: Optional[str], content: Any) -> Optional[str]:
     """Reserve explicit upload URLs before an agent persists document text."""
     return reserve_upload_references(get_upload_handler(), owner, content)
@@ -629,6 +661,12 @@ class UpdateDocumentTool:
             if is_email_doc:
                 doc.language = "email"
 
+            if new_content == (doc.current_content or ""):
+                return {
+                    "error": "No update applied — replacement content is unchanged",
+                    "exit_code": 1,
+                }
+
             missing_id = _missing_document_upload(owner, new_content)
             if missing_id:
                 return {
@@ -761,6 +799,10 @@ class EditDocumentTool:
             skipped = 0
             for edit in edits:
                 _find = edit["find"]
+                if _find == edit["replace"]:
+                    logger.warning("edit_document: skipping no-op FIND/REPLACE block")
+                    skipped += 1
+                    continue
                 if _find in updated_content:
                     updated_content = updated_content.replace(_find, edit["replace"], 1)
                     applied += 1
@@ -941,10 +983,22 @@ class ManageDocumentTool:
                     search_text = re.sub(
                         r"\s+(?:instead|please)\s*$", "", search_text, flags=re.IGNORECASE
                     ).strip()
-                    q = q.filter(Document.title.ilike(f"%{search_text}%"))
                 if args.get("language"):
                     q = q.filter(Document.language == args["language"])
-                docs = q.order_by(Document.updated_at.desc()).limit(args.get("limit", 50)).all()
+                requested_limit = args.get("limit", 50)
+                try:
+                    requested_limit = max(1, min(int(requested_limit), 200))
+                except (TypeError, ValueError):
+                    requested_limit = 50
+                q = q.order_by(Document.updated_at.desc())
+                # A plain listing must not load the entire document library
+                # (including every document body) before applying its limit.
+                if not search_text:
+                    q = q.limit(requested_limit)
+                docs = q.all()
+                if search_text:
+                    docs = _rank_document_search(docs, search_text)
+                docs = docs[:requested_limit]
                 if not docs:
                     msg = "No documents found" + (f" matching '{search_text}'" if search_text else "") + "."
                     return {"response": msg, "documents": [], "exit_code": 0}

@@ -697,7 +697,8 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
       switch_model <model>    — Change the model for the current session
       set_theme <preset>      — Apply a built-in theme preset (dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute)
       create_theme <name> <bg> <fg> <panel> <border> <accent> [key=val ...] — Create custom theme. Optional key=val: advanced color overrides AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false
-      open_panel <name>       — Open a panel (documents, gallery, calendar, email, sessions, notes, memories, skills, settings, theme, cookbook)
+      get_theme               — Return the last server-synchronized theme for this user
+      open_panel <name> [view] — Open a panel; Cookbook views are download/models, launch/serve, active/running, dependencies, settings
       open_email_reply <uid> [folder] [reply|reply-all|ai-reply] [body text] — Open a reply draft document for an email; does not send. ALWAYS append the body text when the user told you what to say (one-shot draft); only omit body when the user just asked to "open a reply" without content.
       get_toggles             — Return current toggle states (server-side knowledge)
     """
@@ -803,14 +804,27 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
         ]
         custom_themes = {}
         try:
-            from routes.prefs_routes import _load as _load_prefs
-            custom_themes = _load_prefs().get("custom-themes", {}) or {}
+            from routes.prefs_routes import _load_for_user
+            custom_themes = _load_for_user(owner).get("custom-themes", {}) or {}
         except Exception:
             pass
         all_known = set(known_presets) | set(custom_themes.keys())
         if theme_name not in all_known:
             custom_label = f" | Custom: {', '.join(sorted(custom_themes.keys()))}" if custom_themes else ""
             return {"error": f"Unknown theme '{theme_name}'. Available: {', '.join(sorted(known_presets))}{custom_label}"}
+        try:
+            from routes.prefs_routes import _load_for_user, _save_for_user
+            prefs = _load_for_user(owner)
+            previous = prefs.get("theme") if isinstance(prefs.get("theme"), dict) else {}
+            stored = {"name": theme_name}
+            if previous.get("name") == theme_name and isinstance(previous.get("colors"), dict):
+                stored["colors"] = previous["colors"]
+            elif isinstance(custom_themes.get(theme_name), dict):
+                stored["colors"] = custom_themes[theme_name]
+            prefs["theme"] = stored
+            _save_for_user(owner, prefs)
+        except Exception:
+            pass
         return {
             "ui_event": "set_theme",
             "theme_name": theme_name,
@@ -868,6 +882,17 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
                 bg["frosted"] = av.lower() in ("true", "1", "yes", "on")
         if advanced:
             colors["advanced"] = advanced
+        try:
+            from routes.prefs_routes import _load_for_user, _save_for_user
+            prefs = _load_for_user(owner)
+            custom_themes = prefs.get("custom-themes")
+            custom_themes = dict(custom_themes) if isinstance(custom_themes, dict) else {}
+            custom_themes[name] = dict(colors)
+            prefs["custom-themes"] = custom_themes
+            prefs["theme"] = {"name": name, "colors": dict(colors)}
+            _save_for_user(owner, prefs)
+        except Exception:
+            pass
         return {
             "ui_event": "create_theme",
             "theme_name": name,
@@ -901,6 +926,7 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
         # calendar, email, sessions, notes, memories, skills, settings, theme, cookbook.
         panel = parts[1].lower() if len(parts) > 1 else ""
         view = ""
+        view_label = ""
         target_date = ""
         _panel_aliases = {
             "documents": "documents",
@@ -943,6 +969,23 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
         target = _panel_aliases.get(panel)
         if not target:
             return {"error": f"Unknown panel '{panel}'. Valid: documents, gallery, calendar, email, sessions, notes, memories, skills, settings, theme, cookbook."}
+        if target == "cookbook":
+            cookbook_views = {
+                "models": ("Search", "models"), "model": ("Search", "models"),
+                "download": ("Search", "models"), "search": ("Search", "models"),
+                "serve": ("Serve", "launch"), "serving": ("Serve", "launch"),
+                "launch": ("Serve", "launch"),
+                "active": ("Running", "running"), "running": ("Running", "running"),
+                "dependencies": ("Dependencies", "dependencies"),
+                "dependency": ("Dependencies", "dependencies"),
+                "settings": ("Settings", "settings"),
+            }
+            requested_view = parts[2].strip().lower() if len(parts) > 2 else ""
+            # A panel alias can carry the subview intent by itself. Previously
+            # `models` and `serve` were silently collapsed to bare Cookbook.
+            resolved_view = cookbook_views.get(requested_view) or cookbook_views.get(panel)
+            if resolved_view:
+                view, view_label = resolved_view
         if target == "calendar":
             view_words = {"day", "week", "month", "year", "agenda"}
             tail_text = ""
@@ -964,9 +1007,13 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
             "panel": target,
             "results": f"Opening {target} panel",
         }
+        if panel != target:
+            payload["requested_panel"] = panel
         if view:
             payload["view"] = view
-            payload["results"] = f"Opening {target} panel in {view} view"
+            if view_label:
+                payload["view_label"] = view_label
+            payload["results"] = f"Opening {target} panel in {view_label or view} view"
         if target_date:
             payload["target_date"] = target_date
         return payload
@@ -1021,6 +1068,24 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
             result["body"] = body
         return result
 
+    elif action == "get_theme":
+        try:
+            from routes.prefs_routes import _load_for_user
+            saved = _load_for_user(owner).get("theme")
+        except Exception:
+            saved = None
+        name = str(saved.get("name") or "").strip() if isinstance(saved, dict) else ""
+        if not name:
+            return {
+                "results": "The current client theme has not been synchronized to the server.",
+                "theme_known": False,
+            }
+        return {
+            "results": f"Current theme: {name}",
+            "current_theme": name,
+            "theme_known": True,
+        }
+
     elif action == "get_toggles":
         return {
             "results": (
@@ -1031,7 +1096,7 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
         }
 
     else:
-        return {"error": f"Unknown action '{action}'. Use: toggle, set_mode, switch_model, set_theme, highlight, clear_highlight, get_toggles"}
+        return {"error": f"Unknown action '{action}'. Use: toggle, set_mode, switch_model, set_theme, create_theme, get_theme, highlight, clear_highlight, get_toggles"}
 
 
 # ---------------------------------------------------------------------------

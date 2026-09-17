@@ -17,7 +17,7 @@ from src.upload_handler import reserve_upload_references
 logger = logging.getLogger(__name__)
 
 
-async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
+async def do_manage_calendar(content: str, owner: Optional[str] = None, *, import_event_uid: Optional[str] = None) -> Dict:
     """Handle manage_calendar tool calls: list/create/update/delete calendar events (local SQLite)."""
     from core.database import SessionLocal, CalendarCal, CalendarEvent, Note
     from routes.calendar_routes import (
@@ -101,6 +101,22 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
         if owner is not None:
             q = q.filter(CalendarCal.owner == owner)
         return q
+
+    def _event_uid_candidates(raw_uid):
+        """Yield exact UID first, then unambiguous UI-anchor spellings.
+
+        Calendar results render links as ``#event-<uid>``. Models sometimes
+        copy that href (or drop only the leading ``#``) into the UID field.
+        Preserve real UIDs beginning with ``event-`` by trying the exact value
+        first and using the stripped form only as a not-found fallback.
+        """
+        text = str(raw_uid or "").strip()
+        candidates = [text]
+        if text.startswith("#event-"):
+            candidates.append(text[len("#event-"):])
+        elif text.startswith("event-"):
+            candidates.append(text[len("event-"):])
+        return [item for index, item in enumerate(candidates) if item and item not in candidates[:index]]
 
     def _first_present_arg(raw_args, *names: str):
         for name in names:
@@ -273,11 +289,11 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                         "exit_code": 1,
                     }
                 if start_raw:
-                    start_dt = _parse_dt(start_raw)
+                    start_dt, _ = _parse_event_dt(start_raw)
                 else:
                     start_dt = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
                 if end_raw:
-                    end_dt = _parse_dt(end_raw)
+                    end_dt, _ = _parse_event_dt(end_raw)
                 else:
                     end_dt = start_dt + timedelta(days=14)
             except ValueError as e:
@@ -421,13 +437,41 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             existing = (
                 _event_query()
                 .filter(
-                    CalendarEvent.dtstart == dtstart,
-                    CalendarEvent.status != "cancelled",
-                    _func.lower(CalendarEvent.summary) == summary.lower(),
+                    *([CalendarEvent.uid == import_event_uid] if import_event_uid else [
+                        CalendarEvent.dtstart == dtstart,
+                        CalendarEvent.status != "cancelled",
+                        _func.lower(CalendarEvent.summary) == summary.lower(),
+                    ]),
                 )
                 .first()
             )
             if existing is not None:
+                # Repair older email-imported events whose model-generated
+                # location was an unrelated map URL. A concrete meeting URL
+                # is stronger evidence than the existing free-text location.
+                incoming_location = str(args.get("location") or "").strip()
+                changed = False
+                if incoming_location and re.match(
+                    r"^https?://(?:teams\.microsoft\.com|(?:[a-z0-9-]+\.)?zoom\.us|meet\.google\.com|(?:[a-z0-9-]+\.)?webex\.com|meet\.jit\.si)/",
+                    incoming_location,
+                    re.IGNORECASE,
+                ) and (
+                    not str(existing.location or "").strip()
+                    or not re.match(
+                        r"^https?://(?:teams\.microsoft\.com|(?:[a-z0-9-]+\.)?zoom\.us|meet\.google\.com|(?:[a-z0-9-]+\.)?webex\.com|meet\.jit\.si)/",
+                        str(existing.location or "").strip(),
+                        re.IGNORECASE,
+                    )
+                ):
+                    existing.location = incoming_location
+                    changed = True
+                for field in ("source_email_uid", "source_email_folder", "source_email_account_id", "source_email_message_id"):
+                    incoming = str(args.get(field) or "").strip()
+                    if incoming and not getattr(existing, field, None):
+                        setattr(existing, field, incoming)
+                        changed = True
+                if changed:
+                    db.commit()
                 reminder_note_id = None
                 reminder_skipped_reason = None
                 minutes_before = _reminder_minutes(args)
@@ -486,7 +530,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                     "exit_code": 1,
                 }
 
-            uid = str(_uuid.uuid4())
+            uid = import_event_uid or str(_uuid.uuid4())
             ev = CalendarEvent(
                 uid=uid, calendar_id=cal.id, summary=summary,
                 description=event_description,
@@ -496,6 +540,10 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                 rrule=args.get("rrule", "") or "",
                 event_type=event_type,
                 importance=importance,
+                source_email_uid=str(args.get("source_email_uid") or "").strip() or None,
+                source_email_folder=str(args.get("source_email_folder") or "").strip() or None,
+                source_email_account_id=str(args.get("source_email_account_id") or "").strip() or None,
+                source_email_message_id=str(args.get("source_email_message_id") or "").strip() or None,
                 caldav_sync_pending="create" if cal.source == "caldav" else None,
             )
             db.add(ev)
@@ -545,11 +593,17 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                 uid = args.get("summary")
             if not uid:
                 return {"error": "uid is required", "exit_code": 1}
-            try:
-                base_uid = _resolve_base_uid(uid)
-            except ValueError as e:
-                return {"error": str(e), "exit_code": 1}
-            ev = _event_query().filter(CalendarEvent.uid == base_uid).first()
+            ev = None
+            base_uid = ""
+            for candidate_uid in _event_uid_candidates(uid):
+                try:
+                    candidate_base_uid = _resolve_base_uid(candidate_uid)
+                except ValueError:
+                    continue
+                ev = _event_query().filter(CalendarEvent.uid == candidate_base_uid).first()
+                if ev:
+                    base_uid = candidate_base_uid
+                    break
             if not ev:
                 title_matches = _event_query().filter(
                     CalendarEvent.summary == str(uid).strip()
@@ -581,6 +635,8 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                 ev.description = args["description"]
             if args.get("location") is not None:
                 ev.location = args["location"]
+            previous_dtstart = ev.dtstart
+            previous_dtend = ev.dtend
             if args.get("dtstart") is not None:
                 # Anchor naive/natural-language input to the USER's timezone and
                 # refresh is_utc, exactly like create_event. Parsing with the
@@ -594,6 +650,13 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                     ev.all_day = False
                 ev.dtstart, _su = _parse_event_dt(args["dtstart"])
                 ev.is_utc = bool(_su and not _eff_all_day)
+                if (
+                    args.get("dtend") is None
+                    and previous_dtstart is not None
+                    and previous_dtend is not None
+                    and previous_dtend > previous_dtstart
+                ):
+                    ev.dtend = ev.dtstart + (previous_dtend - previous_dtstart)
             if args.get("dtend") is not None:
                 ev.dtend, _eu = _parse_event_dt(args["dtend"])
                 if args.get("all_day") is None and bool(ev.all_day) and _looks_like_timed_dt(args["dtend"]):
@@ -607,6 +670,10 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                 ev.event_type = _tag or None
             if args.get("importance") is not None:
                 ev.importance = args["importance"]
+            for field in ("source_email_uid", "source_email_folder", "source_email_account_id", "source_email_message_id"):
+                incoming = str(args.get(field) or "").strip()
+                if incoming:
+                    setattr(ev, field, incoming)
             if args.get("rrule") is not None:
                 ev.rrule = args.get("rrule") or ""
             elif str(args.get("repeat") or "").strip().lower() in {"none", "no", "off", "false", "single"}:
@@ -672,11 +739,17 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                     return {"error": "Multiple events have that exact title; uid is required", "exit_code": 1}
             if not uid:
                 return {"error": "uid or exact summary is required", "exit_code": 1}
-            try:
-                base_uid = _resolve_base_uid(uid)
-            except ValueError as e:
-                return {"error": str(e), "exit_code": 1}
-            ev = _event_query().filter(CalendarEvent.uid == base_uid).first()
+            ev = None
+            base_uid = ""
+            for candidate_uid in _event_uid_candidates(uid):
+                try:
+                    candidate_base_uid = _resolve_base_uid(candidate_uid)
+                except ValueError:
+                    continue
+                ev = _event_query().filter(CalendarEvent.uid == candidate_base_uid).first()
+                if ev:
+                    base_uid = candidate_base_uid
+                    break
             if not ev:
                 return {"error": f"Event {uid} not found", "exit_code": 1}
             is_caldav = ev.calendar and ev.calendar.source == "caldav" and ev.remote_href

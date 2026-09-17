@@ -2,7 +2,7 @@
  * Tasks Module — scheduled recurring LLM prompts.
  */
 
-import uiModule from './ui.js?v=20260908weekhoverfix1';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import markdownModule from './markdown.js';
 import * as spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';
@@ -49,7 +49,7 @@ function _setTaskCompletionPending(active) {
 
 async function _fetchTasks() {
   try {
-    const res = await fetch(`${API_BASE}/api/tasks`, { credentials: 'same-origin' });
+    const res = await fetch(`${API_BASE}/api/tasks?include_last_run=true`, { credentials: 'same-origin' });
     const data = await res.json();
     _tasks = data.tasks || [];
   } catch (e) {
@@ -1001,6 +1001,25 @@ function _renderList() {
         _doRunNow(task.id);
       });
       detailActions.appendChild(runBtn);
+
+      // A manually-triggered run can remain queued behind the interactive
+      // model stream. Offer the existing force-run backend path directly in
+      // the expanded task card so the user does not have to find the run in
+      // Activity first.
+      const waitingForIdle = /waiting\s+for\s+.*?to\s+be\s+idle|queued/i.test(
+        String(task.last_run_result || '')
+      );
+      if (waitingForIdle) {
+        const forceRunBtn = document.createElement('button');
+        forceRunBtn.className = 'memory-toolbar-btn task-detail-force-run-btn';
+        forceRunBtn.title = 'Run anyway, even while Odysseus is busy';
+        forceRunBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:4px;"><polygon points="6 4 20 12 6 20 6 4"/></svg>Run anyway';
+        forceRunBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          _doRunNow(task.id, true);
+        });
+        detailActions.appendChild(forceRunBtn);
+      }
     }
     const editBtn = document.createElement('button');
     editBtn.className = 'memory-toolbar-btn task-detail-edit-btn';
@@ -1323,9 +1342,9 @@ function _showForm(existing, initTaskType, initTriggerType) {
       </select>
       <div id="task-form-output-extra"></div>
 
-      <label class="task-form-label">Model <span style="opacity:0.5;font-weight:normal;font-size:10px;">(optional — overrides session default)</span></label>
+      <label class="task-form-label">Run with model <span style="opacity:0.5;font-weight:normal;font-size:10px;">(optional — uses Utility by default)</span></label>
       <select id="task-form-model" class="task-form-input">
-        <option value="">Use session default</option>
+        <option value="">Use Utility default</option>
       </select>
 
       <label class="task-form-label">Chain</label>
@@ -1660,7 +1679,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
 
   // Populate model dropdown from /api/models. Value is "endpoint_url::model"
   // so a single field encodes both the model name and which endpoint to call.
-  // Blank value (option 0) = inherit session default.
+  // Blank value (option 0) = inherit the background-task Utility/Default chain.
   fetch(`${API_BASE}/api/models`, { credentials: 'same-origin' })
     .then(r => r.json())
     .then(data => {
@@ -2551,6 +2570,12 @@ function _renderCompletedPreviewEntry(entry) {
   }
   const title = _escHtml(entry.taskName || 'Task');
   const time = `<span class="task-log-time" title="${_escHtml(tsAbs)}">${_escHtml(tsLabel)}</span>`;
+  const reportButton = entry.researchId
+    ? `<button class="doclib-chat-open-btn task-completed-report-btn" type="button" title="Open the visual research report">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            Visual Report
+          </button>`
+    : '';
   return `
     <div class="memory-item doclib-chat-row task-completed-preview-row" data-entry-idx="${entryIdx}">
       <div class="doclib-chat-header task-completed-preview-head">
@@ -2569,6 +2594,7 @@ function _renderCompletedPreviewEntry(entry) {
           </div>
         </div>
         <div class="doclib-chat-preview-actions">
+          ${reportButton}
           <button class="doclib-chat-copy-btn task-completed-copy-btn" type="button">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
             Copy
@@ -2584,6 +2610,17 @@ function _renderCompletedPreviewEntry(entry) {
 }
 
 function _wireCompletedPreviewRows(list) {
+  list.querySelectorAll('.task-completed-report-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const row = btn.closest('.task-completed-preview-row');
+      const idx = parseInt(row?.dataset.entryIdx || '-1', 10);
+      const entry = _activityEntries[idx];
+      if (entry?.researchId) {
+        window.open(`${API_BASE}/api/research/report/${encodeURIComponent(entry.researchId)}`, '_blank');
+      }
+    });
+  });
   list.querySelectorAll('.task-completed-open-chat').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2846,7 +2883,17 @@ function _renderActivityEntry(entry, opts = {}) {
   if (hasResult && entry.taskId) {
     actionBtn += `<button class="task-log-run-again" type="button" title="Run this task again">
          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-         Run again
+       Run again
+       </button>`;
+  }
+  // Keep the bypass action in the same visible action strip as the other
+  // task controls. It is specifically for queued runs waiting on the model
+  // idle gate; completed rows retain the normal "Run again" action.
+  const waitingForIdle = /waiting\s+for\s+.*?to\s+be\s+idle/i.test(String(entry.result || ''));
+  if (entry.taskId && (_isRunning && entry.status === 'queued' || waitingForIdle)) {
+      actionBtn += `<button class="task-log-run-again task-log-force-run task-log-force-run-action" type="button" title="Run anyway, even while Odysseus is busy">
+         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+         Run anyway
        </button>`;
   }
   // Running rows replace the relative-time on the right with "Running NN" + a
@@ -2861,9 +2908,8 @@ function _renderActivityEntry(entry, opts = {}) {
     const stale = !isQueued && (Date.now() - startMs) > 30 * 60 * 1000;
     const label = isQueued ? 'Queued' : stale ? 'Still running' : 'Running';
     const elapsedInit = isQueued ? '' : `<span class="task-log-running-elapsed" data-since="${startMs}">${_fmtElapsed(Date.now() - startMs)}</span>`;
-    const forceBtn = isQueued && entry.taskId ? `<button class="task-log-force-run" type="button" title="Start now in parallel, bypassing the queue"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg><span>Start now</span></button>` : '';
     const stopBtn = entry.taskId ? `<button class="task-log-stop" type="button" title="Stop this task"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></button>` : '';
-    rightHtml = `<span class="task-log-running-inline"><span class="task-log-running-label">${label}</span>${elapsedInit}<span data-spin-here="1"></span>${forceBtn}${stopBtn}</span>`;
+    rightHtml = `<span class="task-log-running-inline"><span class="task-log-running-label">${label}</span>${elapsedInit}<span data-spin-here="1"></span>${stopBtn}</span>`;
   } else {
     rightHtml = `<span class="task-log-time" title="${_escHtml(tsAbs)}">${_escHtml(tsLabel)}</span>`;
   }

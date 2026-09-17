@@ -143,6 +143,33 @@ def test_search_matches_meaningful_tokens_when_phrase_skips_words(monkeypatch):
     assert "Tokyo dinner reservation" not in result["results"]
 
 
+def test_search_matches_singular_and_plural_terms_across_label_and_title(monkeypatch):
+    matching = _note(
+        id="contractor-existing",
+        title="Contractor list",
+        content="Extension status",
+        note_type="note",
+        label="forecast",
+        items=None,
+    )
+    other = _note(id="other-note", title="Forecast budget", content="No vendors")
+    fake_attrs = types.ModuleType("sqlalchemy.orm.attributes")
+    fake_attrs.flag_modified = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sqlalchemy.orm.attributes", fake_attrs)
+    fake_db = types.ModuleType("core.database")
+    fake_db.SessionLocal = lambda: _Db([matching, other])
+    fake_db.Note = MagicMock()
+    monkeypatch.setitem(sys.modules, "core.database", fake_db)
+
+    result = asyncio.run(tool_implementations.do_manage_notes(
+        json.dumps({"action": "search", "query": "Forecast Contractors"}),
+        owner=None,
+    ))
+
+    assert "Contractor list" in result["results"]
+    assert "Forecast budget" not in result["results"]
+
+
 def test_list_hides_calendar_reminder_notes_by_default(monkeypatch):
     regular = _note(id="abc12345-existing", title="Real user note")
     calendar_reminder = _note(

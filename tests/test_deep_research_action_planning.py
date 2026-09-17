@@ -440,6 +440,20 @@ def test_generate_queries_rejects_meta_only_queries():
     assert queries == ["Gustav III Swedish king dancing"]
 
 
+def test_search_result_prioritization_drops_generic_hits_when_topic_hits_exist():
+    researcher = _researcher(_ActionNavigator())
+    results = researcher._prioritize_search_results([
+        {"url": "https://dictionary.example/best", "title": "Best Definition"},
+        {
+            "url": "https://example.com/local-ai",
+            "title": "Local AI hardware guide",
+            "snippet": "GPU memory and computer requirements for local models",
+        },
+    ], limit=10, question="Best computer to run local AI")
+
+    assert [item["url"] for item in results] == ["https://example.com/local-ai"]
+
+
 def test_action_planning_sees_recent_navigation_trace(monkeypatch):
     monkeypatch.setattr("src.settings.get_setting", lambda key, default=None: True)
     nav = _ActionNavigator()

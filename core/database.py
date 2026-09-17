@@ -194,6 +194,7 @@ class Session(TimestampMixin, Base):
     rag = Column(Boolean, default=False)
     archived = Column(Boolean, default=False)
     memory_extraction_enabled = Column(Boolean, default=True)
+    memory_injection_enabled = Column(Boolean, default=True)
     skill_injection_enabled = Column(Boolean, default=True)
     thinking_mode = Column(String, nullable=True, default="off")
     temperature_override = Column(Float, nullable=True, default=None)
@@ -249,6 +250,7 @@ class Session(TimestampMixin, Base):
             'rag': self.rag,
             'archived': self.archived,
             'memory_extraction_enabled': self.memory_extraction_enabled is not False,
+            'memory_injection_enabled': self.memory_injection_enabled is not False,
             'skill_injection_enabled': self.skill_injection_enabled is not False,
             'thinking_mode': self.thinking_mode or '',
             'temperature_override': self.temperature_override,
@@ -999,6 +1001,28 @@ def _migrate_add_skill_injection_enabled_column():
             logging.getLogger(__name__).info("Migrated: added skill_injection_enabled to sessions")
     except Exception as e:
         logging.getLogger(__name__).warning(f"skill_injection_enabled migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+def _migrate_add_memory_injection_enabled_column():
+    """Add per-session memory context injection toggle."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()]
+        if "memory_injection_enabled" not in columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN memory_injection_enabled BOOLEAN DEFAULT 1")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added memory_injection_enabled to sessions")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"memory_injection_enabled migration failed: {e}")
     finally:
         try:
             conn.close()
@@ -1770,6 +1794,29 @@ def _migrate_add_doc_source_email_cols():
     except Exception as e:
         logging.getLogger(__name__).warning(f"doc source-email migration: {e}")
 
+
+def _migrate_add_calendar_source_email_cols():
+    """Add provenance fields so email-created events can link back to the email."""
+    cols_to_add = {
+        "source_email_uid": "VARCHAR",
+        "source_email_folder": "VARCHAR",
+        "source_email_account_id": "VARCHAR",
+        "source_email_message_id": "VARCHAR",
+    }
+    try:
+        with engine.connect() as conn:
+            existing = {r[1] for r in conn.execute(text("PRAGMA table_info(calendar_events)"))}
+            for col, spec in cols_to_add.items():
+                if col not in existing:
+                    conn.execute(text(f"ALTER TABLE calendar_events ADD COLUMN {col} {spec}"))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_calendar_events_source_email_message_id "
+                "ON calendar_events (source_email_message_id)"
+            ))
+            conn.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"calendar source-email migration: {e}")
+
 def _migrate_add_task_automation_columns():
     """Add automation columns to scheduled_tasks table if missing."""
     new_cols = {
@@ -2073,8 +2120,29 @@ class CalendarEvent(TimestampMixin, Base):
     remote_href = Column(String, nullable=True)        # CalDAV object URL for updates/deletes
     remote_etag = Column(String, nullable=True)        # Last seen CalDAV ETag, when available
     caldav_sync_pending = Column(String, nullable=True) # create | update | delete retry marker
+    # Provenance for events extracted from email. UID/folder form the frontend
+    # deep link: #email=<folder>:<imap uid>.
+    source_email_uid = Column(String, nullable=True, index=True)
+    source_email_folder = Column(String, nullable=True)
+    source_email_account_id = Column(String, nullable=True, index=True)
+    source_email_message_id = Column(String, nullable=True, index=True)
 
     calendar = relationship("CalendarCal", back_populates="events")
+
+
+class EmailCalendarInvitation(TimestampMixin, Base):
+    """Revision/tombstone state for one owner's email invitation source."""
+    __tablename__ = "email_calendar_invitations"
+
+    id = Column(String, primary_key=True)
+    owner = Column(String, nullable=False, index=True)
+    sender = Column(String, nullable=False)
+    source_uid = Column(String, nullable=False)
+    recurrence_id = Column(String, nullable=False, default="")
+    event_uid = Column(String, nullable=True)
+    sequence = Column(Integer, nullable=False, default=0)
+    stamp = Column(String, nullable=False, default="")
+    cancelled = Column(Boolean, nullable=False, default=False)
 
 
 class CalendarDeletedEvent(TimestampMixin, Base):
@@ -2305,6 +2373,7 @@ def init_db():
     _migrate_add_document_archived_column()
     _migrate_add_last_message_at_column()
     _migrate_add_memory_extraction_enabled_column()
+    _migrate_add_memory_injection_enabled_column()
     _migrate_add_skill_injection_enabled_column()
     _migrate_add_session_generation_settings_columns()
     _migrate_add_folder_column()
@@ -2319,6 +2388,7 @@ def init_db():
     _migrate_assign_legacy_owner()
     _migrate_add_tidy_verdict()
     _migrate_add_doc_source_email_cols()
+    _migrate_add_calendar_source_email_cols()
     _migrate_add_oauth_config()
     _migrate_add_email_oauth_columns()
     _migrate_add_task_automation_columns()

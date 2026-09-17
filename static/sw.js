@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v636-shell-toggle-authority';
+const CACHE_NAME = 'odysseus-v649-large-tool-synthesis-scroll';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -39,11 +39,11 @@ const KATEX_FONTS = [
 // exact URL the browser requests, query string included.
 const PRECACHE = [
   '/',
-  '/static/style.css?v=20260910researchmobilebuttons41',
-  '/static/app.js?v=20260910shelltoggle3',
+  '/static/style.css?v=20260914pdfstrip1',
+  '/static/app.js?v=20260916autoscroll1',
   '/static/js/storage.js',
   '/static/js/appConfig.js',
-  '/static/js/ui.js?v=20260908weekhoverfix1',
+  '/static/js/ui.js?v=20260916largetoolscroll1',
   '/static/js/markdown.js',
   '/static/js/dragSort.js',
   '/static/js/sessions.js',
@@ -60,12 +60,12 @@ const PRECACHE = [
   '/static/js/search.js',
   '/static/js/spinner.js',
   '/static/js/tts-ai.js',
-  '/static/js/document.js?v=20260910minimizedcontext1',
+  '/static/js/document.js?v=20260916docctx2',
   '/static/js/gallery.js?v=20260910promptcopy1',
-  '/static/js/chatRenderer.js?v=20260910streamlinks2',
+  '/static/js/chatRenderer.js?v=20260914pdfstrip1',
   '/static/js/codeRunner.js?v=20260831richtexttools91',
-  '/static/js/chatStream.js?v=20260909cardlayout1',
-  '/static/js/chat.js?v=20260910shelltoggle1',
+  '/static/js/chatStream.js?v=20260914pdfstrip1',
+  '/static/js/chat.js?v=20260917toolttft1',
   '/static/js/cookbook.js',
   '/static/js/search-chat.js',
   '/static/js/compare/index.js?v=20260909mobilepaneaddscroll1',
@@ -74,8 +74,8 @@ const PRECACHE = [
   '/static/js/panels.js?v=20260909movepicklayer1',
   '/static/js/theme.js?v=20260909effectspeed1',
   '/static/js/censor.js',
-  '/static/js/settings.js?v=20260909defaultmodelfix1',
-  '/static/js/admin.js?v=20260908notificationcopy1',
+  '/static/js/settings.js?v=20260912writingstyle3',
+  '/static/js/admin.js?v=20260914toolschemaprofiles1',
   '/static/js/init.js?v=20260829chatstyle12',
   '/static/js/slashCommands.js?v=20260902tuiharness1',
   '/static/js/research/jobs.js?v=20260910researcherrorpersist1',
@@ -84,8 +84,8 @@ const PRECACHE = [
   '/static/js/emailLibrary/signatureFold.js',
   '/static/js/emailLibrary/state.js',
   '/static/js/notes.js?v=20260910drawmerge2',
-  '/static/js/tasks.js?v=20260910tasksortpicker1',
-  '/static/js/calendar.js?v=20260903weekscrollstable1',
+  '/static/js/tasks.js?v=20260914taskmodel1',
+  '/static/js/calendar.js?v=20260914emailsource11',
   '/static/js/calendar/utils.js',
   '/static/js/calendar/reminders.js',
   '/static/js/group.js',

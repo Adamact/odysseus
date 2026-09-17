@@ -17,11 +17,11 @@ async def test_malformed_text_artifact_write_uses_one_bounded_raw_body_handoff(m
         {'choices': [{'delta': {'tool_calls': [{
             'index': 0, 'id': 'truncated-write', 'function': {
                 'name': 'write_file',
-                'arguments': '{"path": "/workspace/output.html"',
+                'arguments': '{"content": "# Evidence\\n\\nA long report that was clipped',
             },
         }]}}]},
         {'choices': [{'delta': {
-            'content': '<!doctype html><html><body>route</body></html>',
+            'content': '# Evidence\n\nComplete recovered report.',
         }}]},
     ])
 
@@ -72,7 +72,10 @@ async def test_malformed_text_artifact_write_uses_one_bounded_raw_body_handoff(m
 
     raw = [chunk async for chunk in stream_preview(
         endpoint_url='http://test', model='test',
-        messages=[{'role': 'user', 'content': 'Create /workspace/output.html.'}],
+        messages=[{'role': 'user', 'content': (
+            "Save a concise evidence-grounded Markdown report to 'output.md' "
+            'with write_file and verify it with read_file.'
+        )}],
         headers={}, turn_contract=contract, session_id='test', owner='test',
         disabled_tools=set(), tool_policy=ToolPolicy(), workspace='/tmp/workspace',
         client_runtime_context={
@@ -88,8 +91,8 @@ async def test_malformed_text_artifact_write_uses_one_bounded_raw_body_handoff(m
     assert len(executed) == 1
     assert executed[0].tool_type == 'write_file'
     assert executed[0].content == (
-        '/workspace/output.html\n'
-        '<!doctype html><html><body>route</body></html>'
+        'output.md\n'
+        '# Evidence\n\nComplete recovered report.'
     )
     assert any(event.get('type') == 'artifact_body_handoff' for event in events)
     assert any(

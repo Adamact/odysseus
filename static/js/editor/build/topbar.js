@@ -51,7 +51,6 @@ export function buildTopbar() {
       <span class="ge-topbar-sep"></span>
     </div>
     <div class="ge-topbar-right">
-      <span class="ge-draft-status" id="ge-draft-status" role="status" aria-live="polite" title="Draft status">Not saved</span>
       <span class="ge-canvas-size" id="ge-canvas-size" title="Canvas size" hidden></span>
       <div class="ge-view-wrap">
         <button class="ge-btn ge-btn-sm ge-stacked-btn" id="ge-view-menu-btn" title="Canvas view" aria-haspopup="true">
@@ -74,6 +73,7 @@ export function buildTopbar() {
           <span class="ge-stacked-label">IMAGE</span>
         </button>
         <div class="ge-image-menu dropdown" id="ge-image-menu" hidden>
+          <button class="dropdown-item-compact" data-image-action="fill"><span>Fill selection / mask</span></button>
           <button class="dropdown-item-compact" data-image-action="canvas-size">
             <span class="dropdown-icon">⤢</span>
             <span>Canvas Size...</span>
@@ -107,8 +107,8 @@ export function buildTopbar() {
           <span class="ge-stacked-label">SELECT</span>
         </button>
         <div class="ge-selection-menu dropdown" id="ge-selection-menu" hidden>
-          <button class="dropdown-item-compact" data-selection-action="all"><span>Select All</span><span class="dropdown-shortcut">Ctrl+Alt+A</span></button>
-          <button class="dropdown-item-compact" data-selection-action="deselect"><span>Deselect</span><span class="dropdown-shortcut">Ctrl+Shift+D</span></button>
+          <button class="dropdown-item-compact" data-selection-action="all"><span>Select All</span><span class="dropdown-shortcut">Ctrl+A</span></button>
+          <button class="dropdown-item-compact" data-selection-action="deselect"><span>Deselect</span><span class="dropdown-shortcut">Ctrl+D</span></button>
           <button class="dropdown-item-compact" data-selection-action="reselect"><span>Reselect</span></button>
           <button class="dropdown-item-compact" data-selection-action="invert"><span>Invert</span><span class="dropdown-shortcut">Ctrl+Alt+I</span></button>
           <button class="dropdown-item-compact" data-selection-action="transform"><span>Transform Selection</span></button>
@@ -177,8 +177,11 @@ export function buildTopbar() {
       </button>
       <div class="ge-save-wrap">
         <button class="ge-btn ge-btn-sm ge-btn-primary ge-stacked-btn" id="ge-save-menu-btn" title="Save options">
-          <span class="ge-stacked-glyph"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg><span class="ge-stacked-caret">▾</span></span>
-          <span class="ge-stacked-label">SAVE</span>
+          <span class="ge-stacked-glyph">
+            <svg hidden class="ge-save-state-icon ge-save-state-dirty" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3h12l4 4v14H4z"/><path d="M8 3v6h8V3"/><path d="m16 3 6 6m0-6-6 6" stroke="var(--fg)" stroke-width="3"/></svg>
+            <svg class="ge-save-state-icon ge-save-state-saved" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+          </span>
+          <span class="ge-stacked-label ge-save-label" id="ge-draft-status" role="status" aria-live="polite">Saved</span>
         </button>
         <div class="ge-save-menu dropdown" id="ge-save-menu" hidden>
           <div class="dropdown-section-label">Image</div>

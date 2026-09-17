@@ -86,6 +86,89 @@ def _extract_json_array_from_text(text: str):
     return last
 
 
+def _calendar_attachment_payloads(msg):
+    """Return calendar attachment bytes without asking an LLM to interpret them."""
+    if not msg:
+        return []
+    found = []
+    for part in msg.walk():
+        filename = _decode_header(part.get_filename() or "")
+        content_type = (part.get_content_type() or "").lower()
+        is_calendar = bool(re.search(r"\.(?:calendar|ics|ical)$", filename, re.I)) or content_type in {
+            "text/calendar", "application/ics", "application/icalendar",
+            "application/calendar+json",
+        }
+        if not is_calendar or part.is_multipart():
+            continue
+        payload = part.get_payload(decode=True)
+        if payload:
+            found.append((filename or "calendar.ics", payload))
+    return found
+
+
+async def _import_calendar_attachments(msg, *, owner, sender, subject,
+                                       source_email_uid="", source_email_folder="",
+                                       source_email_account_id="", source_email_message_id=""):
+    """Import VEVENTs from attached calendar files and return created UIDs."""
+    attachments = _calendar_attachment_payloads(msg)
+    if not attachments:
+        return [], 0
+    from icalendar import Calendar as _ICalendar
+    from src.email_calendar_import import apply_invitation
+
+    event_uids = []
+    created = 0
+    for filename, payload in attachments:
+        try:
+            calendar = _ICalendar.from_ical(payload)
+        except Exception as exc:
+            logger.warning("Calendar attachment %s could not be parsed: %s", filename, exc)
+            raise ValueError(f"Invalid calendar attachment: {filename}") from exc
+        for component in calendar.walk():
+            if component.name != "VEVENT":
+                continue
+            start = component.get("dtstart")
+            start_value = getattr(start, "dt", None)
+            all_day = not isinstance(start_value, datetime)
+            dtstart = start_value.isoformat() if hasattr(start_value, "isoformat") else None
+            end = component.get("dtend")
+            end_value = end.dt if end and getattr(end, "dt", None) else None
+            dtend = end_value.isoformat() if end_value and hasattr(end_value, "isoformat") else None
+            summary = str(component.get("summary") or subject or "Calendar event").strip()
+            description = str(component.get("description") or "").strip()
+            source_note = f"[Auto-added from calendar attachment: {filename}]"
+            description = f"{source_note}\n{description}".strip()
+            args = {
+                "action": "create_event",
+                "summary": summary,
+                "dtstart": dtstart,
+                "all_day": all_day,
+                "description": f"{description}\nFrom: {sender}".strip(),
+                "location": str(component.get("location") or "").strip(),
+                "source_email_uid": str(source_email_uid or "").strip(),
+                "source_email_folder": str(source_email_folder or "").strip(),
+                "source_email_account_id": str(source_email_account_id or "").strip(),
+                "source_email_message_id": str(source_email_message_id or "").strip(),
+            }
+            if dtend:
+                args["dtend"] = dtend
+            if component.get("rrule"):
+                args["rrule"] = component.get("rrule").to_ical().decode()
+            result = await apply_invitation(
+                component, str(calendar.get("method", "")),
+                owner=owner, sender=sender, args=args,
+            )
+            if result.get("exit_code", 0) == 0:
+                uid = str(result.get("uid") or "").strip()
+                if uid:
+                    event_uids.append(uid)
+                if not result.get("duplicate"):
+                    created += 1
+            else:
+                logger.warning("Calendar attachment event creation failed: %s", result.get("error"))
+    return event_uids, created
+
+
 def _owner_for_email_account(account_id: str | None) -> str:
     if not account_id:
         return ""
@@ -414,7 +497,8 @@ async def _run_auto_summarize_once(do_summary: bool = True, do_reply: bool = Tru
                                    days_back: int = 1,
                                    account_id: str | None = None,
                                    max_process: int | None = None,
-                                   progress_cb=None) -> str:
+                                   progress_cb=None, override_url=None,
+                                   override_model=None, override_headers=None) -> str:
     """One iteration of the email scan. Temporarily flips settings flags
     so the existing background-loop logic runs exactly once for the requested ops."""
     settings = _load_settings()
@@ -434,6 +518,9 @@ async def _run_auto_summarize_once(do_summary: bool = True, do_reply: bool = Tru
             account_id=account_id,
             max_process=max_process,
             progress_cb=progress_cb,
+            override_url=override_url,
+            override_model=override_model,
+            override_headers=override_headers,
         )
     finally:
         s2 = _load_settings()
@@ -475,7 +562,7 @@ def _latest_inbox_fallback_uids(conn, reconnect):
         return [], reconnect()
 
 
-async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None, max_process: int | None = None, progress_cb=None, away_only: bool = False) -> str:
+async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None, max_process: int | None = None, progress_cb=None, away_only: bool = False, override_url=None, override_model=None, override_headers=None) -> str:
     """Single pass of the auto-summarize/reply scan.
 
     When account_id is None, iterates over every enabled account in
@@ -508,6 +595,9 @@ async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None
                 max_process=max_process,
                 progress_cb=progress_cb,
                 away_only=away_only,
+                override_url=override_url,
+                override_model=override_model,
+                override_headers=override_headers,
             )
         outs = []
         for idx, aid in enumerate(ids, start=1):
@@ -519,6 +609,9 @@ async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None
                     max_process=max_process,
                     progress_cb=progress_cb,
                     away_only=away_only,
+                    override_url=override_url,
+                    override_model=override_model,
+                    override_headers=override_headers,
                 )
                 outs.append(f"[{names.get(aid, aid[:8])}] {result}")
             except Exception as e:
@@ -531,10 +624,13 @@ async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None
         max_process=max_process,
         progress_cb=progress_cb,
         away_only=away_only,
+        override_url=override_url,
+        override_model=override_model,
+        override_headers=override_headers,
     )
 
 
-async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None = None, max_process: int | None = None, progress_cb=None, away_only: bool = False) -> str:
+async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None = None, max_process: int | None = None, progress_cb=None, away_only: bool = False, override_url=None, override_model=None, override_headers=None) -> str:
     """Single pass of the auto-summarize/reply scan for ONE account.
     Reads current settings flags."""
     import asyncio
@@ -555,7 +651,10 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
         auto_tag = False
         auto_spam = False
         auto_cal = False
-    if not auto_sum and not auto_reply_draft and not auto_reply_away and not auto_tag and not auto_spam and not auto_cal:
+    # Calendar files are deterministic input and should be imported even when
+    # the optional AI calendar-extraction toggle is off.
+    calendar_attachment_scan = True
+    if not auto_sum and not auto_reply_draft and not auto_reply_away and not auto_tag and not auto_spam and not auto_cal and not calendar_attachment_scan:
         return "Nothing to do"
 
     # Owner of the account being processed. All calendar + mailbox reads/writes
@@ -638,7 +737,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
         _cal_existing = set() if away_only else {r[0] for r in _c.execute(
             f"SELECT message_id FROM email_calendar_extractions WHERE {_cache_owner_clause}",
             _cache_owner_params,
-        ).fetchall()} if auto_cal else set()
+        ).fetchall()}
         # Urgency is handled by the built-in `check_email_urgency` task. Keep
         # this legacy poller path disabled so users don't get two independent
         # urgent-email systems.
@@ -663,7 +762,16 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
 
         needs_llm = bool(auto_sum or auto_reply_draft or auto_tag or auto_spam or auto_cal)
         if needs_llm:
-            task_candidates = resolve_task_candidates(owner=account_owner)
+            resolver_kwargs = {"owner": account_owner}
+            # Keep the legacy resolver call shape when no task override is
+            # selected. This matters for extensions that wrap the resolver.
+            if override_url is not None:
+                resolver_kwargs["override_url"] = override_url
+            if override_model is not None:
+                resolver_kwargs["override_model"] = override_model
+            if override_headers is not None:
+                resolver_kwargs["override_headers"] = override_headers
+            task_candidates = resolve_task_candidates(**resolver_kwargs)
             if not task_candidates:
                 return "No model configured"
             url, model, headers = task_candidates[0]
@@ -754,7 +862,11 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                     and not _away_reply_already_sent(settings, account_owner, account_id, message_id, _from_addr_only)
                 )
                 need_class = (auto_tag or auto_spam) and message_id not in _tag_existing
-                need_cal = bool(settings.get("email_auto_calendar", False)) and message_id not in _cal_existing
+                has_calendar_attachment = bool(_calendar_attachment_payloads(msg))
+                need_cal = (
+                    (bool(settings.get("email_auto_calendar", False)) or has_calendar_attachment)
+                    and message_id not in _cal_existing
+                )
                 need_urgent = (auto_urgent and message_id not in _urgent_existing
                                and not _folder.lower().startswith("sent")
                                and "sent" not in _folder.lower()
@@ -811,6 +923,46 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                 body_for_llm = body
                 if att_text:
                     body_for_llm = (body or "") + "\n\n--- ATTACHMENTS ---\n\n" + att_text
+
+                # A real calendar attachment is already structured; do not
+                # spend a small model call reinterpreting it (and do not let
+                # the model turn a Teams URL into an OpenStreetMap location).
+                if need_cal and has_calendar_attachment:
+                    try:
+                        _attachment_uids, _attachment_created = await _import_calendar_attachments(
+                            msg, owner=_acct_owner, sender=sender, subject=subject,
+                            source_email_uid=uid.decode() if isinstance(uid, bytes) else str(uid),
+                            source_email_folder=_folder, source_email_account_id=account_id,
+                            source_email_message_id=message_id,
+                        )
+                        _events_created += _attachment_created
+                        _cal_existing.add(message_id)
+                        _cc = _sql3.connect(SCHEDULED_DB)
+                        _cc.execute(
+                            "INSERT OR REPLACE INTO email_calendar_extractions "
+                            "(message_id, owner, uid, event_uids, events_created, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                            (message_id, account_owner or "", uid.decode() if isinstance(uid, bytes) else str(uid),
+                             json.dumps(_attachment_uids), _attachment_created, datetime.utcnow().isoformat()),
+                        )
+                        _cc.commit()
+                        _cc.close()
+                        need_cal = False
+                        _uid_text = uid.decode() if isinstance(uid, bytes) else str(uid)
+                        _detail_lines.append(
+                            f"calendar attachment · {_folder}#{_uid_text} · {subject or '(no subject)'} — "
+                            f"{_attachment_created} event(s)"
+                        )
+                    except Exception as _calendar_attachment_error:
+                        # Keep the structured attachment retryable. Asking an
+                        # LLM to reinterpret a failed cancellation can create
+                        # the very event that was meant to be cancelled.
+                        need_cal = False
+                        logger.warning(
+                            "Calendar attachment import failed for uid=%s: %s",
+                            uid, _calendar_attachment_error,
+                        )
+                        # Cache only successful parses; a transient failure can
+                        # be retried on the next poll.
 
                 req_headers = {"Content-Type": "application/json"}
                 if headers:
@@ -1003,7 +1155,11 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                             cuid = op.get("uid")
                                             if not cuid or not op.get("date"):
                                                 continue
-                                            args = {"action": "update_event", "uid": cuid, "dtstart": op["date"]}
+                                            args = {"action": "update_event", "uid": cuid, "dtstart": op["date"],
+                                                    "source_email_uid": str(uid.decode() if isinstance(uid, bytes) else uid),
+                                                    "source_email_folder": _folder,
+                                                    "source_email_account_id": account_id,
+                                                    "source_email_message_id": message_id}
                                             if op.get("end_date"): args["dtend"] = op["end_date"]
                                             if op.get("title"): args["summary"] = op["title"]
                                             if op.get("description"):
@@ -1037,8 +1193,14 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                                 # 1) Virtual meeting links
                                                 _mtg_re = _re.compile(r"https?://(?:teams\.microsoft\.com|(?:[a-z0-9-]+\.)?zoom\.us|meet\.google\.com|(?:[a-z0-9-]+\.)?webex\.com|meet\.jit\.si)/[^\s]+", _re.I)
                                                 _mtg_links = _mtg_re.findall(body or "")
-                                                if _mtg_links and not _loc:
-                                                    _loc = _mtg_links[0]
+                                                # A join URL is authoritative for a
+                                                # virtual meeting. Small models
+                                                # sometimes hallucinate a map URL
+                                                # (e.g. OpenStreetMap) as the
+                                                # location even when Teams is in
+                                                # the email.
+                                                if _mtg_links:
+                                                    _loc = _mtg_links[0].rstrip("<>.,);]")
 
                                                 # 2) Tracking URLs (delivery)
                                                 _track_re = _re.compile(r"https?://(?:www\.)?(?:amazon\.(?:com|co\.jp|co\.uk)/(?:gp/your-account/order|progress-tracker)|track\.[a-z0-9-]+\.(?:com|jp)|[a-z0-9-]*\.fedex\.com|[a-z0-9-]*\.ups\.com|[a-z0-9-]*\.dhl\.com|trackings\.post\.japanpost\.jp)[^\s]*", _re.I)
@@ -1089,6 +1251,10 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                                 "dtend": _dtend,
                                                 "location": _loc,
                                                 "description": "\n\n".join(filter(None, _desc_parts)),
+                                                "source_email_uid": str(uid.decode() if isinstance(uid, bytes) else uid),
+                                                "source_email_folder": _folder,
+                                                "source_email_account_id": account_id,
+                                                "source_email_message_id": message_id,
                                             })
                                             r = await do_manage_calendar(cal_args, owner=_acct_owner)
                                             if r.get("exit_code", 0) == 0:

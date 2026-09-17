@@ -874,6 +874,15 @@ def _python_with_visible_final_expression(content: str) -> str:
     return ast.unparse(tree)
 
 
+def _python_with_configured_import_paths(content: str, env: dict | None) -> str:
+    """Expose only explicitly configured package roots under Python ``-I``."""
+    raw = str((env or {}).get("ODYSSEUS_PYTHON_TOOL_SITE_PACKAGES", ""))
+    paths = [item for item in raw.split(os.pathsep) if item and os.path.isabs(item)]
+    if not paths:
+        return content
+    return f"import site\n[site.addsitedir(path) for path in {paths!r}]\nexec(compile({content!r}, '<odysseus-python-tool>', 'exec'))"
+
+
 class PythonTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import agent_cwd, _truncate
@@ -917,7 +926,9 @@ class PythonTool:
         # process-global `/workspace` symlink would break concurrent tasks.
         # Give Python the same per-task namespace Bash receives so both inline
         # code and loaded scripts see the stable virtual workspace root.
-        namespaced_content = _python_with_visible_final_expression(content)
+        namespaced_content = _python_with_configured_import_paths(
+            _python_with_visible_final_expression(content), _subproc_env
+        )
         python_command = shlex.join((sys.executable or "python", "-I", "-c", namespaced_content))
         # Code that explicitly uses the public /workspace path runs inside a
         # namespace whose stable cwd is that same bind. Host workspaces under
@@ -944,8 +955,11 @@ class PythonTool:
         else:
             # Platforms without a usable namespace still receive the same
             # alias contract through a conservative source rewrite.
-            content = _python_with_visible_final_expression(
-                _replace_workspace_alias(content, agent_cwd())
+            content = _python_with_configured_import_paths(
+                _python_with_visible_final_expression(
+                    _replace_workspace_alias(content, agent_cwd())
+                ),
+                _subproc_env,
             )
             proc = await asyncio.create_subprocess_exec(
                 (sys.executable or "python"), "-I", "-c", content,

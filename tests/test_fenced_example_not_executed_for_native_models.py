@@ -525,6 +525,30 @@ def test_resolve_tool_blocks_maps_legacy_native_email_alias_to_offered_mcp_name(
     assert json.loads(blocks[0].content)["max_results"] == 5
 
 
+def test_resolve_tool_blocks_maps_create_draft_alias_to_reviewable_email_draft():
+    native_calls = [{
+        "name": "mcp__email__create_draft",
+        "arguments": json.dumps({
+            "to": "review@example.com",
+            "subject": "Review",
+            "body": "Please review this draft.",
+        }),
+    }]
+
+    blocks, used_native, _ = al._resolve_tool_blocks(
+        "",
+        native_calls,
+        round_num=1,
+        is_api_model=True,
+        offered_tool_names={"mcp__email__draft_email"},
+    )
+
+    assert used_native is True
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "mcp__email__draft_email"
+    assert json.loads(blocks[0].content)["to"] == "review@example.com"
+
+
 def test_resolve_tool_blocks_maps_open_url_to_offered_private_browser():
     native_calls = [{
         "name": "open_url",

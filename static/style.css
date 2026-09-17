@@ -2620,6 +2620,9 @@ body.bg-pattern-ascii-fireflies {
 	    .chat-input-top {
 	      width: 100%;
 	      position: relative;
+	      display: grid;
+	      grid-template-columns: minmax(0, 1fr) auto;
+	      align-items: start;
 	    }
 	    .plan-mode-status {
 	      position: absolute;
@@ -2672,9 +2675,11 @@ body.bg-pattern-ascii-fireflies {
 	      background: color-mix(in srgb, var(--accent, var(--red)) 30%, transparent);
 	    }
 	    .chat-input-top > .model-picker-wrap {
-	      position: absolute;
+	      position: relative;
+	      grid-column: 2;
+	      grid-row: 1;
 	      top: 0;
-	      right: 0;
+	      right: auto;
 	      z-index: 250;
       transform-origin: top right;
 	      transition: opacity 0.22s ease, transform 0.22s ease;
@@ -2687,6 +2692,7 @@ body.bg-pattern-ascii-fireflies {
 	    }
     .chat-input-top > .model-picker-wrap.model-picker-autohide,
     .chat-input-top > .model-picker-wrap.picker-auto-hidden {
+      display: none !important;
       opacity: 0;
       pointer-events: none;
       transform: translateY(-4px) scale(0.96);
@@ -2711,6 +2717,9 @@ body.bg-pattern-ascii-fireflies {
       color: color-mix(in srgb, var(--fg) 30%, transparent);
     }
     .chat-input-bar textarea#message {
+	  grid-column: 1;
+	  grid-row: 1;
+	  min-width: 0;
       width: 100%;
       background: transparent;
       border: none;
@@ -2742,9 +2751,6 @@ body.bg-pattern-ascii-fireflies {
     .chat-input-bar { container-type: inline-size; container-name: chatbar; }
     @container chatbar (max-width: 340px) {
       .chat-input-right .mode-toggle { display: none !important; }
-    }
-    @container chatbar (max-width: 260px) {
-      #model-picker-wrap { display: none !important; }
     }
     .chat-input-left {
       display: flex;
@@ -2933,7 +2939,9 @@ body.bg-pattern-ascii-fireflies {
 	      overflow: auto;
 	      white-space: pre-wrap;
 	      word-break: break-word;
-	      font: 12px/1.55 inherit;
+	      font-size: 12px;
+	      line-height: 1.55;
+	      font-family: inherit;
 	    }
 	    .plan-review-actions {
 	      border-top: 1px solid var(--border);
@@ -4533,18 +4541,64 @@ body.bg-pattern-ascii-fireflies {
       background:var(--panel);
       border:1px solid var(--border);
       border-radius:8px;
-      padding:10px 14px;
-      font-size:0.8rem;
+      padding:11px 13px 12px;
+      font-size:0.78rem;
       color:var(--fg);
       box-shadow:0 8px 24px rgba(0,0,0,0.4);
-      min-width:180px;
-      line-height:1.7;
+      min-width:250px;
+      max-width:min(360px, calc(100vw - 16px));
+      line-height:1.45;
     }
     .ctx-label {
-      display:inline-block;
-      width:60px;
+      display:block;
+      width:auto;
       color:var(--color-muted-alt);
       font-size:0.75rem;
+    }
+    .ctx-popup-title {
+      display:flex;
+      align-items:center;
+      gap:6px;
+      margin-bottom:8px;
+      padding-bottom:7px;
+      border-bottom:1px solid color-mix(in srgb, var(--border) 65%, transparent);
+      font-weight:650;
+      letter-spacing:.01em;
+    }
+    .ctx-popup-title::before {
+      content:'';
+      width:6px;
+      height:6px;
+      flex:0 0 6px;
+      border-radius:50%;
+      background:var(--accent, var(--red));
+      box-shadow:0 0 0 3px color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+    }
+    .ctx-stat-section {
+      display:flex;
+      flex-direction:column;
+      gap:4px;
+    }
+    .ctx-stat-section + .ctx-stat-section {
+      margin-top:9px;
+      padding-top:8px;
+      border-top:1px solid color-mix(in srgb, var(--border) 45%, transparent);
+    }
+    .ctx-stat-row {
+      display:grid;
+      grid-template-columns:minmax(0, 1fr) auto;
+      align-items:baseline;
+      gap:14px;
+      min-height:18px;
+    }
+    .ctx-stat-row .ctx-label {
+      white-space:nowrap;
+    }
+    .ctx-stat-value {
+      color:var(--fg);
+      text-align:right;
+      font-variant-numeric:tabular-nums;
+      white-space:nowrap;
     }
     .edit-btn {
       background:none; border:none;
@@ -4566,6 +4620,7 @@ body.bg-pattern-ascii-fireflies {
       background:var(--bg); color:var(--fg);
       border:1px solid var(--border); border-radius:6px;
       padding:4px 12px; cursor:pointer; font-size:0.8rem;
+      display:inline-flex; align-items:center; justify-content:center; gap:5px;
     }
     .edit-save-btn:hover { background:var(--panel); }
     .edit-cancel-btn:hover { background:var(--panel); }
@@ -4820,7 +4875,9 @@ body.bg-pattern-ascii-fireflies {
       transform: translateX(120%);
       transition: opacity .35s cubic-bezier(0.22, 1, 0.36, 1),
                   transform .45s cubic-bezier(0.22, 1, 0.36, 1);
-      z-index: 9999; pointer-events: none;
+      /* Toasts must stay above the chat-context settings popup so a setting
+         change is visible while that popup remains open. */
+      z-index: 10070; pointer-events: none;
       box-shadow: 0 4px 12px rgba(0,0,0,0.2);
       backdrop-filter: blur(12px);
       max-width: min(420px, calc(100vw - 32px));
@@ -5902,6 +5959,30 @@ body.bg-pattern-ascii-fireflies {
       #memory-modal .admin-card:has(.doclib-card-expanded) > .doclib-grid {
         height: 100% !important;
       }
+      /* Documents need the same bounded flex chain as skills when a card is
+         opened. Without this, the grid falls back to its list layout and the
+         expanded preview only grows to its content height on mobile. */
+      #doclib-modal .admin-card:has(.doclib-card-expanded) > .doclib-grid {
+        display: flex !important;
+        flex: 1 1 0 !important;
+        flex-direction: column !important;
+        min-height: 0 !important;
+        overflow: hidden !important;
+      }
+      #doclib-modal .doclib-card.doclib-card-expanded {
+        flex: 1 1 auto !important;
+        height: 100% !important;
+        min-height: 0 !important;
+      }
+      #doclib-modal .doclib-card.doclib-card-expanded .doclib-card-preview {
+        flex: 1 1 0 !important;
+        min-height: 0 !important;
+      }
+      #doclib-modal .doclib-card.doclib-card-expanded .doclib-card-pdf-frame {
+        height: auto !important;
+        flex: 1 1 0 !important;
+        min-height: 0 !important;
+      }
       /* Skills modal: keep the header + tab strip visible; the expanded
          card fills the skills-list area below them via position:absolute
          (see the #skills-list rule above). Just make sure the tab-panel +
@@ -5928,16 +6009,21 @@ body.bg-pattern-ascii-fireflies {
         font-size: 10px;
         padding: 3px 8px;
       }
-      /* The Documents preview footer only exposes Open and More on phones.
-         Export/archive/delete stay available without crowding the bottom bar. */
-      #doclib-modal .doclib-card-expanded-actions > .doclib-expanded-delete-btn,
+      /* On phones, keep Delete explicit while the other secondary actions
+         stay available from the kebab. */
       #doclib-modal .doclib-card-expanded-actions > .doclib-expanded-archive-btn,
       #doclib-modal .doclib-card-expanded-actions .doclib-expanded-clone-btn,
       #doclib-modal .doclib-card-expanded-actions .doclib-expanded-export-btn {
         display: none !important;
       }
+      #doclib-modal .doclib-card-expanded-actions > .doclib-expanded-delete-btn {
+        display: inline-flex !important;
+        order: 0;
+        left: 0 !important;
+        margin-left: 0;
+      }
       #doclib-modal .doclib-card-expanded-actions > .doclib-action-group {
-        order: 1;
+        order: 2;
         margin-left: 6px !important;
         min-width: 0;
       }
@@ -5955,11 +6041,11 @@ body.bg-pattern-ascii-fireflies {
       }
       #doclib-modal .doclib-card-expanded-actions > .doclib-expanded-mobile-more {
         display: inline-flex;
-        order: 0;
+        order: 1;
         width: 32px;
         min-width: 32px;
         min-height: 30px;
-        margin-left: 0;
+        margin-left: auto;
         padding: 0;
       }
       /* Chat top bar — adjusted for reduced height */
@@ -8380,7 +8466,9 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     /* Eval-prompts picker — only shown during compare; absolute top-right
        inside .chat-input-top, matching .model-picker-wrap's slot. */
     .chat-input-top > .cmp-eval-wrap {
-      position: absolute;
+      position: relative;
+      grid-column: 2;
+      grid-row: 1;
       top: -2px; right: 0;
       z-index: 2;
     }
@@ -11939,7 +12027,7 @@ details .source-link {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
   border-radius: 4px;
-  font-size: 0.75em;
+  font-size: 0.68em;
   color: var(--accent);
 }
 
@@ -12704,7 +12792,7 @@ details a:hover {
   display: flex;
   flex-direction: column;
   max-height: 78vh;
-  height: min(78vh, max-content);
+  height: 78vh;
   overflow: hidden;
 }
 #memory-modal .memory-modal-content:has(
@@ -15775,6 +15863,7 @@ textarea.memory-add-input {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
   color: var(--fg);
   user-select: none;
+  overflow: visible;
 }
 .doc-rich-selection-toolbar button {
   width: 30px;
@@ -15805,10 +15894,31 @@ textarea.memory-add-input {
   background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
   outline: none;
 }
+.doc-rich-selection-toolbar .doc-rich-selection-close {
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  z-index: 2;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel, var(--bg));
+  color: var(--fg);
+  font: 700 15px/1 system-ui, sans-serif;
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.35);
+}
+.doc-rich-selection-toolbar .doc-rich-selection-close:hover,
+.doc-rich-selection-toolbar .doc-rich-selection-close:focus-visible {
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 16%, var(--panel, var(--bg)));
+  outline: none;
+}
 
 @media (max-width: 768px) {
   .doc-rich-selection-toolbar { padding: 4px; }
   .doc-rich-selection-toolbar button { width: 38px; height: 34px; font-size: 13px; }
+  .doc-rich-selection-toolbar .doc-rich-selection-close { width: 20px; height: 20px; top: -10px; right: -10px; }
 }
 
 .doc-rich-slash-menu {
@@ -16183,6 +16293,8 @@ mark.doc-find-mark.current {
   display: flex;
   align-items: center;
   gap: 4px;
+  height: 32px;
+  box-sizing: border-box;
 }
 .doc-selection-clear {
   display: inline-flex;
@@ -16208,14 +16320,63 @@ mark.doc-find-mark.current {
   background: color-mix(in srgb, var(--fg) 10%, transparent);
   border-color: color-mix(in srgb, var(--fg) 12%, transparent);
 }
+.doc-selection-chip-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 3px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel, var(--bg));
+  color: var(--fg);
+  font: 700 15px/1 system-ui, sans-serif;
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+.doc-selection-chip-clear:hover,
+.doc-selection-chip-clear:focus-visible {
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 16%, var(--panel, var(--bg)));
+  outline: none;
+}
+.doc-selection-clear {
+  width: auto;
+  height: 18px;
+  margin-left: 3px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font: 700 11px/1 system-ui, sans-serif;
+  opacity: 1;
+}
 .doc-edit-tag {
-  font-size: 0.75em;
-  opacity: 0.5;
-  background: color-mix(in srgb, var(--fg) 8%, transparent);
-  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 32%, transparent);
+  color: var(--accent, var(--red));
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.68em;
+  line-height: 1;
+  opacity: 0.78;
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
+  border-radius: 999px;
   padding: 1px 5px;
   margin-right: 2px;
   white-space: nowrap;
+  transition: opacity 0.12s, background 0.12s, border-color 0.12s;
+}
+.doc-edit-tag:hover,
+.doc-edit-tag:focus-visible {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
+}
+.doc-edit-tag:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent, var(--red)) 45%, transparent);
+  outline-offset: 2px;
 }
 /* Attachment cards in user messages */
 .attach-cards {
@@ -16307,8 +16468,57 @@ mark.doc-find-mark.current {
   background: color-mix(in srgb, var(--red) 10%, transparent);
   border-left: 2px solid color-mix(in srgb, var(--red) 50%, transparent);
   pointer-events: none;
-  z-index: 0;
+  z-index: 2;
   transition: top 0.05s;
+}
+.doc-selection-overlay-clear {
+  position: absolute;
+  top: 1px;
+  right: 3px;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  color: var(--fg);
+  font: 16px/1 inherit;
+  opacity: 0.7;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.doc-selection-overlay-clear:hover,
+.doc-selection-overlay-clear:focus-visible {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent, var(--red)) 18%, var(--panel));
+  outline: none;
+}
+.doc-selection-rich-clear {
+  position: fixed;
+  z-index: 10040;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel, var(--bg));
+  color: var(--fg);
+  font: 700 15px/1 system-ui, sans-serif;
+  opacity: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.35);
+}
+.doc-selection-rich-clear:hover,
+.doc-selection-rich-clear:focus-visible {
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 16%, var(--panel, var(--bg)));
+  outline: none;
 }
 
 /* ── Suggestion comments (Google Docs style) ── */
@@ -17208,6 +17418,26 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   color: var(--fg);
   background: var(--bg);
 }
+.doc-md-preview.doc-rich-preview {
+  background: #fff;
+  color: #111;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  padding: 32px max(24px, calc((100% - 780px) / 2));
+}
+.doc-rich-preview > :not(.doc-preview-hover-edit) {
+  max-width: 780px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.doc-rich-preview-empty {
+  position: relative;
+  left: -16px;
+  top: -8px;
+  color: #6b7280;
+  text-align: center;
+}
 .doc-preview-hover-edit {
   position: sticky;
   top: 0;
@@ -17240,6 +17470,54 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
 .doc-preview-hover-edit:hover {
   background: color-mix(in srgb, var(--accent, var(--red)) 12%, var(--panel));
   border-color: color-mix(in srgb, var(--accent, var(--red)) 55%, var(--border));
+}
+
+/* DOCX visual preview — keep the Word document on a readable white sheet even
+   when the surrounding workspace uses a dark theme. */
+.doc-docx-preview {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 28px 18px 42px;
+  background: #d9dce1;
+  color: #111827;
+}
+.doc-docx-paper {
+  width: min(816px, 100%);
+  min-height: 1056px;
+  box-sizing: border-box;
+  margin: 0 auto;
+  padding: 72px 76px;
+  background: #fff;
+  color: #111;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  box-shadow: 0 4px 18px rgba(0,0,0,.22);
+}
+.doc-docx-paper h1, .doc-docx-paper h2, .doc-docx-paper h3,
+.doc-docx-paper h4, .doc-docx-paper h5, .doc-docx-paper h6 {
+  color: #111;
+  line-height: 1.2;
+  margin: 1.2em 0 .55em;
+}
+.doc-docx-paper p { margin: 0 0 .8em; }
+.doc-docx-paper img { max-width: 100%; height: auto; }
+.doc-docx-paper table { width: 100%; border-collapse: collapse; margin: 1em 0; }
+.doc-docx-paper td, .doc-docx-paper th { border: 1px solid #c7cbd1; padding: 6px 8px; vertical-align: top; }
+.doc-docx-paper th { background: #f2f3f5; }
+.doc-docx-paper a { color: #1757a6; }
+.doc-docx-preview-loading, .doc-docx-preview-error {
+  max-width: 816px;
+  margin: 40px auto;
+  padding: 20px;
+  color: var(--fg);
+  text-align: center;
+}
+.doc-docx-preview-error { color: var(--color-error, #c2413d); }
+@media (max-width: 700px) {
+  .doc-docx-preview { padding: 12px 8px 28px; }
+  .doc-docx-paper { min-height: 0; padding: 34px 24px; font-size: 14px; }
 }
 @media (hover: none) {
   .doc-preview-hover-edit {
@@ -18899,6 +19177,9 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
 [data-doclib-panel="documents"] .doclib-chip-scroll-arrow {
   top: calc(50% - 9px) !important;
 }
+#doclib-modal .doclib-chip-scroll-arrow {
+  top: calc(50% - 19px) !important;
+}
 [data-doclib-panel="documents"] #doclib-tidy-btn,
 [data-doclib-panel="documents"] #doclib-select-btn {
   top: 1px;
@@ -19613,6 +19894,10 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 .doclib-card-expanded-actions > .doclib-action-group {
   margin-left: auto;
 }
+.doclib-card-expanded-actions > .doclib-expanded-delete-btn,
+.doclib-card-expanded-actions > .doclib-expanded-archive-btn {
+  left: 0 !important;
+}
 .doclib-expanded-mobile-more { display: none; }
 .doclib-btn-hint {
   font-weight: normal;
@@ -19745,6 +20030,10 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   cursor: pointer;
   font-family: inherit;
   transition: border-color 0.15s, color 0.15s;
+}
+.doclib-chat-preview .task-completed-report-btn {
+  color: var(--accent, var(--red));
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 55%, var(--border));
 }
 .doclib-chat-preview .doclib-chat-open-btn:hover {
   border-color: var(--accent, var(--red));
@@ -20044,6 +20333,14 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 .doclib-card.doclib-card-expanded .doclib-card-expanded-actions {
   display: flex;
   flex-shrink: 0;
+}
+/* Document cards can be expanded in the normal windowed library, where the
+   grid has no definite height. A zero-basis <pre> then collapses to nothing
+   while the footer remains visible. Keep the document text's intrinsic height
+   in that layout; bounded/fullscreen layouts can still shrink it and scroll. */
+#doclib-modal .doclib-card.doclib-card-expanded .doclib-card-preview > pre {
+  flex: 1 1 auto;
+  min-height: 1.5em;
 }
 
 /* Collapsible skills section headers (Your skills / Built-in). */
@@ -20492,6 +20789,14 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   flex: 0 0 auto;
   min-height: 0;
 }
+/* The completed-task filters are a compact toolbar, not a flexible panel.
+   Without this override the shared chip frame grows into the available
+   height of the card, which is especially visible the first time the mobile
+   view switches to Completed. */
+.tasks-completed-card > .doclib-chip-scroll-frame:has(> #tasks-completed-status-chips) {
+  flex: 0 0 auto;
+  min-height: 0;
+}
 #memory-category-filters {
   flex: 0 0 auto;
   min-height: 25px;
@@ -20920,6 +21225,29 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   padding: 28px 16px;
   font-size: 12px;
   color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+.pdf-loading-state {
+  min-height: 180px;
+  margin: 16px;
+  box-sizing: border-box;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 22%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 5%, var(--bg));
+  color: color-mix(in srgb, var(--fg) 68%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg) 7%, transparent),
+              0 8px 24px rgba(0, 0, 0, 0.12);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.pdf-loading-state .ai-spinner-whirlpool {
+  color: var(--accent, var(--red));
+  opacity: 0.95;
+}
+.pdf-loading-state .ai-spinner-whirlpool canvas {
+  display: block;
 }
 .doclib-load-more {
   display: block;
@@ -27918,7 +28246,8 @@ body:not(.welcome-ready) #welcome-screen {
 .task-log-open-report,
 .task-log-copy,
 .task-log-clear-cache,
-.task-log-run-again {
+.task-log-run-again,
+.task-log-force-run-action {
   display: inline-flex;
   align-items: center;
   gap: 3px;
@@ -27937,7 +28266,8 @@ body:not(.welcome-ready) #welcome-screen {
 .task-log-open-report:hover,
 .task-log-copy:hover,
 .task-log-clear-cache:hover,
-.task-log-run-again:hover {
+.task-log-run-again:hover,
+.task-log-force-run-action:hover {
   color: var(--fg);
   border-color: color-mix(in srgb, var(--fg) 30%, transparent);
   background: color-mix(in srgb, var(--fg) 5%, transparent);
@@ -30398,6 +30728,10 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 /* Top bar */
 .ge-topbar {
   display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
   align-items: center;
   justify-content: space-between;
   padding: 6px 10px;
@@ -30408,32 +30742,19 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 }
 .ge-topbar-left, .ge-topbar-right {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 4px;
 }
-/* Narrow editor windows cannot fit the full undo/zoom/action set in one
-   line. The overflow handler adds this class after hiding optional AI
-   controls, keeping the essential right-side actions visible below. */
-.ge-topbar.ge-topbar-overflow {
-  flex-wrap: wrap;
-  row-gap: 3px;
-}
-.ge-topbar-overflow .ge-topbar-left {
-  flex: 1 1 auto;
-  min-width: max-content;
-}
-.ge-topbar-overflow .ge-topbar-right {
-  flex: 1 0 100%;
-  min-width: 0;
-  justify-content: flex-start;
-  padding-top: 3px;
-  border-top: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
-}
-.ge-topbar-overflow .ge-topbar-right > * {
+.ge-topbar-right > * {
   flex-shrink: 0;
 }
-.ge-topbar-overflow .ge-topbar-right .ge-draft-status {
-  flex: 0 1 auto;
+.ge-topbar .dropdown[popover] {
+  position: fixed;
+  margin: 0;
+  bottom: auto;
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
 }
 .ge-draft-status {
   flex: 0 1 auto;
@@ -30551,6 +30872,14 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 }
 
 /* Toolbar (left) */
+@keyframes ge-layer-action-flash {
+  from { box-shadow: inset 0 0 0 2px var(--red); background-color: color-mix(in srgb, var(--red) 24%, transparent); }
+  to { box-shadow: inset 0 0 0 2px transparent; }
+}
+.ge-layer-action-flash { animation: ge-layer-action-flash 650ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .ge-layer-action-flash { animation-duration: 1ms; }
+}
 .ge-toolbar {
   display: flex;
   flex-direction: column;
@@ -33407,7 +33736,11 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 .ge-layer-btn.danger { top: -4px; }
 /* Save / Save as new / Download dropdown anchored to the primary Save
    button in the topbar. */
-.ge-save-wrap { position: relative; display: inline-block; }
+.ge-save-wrap {
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+}
 .ge-save-menu {
   position: fixed;
   min-width: 160px;
@@ -33422,6 +33755,11 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   gap: 2px;
 }
 .ge-save-menu[hidden] { display: none; }
+.ge-save-state-icon { display: none; }
+.ge-stacked-btn .ge-stacked-glyph .ge-save-state-icon[hidden] { display: none !important; }
+.ge-stacked-btn .ge-stacked-glyph .ge-save-state-icon:not([hidden]) { display: block; }
+.ge-save-label { white-space: nowrap; min-width: 0; }
+.ge-save-state-saved { color: var(--fg); }
 .ge-save-menu .dropdown-item-compact {
   width: 100%;
   background: none;
@@ -38589,11 +38927,15 @@ body.doc-find-active mark.doc-find-mark.current {
   color: var(--fg);
   background: color-mix(in srgb, var(--fg) 7%, transparent);
 }
+.doc-stats-btn.doc-stats-selected {
+  color: var(--accent, var(--red));
+  font-weight: 600;
+}
 .doc-stats-popover {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 7px);
-  z-index: 80;
+  position: fixed;
+  right: auto;
+  bottom: auto;
+  z-index: 100000;
   width: 190px;
   padding: 8px 10px;
   border: 1px solid var(--border);
@@ -38647,6 +38989,29 @@ body.doc-find-active mark.doc-find-mark.current {
 }
 .doc-email-richbody.richtext-mode {
   background: var(--bg);
+}
+.doc-rich-empty-import {
+  position: absolute;
+  top: 90px;
+  right: 18px;
+  bottom: auto;
+  left: auto;
+  z-index: 2;
+  display: flex;
+  pointer-events: none;
+}
+.doc-rich-empty-import .doc-rich-empty-import-btn {
+  position: static;
+  float: none;
+  margin: 0;
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+@media (max-width: 768px) {
+  .doc-rich-empty-import {
+    top: 106px;
+  }
 }
 .doc-email-richbody.richtext-mode:empty::before {
   content: "Start writing\2026";
@@ -39211,11 +39576,11 @@ body.doc-find-active mark.doc-find-mark.current {
 .email-attachment-chip.is-expanded {
   max-width: 90vw;
 }
-.email-attachment-chip > span:not(.att-size):not(.email-attachment-open):not(.email-attachment-download) {
+.email-attachment-chip > span:not(.att-size):not(.email-attachment-open):not(.email-attachment-download):not(.email-attachment-calendar-open) {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   flex: 1 1 auto; min-width: 0;
 }
-.email-attachment-chip.is-expanded > span:not(.att-size):not(.email-attachment-open):not(.email-attachment-download) {
+.email-attachment-chip.is-expanded > span:not(.att-size):not(.email-attachment-open):not(.email-attachment-download):not(.email-attachment-calendar-open) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -39230,7 +39595,9 @@ body.doc-find-active mark.doc-find-mark.current {
    (was 24px / dim / no border on desktop, easy to miss). Accent-tinted
    background + border makes it read as a real action. */
 .email-attachment-open,
-.email-attachment-download {
+.email-attachment-download,
+.email-attachment-calendar-open,
+.cal-event-email-source {
   display: inline-flex; align-items: center; gap: 4px;
   height: 22px; padding: 0 9px; border-radius: 999px;
   margin-left: 6px; flex: 0 0 auto;
@@ -39250,16 +39617,34 @@ body.doc-find-active mark.doc-find-mark.current {
 .email-attachment-open svg,
 .email-attachment-open > svg,
 .email-attachment-download svg,
-.email-attachment-download > svg {
+.email-attachment-download > svg,
+.email-attachment-calendar-open svg,
+.email-attachment-calendar-open > svg,
+.cal-event-email-source svg,
+.cal-event-email-source > svg {
   width: 12px; height: 12px;
   opacity: 0.9;
 }
 .email-attachment-open:hover,
-.email-attachment-download:hover {
+.email-attachment-download:hover,
+.email-attachment-calendar-open:hover,
+.cal-event-email-source:hover {
   background: color-mix(in srgb, var(--accent-primary, var(--red)) 22%, transparent);
   border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 70%, transparent);
 }
 .email-attachment-download {
+  width: 24px;
+  min-width: 24px;
+  padding: 0;
+  margin-left: 4px;
+}
+.email-attachment-calendar-open {
+  width: 24px;
+  min-width: 24px;
+  padding: 0;
+  margin-left: 4px;
+}
+.cal-event-email-source {
   width: 24px;
   min-width: 24px;
   padding: 0;
@@ -39279,7 +39664,8 @@ body.doc-find-active mark.doc-find-mark.current {
 }
 .email-attachment-open-label { line-height: 1; }
 .email-attachment-chip.is-expanded .email-attachment-open,
-.email-attachment-chip.is-expanded .email-attachment-download {
+.email-attachment-chip.is-expanded .email-attachment-download,
+.email-attachment-chip.is-expanded .email-attachment-calendar-open {
   width: 24px;
   min-width: 24px;
   padding: 0;
@@ -39325,7 +39711,7 @@ body.doc-find-active mark.doc-find-mark.current {
     align-items: center;
     max-width: min(92vw, 360px);
   }
-  .email-attachment-chip.is-expanded > span:not(.att-size):not(.email-attachment-open):not(.email-attachment-download) {
+  .email-attachment-chip.is-expanded > span:not(.att-size):not(.email-attachment-open):not(.email-attachment-download):not(.email-attachment-calendar-open) {
     flex: 1 1 auto;
     white-space: nowrap;
     overflow: hidden;
@@ -39337,7 +39723,8 @@ body.doc-find-active mark.doc-find-mark.current {
     margin-left: 0;
   }
   .email-attachment-chip.is-expanded .email-attachment-open,
-  .email-attachment-chip.is-expanded .email-attachment-download {
+  .email-attachment-chip.is-expanded .email-attachment-download,
+  .email-attachment-chip.is-expanded .email-attachment-calendar-open {
     width: 28px;
     min-width: 28px;
     padding: 0;
@@ -44338,6 +44725,16 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   transition: opacity 0.15s, border-color 0.15s, background 0.15s;
 }
 .note-form-draw-text { font-weight: 700; font-family: Georgia, serif; font-size: 16px; }
+.note-form-draw-undo.has-undo {
+  opacity: 1;
+  color: var(--accent-primary, var(--red));
+  border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 12%, transparent);
+}
+.note-form-draw-undo:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
 /* Size badge in the bottom-right of T — empty until a size is chosen. */
 .note-form-draw-text-badge {
   position: absolute;
@@ -45885,6 +46282,11 @@ button.cal-view-btn {
   background:color-mix(in srgb, currentColor 16%, transparent);
   box-shadow:inset 0 0 0 1px color-mix(in srgb, currentColor 20%, transparent);
   vertical-align:1px;
+}
+.cal-event-source svg {
+  width: 10px;
+  height: 10px;
+  display: block;
 }
 .cal-event-row .cal-event-source {
   width:11px;
@@ -47617,8 +48019,9 @@ button.cal-btn.cal-btn-danger:hover { background:var(--accent, var(--red)); colo
 .chat-research-card .agent-thread-header:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
 .chat-research-card.agent-thread-node .agent-thread-dot { top: 23px; }
 .chat-research-card .agent-thread-status { min-width: 0; }
-.chat-research-background { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; white-space: nowrap; flex-shrink: 0; font-size: 10px; opacity: 0.7; }
+.chat-research-background { display: inline-flex; align-items: center; gap: 5px; margin-left: 0; white-space: nowrap; flex-shrink: 0; }
 .chat-research-background .spinner-whirlpool { margin: 0 !important; }
+.chat-research-background canvas { transform: translateY(-2px); }
 .chat-research-card .research-job-query { white-space: normal; overflow-wrap: anywhere; font-size: 12px; }
 .chat-research-detail { margin-top: 5px; font-size: 12px; color: var(--fg-dim, #888); }
 .chat-research-open { display: inline-flex; align-items: center; min-height: 44px; padding: 0 8px; margin-top: 4px; color: var(--red); text-decoration: underline; }
@@ -49822,7 +50225,9 @@ body.theme-frosted .modal {
     border-radius: 6px;
     background: color-mix(in srgb, var(--fg) 3%, var(--bg));
     color: color-mix(in srgb, var(--fg) 62%, transparent);
-    font: 500 10px/1 inherit;
+    font-size: 10px;
+    line-height: 1;
+    font-family: inherit;
     text-align: left;
     scroll-snap-align: start;
     transition: border-color .15s ease, background .15s ease, color .15s ease;
@@ -49839,7 +50244,9 @@ body.theme-frosted .modal {
     border-radius: 6px;
     background: color-mix(in srgb, var(--fg) 3%, var(--bg));
     color: color-mix(in srgb, var(--fg) 70%, transparent);
-    font: 600 10px/1 inherit;
+    font-size: 10px;
+    line-height: 1;
+    font-family: inherit;
     cursor: pointer;
     white-space: nowrap;
   }
@@ -50479,7 +50886,7 @@ body.settings-sidebar-resize-active {
 }
 #research-pane #research-history-bulk-delete {
   position: relative;
-  top: -2px;
+  top: -4px;
   right: 0;
   margin-left: auto;
 }
@@ -50497,6 +50904,7 @@ body.settings-sidebar-resize-active {
   position: relative;
   top: -2px;
   right: 0;
+  margin-left: 4px;
 }
 #research-pane #research-past-list {
   position: relative;
@@ -50557,6 +50965,25 @@ body.settings-sidebar-resize-active {
   line-height: 1.2;
   flex: 1 1 auto;
   min-width: 0;
+}
+#research-pane #research-past-list .research-job-header:has(.research-job-title-error) {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+#research-pane #research-past-list .research-job-header:has(.research-job-title-error) .research-job-query {
+  order: 1;
+}
+#research-pane #research-past-list .research-job-header:has(.research-job-title-error) .research-job-retry-badge,
+#research-pane #research-past-list .research-job-header:has(.research-job-title-error) .research-job-edit-badge,
+#research-pane #research-past-list .research-job-header:has(.research-job-title-error) .research-job-overflow {
+  order: 2;
+}
+#research-pane #research-past-list .research-job-title-error {
+  order: 3;
+  flex: 0 0 100%;
+  max-width: none;
+  margin-top: 0;
+  text-align: left;
 }
 #research-pane #research-past-list .research-job-report-badge,
 #research-pane #research-past-list .research-job-discuss-badge,

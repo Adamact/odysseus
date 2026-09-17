@@ -1,7 +1,7 @@
 // static/js/chatRenderer.js
 // Extracted from chat.js — message rendering, sources, images, metrics
 
-import uiModule from './ui.js?v=20260908weekhoverfix1';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import markdownModule from './markdown.js';
 import { svgifyEmoji } from './markdown.js';
 import { addAITTSButton } from './tts-ai.js';
@@ -1800,7 +1800,7 @@ function _activateEntityAnchor(e, forcedAnchor = null) {
     } else if (panel === 'skills') {
       document.getElementById('tool-skills-btn')?.click();
     } else if (panel === 'research') {
-        import('./research/panel.js?v=20260911researchcardselect1').then(mod => {
+        import('./research/panel.js?v=20260911researchmenu1').then(mod => {
         const open = mod.openPanel || (mod.default && mod.default.openPanel);
         if (open) open();
       }).catch(() => {});
@@ -1848,7 +1848,7 @@ function _activateEntityAnchor(e, forcedAnchor = null) {
       } catch {}
     });
   } else if (kind === 'document') {
-    import('./document.js?v=20260911removealignrightshortcut1').then(mod => {
+    import('./document.js?v=20260916docctx2').then(mod => {
       const open = mod.loadDocument
         || mod.openDocument
         || (mod.default && (mod.default.loadDocument || mod.default.openDocument));
@@ -1875,7 +1875,7 @@ function _activateEntityAnchor(e, forcedAnchor = null) {
       if (open) open(id);
     }).catch(() => {});
   } else if (kind === 'email') {
-    import('./emailLibrary.js?v=20260910replyactions1').then(mod => {
+    import('./emailLibrary.js?v=20260915trashmove2').then(mod => {
       const open = mod.openEmailLibrary || (mod.default && mod.default.openEmailLibrary);
       if (!open) return;
       const parts = String(id || '').split(':');
@@ -1889,12 +1889,12 @@ function _activateEntityAnchor(e, forcedAnchor = null) {
       }
     }).catch(() => {});
   } else if (kind === 'event') {
-    import('./calendar.js?v=20260903weekscrollstable1').then(mod => {
+    import('./calendar.js?v=20260914emailsource11').then(mod => {
       const open = mod.openCalendarTo || (mod.default && mod.default.openCalendarTo);
       if (open) open(id);
     }).catch(() => {});
   } else if (kind === 'task') {
-    import('./tasks.js?v=20260901taskskilldensity1').then(mod => {
+    import('./tasks.js?v=20260914taskmodel1').then(mod => {
       const open = mod.openTasks || (mod.default && mod.default.openTasks);
       if (open) open(id);
       else { const b = document.getElementById('tasks-btn'); if (b) b.click(); }
@@ -1905,7 +1905,7 @@ function _activateEntityAnchor(e, forcedAnchor = null) {
       if (open) open(id);
     }).catch(() => {});
   } else if (kind === 'research') {
-    import('./research/panel.js?v=20260911researchcardselect1').then(mod => {
+    import('./research/panel.js?v=20260911researchmenu1').then(mod => {
       const open = mod.openPanel || (mod.default && mod.default.openPanel);
       if (open) open(id);
     }).catch(() => {});
@@ -2609,14 +2609,8 @@ export function displayMetrics(messageElement, metrics) {
   const costStr0 = cost !== null ? `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}` : null;
   const hasTps = tps != null && tps !== 'undefined' && Number.isFinite(Number(tps));
   const tpsText = hasTps ? `${Number(tps).toFixed(2)} tok/s` : '';
-  const ttftText = ttft != null && Number.isFinite(Number(ttft))
-    ? `${Number(ttft).toFixed(3)}s TTFT`
-    : '';
-  const injectedText = injectedTokens != null && Number.isFinite(Number(injectedTokens))
-    ? `${Number(injectedTokens).toLocaleString()} in`
-    : '';
   const metricsLabel = hasTps
-    ? [tpsText, ttftText, injectedText].filter(Boolean).join(' · ')
+    ? tpsText
     : costStr0
       ? costStr0
       : responseTime != null
@@ -2636,7 +2630,7 @@ export function displayMetrics(messageElement, metrics) {
     document.querySelectorAll('.ctx-popup').forEach(p => { if (typeof p._dismiss === 'function') p._dismiss(); else p.remove(); });
 
     const costStr = cost !== null ? `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}` : '';
-    const costRows = costStr ? `<div><span class="ctx-label">Cost</span> ${costStr}</div>` : '';
+    const costRows = costStr ? `<div class="ctx-stat-row"><span class="ctx-label">Cost</span><span class="ctx-stat-value">${costStr}</span></div>` : '';
     const speedStr = hasTps ? tpsText : 'n/a';
     const speedLabel = metrics.tps_source === 'computed' ? 'Speed (wall)' : 'Speed';
     const totalTok = inputTokens + outputTokens;
@@ -2656,28 +2650,34 @@ export function displayMetrics(messageElement, metrics) {
     let sessionCostStr = '';
     const sc = getSessionCost();
     if (costStr && sc > 0) {
-      sessionCostStr = `<div><span class="ctx-label">Session</span> $${sc < 0.01 ? sc.toFixed(4) : sc.toFixed(3)}</div>`;
+      sessionCostStr = `<div class="ctx-stat-row"><span class="ctx-label">Session</span><span class="ctx-stat-value">$${sc < 0.01 ? sc.toFixed(4) : sc.toFixed(3)}</span></div>`;
     }
 
     const popup = document.createElement('div');
     popup.className = 'ctx-popup';
     popup.innerHTML = `
-      <div style="font-weight:600;margin-bottom:6px;color:var(--fg);">Message Stats</div>
-      <div><span class="ctx-label">Model</span> ${model.split('/').pop()}</div>
-      <div><span class="ctx-label">Input (all rounds)</span> ${inputTokens.toLocaleString()} tokens${isReal ? '' : '~'}</div>
-      ${injectedTokens != null ? `<div><span class="ctx-label">Injected (first request)</span> ${Number(injectedTokens).toLocaleString()} tokens</div>` : ''}
-      <div><span class="ctx-label">Output</span> ${outputTokens.toLocaleString()} tokens${isReal ? '' : '~'}</div>
-      <div><span class="ctx-label">Total</span> ${totalTok.toLocaleString()} tokens</div>
-      <div><span class="ctx-label">${speedLabel}</span> ${speedStr}</div>
-      <div><span class="ctx-label">Time</span> ${Number(responseTime).toFixed(3)}s</div>
-      ${prepTime != null ? `<div><span class="ctx-label">Prep</span> ${prepTime}s</div>` : ''}
-      ${modelWaitTime != null ? `<div><span class="ctx-label">Model wait</span> ${modelWaitTime}s</div>` : ''}
-      ${visibleTtft != null ? `<div><span class="ctx-label">TTFT</span> ${Number(visibleTtft).toFixed(3)}s</div>` : ''}
-      ${schemaCount != null ? `<div><span class="ctx-label">Tool schemas</span> ${Number(schemaCount).toLocaleString()}</div>` : ''}
-      ${agentRounds != null ? `<div><span class="ctx-label">Agent rounds</span> ${Number(agentRounds).toLocaleString()}</div>` : ''}
-      ${toolCalls != null ? `<div><span class="ctx-label">Tool calls</span> ${Number(toolCalls).toLocaleString()}</div>` : ''}
-      ${costRows}
-      ${sessionCostStr}
+      <div class="ctx-popup-title">Message stats</div>
+      <div class="ctx-stat-section">
+        <div class="ctx-stat-row"><span class="ctx-label">Model</span><span class="ctx-stat-value">${model.split('/').pop()}</span></div>
+        <div class="ctx-stat-row"><span class="ctx-label">Input · all rounds</span><span class="ctx-stat-value">${inputTokens.toLocaleString()} tokens${isReal ? '' : '~'}</span></div>
+        ${injectedTokens != null ? `<div class="ctx-stat-row"><span class="ctx-label">Injected · first request</span><span class="ctx-stat-value">${Number(injectedTokens).toLocaleString()} tokens</span></div>` : ''}
+        <div class="ctx-stat-row"><span class="ctx-label">Output</span><span class="ctx-stat-value">${outputTokens.toLocaleString()} tokens${isReal ? '' : '~'}</span></div>
+        <div class="ctx-stat-row"><span class="ctx-label">Total</span><span class="ctx-stat-value">${totalTok.toLocaleString()} tokens</span></div>
+      </div>
+      <div class="ctx-stat-section">
+        <div class="ctx-stat-row"><span class="ctx-label">${speedLabel}</span><span class="ctx-stat-value">${speedStr}</span></div>
+        <div class="ctx-stat-row"><span class="ctx-label">Time</span><span class="ctx-stat-value">${Number(responseTime).toFixed(3)}s</span></div>
+        ${prepTime != null ? `<div class="ctx-stat-row"><span class="ctx-label">Prep</span><span class="ctx-stat-value">${prepTime}s</span></div>` : ''}
+        ${modelWaitTime != null ? `<div class="ctx-stat-row"><span class="ctx-label">Model wait</span><span class="ctx-stat-value">${modelWaitTime}s</span></div>` : ''}
+        ${visibleTtft != null ? `<div class="ctx-stat-row"><span class="ctx-label">TTFT</span><span class="ctx-stat-value">${Number(visibleTtft).toFixed(3)}s</span></div>` : ''}
+      </div>
+      <div class="ctx-stat-section">
+        ${schemaCount != null ? `<div class="ctx-stat-row"><span class="ctx-label">Tool schemas</span><span class="ctx-stat-value">${Number(schemaCount).toLocaleString()}</span></div>` : ''}
+        ${agentRounds != null ? `<div class="ctx-stat-row"><span class="ctx-label">Agent rounds</span><span class="ctx-stat-value">${Number(agentRounds).toLocaleString()}</span></div>` : ''}
+        ${toolCalls != null ? `<div class="ctx-stat-row"><span class="ctx-label">Tool calls</span><span class="ctx-stat-value">${Number(toolCalls).toLocaleString()}</span></div>` : ''}
+        ${costRows}
+        ${sessionCostStr}
+      </div>
       ${prepDetails ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);font-size:0.85em;opacity:0.8;">
         <div style="font-weight:600;margin-bottom:4px;color:var(--fg);">Agent prep</div>
         ${prepDetails}
@@ -3130,11 +3130,15 @@ export function renderAskUserCard(payload, options) {
   if (!isToolApproval) card.appendChild(other);
 
   const previous = chatBox.lastElementChild;
-  if (previous?.classList?.contains('agent-thread')) {
+  const previousIsThread = previous?.classList?.contains('agent-thread');
+  const previousIsAssistant = previous?.classList?.contains('msg-ai');
+  if (previousIsThread || previousIsAssistant) {
     card.classList.add('ask-user-card-attached');
-    const hadBottom = previous.classList.contains('has-bottom');
-    previous.classList.add('has-bottom', 'has-ask-user-bottom');
-    if (!hadBottom) previous.dataset.askUserAttachedBottom = 'true';
+    if (previousIsThread) {
+      const hadBottom = previous.classList.contains('has-bottom');
+      previous.classList.add('has-bottom', 'has-ask-user-bottom');
+      if (!hadBottom) previous.dataset.askUserAttachedBottom = 'true';
+    }
   }
 
   chatBox.appendChild(card);
@@ -3526,7 +3530,7 @@ export function addMessage(role, content, modelName, metadata) {
       text = text
         .replace(/\n*=== File: .+? ===\n\[Type: .+?\]\n+```[\s\S]*?```/g, '')
         .replace(/\n*=== File: .+? ===\n\[Type: .+?\]\n+[\s\S]*?(?=\n*=== File:|$)/g, '')
-        .replace(/\n*\[PDF content\]:[\s\S]*?(?=\n*\[PDF content\]|\n*=== File:|$)/g, '')
+        .replace(/\n*\[PDF content[^\]]*\]:[\s\S]*?(?=\n*\[PDF content[^\]]*\]:|\n*=== File:|$)/g, '')
         .replace(/\n*\[Image attached: [^\]]+\]/g, '')
         .replace(/\n*\[Attached (?:document|non-text) file\]/g, '')
         .trim();
@@ -3578,10 +3582,12 @@ export function addMessage(role, content, modelName, metadata) {
 
     // Style [Doc edit: ...] prefix in user messages
     if (role === 'user') {
-      // Match compact format: [Doc edit: line X] instruction
+      // Match both the optimistic live format (L1) and the persisted-history
+      // format (line 1). Keep one interactive element in either path so the
+      // bubble does not visibly gain styling only after a refresh.
       b.innerHTML = b.innerHTML.replace(
-        /\[Doc edit: (lines? [\d–\-]+)\]\s*/,
-        '<span class="doc-edit-tag">Doc edit: $1</span> '
+        /\[Doc edit: ((?:L|lines?)\s*[\d–\-]+)\]\s*/i,
+        '<button type="button" class="doc-edit-tag" data-doc-edit-ref="$1" title="Select this text again">Doc edit: $1</button> '
       );
       // Match raw format: "In the document, edit this specific text (line X):\n```\n...\n```\n\nInstruction: ..."
       // After markdown processing this becomes a <p> + <pre><code> block + <p>Instruction: text</p>
@@ -3591,8 +3597,21 @@ export function addMessage(role, content, modelName, metadata) {
         // Extract instruction text (after "Instruction: ")
         const instrMatch = b.textContent.match(/Instruction:\s*([\s\S]*)$/);
         const instrText = instrMatch ? instrMatch[1].trim() : '';
-        b.innerHTML = '<span class="doc-edit-tag">Doc edit: ' + lineRef + '</span> ' + markdownModule.processWithThinking(instrText);
+        b.innerHTML = '<button type="button" class="doc-edit-tag" data-doc-edit-ref="' + lineRef + '" title="Select this text again">Doc edit: ' + lineRef + '</button> ' + markdownModule.processWithThinking(instrText);
       }
+
+      b.querySelectorAll('[data-doc-edit-ref]').forEach(button => {
+        button.addEventListener('click', () => {
+          import('./document.js?v=20260916docctx2').then(mod => {
+            const restore = mod.restoreSelectionReference
+              || mod.default?.restoreSelectionReference;
+            return restore?.(button.dataset.docEditRef || '', {
+              documentId: metadata?.document_id || '',
+              selections: metadata?.document_selections || null,
+            });
+          }).catch(() => {});
+        });
+      });
 
       // Render attachment cards
       if (attachments?.length) {

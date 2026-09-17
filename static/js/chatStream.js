@@ -2,12 +2,12 @@
 // SSE event handlers extracted from chat.js handleChatSubmit
 // Handles: ui_control events, background stream management
 
-import uiModule from './ui.js?v=20260908weekhoverfix1';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import Storage from './storage.js';
-import themeModule from './theme.js?v=20260909effectspeed1';
+import themeModule from './theme.js?v=20260911organsrain1';
 import markdownModule from './markdown.js';
 import sessionModule from './sessions.js';
-import documentModule from './document.js?v=20260911removealignrightshortcut1';
+import documentModule from './document.js?v=20260916docctx2';
 
 // Tool approvals are control-plane submits for the current chat. chat.js
 // deliberately leaves the composer untouched, then programmatically clicks the
@@ -186,14 +186,14 @@ export function handleUIControl(uiData) {
           if (fn) fn();
         }).catch(function(){});
       } else if (panel === 'calendar') {
-        import('./calendar.js?v=20260903weekscrollstable1').then(function(mod) {
+        import('./calendar.js?v=20260914emailsource9').then(function(mod) {
           var viewFn = mod.openCalendarView || (mod.default && mod.default.openCalendarView);
           var fn = mod.openCalendar || (mod.default && mod.default.openCalendar);
           if (viewFn && (uiData.view || uiData.target_date)) viewFn(uiData.view || 'month', uiData.target_date || '');
           else if (fn) fn();
         }).catch(function(){});
       } else if (panel === 'email') {
-        import('./emailLibrary.js?v=20260910replyactions1').then(function(mod) {
+        import('./emailLibrary.js?v=20260915trashmove2').then(function(mod) {
           var fn = mod.openEmailLibrary || (mod.default && mod.default.openEmailLibrary);
           if (fn) fn();
         }).catch(function(){});
@@ -205,7 +205,7 @@ export function handleUIControl(uiData) {
       } else if (panel === 'cookbook') {
         import('./cookbook.js').then(function(mod) {
           var fn = mod.open || (mod.default && mod.default.open);
-          if (fn) fn();
+          if (fn) fn(uiData.view ? { tab: uiData.view } : undefined);
         }).catch(function(){});
       } else if (panel === 'notes') {
         import('./notes.js?v=20260910drawmerge1').then(function(mod) {
@@ -213,7 +213,7 @@ export function handleUIControl(uiData) {
           if (fn) fn();
         }).catch(function(){});
       } else if (panel === 'theme' || panel === 'themes') {
-        import('./theme.js?v=20260909effectspeed1').then(function(mod) {
+        import('./theme.js?v=20260911organsrain1').then(function(mod) {
           var fn = mod.togglePopup || (mod.default && mod.default.togglePopup);
           var modal = document.getElementById('theme-modal');
           if (modal && modal.classList.contains('hidden') && fn) fn();
@@ -259,7 +259,7 @@ export function handleUIControl(uiData) {
       } catch (e) {
         console.warn('open_email_reply existing draft update failed:', e);
       }
-      import('./emailInbox.js?v=20260903emailsend2').then(function(mod) {
+        import('./emailInbox.js?v=20260914aireply4').then(function(mod) {
         var fn = mod.openReplyDraft || (mod.default && mod.default.openReplyDraft);
         if (fn) fn(uiData.uid, uiData.folder || 'INBOX', uiData.mode || 'reply', uiData.body || '');
       }).catch(function(e) {

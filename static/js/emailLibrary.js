@@ -4,8 +4,8 @@
  */
 
 import spinnerModule from './spinner.js';
-import { styledConfirm, showToast, emptyStateIcon } from './ui.js?v=20260908weekhoverfix1';
-import { folderDisplayName, sortedFolders } from './emailInbox.js?v=20260903emailsend2';
+import { styledConfirm, showToast, emptyStateIcon } from './ui.js?v=20260916largetoolscroll1';
+import { folderDisplayName, sortedFolders } from './emailInbox.js?v=20260914aireply4';
 import settingsModule from './settings.js?v=20260909defaultmodelfix1';
 import * as Modals from './modalManager.js';
 import { topPortalZ } from './toolWindowZOrder.js';
@@ -997,7 +997,7 @@ function _showEmailReaderLoadError(reader, message, onRetry) {
 function _openCalendarEventFromEmail(uid) {
   const target = String(uid || '').trim();
   if (!target) return;
-  import('./calendar.js?v=20260903weekscrollstable1').then(mod => {
+  import('./calendar.js?v=20260914emailsource11').then(mod => {
     const open = mod.openCalendarTo || (mod.default && mod.default.openCalendarTo);
     if (open) open(target);
   }).catch(() => {});
@@ -1095,7 +1095,7 @@ function _loadedEmailsHaveVisibleTags() {
 
 async function _openTasksForEmailTags() {
   try {
-    const mod = await import('./tasks.js?v=20260901taskskilldensity1');
+    const mod = await import('./tasks.js?v=20260914taskmodel1');
     const openTasks = mod.openTasks || mod.default?.openTasks;
     if (typeof openTasks === 'function') {
       openTasks(null, { filter: 'Email', focusAction: 'check_email_urgency' });
@@ -1821,7 +1821,8 @@ async function _deleteEmailAndAdvance(em, card, opts = {}) {
     : null;
   const nextUid = sibling ? sibling.dataset.uid : null;
   try {
-    await fetch(`${API_BASE}/api/email/delete/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'DELETE' });
+    const response = await fetch(`${API_BASE}/api/email/delete/${encodeURIComponent(em.uid)}?${_emailMutationQuery(em)}`, { method: 'DELETE' });
+    await _requireSuccessfulEmailMutation(response, 'Failed to delete email');
   } catch (err) {
     console.error('Failed to delete email:', err);
     busy?.remove?.();
@@ -2059,6 +2060,23 @@ function _wireEmailSetupHint(root) {
 
 function _acct() {
   return state._libAccountId ? `&account_id=${encodeURIComponent(state._libAccountId)}` : '';
+}
+
+function _emailMutationQuery(em, fallbackFolder = state._libFolder) {
+  const folder = String(em?.folder || fallbackFolder || 'INBOX');
+  const accountId = em?.account_id || state._libAccountId || '';
+  const params = new URLSearchParams({ folder });
+  if (accountId) params.set('account_id', String(accountId));
+  if (em?.message_id) params.set('message_id', String(em.message_id));
+  return params.toString();
+}
+
+async function _requireSuccessfulEmailMutation(response, fallback = 'Email operation failed') {
+  const data = await response.json().catch(() => null);
+  if (!response.ok || data?.success !== true) {
+    throw new Error(data?.error || `${fallback} (${response.status})`);
+  }
+  return data;
 }
 
 function _unsubscribeMethodLabel(method) {
@@ -6991,7 +7009,7 @@ async function _loadScheduled(grid, sp) {
     cancelBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
     cancelBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      const { styledConfirm } = await import('./ui.js?v=20260908weekhoverfix1');
+      const { styledConfirm } = await import('./ui.js?v=20260916largetoolscroll1');
       const ok = await styledConfirm(`Cancel scheduled email "${subject}"?`, { confirmText: 'Cancel Send', cancelText: 'Keep', danger: true });
       if (!ok) return;
       try {
@@ -7872,7 +7890,7 @@ async function _toggleCardPreview(card, em) {
     });
     reader.querySelector('[data-act="more"]')?.addEventListener('click', (ev) => {
       ev.stopPropagation();
-      _showReaderMoreMenu(em, card, reader, ev.currentTarget);
+      _showReaderMoreMenu(em, card, reader, ev.currentTarget, data);
     });
     reader.querySelector('[data-act="summarize"]')?.addEventListener('click', async (ev) => {
       ev.stopPropagation();
@@ -8024,6 +8042,22 @@ function _renderEmailBody(data) {
       return _foldSignature(plainTurns, null);
     }
     return _foldSignature(_escLinkify(plain).replace(/\n/g, '<br>'), null);
+  }
+
+  // Prefer the normalized plain-text thread when the message contains
+  // explicit reply markers. HTML mail from Outlook/Gmail commonly wraps the
+  // same quoted message in several nested blockquotes; feeding that markup
+  // to the HTML walker creates phantom chains such as "Earlier reply >
+  // Earlier reply > sender". The plain representation has the actual quote
+  // levels and gives us one stable fold per real quoted message.
+  const hasPlainThreadMarkers = plain && (
+    /^\s*>/m.test(plain)
+    || /^\s*-{5,}\s*(?:Previous message|Original message)\s*-{5,}\s*$/im.test(plain)
+    || /^\s*On\s.+?\s(?:wrote|skrev|schrieb|écrit|escribió)\s*:\s*$/im.test(plain)
+  );
+  if (hasPlainThreadMarkers) {
+    const plainThread = _renderPlaintextThread(plain);
+    if (plainThread) return _foldSignature(plainThread, data && data.sender_signature || null);
   }
 
   // Prefer the server-cached thread parse — that's the richest structure
@@ -8893,7 +8927,7 @@ function _wireAttachmentHandlers(reader, folder) {
         try { uiModule.showToast && uiModule.showToast(`Downloading ${count || 'all'} attachments`); } catch (_) {}
       } catch (e) {
         console.error('attachments zip download error', e);
-        try { const { showError } = await import('./ui.js?v=20260908weekhoverfix1'); showError('Could not download attachments'); } catch (_) {}
+        try { const { showError } = await import('./ui.js?v=20260916largetoolscroll1'); showError('Could not download attachments'); } catch (_) {}
       } finally {
         delete btn.dataset.downloading;
         btn.classList.remove('is-loading');
@@ -8936,12 +8970,16 @@ function _wireAttachmentHandlers(reader, folder) {
         if (!importRes.ok || !result.ok) {
           throw new Error(result.detail || result.error || `HTTP ${importRes.status}`);
         }
+        const existingEventUid = Array.isArray(result.event_uids) ? String(result.event_uids[0] || '').trim() : '';
+        if (existingEventUid && Number(result.imported || 0) === 0 && Number(result.skipped || 0) > 0) {
+          _openCalendarEventFromEmail(existingEventUid);
+        }
         try { uiModule.showToast && uiModule.showToast(`${result.imported || 0} event${result.imported === 1 ? '' : 's'} added to ${result.calendar || 'calendar'}`); } catch (_) {}
         window.dispatchEvent(new CustomEvent('calendar-refresh'));
       } catch (e) {
         console.error('calendar attachment import failed', e);
         try {
-          const { showError } = await import('./ui.js?v=20260908weekhoverfix1');
+          const { showError } = await import('./ui.js?v=20260916largetoolscroll1');
           showError(`Couldn't add ${name} to calendar: ${e?.message || 'Import failed'}`);
         } catch (_) {}
       } finally {
@@ -8986,7 +9024,7 @@ function _wireAttachmentHandlers(reader, folder) {
         const json = await res.json().catch(() => ({}));
         if (!res.ok || !json.doc_id) {
           const msg = (json && json.error) || `HTTP ${res.status}`;
-          try { const { showError } = await import('./ui.js?v=20260908weekhoverfix1'); showError(`Couldn't open ${name}: ${msg}`); } catch (_) { alert(`Couldn't open ${name}: ${msg}`); }
+          try { const { showError } = await import('./ui.js?v=20260916largetoolscroll1'); showError(`Couldn't open ${name}: ${msg}`); } catch (_) { alert(`Couldn't open ${name}: ${msg}`); }
           return;
         }
         try {
@@ -9002,7 +9040,7 @@ function _wireAttachmentHandlers(reader, folder) {
               ownerModal.classList.add('hidden');
             }
           }
-          const docMod = await import('./document.js?v=20260911removealignrightshortcut1');
+          const docMod = await import('./document.js?v=20260916docctx2');
           const load = (docMod && docMod.loadDocument) || (docMod && docMod.default && docMod.default.loadDocument);
           if (typeof load === 'function') {
             await load(json.doc_id);
@@ -9011,14 +9049,14 @@ function _wireAttachmentHandlers(reader, folder) {
           }
         } catch (e) {
           console.error('Open document failed:', e);
-          try { const { showError } = await import('./ui.js?v=20260908weekhoverfix1'); showError('Document opened but panel could not mount'); } catch (_) {}
+          try { const { showError } = await import('./ui.js?v=20260916largetoolscroll1'); showError('Document opened but panel could not mount'); } catch (_) {}
         }
       } catch (e) {
         console.error('attachment-as-doc error', e);
         const msg = e && e.name === 'AbortError'
           ? `Opening ${name} timed out. Try downloading it instead.`
           : `Couldn't open ${name}`;
-        try { const { showError } = await import('./ui.js?v=20260908weekhoverfix1'); showError(msg); } catch (_) {}
+        try { const { showError } = await import('./ui.js?v=20260916largetoolscroll1'); showError(msg); } catch (_) {}
       } finally {
         delete openBtn.dataset.opening;
         openBtn.classList.remove('is-loading');
@@ -9052,7 +9090,7 @@ function _wireAttachmentHandlers(reader, folder) {
     if (chip.dataset.wired === '1') return;
     chip.dataset.wired = '1';
     chip.addEventListener('click', async (ev) => {
-      if (ev.target.closest('.email-attachment-open')) return;
+      if (ev.target.closest('.email-attachment-open, .email-attachment-calendar-open, .email-attachment-download')) return;
       ev.stopPropagation();
       ev.preventDefault();
       const uid = chip.dataset.attUid;
@@ -9629,7 +9667,7 @@ async function _openEmailAsTab(em, folder) {
     _wireReaderActionOverflow(reader);
     reader.querySelector('[data-act="more"]')?.addEventListener('click', (ev) => {
       ev.stopPropagation();
-      try { _showReaderMoreMenu(em, modal, reader, ev.currentTarget); } catch {}
+      try { _showReaderMoreMenu(em, modal, reader, ev.currentTarget, data); } catch {}
     });
   } catch (err) {
     showFailedTab(err?.message ? `Failed to load email: ${err.message}` : 'Failed to load email');
@@ -9791,7 +9829,7 @@ async function _openEmailWindow(em, folder) {
       // element and the email data. The card param is mostly used to find
       // the next sibling; the standalone window has none so we just pass
       // bodyEl as a stand-in.
-      try { _showReaderMoreMenu(em, modal, bodyEl, ev.currentTarget); } catch {}
+      try { _showReaderMoreMenu(em, modal, bodyEl, ev.currentTarget, data); } catch {}
     });
   } catch (err) {
     bodyEl.innerHTML = `<div style="color:var(--red,#e55);padding:16px;">Failed to load: ${_esc(String(err))}</div>`;
@@ -10052,9 +10090,9 @@ function _fitReaderActions(meta) {
   const compact = buttonsWidth > Math.max(190, meta.clientWidth - 150);
   row.classList.toggle('email-reader-actions-compact', compact);
   if (compact) {
-    // Reply is the primary reader action and must survive compact layouts.
-    // Move the optional AI and Reply All variants into More first.
-    row.querySelectorAll('[data-act="ai-reply"], [data-act="reply-all"]')
+    // Keep the two common drafting actions visible on narrow screens. Put
+    // the less frequent recipient variants in More first.
+    row.querySelectorAll('[data-act="reply-all"], [data-act="forward"]')
       .forEach(button => button.classList.add('reader-action-overflowed'));
   }
 }
@@ -10072,7 +10110,7 @@ function _wireReaderActionOverflow(reader) {
   _readerActionFitObserver?.observe(meta);
 }
 
-function _showReaderMoreMenu(em, card, reader, anchor) {
+function _showReaderMoreMenu(em, card, reader, anchor, data) {
   // Toggle: if a dropdown for THIS anchor is already open, close it.
   const existing = document.querySelector('.email-card-dropdown');
   if (existing && existing._anchor === anchor) {
@@ -10131,7 +10169,17 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
   const overflowActions = Array.from(reader.querySelectorAll('.reader-action-overflowed')).map(button => ({
     label: button.querySelector('.reader-btn-label')?.textContent?.trim() || button.title || 'Action',
     icon: button.querySelector('svg')?.outerHTML || '',
-    action: () => button.click(),
+    button,
+    action: (positionAnchor) => {
+      if (button.dataset.act === 'ai-reply') {
+        _handleAiReplyButton({
+          currentTarget: button,
+          stopPropagation() {},
+        }, em, data, positionAnchor || button);
+      } else {
+        button.click();
+      }
+    },
   }));
   const actions = [
     ...overflowActions,
@@ -10231,7 +10279,7 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
       action: async () => {
         const email = (em.from_address || em.from || '').trim();
         if (!email) {
-          import('./ui.js?v=20260908weekhoverfix1').then(m => m.showError && m.showError('No sender address')).catch(() => {});
+          import('./ui.js?v=20260916largetoolscroll1').then(m => m.showError && m.showError('No sender address')).catch(() => {});
           return;
         }
         const name = (em.from_name || '').trim() || email.split('@')[0];
@@ -10242,14 +10290,14 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
             body: JSON.stringify({ name, email }),
           });
           const d = await r.json();
-          import('./ui.js?v=20260908weekhoverfix1').then(m => {
+          import('./ui.js?v=20260916largetoolscroll1').then(m => {
             if (!m.showToast) return;
             if (d.success && d.message === 'Already exists') m.showToast('Already in contacts');
             else if (d.success) m.showToast('Saved to contacts');
             else m.showError && m.showError('Failed to save contact');
           }).catch(() => {});
         } catch (_) {
-          import('./ui.js?v=20260908weekhoverfix1').then(m => m.showError && m.showError('Failed to save contact')).catch(() => {});
+          import('./ui.js?v=20260916largetoolscroll1').then(m => m.showError && m.showError('Failed to save contact')).catch(() => {});
         }
       },
     },
@@ -10271,7 +10319,8 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
         const busy = _showEmailDeleteOverlay(card);
         await busy?.ready;
         try {
-          await fetch(`${API_BASE}/api/email/delete/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'DELETE' });
+          const response = await fetch(`${API_BASE}/api/email/delete/${encodeURIComponent(em.uid)}?${_emailMutationQuery(em)}`, { method: 'DELETE' });
+          await _requireSuccessfulEmailMutation(response, 'Failed to delete email');
         } catch (e) {
           console.error(e);
           busy?.remove?.();
@@ -10296,7 +10345,8 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
         const busy = _showEmailDeleteOverlay(card);
         await busy?.ready;
         try {
-          await fetch(`${API_BASE}/api/email/delete-permanent/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'DELETE' });
+          const response = await fetch(`${API_BASE}/api/email/delete-permanent/${encodeURIComponent(em.uid)}?${_emailMutationQuery(em)}`, { method: 'DELETE' });
+          await _requireSuccessfulEmailMutation(response, 'Failed to delete email');
         } catch (e) {
           console.error(e);
           busy?.remove?.();
@@ -10328,6 +10378,14 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
       }
       if (a.submenu === 'translate') {
         _showEmailTranslateSubmenu(reader, dropdown);
+        return;
+      }
+      // A hidden overflowed button has a zero-sized client rect. Invoke the
+      // AI chooser while the visible More item is still mounted, then close
+      // the action menu after the chooser has captured its position.
+      if (a.button?.dataset.act === 'ai-reply') {
+        a.action(item);
+        close();
         return;
       }
       close();
@@ -10518,11 +10576,12 @@ function _showCardMenu(em, anchor) {
       const busy = _showEmailDeleteOverlay(card);
       await busy?.ready;
       try {
-        await fetch(`${API_BASE}/api/email/delete/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'DELETE' });
+        const response = await fetch(`${API_BASE}/api/email/delete/${encodeURIComponent(em.uid)}?${_emailMutationQuery(em)}`, { method: 'DELETE' });
+        await _requireSuccessfulEmailMutation(response, 'Failed to delete email');
       } catch (e) {
         busy?.remove?.();
-        showToast('Failed to delete email');
-        throw e;
+        showToast(e?.message || 'Could not move email to Trash');
+        return;
       }
       busy?.remove?.();
       await _animateEmailCardRemoval([em.uid]);
@@ -10953,9 +11012,9 @@ function _closeAiReplyChoice() {
   });
 }
 
-function _showAiReplyChoice(btn, em, data) {
+function _showAiReplyChoice(btn, em, data, positionAnchor = btn) {
   _closeAiReplyChoice();
-  const rect = btn.getBoundingClientRect();
+  const rect = positionAnchor.getBoundingClientRect();
   const menu = document.createElement('div');
   menu.className = 'email-ai-reply-choice';
   /* Clamp width to viewport minus 16px margin so the menu never spills off
@@ -11043,7 +11102,7 @@ function _showAiReplyChoice(btn, em, data) {
   }, 0);
 }
 
-function _handleAiReplyButton(ev, em, data) {
+function _handleAiReplyButton(ev, em, data, positionAnchor = ev.currentTarget) {
   ev.stopPropagation();
   const btn = ev.currentTarget;
   // First click on a cached email surfaces the cached draft. Second
@@ -11058,7 +11117,7 @@ function _handleAiReplyButton(ev, em, data) {
     data.cached_ai_reply = null;
     btn.dataset.shownOnce = '';
   }
-  _showAiReplyChoice(btn, em, data);
+  _showAiReplyChoice(btn, em, data, positionAnchor);
 }
 
 function _hasMultipleRecipients(data) {
@@ -11284,7 +11343,7 @@ async function _createEmailReplyReminder(em, dueDate, customText = '') {
       body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error('Failed');
-    const { showToast } = await import('./ui.js?v=20260908weekhoverfix1');
+    const { showToast } = await import('./ui.js?v=20260916largetoolscroll1');
     if (dueDate) {
       const fmt = dueDate.toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
       showToast(`Todo reminder set for ${fmt}`);
@@ -11295,7 +11354,7 @@ async function _createEmailReplyReminder(em, dueDate, customText = '') {
       try { Notification.requestPermission(); } catch {}
     }
   } catch (e) {
-    const { showError } = await import('./ui.js?v=20260908weekhoverfix1');
+    const { showError } = await import('./ui.js?v=20260916largetoolscroll1');
     showError('Failed to create reminder');
   }
 }

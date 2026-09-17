@@ -38,7 +38,12 @@ from src.llm_core import (
     _normalize_http_status,
     _normalize_usage_counts,
 )
-from src.model_context import estimate_tokens
+from src.model_context import estimate_tokens, is_local_endpoint
+from src.model_profiles import (
+    ODYSSEUS_COMPACT_TOOL_SCHEMA_PROFILE,
+    is_odysseus_merged_tools_model,
+    tool_schema_profile,
+)
 from src.agent_evidence import (
     EvidenceLedger,
     command_has_mutation_effect,
@@ -76,7 +81,7 @@ from src.tool_approvals import (
     tool_approval_store,
 )
 from src.tool_types import ToolBlock
-from src.turn_contract import with_turn_contract
+from src.turn_contract import selected_tools_for_request, with_turn_contract
 from src.tool_utils import _truncate, get_mcp_manager
 from src.agent_tools import (
     parse_tool_blocks,
@@ -184,7 +189,7 @@ def _thinking_mode_for_route(
     # The pre-Heretic control is served by vLLM without a verified reasoning
     # parser.  If thinking is enabled, its private analysis is returned as
     # ordinary content and the WebUI buffers a long pre-answer transcript.
-    if model_name == "odysseus-qwen3.5-tools-pre-heretic":
+    if is_odysseus_merged_tools_model(model_name):
         return "off"
     policy = _route_thinking_policy()
     if policy in {"on", "off"}:
@@ -209,8 +214,7 @@ def _qwen_tool_router_output_budget(requested: int | None) -> int:
 def _allow_visual_tool_evidence_for_model(model: str) -> bool:
     """Keep pixels for multimodal Odysseus routers; legacy routers stay text-only."""
 
-    value = str(model or "").strip().lower()
-    return value.startswith("odysseus-qwen3.5-tools-") or not _is_qwen38_tool_router(model)
+    return is_odysseus_merged_tools_model(model) or not _is_qwen38_tool_router(model)
 
 
 def _malformed_native_tool_recovery_instruction(names: Set[str]) -> str:
@@ -400,10 +404,57 @@ def _contract_allows_single_action_terminal(contract) -> bool:
     return contract is None or len(contract.capabilities) <= 1
 
 
+def _request_has_compound_actions(text: str) -> bool:
+    """Return whether a turn explicitly requests multiple semantic operations."""
+    value = str(text or "")
+    if (
+        len(re.findall(r"\bhttps?://[^\s<>\"']+", value, re.IGNORECASE)) >= 2
+        and re.search(
+            r"\b(?:compare|contrast|synthesi[sz]e|cite|citing|evidence)\b",
+            value,
+            re.IGNORECASE,
+        )
+    ):
+        return True
+    groups = (
+        r"\b(?:create|add|make|write|draft|schedule|book|set\s+up)\b",
+        r"\b(?:list|search|find|locate|look\s+up)\b",
+        r"\b(?:read|open|inspect|view|download)\b",
+        r"\b(?:edit|update|change|replace|rewrite|append)\b",
+        r"\b(?:suggest|recommend|propose)\b",
+        r"\b(?:pause|disable|suspend)\b",
+        r"\b(?:resume|re-enable|bring\s+(?:it|them)\s+back)\b",
+        r"\b(?:delete|remove|cancel|get\s+rid\s+of)\b",
+        r"\b(?:verify|confirm|check)\b",
+    )
+    return sum(bool(re.search(pattern, value, re.IGNORECASE)) for pattern in groups) >= 2
+
+
+def _request_forbids_execution_retry(text: str) -> bool:
+    """Return whether the user explicitly bounded command execution to one try."""
+    value = str(text or "")
+    return bool(
+        re.search(
+            r"\b(?:do\s+not|don['’]?t|dont|never)\s+"
+            r"(?:retry|re-?run|run\s+(?:it|that|the\s+command)\s+again)\b",
+            value,
+            re.IGNORECASE,
+        )
+        or re.search(
+            r"\b(?:run|execute|try)\b[^.!?\n]{0,120}\b(?:once|one\s+time)\b",
+            value,
+            re.IGNORECASE,
+        )
+    )
+
+
 def _contract_mutation_signature(block, contract):
-    """Deduplicate exact successful writes when a compound turn continues."""
-    if contract is None or len(contract.capabilities) <= 1:
-        return None
+    """Deduplicate an exact successful mutation for the rest of this turn.
+
+    A model may continue after a successful write in order to verify or summarize
+    it.  That continuation must never execute the same state-changing call again,
+    regardless of whether the turn contract names one capability or several.
+    """
     from src.tool_capabilities import ToolEffect, capabilities_for_action
     effects = capabilities_for_action(block.tool_type, block.content).effects
     if not effects & {ToolEffect.WRITE_PRIVATE, ToolEffect.WRITE_WORKSPACE,
@@ -525,7 +576,20 @@ async def _dispatch_required_safe_read(operation, **execution_context):
 
 def _tool_rejection_reason(tool_name, policy_names, tool_policy, contract=None):
     if contract is not None and not contract.permits(tool_name):
-        return f"Tool '{tool_name}' is outside the requested turn capabilities."
+        offered = sorted(
+            name for name in (contract.offered or ())
+            if name not in {"ask_user", "update_plan"}
+        )
+        available = (
+            f" Available tool{'s' if len(offered) != 1 else ''} for this turn: "
+            + ", ".join(offered)
+            + "."
+            if offered else ""
+        )
+        return (
+            f"Tool '{tool_name}' is outside the requested turn capabilities."
+            f"{available}"
+        )
     if tool_policy is not None:
         blocked_name = next((name for name in policy_names if tool_policy.blocks(name)), None)
         if blocked_name is not None:
@@ -574,6 +638,12 @@ _NATIVE_EMAIL_ALIAS_TO_MCP = {
     "email_list_accounts": "mcp__email__list_email_accounts",
     "email_list_messages": "mcp__email__list_emails",
     "email_get_message": "mcp__email__read_email",
+    # Common OpenAI-compatible names for the same reviewable, unsent draft
+    # operation. This is lossless: both aliases preserve recipient, subject,
+    # and body and do not grant send authority.
+    "create_draft": "mcp__email__draft_email",
+    "email_create_draft": "mcp__email__draft_email",
+    "mcp__email__create_draft": "mcp__email__draft_email",
     "email_send_message": "mcp__email__send_email",
     "email_reply_to_message": "mcp__email__reply_to_email",
     "email_delete_message": "mcp__email__delete_email",
@@ -783,7 +853,7 @@ def _is_qwen38_tool_router(model: str) -> bool:
         or "qwen35-9b-tool-router" in value
         or "qwen3.5-9b-tool-router" in value
         or "odysseus-qwen3.5-9b" in value
-        or value.startswith("odysseus-qwen3.5-tools-")
+        or is_odysseus_merged_tools_model(value)
     )
 
 
@@ -947,6 +1017,16 @@ def _looks_like_youtube_tool_turn(text: str) -> bool:
         r"official\s+.+\s+channel)\b",
         value,
     ))
+
+
+def _explicitly_named_personal_tools(text: str) -> Set[str]:
+    """Honor unambiguous requests for normal personal-app tool surfaces."""
+    value = str(text or "")
+    return {
+        name
+        for name in ("manage_notes", "manage_calendar", "manage_tasks")
+        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", value)
+    }
 
 
 def _qwen38_router_tool_names(query: str) -> Set[str]:
@@ -1548,6 +1628,30 @@ def _parse_explicit_open_panel_request(text: str) -> Optional[tuple[str, str]]:
     return "ui_control", f"open_panel {target}{(' ' + view) if target == 'calendar' and view else ''}{(' ' + target_date) if target == 'calendar' and target_date else ''}"
 
 
+def _parse_explicit_theme_change_request(text: str) -> Optional[tuple[str, str]]:
+    """Bind explicit preset changes to ``set_theme``, not panel navigation."""
+    value = str(text or "").strip().lower()
+    value = re.sub(
+        r"^(?:(?:ok(?:ay)?|now|then|also|hmm|actually|please)[,;:]?\s+)+",
+        "",
+        value,
+    )
+    presets = (
+        "dark|light|midnight|paper|cyberpunk|retrowave|forest|ocean|ume|"
+        "copper|terminal|organs|lavender|gpt|claude|cute"
+    )
+    match = re.fullmatch(
+        rf"(?:(?:set|change|switch|put)\s+(?:(?:the|my)\s+)?(?:theme\s+)?"
+        rf"(?:it\s+)?(?:back\s+)?to\s+|go\s+)(?P<theme>{presets})"
+        rf"(?:\s+(?:theme|mode))?(?:\s+pls|\s+please)?[.!?]*",
+        value,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return "ui_control", json.dumps({"action": "set_theme", "name": match["theme"]})
+
+
 def _calendar_open_panel_snapshot_command(result: dict[str, Any]) -> str:
     """Build a context snapshot read after opening the calendar panel."""
     if not isinstance(result, dict):
@@ -1715,6 +1819,30 @@ def _has_successful_calendar_action_evidence(
         except Exception:
             action = command.splitlines()[0].strip().lower() if command else ""
         if action in expected:
+            return True
+    return False
+
+
+def _has_calendar_mutation_then_verification(
+    tool_events: list[dict[str, Any]],
+    expected_actions: set[str],
+) -> bool:
+    """True after a requested calendar mutation and a later successful readback."""
+    expected = {str(action or "").strip().lower() for action in expected_actions if action}
+    mutation_seen = False
+    for event in tool_events or []:
+        if not isinstance(event, dict) or _resolved_tool_event_name(event) != "manage_calendar":
+            continue
+        if not tool_result_is_successful(event):
+            continue
+        try:
+            payload = json.loads(str(event.get("command") or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            payload = {}
+        action = str(payload.get("action") or "").strip().lower() if isinstance(payload, dict) else ""
+        if action in expected:
+            mutation_seen = True
+        elif mutation_seen and action in {"list", "list_events", "lis_events"}:
             return True
     return False
 
@@ -2476,6 +2604,17 @@ def _parse_qwen_explicit_admin_request(text: str) -> Optional[tuple[str, str]]:
             return "app_api", json.dumps({
                 "action": "call", "method": "GET", "path": "/api/gallery/library",
             })
+    if (
+        re.search(r"\b(?:best|recommended?|suitable|compatible|fit)\b", q)
+        and re.search(r"\bmodels?\b", q)
+        and re.search(r"\b(?:my|this|the|current)\s+(?:hardware|machine|computer|pc|server|system)\b|\b(?:gpu|vram|ram)\b", q)
+    ):
+        return "app_api", json.dumps({
+            "action": "call",
+            "method": "GET",
+            "path": "/api/hwfit/models",
+            "query": {"fit_only": "true", "limit": 10, "sort": "fit"},
+        })
     if listish and _looks_like_explicit_app_settings_request(q):
         return "manage_settings", json.dumps({"action": "list"})
     if listish and re.search(r"\b(?:cookbook\s+servers?|configured\s+cookbook\s+servers?|default\s+cookbook\s+server)\b", q):
@@ -3004,6 +3143,15 @@ def _parse_qwen_explicit_email_search_request(text: str) -> Optional[dict[str, A
     query = re.sub(r"\s+", " ", match.group(1)).strip(" .\"'")
     if not query:
         return None
+    # In inventory requests, "with sender and subject" names the columns the
+    # user wants displayed; it is not a topic query.  Treating that projection
+    # as search text returns an empty result and masks the proper list reader.
+    if re.fullmatch(
+        r"(?:the\s+)?sender(?:\s+(?:and|,)\s+(?:the\s+)?subject)?",
+        query,
+        re.IGNORECASE,
+    ):
+        return None
     return {"query": query, "max_results": 10}
 
 
@@ -3458,7 +3606,15 @@ def _parse_qwen_explicit_calendar_delete(text: str) -> Optional[str]:
             value,
             re.IGNORECASE,
         )
-    return match.group(1).rstrip(".") if match else None
+    if not match:
+        return None
+    candidate = match.group(1).rstrip(".")
+    if candidate.casefold() in {
+        "from", "on", "the", "this", "that", "it", "first", "second",
+        "third", "fourth", "fifth", "last", "next", "previous",
+    }:
+        return None
+    return candidate
 
 
 def _parse_qwen_explicit_calendar_move(text: str) -> Optional[dict[str, Any]]:
@@ -4442,7 +4598,7 @@ def _has_successful_notes_action_evidence(
     return False
 
 
-def _memory_list_summary_from_tool_output(raw: str) -> str:
+def _memory_list_summary_from_tool_output(raw: str, max_items: int = 20) -> str:
     """Keep broad memory listings reviewable without dumping the whole store."""
     if not isinstance(raw, str) or not raw.strip():
         return ""
@@ -4481,7 +4637,7 @@ def _memory_list_summary_from_tool_output(raw: str) -> str:
             text = re.sub(r"\s+", " ", item_match.group(3)).strip()
             row = f"- [{category} {memory_id}](#memory-{quote(memory_id, safe='')}) — {text}"
             all_items.append(row)
-            if len(items) < 20:
+            if len(items) < max_items:
                 items.append(row)
     compact_header_match = re.search(
         r"^(Memory:\s+\d+\s+saved\s+entr(?:y|ies)(?:\s+\([^\n]+\))?\.?)",
@@ -4930,6 +5086,7 @@ def _normalize_calendar_list_range_args(
     args: dict[str, Any],
     *,
     today: Any = None,
+    user_text: str = "",
 ) -> tuple[dict[str, Any], bool]:
     """Convert obvious relative calendar list ranges to concrete ISO dates."""
     if not isinstance(args, dict):
@@ -4983,7 +5140,25 @@ def _normalize_calendar_list_range_args(
         end = (today_date + timedelta(days=7)).isoformat()
 
     if not start or not end:
-        return args, False
+        broad_calendar_read = bool(re.search(
+            r"\bwhat(?:['’]?s|\s+is)\s+on\s+(?:my|our|the)\s+calendar\b|"
+            r"\b(?:list|show|check)\s+(?:me\s+)?(?:my|our|the)?\s*"
+            r"(?:calendar|calendar\s+events|schedule)\b",
+            str(user_text or ""),
+            re.IGNORECASE,
+        ))
+        if not broad_calendar_read:
+            return args, False
+        prompt_bounds = _calendar_bounds_for_prompt(user_text, today=today_date)
+        if not prompt_bounds:
+            return args, False
+        # A broad listing has no user-authored title filter. Discard model
+        # guesses such as a fabricated schedule string or narrow clock range.
+        return {
+            "action": "list_events",
+            "start": prompt_bounds[0],
+            "end": prompt_bounds[1],
+        }, True
 
     normalized = dict(args)
     normalized["action"] = "list_events"
@@ -5123,6 +5298,17 @@ def _parse_ambiguous_calendar_date_ask_user(text: str) -> Optional[tuple[str, st
     if not re.search(r"\b(?:add|create|schedule|book|event)\b", q):
         return None
     if not re.search(r"\bnext\s+month\b", q):
+        return None
+    # An ordinal weekday is a complete, deterministic date specification once
+    # the request supplies "next month" (for example, "the last Wednesday of
+    # next month").  Do not preempt a capable model with an unnecessary
+    # ask_user turn merely because the user did not spell out a calendar day.
+    if re.search(
+        r"\b(?:first|second|third|fourth|last)\s+"
+        r"(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b"
+        r"(?:\s+of\s+(?:the\s+)?next\s+month)?",
+        q,
+    ):
         return None
     if re.search(r"\b(?:20\d{2}-\d{2}-\d{2}|\b\d{1,2}/\d{1,2}\b|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}\b", q):
         return None
@@ -5434,7 +5620,14 @@ def _email_list_summary_from_tool_output(
     """Format list_emails output for chat without an LLM pass."""
     if not isinstance(raw, str) or not raw.strip():
         return ""
-    if re.search(r"\b(no emails?|found 0 email|0 email)\b", raw, re.IGNORECASE):
+    account_errors = bool(re.search(r"\[EMAIL ACCOUNT ERRORS:", raw, re.IGNORECASE))
+    if account_errors and not re.search(r"^\s*\d+\.\s+\*\*", raw, re.MULTILINE):
+        return (
+            "I couldn't check the inbox because one or more email accounts are "
+            "currently unavailable. No reliable empty-inbox result was returned."
+        )
+    if (not account_errors
+            and re.search(r"\b(no emails?|found 0 email|0 email)\b", raw, re.IGNORECASE)):
         return "No emails found."
 
     parsed: list[dict[str, str]] = []
@@ -6657,7 +6850,7 @@ def _compact_native_route_tools(
             for path in _explicit_local_media_inputs(text)
         )
         compact.update(original & {
-            "inspect_media", "transcribe_media", "bash", "read_file", "ls",
+            "inspect_media", "extract_text", "transcribe_media", "bash", "read_file", "ls",
             "pdf_extract" if local_pdf_input else "__no_local_pdf__",
         })
         if (
@@ -6981,7 +7174,7 @@ def _compact_native_media_analysis_tools(
     if not media_inputs:
         return original
     suffixes = {Path(path).suffix.casefold() for path in media_inputs}
-    allowed = {"inspect_media", "transcribe_media", "read_file", "ls", "python"}
+    allowed = {"inspect_media", "extract_text", "transcribe_media", "read_file", "ls", "python"}
     if suffixes & {
         ".mp4", ".mov", ".mkv", ".webm", ".avi", ".mp3", ".wav",
         ".m4a", ".aac", ".flac", ".ogg", ".opus",
@@ -6990,6 +7183,12 @@ def _compact_native_media_analysis_tools(
     if ".pdf" in suffixes:
         allowed.add("pdf_extract")
     if _visual_text_extraction_requested(text):
+        # OCR is a complete, purpose-built read surface.  Do not expose
+        # generic Python or the visual-description tool alongside it: models
+        # otherwise improvise long Tesseract/crop loops after the native OCR
+        # result instead of returning the requested exact text.
+        if "extract_text" in original:
+            return {"extract_text"}
         allowed.discard("transcribe_media")
     if _local_media_needs_web_lookup(text) or re.search(r"https?://", text, re.IGNORECASE):
         allowed.update(WEB_TOOL_NAMES)
@@ -7135,6 +7334,19 @@ def _workspace_tools_disabled_for_owner(owner: Optional[str]) -> bool:
     if flag in {"0", "false", "no", "off"}:
         return False
     return str(owner or "").strip().startswith("sft_")
+
+
+def _workspace_tools_disabled_for_request(
+    owner: Optional[str],
+    client_runtime_context: Optional[Dict[str, Any]],
+) -> bool:
+    """Keep SFT web sessions isolated without disabling declared native workspaces."""
+    native_terminal = bool(
+        isinstance(client_runtime_context, dict)
+        and client_runtime_context.get("surface") == "odysseus-native"
+        and client_runtime_context.get("terminal_agent") is True
+    )
+    return _workspace_tools_disabled_for_owner(owner) and not native_terminal
 
 
 def _strip_workspace_tools_for_sft(
@@ -7485,12 +7697,12 @@ def _assemble_prompt(tool_names: set, disabled_tools: set = None, compact: bool 
 
     if compact:
         artifact_surface = {
-            "inspect_media", "transcribe_media", "pdf_extract", "read_file",
+            "inspect_media", "extract_text", "transcribe_media", "pdf_extract", "read_file",
             "write_file", "ls", "python", "private_browser",
         }
         if (
             "write_file" in included
-            and included & {"inspect_media", "transcribe_media", "pdf_extract"}
+            and included & {"inspect_media", "extract_text", "transcribe_media", "pdf_extract"}
             and included <= artifact_surface
         ):
             return (
@@ -7662,6 +7874,11 @@ def _agent_route_tool_mode(
     """Resolve tool transport behavior for the currently active model route."""
 
     model_lc = (model or "").lower()
+    # Odysseus/Ajax names opt into the native OpenAI-compatible tool transport
+    # as well as the compact schemas. Do not let stale endpoint flags disable
+    # the tools these models were trained to call.
+    if tool_schema_profile(model) == ODYSSEUS_COMPACT_TOOL_SCHEMA_PROFILE:
+        return True, False, False
     endpoint_supports: Optional[bool] = None
     try:
         from core.database import SessionLocal as _SL, ModelEndpoint as _ME
@@ -7801,6 +8018,10 @@ def _configured_model_tool_surface(
             db.close()
     except Exception as exc:
         logger.debug("model tool surface lookup failed: %s", exc)
+    # With no explicit per-model override, model naming selects one of the two
+    # schema profiles. Settings may intentionally override this default.
+    if tool_schema_profile(model) == ODYSSEUS_COMPACT_TOOL_SCHEMA_PROFILE:
+        return "compact"
     return ""
 
 
@@ -8346,7 +8567,11 @@ def _web_search_unavailable_for_turn(
     """
     if "web" not in set(intent_domains or ()):
         return False
-    if not (WEB_TOOL_NAMES & set(disabled_tools or ())):
+    # A turn is unavailable only when every public-web route is disabled.
+    # Exact-URL turns intentionally expose web_fetch while keeping broad
+    # web_search disabled; the former intersection check incorrectly
+    # short-circuited those valid fetch-only contracts.
+    if not WEB_TOOL_NAMES.issubset(set(disabled_tools or ())):
         return False
     # Private-browser navigation is independent of the optional public-search
     # toggle. Let an explicit browser action reach its available tool.
@@ -9371,10 +9596,10 @@ def _native_media_workspace_rules(workspace: str) -> str:
     return (
         "\n\n## Workspace media mode\n"
         f"- Active workspace: `{workspace}`; relative paths resolve there.\n"
-        "- For a named local image, video, or PDF, make `inspect_media` your first inspection call.\n"
-        "- Do not use bash/Python/ffprobe/OpenCV/ffmpeg to inspect media contents or launch a background analysis when `inspect_media` is available. Use those only after a native inspection error or for an explicitly requested transformation.\n"
+        "- For explicit OCR or exact visible-text extraction, use `extract_text` first. For other named local images, videos, or PDFs, use `inspect_media` first.\n"
+        "- Do not use bash/Python/ffprobe/OpenCV/ffmpeg to inspect media contents or launch a background analysis when the matching native media tool is available. Use those only after a native-tool error or for an explicitly requested transformation.\n"
         "- Inspect supplied media before answering; never call it inaccessible without a failed tool result.\n"
-        "- Inspect pixels or visible text with `inspect_media`; transcribe only speech/audio with `transcribe_media`.\n"
+        "- Extract exact visible text with `extract_text`, inspect general pixels/scenes with `inspect_media`, and transcribe only speech/audio with `transcribe_media`.\n"
         "- For a multi-question video, prefer one bounded overview or focused `inspect_media` sampling call over repeated shell jobs.\n"
         "- Answer from tool evidence, recover from errors, and do not invent unseen content."
     )
@@ -9698,8 +9923,7 @@ def _should_use_direct_low_signal_path(
         and (
             casual_low_signal_turn
             or standalone_link_fragment_turn
-            or not existing_conversation
-            or (qwen38_tool_router and (casual_low_signal_turn or standalone_link_fragment_turn))
+            or ambiguous_short_turn
         )
         and not continuation
         and not plan_mode
@@ -10537,6 +10761,19 @@ def _turn_targets_active_document(intent: Dict[str, object], last_user: str, act
         r"email|mail|reply|respond|response|draft|compose|send|"
         r"tell them|tell her|tell him|say|write|make it say|"
         r"japanese|japan|polite|formal|tone|style"
+        r")\b",
+        text,
+    ):
+        return True
+    # Deictic writing references point at the visible editor even when the user
+    # never says "document".  Keep this ownership signal narrow so an unrelated
+    # request such as "fact check the stock market" does not inherit a stale tab.
+    if re.search(
+        r"\b(?:"
+        r"what\s+(?:i(?:['’]?m|\s+am|\s+was|\s+have\s+been)|we(?:['’]?re|\s+are|\s+were|\s+have\s+been))\s+"
+        r"(?:writing|drafting|working\s+on)|"
+        r"what\s+(?:i|we)\s+wrote|"
+        r"(?:my|our)\s+(?:writing|draft|document|text)"
         r")\b",
         text,
     ):
@@ -11775,6 +12012,88 @@ def _recent_odysseus_anchor_refs(messages: List[Dict], history_session: Any = No
     return refs
 
 
+def _ordinal_collection_mutation_target(
+    user_text: str,
+    messages: List[Dict],
+    history_session: Any,
+    family: str,
+) -> str:
+    """Bind a singular ordinal mutation to the prior authoritative list order."""
+    noun = r"(?:tasks?|jobs?|automations?)" if family == "tasks" else r"(?:events?|appointments?|meetings?)"
+    match = re.fullmatch(
+        rf"\s*(?:please\s+)?(?:delete|remove|trash|cancel|pause|resume)\s+"
+        rf"(?:the\s+)?(?P<ordinal>first|second|third|fourth|fifth|sixth|seventh|"
+        rf"eighth|ninth|tenth|[1-9]\d*(?:st|nd|rd|th))\s+{noun}"
+        rf"(?:\s+from\s+(?:that|the|this)\s+list)?[.!?]*\s*",
+        str(user_text or ""),
+        re.IGNORECASE,
+    )
+    if not match:
+        return ""
+    raw_ordinal = match["ordinal"].casefold()
+    index = {
+        word: position
+        for position, word in enumerate(
+            ("first", "second", "third", "fourth", "fifth", "sixth",
+             "seventh", "eighth", "ninth", "tenth"),
+            1,
+        )
+    }.get(raw_ordinal)
+    if index is None:
+        number = re.match(r"\d+", raw_ordinal)
+        index = int(number.group()) if number else 0
+    if index < 1:
+        return ""
+
+    candidates: list[Any] = list(messages or [])
+    if history_session is not None:
+        with contextlib.suppress(Exception):
+            candidates.extend(list(getattr(history_session, "history", None) or []))
+    expected_tool = "manage_tasks" if family == "tasks" else "manage_calendar"
+    expected_action = "list" if family == "tasks" else "list_events"
+    for message in reversed(candidates):
+        metadata = (
+            message.get("metadata")
+            if isinstance(message, dict)
+            else getattr(message, "metadata", None)
+        )
+        if isinstance(metadata, str):
+            with contextlib.suppress(TypeError, json.JSONDecodeError):
+                metadata = json.loads(metadata)
+        if not isinstance(metadata, dict):
+            continue
+        for event in reversed(metadata.get("tool_events") or []):
+            if not isinstance(event, dict):
+                continue
+            if _resolved_tool_event_name(event) != expected_tool:
+                continue
+            if event.get("error") is True or event.get("exit_code") not in (None, 0):
+                continue
+            try:
+                args = event.get("command") or {}
+                if isinstance(args, str):
+                    args = json.loads(args)
+            except (TypeError, json.JSONDecodeError):
+                args = {}
+            if not isinstance(args, dict) or str(args.get("action") or "").lower() != expected_action:
+                continue
+            output = str(event.get("output") or "")
+            if family == "tasks":
+                identifiers = [
+                    found.strip()
+                    for found in re.findall(
+                        r"^\s*\d+\.\s+.+?\s+\(([^)\n]+)\)\s+[—-]",
+                        output,
+                        re.MULTILINE,
+                    )
+                ]
+            else:
+                identifiers = re.findall(r"\]\(#event-([A-Za-z0-9_-]+)\)", output)
+            if 1 <= index <= len(identifiers):
+                return identifiers[index - 1]
+    return ""
+
+
 def _recent_odysseus_note_title(messages: List[Dict], history_session: Any = None) -> str:
     """Recover the most recent created note title when compact context lacks an id."""
     candidates: list[Any] = list(messages[-12:])
@@ -11967,6 +12286,58 @@ def _email_draft_review_requested(text: str) -> bool:
         )
         or re.search(r"(?:仅|只)?(?:保存|保留)?(?:为|成)?草稿|(?:审批|审核)[^。\n]{0,24}草稿", value)
     )
+
+
+_EMAIL_MUTATION_TOOLS = frozenset({
+    "send_email", "reply_to_email", "draft_email", "draft_email_reply",
+    "ai_draft_email_reply", "archive_email", "delete_email",
+    "mark_email_read", "manage_email_state", "block_sender",
+    "unsubscribe_email", "bulk_email",
+})
+
+
+def _email_mutation_forbidden(text: str, tool_name: str) -> bool:
+    """Honor an explicit read-only email boundary before tool dispatch."""
+
+    bare_tool = str(tool_name or "").removeprefix("mcp__email__")
+    if bare_tool not in _EMAIL_MUTATION_TOOLS:
+        return False
+    value = re.sub(r"\s+", " ", str(text or "")).strip()
+    negative_scopes = re.findall(
+        r"\b(?:do\s+not|don't|without|never)\b[^.\n]{0,120}?"
+        r"(?=\band\s+(?:do\s+not|don't|never)\b|[.\n]|$)",
+        value,
+        re.IGNORECASE,
+    )
+    broad_read_only = any(
+        re.search(r"\b(?:modify|change|alter|mutate|take\s+action|anything)\b", scope, re.I)
+        and (
+            re.search(r"\b(?:e-?mail|mail|message|inbox|anything|take\s+action)\b", scope, re.I)
+            or not re.search(r"\b(?:calendar|event|document|note|task|memory)\b", scope, re.I)
+        )
+        for scope in negative_scopes
+    )
+    if broad_read_only:
+        return True
+    forbidden_verbs = {
+        "send_email": r"send|deliver",
+        "reply_to_email": r"send|reply|respond",
+        "draft_email": r"draft|compose|write",
+        "draft_email_reply": r"draft|compose|reply|respond",
+        "ai_draft_email_reply": r"draft|compose|reply|respond",
+        "archive_email": r"archive",
+        "delete_email": r"delete|remove",
+        "mark_email_read": r"mark|modify|change",
+        "manage_email_state": r"mark|modify|change|favorite|archive",
+        "block_sender": r"block",
+        "unsubscribe_email": r"unsubscribe",
+        "bulk_email": r"send|modify|change",
+    }[bare_tool]
+    return bool(re.search(
+        rf"\b(?:do\s+not|don't|without)\b[^.\n]{{0,80}}\b(?:{forbidden_verbs})\b",
+        value,
+        re.IGNORECASE,
+    ))
 
 
 def _send_recipient_name_from_request(text: str) -> str:
@@ -13236,7 +13607,10 @@ def _tui_bounded_host_read_command(command: str) -> Optional[tuple[str, str]]:
 
 
 def _is_odysseus_qwen_model(model: str) -> bool:
-    return (model or "").lower().startswith("odysseus-qwen3")
+    return (
+        (model or "").lower().startswith("odysseus-qwen3")
+        or is_odysseus_merged_tools_model(model)
+    )
 
 
 def _is_odysseus_qwen_native(model: str) -> bool:
@@ -13695,7 +14069,8 @@ def _build_system_prompt(
                 _style = str(_by_account.get(_style_account_id) or "").strip()
             if not _style:
                 _style = (_settings.get("email_writing_style", "") or "").strip()
-            if _style:
+            _general_style = (_settings.get("document_writing_style", "") or "").strip()
+            if _style or _general_style:
                 # Hardcoded identity/style rules stay in the trusted system prompt.
                 agent_prompt += (
                     "\n\n"
@@ -13711,7 +14086,10 @@ def _build_system_prompt(
                 # style value cannot inject system-role instructions.
                 _email_style_message = untrusted_context_message(
                     "email writing style",
-                    "EMAIL WRITING STYLE AND IDENTITY — FOLLOW FOR ANY EMAIL DRAFT OR SEND:\n" + _style,
+                    "GENERAL WRITING STYLE — APPLY TO PROSE:\n"
+                    + (_general_style or "(none configured)")
+                    + "\n\nEMAIL CONVENTIONS — APPLY ONLY TO EMAIL DRAFTS/SENDS:\n"
+                    + (_style or "(none configured)"),
                 )
         except Exception:
             pass
@@ -14713,6 +15091,7 @@ def _append_tool_results(
     round_reasoning: str = "",
     tool_result_records: Optional[list] = None,
     include_reasoning_content: bool = True,
+    preserve_all_reasoning_content: bool = False,
     allow_visual_evidence: bool = True,
 ):
     """Append tool execution results back into the message history for the next LLM round.
@@ -14846,10 +15225,13 @@ def _append_tool_results(
             block for index, block in enumerate(image_blocks)
             if index in selected
         ]
-    # Strip reasoning_content from earlier assistant turns; only the newest keeps it.
-    for _m in messages:
-        if _m.get("role") == "assistant":
-            _m.pop("reasoning_content", None)
+    # Most models need only the newest reasoning turn and can otherwise grow
+    # context without bound. DeepSeek is stricter: every historical assistant
+    # tool-call message must retain the reasoning_content returned with it.
+    if not preserve_all_reasoning_content:
+        for _m in messages:
+            if _m.get("role") == "assistant":
+                _m.pop("reasoning_content", None)
     if used_native and native_tool_calls:
         assistant_msg = {"role": "assistant"}
         # When the model emitted ONLY tool calls (no prose), content must be
@@ -15260,6 +15642,13 @@ _LOCAL_MEDIA_SUFFIXES = frozenset({
     ".mpeg", ".mpg", ".pdf", ".png", ".svg", ".tif", ".tiff", ".webm", ".webp",
 })
 
+# Tools that provide authoritative evidence about supplied local media.
+# Keeping this shared prevents a dedicated OCR call from being mistaken for
+# an unobserved-media escape and replaced with a generic visual inspection.
+_LOCAL_MEDIA_EVIDENCE_TOOLS = frozenset({
+    "inspect_media", "extract_text", "transcribe_media",
+})
+
 
 def _explicit_local_media_files(text: str) -> list[str]:
     """Return concrete local image/video paths named in the current request."""
@@ -15407,6 +15796,8 @@ def _visible_media_caption_requested(text: str) -> bool:
 def _visual_text_extraction_requested(text: str) -> bool:
     """Return whether text must be read from video/image pixels, not audio."""
     value = str(text or "")
+    if re.search(r"\bOCR\b|optical\s+character\s+recognition", value, re.IGNORECASE):
+        return True
     visual = r"(?:ocr|on[- ]?screen|visible|displayed|shown|flashing|written|burned[- ]?in)"
     text_kind = r"(?:words?|text|captions?|subtitles?|labels?|titles?)"
     return bool(
@@ -15886,6 +16277,17 @@ _WEB_SEARCH_POLLUTION_RE = re.compile(
 )
 
 
+_WEB_SEARCH_CONVERSATION_PREFIX_RE = re.compile(
+    r"^\s*(?:(?:hi+|hey+|hello+|yo+|howdy)\b[\s,!.:-]*)?"
+    r"(?:"
+    r"(?:(?:it\s+)?looks?\s+like\s+)?(?:you(?:'re|\s+are)\s+)?"
+    r"(?:test(?:ing)?)(?:\s+(?:the|this|our))?\s+(?:chat|conversation|session)"
+    r"|how\s+can\s+i\s+help(?:\s+you)?"
+    r")\b[\s,!.:;-]*",
+    re.IGNORECASE,
+)
+
+
 def _web_search_meaningful_words(value: str) -> set[str]:
     return {
         word
@@ -15894,6 +16296,16 @@ def _web_search_meaningful_words(value: str) -> set[str]:
         and word not in _WEB_SEARCH_QUERY_STOPWORDS
         and not _WEB_SEARCH_QUERY_FILLER_RE.fullmatch(word)
     }
+
+
+def _strip_web_search_conversation_prefix(query: str) -> str:
+    """Drop leaked chat-state prose from the front of a useful query.
+
+    Native-tool models can copy a preceding greeting or test acknowledgement
+    into their next search argument. That prose is never a search facet, while
+    everything after it may still be a useful model-selected refinement.
+    """
+    return _WEB_SEARCH_CONVERSATION_PREFIX_RE.sub("", str(query or ""), count=1).strip()
 
 
 def _web_search_query_from_user_text(user_text: str) -> str:
@@ -16623,6 +17035,45 @@ def _private_browser_product_query(user_text: str) -> str:
     return query[:120] if 0 < len(query.split()) <= 12 else ""
 
 
+def _private_browser_uses_unrequested_placeholder(
+    block: ToolBlock,
+    user_text: str,
+    history: Iterable[Mapping[str, Any]] = (),
+) -> bool:
+    """Reject documentation-example URLs unless the user named one this session."""
+    if block.tool_type != "private_browser":
+        return False
+    try:
+        args = json.loads(block.content or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return False
+    if not isinstance(args, dict):
+        return False
+    urls: list[str] = []
+    action = str(args.get("action") or "").strip().lower()
+    if action in {"open", "read"}:
+        urls.append(str(args.get("url") or ""))
+    elif action == "batch":
+        for command in args.get("commands") or []:
+            if isinstance(command, (list, tuple)) and len(command) >= 2 and str(command[0]).lower() in {"open", "read"}:
+                urls.append(str(command[1]))
+            elif isinstance(command, dict) and str(command.get("action") or "").lower() in {"open", "read"}:
+                urls.append(str(command.get("url") or ""))
+    placeholders = {"example.com", "www.example.com", "example.org", "www.example.org", "example.net", "www.example.net"}
+    requested_parts = [str(user_text or "")]
+    requested_parts.extend(
+        str(row.get("content") or "")
+        for row in history
+        if isinstance(row, Mapping) and row.get("role") == "user"
+    )
+    requested = "\n".join(requested_parts).lower()
+    for url in urls:
+        host = (urlparse(url).hostname or "").lower()
+        if host in placeholders and host not in requested and host.removeprefix("www.") not in requested:
+            return True
+    return False
+
+
 def _should_emit_buffered_qwen_round(
     *,
     odysseus_finetune: bool,
@@ -16945,7 +17396,12 @@ def _normalize_local_pdf_inspection_query(
     return type(block)(block.tool_type, json.dumps(args, ensure_ascii=False))
 
 
-def _normalize_web_search_block_query(block: ToolBlock, user_text: str) -> ToolBlock:
+def _normalize_web_search_block_query(
+    block: ToolBlock,
+    user_text: str,
+    *,
+    current_user_text: str = "",
+) -> ToolBlock:
     """Repair only non-query/polluted web_search args.
 
     Do not second-guess a topical model-generated query. For follow-ups like
@@ -16960,7 +17416,7 @@ def _normalize_web_search_block_query(block: ToolBlock, user_text: str) -> ToolB
     if not query:
         return block
     user_lower = str(user_text or "").lower()
-    cleaned = query
+    cleaned = _strip_web_search_conversation_prefix(query) or query
     # Tool routers often copy the user's imperative wrapper verbatim. Search
     # providers rank that as a query about search engines (Google/Bing/Yahoo)
     # rather than the requested subject. Keep only the subject phrase.
@@ -16987,6 +17443,34 @@ def _normalize_web_search_block_query(block: ToolBlock, user_text: str) -> ToolB
     if "official links" in cleaned.lower() and "official link" not in user_lower:
         cleaned = re.sub(r"\bofficial\s+links?\s*(?:for\s+)?", " ", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"^\s*(?:what|how)\s+about\s+", "", cleaned, flags=re.IGNORECASE)
+    # A model can preserve every word from a follow-up facet while forgetting
+    # the subject established by the preceding web/browser turn.  For example,
+    # after finding coffee shops in Todoroki it may search only "grilled cheese
+    # sandwich menu", producing unrelated global chains.  When the caller
+    # supplies the direct current turn separately from the contextual topic,
+    # require one concrete anchor from the prior topic.  This is deliberately
+    # narrower than general query rewriting: inferred entities remain trusted
+    # when the latest turn itself has no substantive query terms.
+    current = str(current_user_text or "").strip()
+    contextual = str(user_text or "").strip()
+    if current and contextual and contextual.casefold() != current.casefold():
+        prior = contextual
+        if contextual.casefold().endswith(current.casefold()):
+            prior = contextual[: -len(current)].strip(" ,.;:-")
+        prior_anchors = _web_search_context_anchor_words(prior)
+        current_words = _web_search_meaningful_words(current)
+        query_words = _web_search_meaningful_words(cleaned)
+        if (
+            prior_anchors
+            and current_words
+            and query_words
+            and query_words & current_words
+            and not (query_words & prior_anchors)
+            and not _web_search_query_supplies_visual_entity(current, cleaned)
+        ):
+            prefix = _web_search_contextual_query_prefix(prior)
+            if prefix:
+                cleaned = re.sub(r"\s+", " ", f"{prefix} {cleaned}").strip(" ,.;:")
     if _web_search_query_missing_context_anchor(user_text, cleaned):
         replacement = (
             _web_search_contextual_query_prefix(user_text)
@@ -17147,6 +17631,67 @@ def _browser_search_navigation_to_web_search(block: ToolBlock, user_text: str) -
         query[:160],
     )
     return ToolBlock("web_search", json.dumps({"query": query}, ensure_ascii=False))
+
+
+def _contextual_browser_opens_to_web_search(
+    block: ToolBlock,
+    contextual_text: str,
+    current_user_text: str,
+    *,
+    allow_web_search: bool = True,
+) -> ToolBlock:
+    """Keep referential web follow-ups anchored when the model opens new sites.
+
+    Browser interaction with the current page (click/snapshot/fill) remains
+    untouched.  A batch containing only fresh opens/snapshots is discovery,
+    however, and is unsafe when none of its URLs retain the prior task's
+    subject.  Route that narrow case through the same contextual query repair
+    used for web_search.
+    """
+    if block.tool_type != "private_browser" or not allow_web_search:
+        return block
+    contextual = str(contextual_text or "").strip()
+    current = str(current_user_text or "").strip()
+    if not contextual or not current or contextual.casefold() == current.casefold():
+        return block
+    try:
+        args = json.loads(str(block.content or ""))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return block
+    if not isinstance(args, dict):
+        return block
+    action = str(args.get("action") or "").strip().lower()
+    commands = args.get("commands") if action == "batch" else [args]
+    if not isinstance(commands, list) or not commands:
+        return block
+    actions: list[str] = []
+    urls: list[str] = []
+    for command in commands:
+        if isinstance(command, list) and command:
+            command_action = str(command[0] or "").strip().lower()
+            command_url = str(command[1] or "").strip() if len(command) > 1 and command_action == "open" else ""
+        elif isinstance(command, dict):
+            command_action = str(command.get("action") or "").strip().lower()
+            command_url = str(command.get("url") or "").strip() if command_action == "open" else ""
+        else:
+            return block
+        actions.append(command_action)
+        if command_url:
+            urls.append(unquote(command_url))
+    if not urls or any(item not in {"open", "snapshot", "wait"} for item in actions):
+        return block
+    prior = contextual
+    if contextual.casefold().endswith(current.casefold()):
+        prior = contextual[: -len(current)].strip(" ,.;:-")
+    prior_anchors = _web_search_context_anchor_words(prior)
+    url_words = _web_search_meaningful_words(" ".join(urls))
+    if not prior_anchors or prior_anchors & url_words:
+        return block
+    return _normalize_web_search_block_query(
+        ToolBlock("web_search", json.dumps({"query": current}, ensure_ascii=False)),
+        contextual,
+        current_user_text=current,
+    )
 
 
 def _web_search_queries_overlap(left: str, right: str) -> bool:
@@ -18344,6 +18889,27 @@ def _workspace_inspection_tool_block(block: Any) -> bool:
     }
 
 
+def _personal_read_only_tool_block(block: Any) -> bool:
+    """Recognize non-mutating personal-data calls, including MCP aliases."""
+    tool_type = str(getattr(block, "tool_type", "") or "").strip().lower()
+    if tool_type.startswith("mcp__"):
+        tool_type = tool_type.rsplit("__", 1)[-1]
+    if tool_type in {
+        "read_email", "search_emails", "list_emails", "list_email_accounts",
+        "search_contacts", "list_contacts", "read_contact",
+    }:
+        return True
+    if tool_type == "manage_calendar":
+        try:
+            payload = json.loads(getattr(block, "content", "") or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return False
+        return str(payload.get("action") or "").strip().lower() in {
+            "list", "list_events", "lis_events", "list_calendars",
+        }
+    return False
+
+
 def _read_only_repeat_limit(block: Any) -> int:
     """Bound exact repeated observations while preserving legitimate rechecks."""
 
@@ -19538,6 +20104,16 @@ def _enforce_caller_disabled_tool_policy(
     return relevant_tools, base_relevant_tools, tool_policy
 
 
+def _blocks_before_inference(turn_contract) -> bool:
+    """Block missing concrete tools, but let unclassified prose reach the model."""
+
+    return bool(
+        turn_contract is not None
+        and turn_contract.unavailable
+        and "unknown" not in set(turn_contract.capabilities or ())
+    )
+
+
 @with_turn_contract
 async def stream_agent_loop(
     endpoint_url: str,
@@ -19591,6 +20167,29 @@ async def stream_agent_loop(
       - data: [DONE]                                        (end)
     """
 
+    # The immutable turn contract is resolved after request/user/global policy
+    # filtering.  Legacy callers can nevertheless pass a disabled-tool snapshot
+    # captured before that resolution.  Reconcile it at the execution boundary
+    # so an explicitly admitted tool cannot be offered to the model and then
+    # rejected by the dispatcher.  A guide-only/block-all policy remains
+    # absolute, and genuinely denied tools never appear in ``offered``.
+    if turn_contract is not None and not (
+        tool_policy and tool_policy.block_all_tool_calls
+    ):
+        _contract_offered = set(turn_contract.offered or ())
+        if _contract_offered:
+            disabled_tools = set(disabled_tools or ()) - _contract_offered
+            if tool_policy is not None:
+                tool_policy = replace(
+                    tool_policy,
+                    disabled_tools=frozenset(
+                        set(tool_policy.disabled_tools) - _contract_offered
+                    ),
+                    hidden_tools=frozenset(
+                        set(tool_policy.hidden_tools) - _contract_offered
+                    ),
+                )
+
     if turn_contract is not None and turn_contract.selection_mode == 'clean_compact_v3_preview':
         from src.clean_agent_preview import stream_preview
         async for chunk in stream_preview(
@@ -19603,20 +20202,19 @@ async def stream_agent_loop(
             external_untrusted_context_seen=external_untrusted_context_seen,
             workspace=workspace,
             client_runtime_context=client_runtime_context,
+            external_tool_schemas=external_tool_schemas,
             max_tokens=max_tokens,
             max_rounds=max_rounds,
+            temperature=temperature,
         ):
             yield chunk
         return
 
     if turn_contract is not None:
         yield 'data: ' + json.dumps({"type": "turn_contract", **turn_contract.audit()}) + '\n\n'
-        if turn_contract.unavailable:
+        if _blocks_before_inference(turn_contract):
             unavailable = ", ".join(sorted(turn_contract.unavailable))
             clarification = (
-                "Which action would you like me to take, and on what? "
-                "I haven’t called any tools."
-            ) if "unknown" in turn_contract.capabilities else (
                 "I can’t perform this request with the currently permitted tools "
                 f"(unavailable: {unavailable}). I haven’t substituted another tool."
             )
@@ -19628,7 +20226,10 @@ async def stream_agent_loop(
     # Keep the validated canonical path for single-capability turns. Forcing
     # every result through synthesis caused live router loops; compound work
     # still cannot finish after only one capability's result.
-    _deterministic_terminal_eligible = _contract_allows_single_action_terminal(turn_contract)
+    _deterministic_terminal_eligible = (
+        _contract_allows_single_action_terminal(turn_contract)
+        and not _request_has_compound_actions(_extract_last_user_message(messages))
+    )
     # Preserve the caller's explicit tool surface before intent/domain
     # enrichment adds fallback tools.  Preemptive shortcuts must not execute a
     # different high-level capability than the surface the caller selected.
@@ -19657,7 +20258,9 @@ async def stream_agent_loop(
                 **({"strict": function["strict"]} if isinstance(function.get("strict"), bool) else {}),
             },
         })
-    _sft_personal_fixture_mode = _workspace_tools_disabled_for_owner(owner)
+    _sft_personal_fixture_mode = _workspace_tools_disabled_for_request(
+        owner, client_runtime_context
+    )
     if _sft_personal_fixture_mode:
         workspace = None
         cwd = None
@@ -19855,7 +20458,11 @@ async def stream_agent_loop(
         f"{_web_search_user_text} {_last_user}"
     )
     _explicit_no_web_lookup = _explicitly_avoids_web_lookup(_last_user)
-    if turn_contract is not None and not turn_contract.permits("web_search"):
+    if (
+        turn_contract is not None
+        and not turn_contract.permits("web_search")
+        and not turn_contract.permits("web_fetch")
+    ):
         _explicit_no_web_lookup = True
     _contextual_public_web_followup = _looks_like_contextual_public_web_followup(
         _last_user,
@@ -20557,15 +21164,13 @@ async def stream_agent_loop(
         # visible answer until the full completion has finished.
         direct_defer_visible = (
             _qwen38_tool_router
-            and not (model or "").lower().startswith("odysseus-qwen3.5-tools-")
+            and not is_odysseus_merged_tools_model(model)
         )
 
         def _direct_candidate_request(_index, _url, candidate_model, _headers):
             candidate_is_qwen = _is_odysseus_qwen_model(candidate_model)
             candidate_is_router = _is_qwen38_tool_router(candidate_model)
-            candidate_is_merged_tools = (candidate_model or "").lower().startswith(
-                "odysseus-qwen3.5-tools-"
-            )
+            candidate_is_merged_tools = is_odysseus_merged_tools_model(candidate_model)
             candidate_messages = (
                 [{"role": "user", "content": _last_user}]
                 if candidate_is_router and not candidate_is_merged_tools
@@ -21113,12 +21718,28 @@ async def stream_agent_loop(
     # Per-request forced tools are stronger than retrieval. Explicit search
     # settings make web tools visible even when tool RAG misses them;
     # route-level disabled_tools decides what remains allowed.
+    _exact_forced_native_chain = False
     if not guide_only and forced_tools:
         forced_set = {t for t in forced_tools if t not in disabled_tools}
-        if _relevant_tools is None:
+        _exact_forced_native_chain = bool(
+            {"write_file", "read_file"}.issubset(forced_set)
+            and forced_set.intersection({"inspect_media", "extract_text"})
+            and forced_set.issubset(
+                {"inspect_media", "extract_text", "write_file", "read_file"}
+            )
+        )
+        if _exact_forced_native_chain:
+            _relevant_tools = set(forced_set)
+            _base_relevant_tools = set(forced_set)
+            logger.info(
+                "[agent-intent] clamped explicit native evidence/artifact chain=%s",
+                sorted(forced_set),
+            )
+        elif _relevant_tools is None:
             from src.tool_index import ALWAYS_AVAILABLE
             _relevant_tools = set(ALWAYS_AVAILABLE)
-        _relevant_tools.update(forced_set)
+        if not _exact_forced_native_chain:
+            _relevant_tools.update(forced_set)
 
     if not guide_only and _relevant_tools is not None:
         _explicit_browser_interaction = _looks_like_explicit_browser_interaction(_last_user)
@@ -21339,6 +21960,26 @@ async def stream_agent_loop(
         client_runtime_context,
         workspace,
     )
+    _context_only_web_followup = bool(
+        _intent.get("continuation")
+        and _contextual_public_web_followup
+        and not (set(selected_tools_for_request(_last_user) or ()) & WEB_TOOL_NAMES)
+        and not _looks_like_explicit_browser_interaction(_last_user)
+    )
+    if _context_only_web_followup:
+        # The prior assistant answer is already in model context.  A question
+        # such as "Which of those costs less?" needs reasoning over that
+        # answer, not a fresh lookup.  The Web toggle may hide search tools,
+        # but it must not replace a context-only answer with a capability
+        # refusal.
+        _web_search_unavailable_turn = False
+    if turn_contract is not None and any(
+        turn_contract.permits(name) for name in ("web_search", "web_fetch")
+    ):
+        # The resolved executable contract is authoritative. An earlier
+        # caller-policy snapshot must not claim Web is disabled after the
+        # route has explicitly admitted a concrete search/fetch operation.
+        _web_search_unavailable_turn = False
     _base_relevant_tools = None if _relevant_tools is None else set(_relevant_tools)
     _native_terminal_runtime = bool(
         isinstance(client_runtime_context, dict)
@@ -21479,6 +22120,15 @@ async def stream_agent_loop(
                 route_tools = set(router_tools)
             else:
                 route_tools.update(router_tools)
+            # The compact router is the semantic authority when it can
+            # distinguish a background-task lifecycle from a calendar event.
+            # Retrieval is intentionally broad and may otherwise leave the
+            # conflicting personal tool in the union (for example, a recurring
+            # task that runs every Monday and is later paused/resumed/deleted).
+            if "manage_tasks" in router_tools and "manage_calendar" not in router_tools:
+                route_tools.discard("manage_calendar")
+            elif "manage_calendar" in router_tools and "manage_tasks" not in router_tools:
+                route_tools.discard("manage_tasks")
             if _youtube_tool_turn and "youtube_tool" not in disabled_tools:
                 route_tools.add("youtube_tool")
             if "web" in _intent_domains and not _explicit_no_web_lookup:
@@ -21509,6 +22159,16 @@ async def stream_agent_loop(
                     and "private_browser" not in disabled_tools
                 ):
                     route_tools.add("private_browser")
+        if route_tools is not None and "notes_calendar_tasks" in _intent_domains:
+            _personal_semantic_tools = _qwen38_router_tool_names(
+                _retrieval_query or _last_user
+            ) & {"manage_tasks", "manage_calendar"}
+            if _personal_semantic_tools == {"manage_tasks"}:
+                route_tools.discard("manage_calendar")
+                route_tools.add("manage_tasks")
+            elif _personal_semantic_tools == {"manage_calendar"}:
+                route_tools.discard("manage_tasks")
+                route_tools.add("manage_calendar")
         if _web_fetch_needs_private_browser and "private_browser" not in disabled_tools:
             route_tools.update({"web_search", "web_fetch", "private_browser"})
         if _private_browser_needs_static_fallback:
@@ -21608,11 +22268,12 @@ async def stream_agent_loop(
                     _last_user, client_runtime_context
                 )
             )
-            _local_media_tools = {
-                "inspect_media", "transcribe_media", "bash", "read_file", "ls"
-            }
-            if _visual_text_extraction_requested(_last_user):
-                _local_media_tools.discard("transcribe_media")
+            _ocr_requested = _visual_text_extraction_requested(_last_user)
+            _local_media_tools = (
+                {"extract_text"}
+                if _ocr_requested
+                else {"inspect_media", "transcribe_media", "bash", "read_file", "ls"}
+            )
             if _local_pdf_input and _artifact_creation_requested:
                 # A local PDF deliverable needs native extraction/vision and
                 # Python/file writers.  Shell PDF probing is a competing
@@ -21668,6 +22329,34 @@ async def stream_agent_loop(
     _relevant_tools = _strip_workspace_tools_for_sft(
         _relevant_tools, owner, client_runtime_context
     )
+    # Tool retrieval can correctly identify an explicitly named personal tool
+    # and still lose it during a later model-specific route clamp. An exact
+    # registered tool name is unambiguous user intent, so preserve it unless
+    # caller or public security policy explicitly blocks it.
+    _named_personal_tools = _explicitly_named_personal_tools(
+        _retrieval_query or _last_user
+    )
+    if _named_personal_tools:
+        logger.info(
+            "[agent-intent] explicit personal tool audit names=%s guide_only=%s domains=%s caller_disabled=%s",
+            sorted(_named_personal_tools),
+            guide_only,
+            sorted(_intent_domains),
+            sorted(_named_personal_tools & set(_caller_disabled_tools)),
+        )
+    if not guide_only:
+        _explicit_personal_tools = _named_personal_tools - set(_caller_disabled_tools)
+        if _explicit_personal_tools:
+            if _relevant_tools is None:
+                _relevant_tools = set()
+            _relevant_tools.update(_explicit_personal_tools)
+            if _base_relevant_tools is None:
+                _base_relevant_tools = set()
+            _base_relevant_tools.update(_explicit_personal_tools)
+            logger.info(
+                "[agent-intent] preserved explicitly named personal tools=%s",
+                sorted(_explicit_personal_tools),
+            )
     _local_media_turn = bool(
         workspace and _native_local_media_inputs(_last_user, client_runtime_context)
     )
@@ -21838,6 +22527,25 @@ async def stream_agent_loop(
         and _relevant_tools is not None
         and "notes_calendar_tasks" in _intent_domains
     ):
+        # Retrieval may broadly associate weekdays and schedules with the
+        # calendar. Apply the semantic task/calendar boundary for every model,
+        # not only compact Qwen: recurring AI jobs with lifecycle operations
+        # belong to manage_tasks, while meetings/events remain calendar work.
+        _personal_semantic_tools = _qwen38_router_tool_names(
+            _retrieval_query or _last_user
+        ) & {"manage_tasks", "manage_calendar"}
+        if _personal_semantic_tools == {"manage_tasks"}:
+            _relevant_tools.discard("manage_calendar")
+            _relevant_tools.add("manage_tasks")
+            if _base_relevant_tools is not None:
+                _base_relevant_tools.discard("manage_calendar")
+                _base_relevant_tools.add("manage_tasks")
+        elif _personal_semantic_tools == {"manage_calendar"}:
+            _relevant_tools.discard("manage_tasks")
+            _relevant_tools.add("manage_calendar")
+            if _base_relevant_tools is not None:
+                _base_relevant_tools.discard("manage_tasks")
+                _base_relevant_tools.add("manage_calendar")
         _personal_app_tools = _DOMAIN_TOOL_MAP["notes_calendar_tasks"] & set(_relevant_tools)
         if _personal_app_tools:
             disabled_tools.difference_update(_personal_app_tools)
@@ -21977,6 +22685,13 @@ async def stream_agent_loop(
             _base_relevant_tools = set()
         _base_relevant_tools.update(declared_names)
 
+    if _exact_forced_native_chain:
+        # Later domain and skill enrichment is additive by design. Re-apply
+        # the explicit bounded chain before schema assembly so those generic
+        # fallbacks cannot reintroduce shell/research tools.
+        _relevant_tools = set(forced_set)
+        _base_relevant_tools = set(forced_set)
+
     # Recovery routing also consults the hard policy set even when the general
     # agent-floor branch below is skipped (for example on a narrowly selected
     # artifact surface). Initialize it once at request scope so every route
@@ -21990,6 +22705,7 @@ async def stream_agent_loop(
     if (
         not guide_only
         and _relevant_tools is not None
+        and not _exact_forced_native_chain
         # Low-signal workspace turns intentionally expose only read-only
         # navigation tools. Do not let the general agent floor re-add bash
         # after that narrow surface was selected.
@@ -22163,11 +22879,12 @@ async def stream_agent_loop(
                 Path(path).suffix.casefold() == ".pdf"
                 for path in _local_media_files
             )
-            _local_media_tools = {
-                "inspect_media", "transcribe_media", "bash", "read_file", "ls"
-            } - _hard_blocked_tools - set(disabled_tools)
-            if _visual_text_extraction_requested(_last_user):
-                _local_media_tools.discard("transcribe_media")
+            _ocr_requested = _visual_text_extraction_requested(_last_user)
+            _local_media_tools = (
+                {"extract_text"}
+                if _ocr_requested
+                else {"inspect_media", "transcribe_media", "bash", "read_file", "ls"}
+            ) - _hard_blocked_tools - set(disabled_tools)
             if _local_pdf_input and _artifact_creation_requested:
                 # Local PDF artifact tasks should stay on native PDF/media
                 # readers plus the Python/file mutation surface.
@@ -22499,11 +23216,12 @@ async def stream_agent_loop(
                         _last_user, client_runtime_context
                     )
                 )
-                _local_media_tools = {
-                    "inspect_media", "transcribe_media", "bash", "read_file", "ls",
-                }
-                if _visual_text_extraction_requested(_last_user):
-                    _local_media_tools.discard("transcribe_media")
+                _ocr_requested = _visual_text_extraction_requested(_last_user)
+                _local_media_tools = (
+                    {"extract_text"}
+                    if _ocr_requested
+                    else {"inspect_media", "transcribe_media", "bash", "read_file", "ls"}
+                )
                 if local_pdf_input and _artifact_creation_requested:
                     _local_media_tools.discard("bash")
                 if local_pdf_input:
@@ -22524,6 +23242,8 @@ async def stream_agent_loop(
                     ):
                         _irrelevant_local_media_web_tools.add("private_browser")
                     route_tools.difference_update(_irrelevant_local_media_web_tools)
+        if turn_contract is not None and tool_surface != "full":
+            route_tools = set(turn_contract.offered)
         # Native OpenAI-compatible endpoints use the compact system prompt by
         # default even when no explicit per-model surface preference is stored.
         # Keep the schema bundle consistent with that prompt: artifact routes
@@ -22546,8 +23266,6 @@ async def stream_agent_loop(
                     text=_last_user,
                     media_inputs=_prompt_media_inputs,
                 )
-        if turn_contract is not None:
-            route_tools = set(turn_contract.offered)
         prompt_route_tools = set() if tool_surface == "none" else route_tools
         clean_source = _strip_agent_injected_messages(compacted_source)
         if _full_inventory_mode:
@@ -22561,11 +23279,32 @@ async def stream_agent_loop(
             )}, *[m for m in clean_source if m.get("role") != "system"]]
             route_mcp_schemas = []
         elif normalized_external_tool_schemas:
+            # Reasoning-parser models need the private reasoning attached to
+            # an assistant tool-call message replayed on the immediately
+            # following request.  Qwen 3.5 in particular can otherwise finish
+            # the follow-up entirely in ``reasoning`` (leaving content empty),
+            # or emit a broken closing-think fragment.  Keep this transport
+            # field only for local Qwen; ordinary external-schema callers must
+            # continue to have private scratchpads stripped.
+            _preserve_external_tool_reasoning = bool(
+                is_local_endpoint(candidate_url)
+                and (
+                    _is_odysseus_qwen_model(candidate_model)
+                    or re.search(r"(?:qwen3\.5|qwen35)", str(candidate_model or ""), re.I)
+                )
+            )
             external_source = [
                 {
                     key: value
                     for key, value in message.items()
-                    if key not in {"reasoning", "reasoning_content"}
+                    if (
+                        key not in {"reasoning", "reasoning_content"}
+                        or (
+                            _preserve_external_tool_reasoning
+                            and message.get("role") == "assistant"
+                            and key == "reasoning_content"
+                        )
+                    )
                 }
                 for message in clean_source
             ]
@@ -22830,7 +23569,57 @@ async def stream_agent_loop(
             "textual_tool_transport": textual_tools,
         }
 
+    # A warm session can have a complete authoritative transcript while an
+    # upstream context shaper supplies only the newest request.  This is
+    # especially damaging for causal personal-tool turns (read an email, then
+    # act on its details): the UI and database show the evidence, but the model
+    # is told it is missing.  Reconcile only when the provider-bound source is
+    # demonstrably shorter than session history.  Keep route-local system and
+    # injected context plus the source's newest request (which may be
+    # multimodal), and restore only missing antecedent conversation.
     _initial_route_source_messages = messages
+    if history_session is not None:
+        try:
+            _authoritative_history = list(history_session.get_context_messages() or [])
+
+            def _is_direct_conversation_message(_message):
+                if not isinstance(_message, dict) or _message.get("role") not in {"user", "assistant"}:
+                    return False
+                if _message.get("_agent_injected"):
+                    return False
+                _metadata = _message.get("metadata") or {}
+                return not (
+                    _metadata.get("trusted") is False
+                    and _metadata.get("source")
+                )
+
+            _source_direct = [
+                item for item in messages if _is_direct_conversation_message(item)
+            ]
+            _history_direct = [
+                item for item in _authoritative_history
+                if _is_direct_conversation_message(item)
+            ]
+            if len(_history_direct) > len(_source_direct) and _source_direct:
+                _latest_source = _source_direct[-1]
+                _nonconversation_prefix = [
+                    item for item in messages
+                    if not _is_direct_conversation_message(item)
+                ]
+                _initial_route_source_messages = [
+                    *_nonconversation_prefix,
+                    *_history_direct[:-1],
+                    _latest_source,
+                ]
+                logger.warning(
+                    "[agent-context] restored %d missing session antecedent(s) before route shaping",
+                    len(_history_direct) - len(_source_direct),
+                )
+        except Exception as _history_reconcile_error:
+            logger.warning(
+                "[agent-context] authoritative session reconciliation skipped: %s",
+                _history_reconcile_error,
+            )
     _route_state = await _build_route_request_state(
         endpoint_url,
         model,
@@ -23066,6 +23855,7 @@ async def stream_agent_loop(
     # that instruction, do not re-emit the same stall nudge for every
     # remaining round; route through the bounded exhaustion synthesizer.
     _loop_breaker_force_answer_used = False
+    _calendar_completion_nudge_sent = False
     _host_bridge_failed_turn = False
     # A detached host-shell result is an unfinished action, not a successful
     # turn. Keep the job id outside the model transcript so a weak router
@@ -23130,6 +23920,8 @@ async def stream_agent_loop(
     _failed_read_recovery_instruction_sent = False
     _post_effectful_mutation_done = False
     _successful_mutation_signatures: set[tuple[str, str]] = set()
+    _single_execution_bound = _request_forbids_execution_retry(_last_user)
+    _execution_tool_attempts: dict[str, int] = {}
     _post_edit_verification_required = _requested_post_edit_verification(_last_user)
     _post_edit_verification_command = _requested_verification_command(_last_user)
     if _post_edit_verification_required and not _post_edit_verification_command and _tui_test_request:
@@ -23202,7 +23994,7 @@ async def stream_agent_loop(
         r"trigger|launch|start|kick off|stop|kill|restart|adopt|serve|submit|press|type|"
         r"register|adopt|list|search|scan|find|query|hit|ping|test|use|perform|do|"
         r"create|generate|write|edit|fix|correct|revise|rebuild|update|complete|finish|calculate|compute|plot|chart|save|export|render|"
-        r"provide|give|state|report|answer|respond|summarize|conclude)"
+        r"provide|give|state|report|answer|respond|summarize|conclude|explain|compare|cite|synthesize)"
         r"\b[^.\n]{0,140}",
         re.IGNORECASE,
     )
@@ -23301,7 +24093,7 @@ async def stream_agent_loop(
             # the Qwen chat template surface and can erase learned no-schema
             # behaviors, especially contextual follow-up routing.
             return []
-        if turn_contract is not None:
+        if turn_contract is not None and tool_surface != "full":
             # Native/textual transport may change across fallback candidates;
             # the logical tool scope remains the same. Textual routes receive
             # their offerings in the prompt, not as native function schemas.
@@ -23309,7 +24101,14 @@ async def stream_agent_loop(
                 return []
             return _apply_tool_surface_to_schemas(turn_contract.schemas(), tool_surface)
         if route_state["is_api_model"]:
-            if route_relevant_tools:
+            if tool_surface == "full":
+                # Full/regular models own semantic tool choice.  Offer every
+                # schema that survives explicit permissions, user toggles and
+                # request policy; RAG remains prompt context, not a capability
+                # gate.  This also keeps MCP tools available on ambiguous
+                # follow-ups where lexical retrieval misses the prior domain.
+                schemas = list(FUNCTION_TOOL_SCHEMAS) + list(route_mcp_schemas)
+            elif route_relevant_tools:
                 schema_names = set(route_relevant_tools)
                 # Account privilege must not widen a host-local TUI turn. The
                 # selected local tools are already authoritative for this
@@ -23360,7 +24159,7 @@ async def stream_agent_loop(
                     if schema.get("function", {}).get("name") not in disabled_tools
                     and schema.get("name") not in disabled_tools
                 ]
-            if _pure_web_turn:
+            if _pure_web_turn and tool_surface != "full":
                 allowed = _web_only_route_tools(_last_user, disabled_tools)
                 schemas = [
                     schema for schema in schemas
@@ -24557,6 +25356,7 @@ async def stream_agent_loop(
             and not _native_terminal_runtime
             and not normalized_external_tool_schemas
             and "manage_calendar" not in disabled_tools
+            and set(_intent_domains) <= {"calendar"}
             and not _parse_qwen_explicit_chat_transcript_search(_last_user)
         ):
             _preemptive_calendar_ask = _parse_ambiguous_calendar_date_ask_user(_last_user)
@@ -24733,6 +25533,10 @@ async def stream_agent_loop(
             and not _approved_result_injected
             and not _native_terminal_runtime
             and not normalized_external_tool_schemas
+            # A one-tool shortcut cannot own a causal compound workflow. Let
+            # the agent consume the complete request-scoped tool surface.
+            and len(_caller_relevant_tools or ()) <= 1
+            and not _request_has_compound_actions(_last_user)
             # Sealed safe reads use the central required-operation path so
             # execution and canonical rendering have the same owner.
             and _required_safe_read_operation(turn_contract) is None
@@ -25223,28 +26027,11 @@ async def stream_agent_loop(
                     )
                     yield f'data: {json.dumps({"type": "final_response", "content": full_response})}\n\n'
                     return
-                _provider_error_public_web_lookup = (
-                    not _web_search_unavailable_turn
-                    and not _explicit_no_web_lookup
-                    and not tool_events
-                    and "web_search" not in disabled_tools
-                    and (
-                        _contextual_public_web_followup
-                        or bool(re.search(
-                            r"\b(?:latest|current|today|online|internet|web|look\s+up|search|"
-                            r"price|cost|petrol|gasoline|fuel|weather|forecast)\b",
-                            _last_user,
-                            re.IGNORECASE,
-                        ))
-                    )
-                    and not re.search(
-                        r"\b(?:email|mail|inbox|calendar|meeting|task|note|memory|"
-                        r"saved\s+research|past\s+chat|prior\s+chat|previous\s+conversation|"
-                        r"research|deep\s+dive|investigate)\b",
-                        _last_user,
-                        re.IGNORECASE,
-                    )
-                )
+                # A provider error is never authority for the harness to run a
+                # tool itself. The model owns query formulation and tool choice;
+                # surface the provider failure instead of silently substituting
+                # a raw user-text web search.
+                _provider_error_public_web_lookup = False
                 if _provider_error_public_web_lookup:
                     _finalize_round_usage(include_empty=False)
                     _fallback_block = _normalize_web_search_block_query(
@@ -25668,9 +26455,15 @@ async def stream_agent_loop(
                         # other vendors). Regular content still flows into
                         # round_response unchanged.
                         if data.get("thinking"):
+                            # Even when Qwen's private reasoning is hidden from
+                            # the client, retain it for the assistant tool-call
+                            # message sent on the next model round. Dropping it
+                            # breaks Qwen 3.5 reasoning-parser continuation:
+                            # the follow-up can become reasoning-only or leak a
+                            # truncated closing-think fragment.
+                            round_reasoning += data["delta"]
                             if _qwen38_tool_router:
                                 continue
-                            round_reasoning += data["delta"]
                         else:
                             _qwen_text_cleanup = (
                                 _ody_qwen_finetune_model or _qwen38_tool_router
@@ -25680,8 +26473,12 @@ async def stream_agent_loop(
                                 if _qwen_text_cleanup
                                 else data["delta"]
                             )
-                            if _qwen_text_cleanup:
-                                _delta_text = _normalize_ody_qwen_text_artifacts(_delta_text, strip_edges=False)
+                            # Never run word-level Qwen repairs on an
+                            # individual stream delta. Deltas are arbitrary
+                            # token fragments, so repairing ``nex`` before the
+                            # following ``t`` arrives corrupts valid output.
+                            # Normalize only after the complete round has been
+                            # assembled below.
                             round_response += _delta_text
                             data["delta"] = _delta_text
                             if _is_api_model:
@@ -26341,6 +27138,7 @@ async def stream_agent_loop(
         _explicit_session_action = _parse_qwen_explicit_session_action(_last_user, messages)
         _explicit_private_browser_inspection = _parse_explicit_private_browser_inspection(_last_user)
         _explicit_teacher_request = _parse_explicit_teacher_request(_last_user)
+        _explicit_theme_change_request = _parse_explicit_theme_change_request(_last_user)
         if (
             _explicit_private_browser_inspection
             and "private_browser" not in disabled_tools
@@ -26718,7 +27516,9 @@ async def stream_agent_loop(
             ):
                 _qwen_explicit_tool = "web_search"
                 _qwen_explicit_args = _last_user
-        if _explicit_open_panel_request:
+        if _explicit_theme_change_request:
+            _qwen_explicit_tool, _qwen_explicit_args = _explicit_theme_change_request
+        elif _explicit_open_panel_request:
             _qwen_explicit_tool, _qwen_explicit_args = _explicit_open_panel_request
         _spam_confirmation_blocks = []
         if not guide_only and _contextual_email_followup:
@@ -28082,6 +28882,9 @@ async def stream_agent_loop(
         ).strip()
         if _ody_qwen_finetune_model or _qwen38_tool_router:
             cleaned_round = _visible_response_text(cleaned_round)
+            cleaned_round = _normalize_ody_qwen_text_artifacts(cleaned_round)
+            if not tool_blocks and round_response and full_response.endswith(round_response):
+                full_response = full_response[:-len(round_response)] + cleaned_round
         if not tool_blocks and tool_events and cleaned_round:
             _answer_without_private_promise = _strip_trailing_answer_promise(
                 cleaned_round
@@ -28286,7 +29089,7 @@ async def stream_agent_loop(
 
         _has_local_media_evidence = any(
             str(event.get("tool") or "").lower()
-            in {"inspect_media", "transcribe_media"}
+            in _LOCAL_MEDIA_EVIDENCE_TOOLS
             and event.get("exit_code") in (0, None)
             and not event.get("error")
             for event in tool_events
@@ -28294,7 +29097,7 @@ async def stream_agent_loop(
         )
         _media_tool_block_present = any(
             str(getattr(block, "tool_type", "") or "").lower()
-            in {"inspect_media", "transcribe_media"}
+            in _LOCAL_MEDIA_EVIDENCE_TOOLS
             for block in (tool_blocks or [])
         )
         if (
@@ -28304,7 +29107,7 @@ async def stream_agent_loop(
             and not _has_local_media_evidence
             and not _media_tool_block_present
             and set(_relevant_tools or ())
-            & {"inspect_media", "transcribe_media"}
+            & _LOCAL_MEDIA_EVIDENCE_TOOLS
         ):
             _local_media_source_nudge_sent = True
             if round_texts:
@@ -28325,8 +29128,8 @@ async def stream_agent_loop(
                 "role": "system",
                 "content": (
                     "No successful local-media observation exists yet. Call "
-                    "inspect_media for visible content or transcribe_media for "
-                    "speech before answering. Do not infer source contents from "
+                    "extract_text for OCR, inspect_media for general visible content, "
+                    "or transcribe_media for speech before answering. Do not infer source contents from "
                     "the filename or directory listing."
                 ),
             })
@@ -28440,7 +29243,11 @@ async def stream_agent_loop(
             if cleaned_round and _notes_definition_answer:
                 logger.info("[agent] completed notes definition answer without tool execution")
                 break
-            if cleaned_round and _has_successful_calendar_list_evidence(tool_events):
+            if (
+                cleaned_round
+                and _has_successful_calendar_list_evidence(tool_events)
+                and set(_intent_domains) <= {"calendar"}
+            ):
                 logger.info("[agent] completed calendar list synthesis after tool evidence")
                 break
             if cleaned_round and any(
@@ -29546,6 +30353,46 @@ async def stream_agent_loop(
         elif any(_workspace_mutation_tool_block(block) for block in tool_blocks):
             _artifact_observation_only_rounds = 0
 
+        # Once a requested calendar mutation has succeeded, unrelated read-only
+        # calls add no evidence. The state tool's successful result is already
+        # authoritative; weak routers otherwise fall back into repeated email
+        # or note reads from earlier turns. Give one tool-free finish round at
+        # the semantic completion boundary.
+        _calendar_expected_actions = _calendar_expected_mutation_actions(_last_user)
+        if (
+            not _calendar_completion_nudge_sent
+            and _calendar_expected_actions
+            and _has_successful_calendar_action_evidence(tool_events, _calendar_expected_actions)
+            and tool_blocks
+            and all(
+                _workspace_inspection_tool_block(block)
+                or _personal_read_only_tool_block(block)
+                for block in tool_blocks
+            )
+        ):
+            _calendar_completion_nudge_sent = True
+            _force_answer = True
+            full_response = _drop_rejected_round_response(full_response, cleaned_round)
+            if round_texts:
+                round_texts.pop()
+            if round_models:
+                round_models.pop()
+            if round_endpoint_ids:
+                round_endpoint_ids.pop()
+            if round_endpoint_labels:
+                round_endpoint_labels.pop()
+            messages.append({
+                "role": "system",
+                "content": (
+                    "The requested calendar mutation succeeded and its state was verified by a later "
+                    "calendar readback. Do not call more tools. Briefly confirm the completed change "
+                    "from the verified evidence now."
+                ),
+            })
+            logger.info("[agent] stopped post-calendar-completion read-only expansion")
+            yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+            continue
+
         # Stall detector for repeated no-progress tool loops.
         # A round is "useless" ONLY when it re-issues a recent tool call AND
         # writes no answer text — i.e. the model is going in circles.
@@ -30132,6 +30979,41 @@ async def stream_agent_loop(
                     yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
                     continue
 
+        # Explicit read-only email requests are a hard user boundary. Models
+        # sometimes solve the lookup and then invent a helpful draft; suppress
+        # that mutation before dispatch and converge to a truthful summary.
+        if tool_blocks:
+            _read_only_blocks = []
+            _read_only_calls = []
+            _blocked_email_mutations = []
+            for _idx, _block in enumerate(tool_blocks):
+                if _email_mutation_forbidden(_last_user, _block.tool_type):
+                    _blocked_email_mutations.append(_block.tool_type)
+                    continue
+                _read_only_blocks.append(_block)
+                if _idx < len(converted_calls):
+                    _read_only_calls.append(converted_calls[_idx])
+            if _blocked_email_mutations:
+                logger.warning(
+                    "[agent] blocked email mutation forbidden by explicit read-only request: %s",
+                    sorted(set(_blocked_email_mutations)),
+                )
+                tool_blocks = _read_only_blocks
+                converted_calls = _read_only_calls
+                native_tool_calls = _read_only_calls if used_native else []
+                if not tool_blocks:
+                    _force_answer = True
+                    messages.append({
+                        "role": "system",
+                        "content": (
+                            "The user explicitly required read-only email handling, so "
+                            "the proposed mutation was not executed. Do not call more "
+                            "tools. Finish with only the requested evidence and summary."
+                        ),
+                    })
+                    yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                    continue
+
         # Execute each tool block
         tool_results = []
         tool_result_texts = []  # plain text for native tool role messages
@@ -30283,7 +31165,7 @@ async def stream_agent_loop(
             _local_media_evidence_required_block = (
                 _local_media_turn
                 and not _has_local_media_evidence
-                and block.tool_type not in {"inspect_media", "transcribe_media"}
+                and block.tool_type not in _LOCAL_MEDIA_EVIDENCE_TOOLS
             )
             # Build a short display string for the frontend tool bubble.
             # Document tools show a brief summary instead of dumping full content.
@@ -30299,12 +31181,35 @@ async def stream_agent_loop(
             else:
                 cmd_display = full_command
 
+            if _contextual_public_web_followup and block.tool_type == "private_browser":
+                contextual_browser_block = _contextual_browser_opens_to_web_search(
+                    block,
+                    _web_search_user_text,
+                    _last_user,
+                    allow_web_search=(
+                        turn_contract is None
+                        or turn_contract.permits("web_search")
+                    ),
+                )
+                if contextual_browser_block.tool_type != block.tool_type:
+                    block = contextual_browser_block
+                    full_command = block.content.strip()
+                    cmd_display = full_command
+                    logger.info(
+                        "Normalized unanchored browser discovery follow-up into web_search: %s",
+                        full_command[:160],
+                    )
+
             if (
                 not _blocked_failed_retry
                 and not _blocked_redundant_read
                 and block.tool_type == "web_search"
             ):
-                normalized_web_block = _normalize_web_search_block_query(block, _web_search_user_text)
+                normalized_web_block = _normalize_web_search_block_query(
+                    block,
+                    _web_search_user_text,
+                    current_user_text=_last_user,
+                )
                 if normalized_web_block.content != block.content:
                     block = normalized_web_block
                     full_command = block.content.strip()
@@ -30614,6 +31519,25 @@ async def stream_agent_loop(
                     _task_args = None
                 if isinstance(_task_args, dict):
                     _task_action = str(_task_args.get("action") or "").strip().lower()
+                    _ordinal_task_id = _ordinal_collection_mutation_target(
+                        _last_user, messages, history_session, "tasks",
+                    )
+                    if (
+                        _ordinal_task_id
+                        and _task_action in {"edit", "update", "delete", "pause", "resume"}
+                    ):
+                        if _task_action == "update":
+                            _task_args["action"] = "edit"
+                            _task_action = "edit"
+                        _task_args["task_id"] = _ordinal_task_id
+                        block = type(block)(block.tool_type, json.dumps(_task_args))
+                        full_command = block.content
+                        cmd_display = full_command
+                        logger.info(
+                            "Bound ordinal manage_tasks %s to prior list id: %s",
+                            _task_action,
+                            _ordinal_task_id,
+                        )
                     if (
                         _task_action in {"list", "edit", "update", "delete", "pause", "resume"}
                         and _looks_like_recent_reference(_last_user, "task")
@@ -30885,6 +31809,33 @@ async def stream_agent_loop(
                         "delete": "delete_event",
                         "list": "list_events",
                     }.get(_calendar_action, _calendar_action)
+                    _ordinal_event_uid = _ordinal_collection_mutation_target(
+                        _last_user, messages, history_session, "calendar",
+                    )
+                    if (
+                        _ordinal_event_uid
+                        and _calendar_action in {"update_event", "delete_event"}
+                    ):
+                        _calendar_args["action"] = _calendar_action
+                        _calendar_args["uid"] = _ordinal_event_uid
+                        if _calendar_action == "delete_event":
+                            for _alias in (
+                                "summary", "title", "name", "query", "search",
+                                "scheduled_time", "dtstart", "dtend",
+                            ):
+                                _calendar_args.pop(_alias, None)
+                        normalized_calendar_command = json.dumps(
+                            _calendar_args,
+                            ensure_ascii=False,
+                        )
+                        block = type(block)(block.tool_type, normalized_calendar_command)
+                        full_command = normalized_calendar_command
+                        cmd_display = normalized_calendar_command
+                        logger.info(
+                            "Bound ordinal manage_calendar %s to prior list uid: %s",
+                            _calendar_action,
+                            _ordinal_event_uid,
+                        )
                     if _calendar_action == "delete_event":
                         _delete_summary = _parse_qwen_explicit_calendar_delete(_last_user)
                         misplaced_summary = str(
@@ -30985,7 +31936,8 @@ async def stream_agent_loop(
                                 _recent_event_uid,
                             )
                     _normalized_calendar_args, _calendar_changed = _normalize_calendar_list_range_args(
-                        _calendar_args
+                        _calendar_args,
+                        user_text=_last_user,
                     )
                     if not _calendar_changed:
                         _normalized_calendar_args, _calendar_changed = _normalize_calendar_create_relative_args(
@@ -31018,6 +31970,22 @@ async def stream_agent_loop(
             _effective_call_signature = _tool_call_signature(
                 block.tool_type, block.content
             )
+            # Argument recovery can turn a vague/referential model call into
+            # the exact mutation that already succeeded in an earlier round.
+            # Check again after normalization so changing the model's raw
+            # wording cannot repeat the same effective side effect.
+            _effective_mutation_signature = _contract_mutation_signature(
+                block, turn_contract
+            )
+            _blocked_repeated_successful_mutation = bool(
+                _effective_mutation_signature
+                and _effective_mutation_signature in _successful_mutation_signatures
+            )
+            _blocked_user_bounded_execution_retry = bool(
+                _single_execution_bound
+                and block.tool_type in {"bash", "host_shell", "python"}
+                and _execution_tool_attempts.get(block.tool_type, 0) >= 1
+            )
             _effective_previous_failure = _failed_call_history.get(
                 _effective_call_signature
             )
@@ -31046,9 +32014,19 @@ async def stream_agent_loop(
             blocked_by_disabled_tools = bool(
                 disabled_tools and not policy_names.isdisjoint(disabled_tools)
             )
+            _explicit_email_mutation_denied = _email_mutation_forbidden(
+                _last_user, block.tool_type
+            )
             if turn_contract is not None:
-                blocked_by_tool_policy = not turn_contract.permits(block.tool_type)
-                blocked_by_disabled_tools = blocked_by_tool_policy
+                blocked_by_tool_policy = (
+                    blocked_by_tool_policy or not turn_contract.permits(block.tool_type)
+                )
+                blocked_by_disabled_tools = (
+                    blocked_by_disabled_tools or blocked_by_tool_policy
+                    or _explicit_email_mutation_denied
+                )
+            elif _explicit_email_mutation_denied:
+                blocked_by_disabled_tools = True
             broad_host_read_reason = _tui_broad_host_read_reason(
                 full_command,
                 client_runtime_context=client_runtime_context,
@@ -31075,7 +32053,7 @@ async def stream_agent_loop(
                 _local_media_evidence_required_block
                 and _local_media_evidence_block_count == 0
                 and _local_media_files
-                and block.tool_type not in {"inspect_media", "transcribe_media"}
+                and block.tool_type not in _LOCAL_MEDIA_EVIDENCE_TOOLS
             )
             if _auto_local_media_evidence:
                 # A model that starts with Python/bash can otherwise receive a
@@ -31113,7 +32091,61 @@ async def stream_agent_loop(
                     full_command,
                 )
             )
-            if (
+            # A parsed model action can be rejected by a schema, policy, or
+            # recovery guard before dispatch.  Keep that distinct from an
+            # executed tool call in the streamed trace so canonical decoding
+            # can correlate the attempted action with its rejection result.
+            _execution_attempted = False
+            if _blocked_user_bounded_execution_retry:
+                desc = f"{block.tool_type}: BLOCKED BY USER EXECUTION BOUND"
+                result = {
+                    "error": (
+                        "The user requested one execution with no retry; this additional "
+                        "command was not executed."
+                    ),
+                    "exit_code": 2,
+                    "blocked": True,
+                    "policy": "user_bounded_single_execution",
+                }
+                _force_answer = True
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "The user explicitly prohibited retries. Do not call more tools. "
+                        "Report only the first execution's actual output and status; do not "
+                        "claim the requested command ran if the first command differed."
+                    ),
+                })
+                yield f'data: {json.dumps({"type": "tool_retry_blocked", "reason": "user_bounded_single_execution", "tool": block.tool_type, "command": cmd_display, "round": round_num, **({"call_id": tool_call_id, "tool_call_id": tool_call_id} if tool_call_id else {})})}\n\n'
+                logger.info(
+                    "[agent] blocked retry forbidden by user for %s",
+                    block.tool_type,
+                )
+            elif _blocked_repeated_successful_mutation:
+                desc = f"{block.tool_type}: BLOCKED REPEATED SUCCESSFUL MUTATION"
+                result = {
+                    "error": (
+                        "That exact state-changing action already succeeded in this "
+                        "turn, so it was not executed again."
+                    ),
+                    "exit_code": 2,
+                    "blocked": True,
+                    "policy": "repeated_successful_mutation",
+                }
+                _force_answer = True
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "The requested mutation already succeeded. Do not call more "
+                        "tools; finish with a concise confirmation of the verified result."
+                    ),
+                })
+                yield f'data: {json.dumps({"type": "tool_retry_blocked", "reason": "repeated_successful_mutation", "tool": block.tool_type, "command": cmd_display, "round": round_num, **({"call_id": tool_call_id, "tool_call_id": tool_call_id} if tool_call_id else {})})}\n\n'
+                logger.info(
+                    "[agent] blocked post-normalization repeated successful mutation %s",
+                    block.tool_type,
+                )
+            elif (
                 _local_media_evidence_required_block
                 and not _allow_local_media_discovery
                 and not _auto_local_media_evidence
@@ -31122,8 +32154,8 @@ async def stream_agent_loop(
                 desc = f"{block.tool_type}: BLOCKED"
                 result = {
                     "error": (
-                        "Local media has not been observed yet. Use inspect_media for "
-                        "visible content or transcribe_media for speech before using "
+                        "Local media has not been observed yet. Use extract_text for OCR, "
+                        "inspect_media for general visible content, or transcribe_media for speech before using "
                         "shell, Python, browser, or file tools."
                     ),
                     "exit_code": 2,
@@ -31306,6 +32338,11 @@ async def stream_agent_loop(
                         block.tool_type,
                     )
             else:
+                _execution_attempted = True
+                if block.tool_type in {"bash", "host_shell", "python"}:
+                    _execution_tool_attempts[block.tool_type] = (
+                        _execution_tool_attempts.get(block.tool_type, 0) + 1
+                    )
                 yield (
                     f'data: {json.dumps({"type": "tool_start", "tool": block.tool_type, "command": cmd_display, "full_command": full_command, "round": round_num, **({"call_id": tool_call_id, "tool_call_id": tool_call_id} if tool_call_id else {})})}\n\n'
                 )
@@ -31321,6 +32358,16 @@ async def stream_agent_loop(
 
                 async def _run_tool():
                     try:
+                        if _private_browser_uses_unrequested_placeholder(block, _last_user, messages):
+                            return block.tool_type, {
+                                "exit_code": 1,
+                                "error": "Placeholder browser URL was not requested by the user.",
+                                "output": (
+                                    "Do not navigate to example.com. Continue from the current page "
+                                    "using a fresh snapshot and validated element refs, or state the "
+                                    "specific blocker without inventing product details."
+                                ),
+                            }
                         if (
                             (_qwen38_tool_router or _full_inventory_mode) and (_pure_web_turn or _contextual_public_web_followup)
                             and not _artifact_creation_requested
@@ -31429,7 +32476,12 @@ async def stream_agent_loop(
                         "browser_epoch": _browser_state_epoch,
                         "count": (_prior_read.get("count", 0) + 1) if _same_observation_state else 1,
                     }
-            elif not (_blocked_failed_retry or _blocked_redundant_read):
+            elif not (
+                _blocked_failed_retry
+                or _blocked_redundant_read
+                or _blocked_repeated_successful_mutation
+                or _blocked_user_bounded_execution_retry
+            ):
                 _failure_text = str(
                     result.get("error")
                     or result.get("output")
@@ -31450,7 +32502,7 @@ async def stream_agent_loop(
                 )
             run_security.observe_tool_result(block.tool_type, result, block.content)
             if (
-                block.tool_type in {"inspect_media", "transcribe_media"}
+                block.tool_type in _LOCAL_MEDIA_EVIDENCE_TOOLS
                 and tool_result_is_successful(result)
             ):
                 _has_local_media_evidence = True
@@ -31863,7 +32915,7 @@ async def stream_agent_loop(
                 _inherit_calendar_open_range_from_tool_events(result, tool_events)
 
             # Emit tool_output (include ui_event data if present)
-            tool_output_data = {"type": "tool_output", "tool": block.tool_type, "command": cmd_display, "output": output_text, "exit_code": result.get("exit_code")}
+            tool_output_data = {"type": "tool_output", "tool": block.tool_type, "command": cmd_display, "output": output_text, "exit_code": result.get("exit_code"), "execution_attempted": _execution_attempted, "blocked": bool(result.get("blocked", False))}
             # Keep exact arguments on email mutation events. The frontend uses
             # these UIDs to reconcile an agent cleanup immediately, even when
             # a provider returns only human-readable MCP text.
@@ -32196,7 +33248,7 @@ async def stream_agent_loop(
             if (
                 _qwen38_tool_router
                 and block.tool_type in {"update_document", "edit_document"}
-                and _contract_allows_single_action_terminal(turn_contract)
+                and _deterministic_terminal_eligible
                 and not result.get("error")
                 and (
                     result.get("doc_id")
@@ -32418,7 +33470,16 @@ async def stream_agent_loop(
                             )
                     elif _tasks_text and not re.match(r"^(done|created|updated|deleted|task)\b", _tasks_text, re.IGNORECASE):
                         _tasks_text = f"Done — {_tasks_text}"
-                if _tasks_text and _deterministic_terminal_eligible:
+                if (
+                    _tasks_text
+                    and _deterministic_terminal_eligible
+                    and _tasks_action != "list"
+                ):
+                    # Mutations have a canonical tool result. A read-only list
+                    # continues to one synthesis round so the model owns the
+                    # user-facing wording and links. Appending the raw list here
+                    # caused raw output plus model synthesis to stream/save as
+                    # one duplicated answer.
                     _clean_current = strip_tool_blocks(full_response).strip()
                     if _tasks_text not in _clean_current:
                         _prefix = "\n\n" if _clean_current else ""
@@ -32595,6 +33656,8 @@ async def stream_agent_loop(
                             "manage_tasks",
                             "ls",
                             "list_files",
+                            "bash",
+                            "host_shell",
                         }:
                             yield (
                                 "data: "
@@ -33546,6 +34609,21 @@ async def stream_agent_loop(
                     _calendar_action = str(block.content or "").strip().splitlines()[0].lower()
                 if _calendar_action in {"create", "create_event", "update", "update_event", "delete", "delete_event"}:
                     _qwen_explicit_effectful_completed = True
+            if block.tool_type == "manage_tasks" and tool_result_is_successful(result):
+                try:
+                    _completed_task_args = json.loads(block.content or "{}")
+                    _completed_task_action = (
+                        str(_completed_task_args.get("action") or "").strip().lower()
+                        if isinstance(_completed_task_args, dict)
+                        else ""
+                    )
+                except (TypeError, json.JSONDecodeError):
+                    _completed_task_action = ""
+                if _completed_task_action in {
+                    "create", "add", "edit", "update", "delete", "remove",
+                    "pause", "resume", "enable", "disable",
+                }:
+                    _qwen_explicit_effectful_completed = True
             if (
                 _qwen38_tool_router
                 and block.tool_type == "manage_memory"
@@ -33690,7 +34768,14 @@ async def stream_agent_loop(
             logger.info("[agent] completed TUI bash block from deterministic host probe")
             break
 
-        if _qwen_terminal_summary_completed and _deterministic_terminal_eligible:
+        _required_surface = set(getattr(turn_contract, "required", ()) or ())
+        _read_only_email_terminal_eligible = bool(_required_surface) and _required_surface.issubset({
+            "search_emails", "read_email",
+            "mcp__email__search_emails", "mcp__email__read_email",
+        })
+        if _qwen_terminal_summary_completed and (
+            _deterministic_terminal_eligible or _read_only_email_terminal_eligible
+        ):
             logger.info("[agent] completed compact-router turn from deterministic terminal summary")
             break
 
@@ -33836,7 +34921,7 @@ async def stream_agent_loop(
             _post_effectful_mutation_done
             and _post_edit_verification_completed
             and _workspace_mutation_completion_authorized
-            and _contract_allows_single_action_terminal(turn_contract)
+            and _deterministic_terminal_eligible
         ):
             if _tui_local_execution_turn or _qwen38_tool_router:
                 full_response = _tui_verified_coding_summary(tool_events)
@@ -33858,7 +34943,7 @@ async def stream_agent_loop(
             logger.info("[agent] completed verified workspace mutation")
             break
 
-        if (_inspection_edit_completed or _file_creation_completed) and _contract_allows_single_action_terminal(turn_contract):
+        if (_inspection_edit_completed or _file_creation_completed) and _deterministic_terminal_eligible:
             if not full_response.strip() or full_response.strip().startswith("```"):
                 _verification_output = ""
                 for _event in reversed(tool_events):
@@ -33895,7 +34980,11 @@ async def stream_agent_loop(
             logger.info("[agent] completed explicit endpoint listing from deterministic tool output")
             break
 
-        if _qwen_explicit_effectful_completed and _contract_allows_single_action_terminal(turn_contract):
+        if (
+            _qwen_explicit_effectful_completed
+            and _deterministic_terminal_eligible
+            and _contract_allows_single_action_terminal(turn_contract)
+        ):
             if _calendar_effect_anchor and f"#event-" not in full_response:
                 full_response = (full_response.rstrip() + _calendar_effect_anchor).strip()
                 if round_texts:
@@ -33930,21 +35019,33 @@ async def stream_agent_loop(
             logger.info("[agent] completed compact memory listing from deterministic tool output")
             break
 
-        if _doc_stream_create_completed and _contract_allows_single_action_terminal(turn_contract):
+        if (
+            _doc_stream_create_completed
+            and _deterministic_terminal_eligible
+            and _contract_allows_single_action_terminal(turn_contract)
+        ):
             if not full_response.strip():
                 full_response = "Done."
                 yield 'data: ' + json.dumps({"delta": "Done."}) + '\n\n'
             logger.info("[agent] odysseus doc stream-create completed after one create_document")
             break
 
-        if _native_document_tool_completed and _contract_allows_single_action_terminal(turn_contract):
+        if (
+            _native_document_tool_completed
+            and _deterministic_terminal_eligible
+            and _contract_allows_single_action_terminal(turn_contract)
+        ):
             if not full_response.strip() or full_response.strip().startswith("```"):
                 full_response = "Done."
                 yield 'data: ' + json.dumps({"delta": "Done."}) + '\n\n'
             logger.info("[agent] document tool completed after successful document mutation")
             break
 
-        if _ody_doc_tool_completed and _contract_allows_single_action_terminal(turn_contract):
+        if (
+            _ody_doc_tool_completed
+            and _deterministic_terminal_eligible
+            and _contract_allows_single_action_terminal(turn_contract)
+        ):
             if not full_response.strip() or full_response.strip().startswith("```"):
                 full_response = "Done."
                 yield 'data: ' + json.dumps({"delta": "Done."}) + '\n\n'
@@ -34051,7 +35152,27 @@ async def stream_agent_loop(
                              tool_results, tool_result_texts, used_native, round_num,
                              round_reasoning=round_reasoning,
                              tool_result_records=tool_result_records,
-                             include_reasoning_content=not bool(normalized_external_tool_schemas),
+                             # DeepSeek requires its prior reasoning_content on
+                             # the follow-up request even when native/external
+                             # tool schemas are present. Other providers keep
+                             # the conservative external-schema behavior.
+                             include_reasoning_content=(
+                                 not bool(normalized_external_tool_schemas)
+                                 or _is_odysseus_qwen_model(_round_actual_model)
+                                 or bool(re.search(
+                                     r"(?:qwen3\.5|qwen35)",
+                                     str(_round_actual_model or ""),
+                                     re.IGNORECASE,
+                                 ))
+                                 or "deepseek" in str(_round_actual_model or "").lower()
+                                 or "deepseek" in str(requested_model or "").lower()
+                                 or str(_round_actual_endpoint_id or "").lower() == "flashteach"
+                             ),
+                             preserve_all_reasoning_content=(
+                                 "deepseek" in str(_round_actual_model or "").lower()
+                                 or "deepseek" in str(requested_model or "").lower()
+                                 or str(_round_actual_endpoint_id or "").lower() == "flashteach"
+                             ),
                              allow_visual_evidence=_allow_visual_tool_evidence_for_model(_round_actual_model))
         if _private_browser_catalog_ready and not _force_answer:
             _force_answer = True
@@ -35128,6 +36249,7 @@ async def stream_agent_loop(
         _retry_block = _normalize_web_search_block_query(
             _retry_source_block or ToolBlock("web_search", _retry_context),
             _retry_context,
+            current_user_text=_last_user,
         )
         _retry_query = _web_search_query_from_block(_retry_block)
         if (
@@ -35441,6 +36563,8 @@ async def stream_agent_loop(
                 "manage_tasks",
                 "manage_calendar",
                 "web_search",
+                "bash",
+                "host_shell",
             }:
                 continue
             if _tool_name == "web_fetch" and _web_search_completed:
@@ -35594,7 +36718,10 @@ async def stream_agent_loop(
                     _ev.get("output") or "",
                     attachments_only=_email_attachment_list_requested(_last_user),
                 )
-                if _email_summary and not _visible_response_text(full_response):
+                if _email_summary and (
+                    not _visible_response_text(full_response)
+                    or "No reliable empty-inbox result" in _email_summary
+                ):
                     full_response = _email_summary
                 break
             if _tool_name in {"read_email", "mcp__email__read_email"}:

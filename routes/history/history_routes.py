@@ -820,6 +820,8 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             except Exception:
                 logger.debug("session_created event dispatch failed", exc_info=True)
 
+            from src.model_profiles import supports_user_thinking_toggle
+            thinking_supported = supports_user_thinking_toggle(session.model)
             return {
                 "status": "ok",
                 "id": new_id,
@@ -858,10 +860,12 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
         try:
             from src.context_compactor import auto_compact_threshold_percent
             from src.model_context import estimate_tokens, get_context_length
+            from src.model_profiles import supports_user_thinking_toggle
 
             messages = session.get_context_messages()
             used = int(estimate_tokens(messages))
             ctx_len = int(get_context_length(session.endpoint_url, session.model) or 0)
+            thinking_supported = supports_user_thinking_toggle(session.model)
             pct = round((used / ctx_len) * 100, 1) if ctx_len else 0.0
             pct = max(0.0, min(100.0, pct))
             auto_threshold = auto_compact_threshold_percent()
@@ -888,8 +892,10 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 "should_compact": pct >= auto_threshold,
                 "auto_compact_threshold": auto_threshold,
                 "memory_extraction_enabled": getattr(session, "memory_extraction_enabled", True) is not False,
+                "memory_injection_enabled": getattr(session, "memory_injection_enabled", True) is not False,
                 "skill_injection_enabled": getattr(session, "skill_injection_enabled", True) is not False,
-                "thinking_mode": getattr(session, "thinking_mode", "") or "off",
+                "thinking_mode": (getattr(session, "thinking_mode", "") or "off") if thinking_supported else "off",
+                "thinking_supported": thinking_supported,
                 "temperature_override": getattr(session, "temperature_override", None),
                 "max_tokens_override": getattr(session, "max_tokens_override", None),
             }
@@ -971,6 +977,43 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
         finally:
             db.close()
 
+    @router.post("/api/session/{session_id}/memory-injection")
+    async def set_session_memory_injection(request: Request, session_id: str) -> Dict[str, Any]:
+        """Toggle saved-memory injection for one chat session."""
+        _verify_session_owner(request, session_id, session_manager)
+        try:
+            session = session_manager.get_session(session_id)
+        except KeyError:
+            raise HTTPException(404, "Session not found")
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if "enabled" not in body:
+            raise HTTPException(400, "Missing enabled")
+        enabled = bool(body.get("enabled"))
+
+        db = SessionLocal()
+        try:
+            db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
+            if not db_session:
+                session.memory_injection_enabled = enabled
+                session_manager.save_sessions()
+                return {"status": "success", "memory_injection_enabled": enabled}
+            db_session.memory_injection_enabled = enabled
+            db.commit()
+            session.memory_injection_enabled = enabled
+            return {"status": "success", "memory_injection_enabled": enabled}
+        except HTTPException:
+            raise
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Memory injection toggle error {session_id}: {e}")
+            raise HTTPException(500, "Failed to update memory injection")
+        finally:
+            db.close()
+
     @router.post("/api/session/{session_id}/generation-settings")
     async def set_session_generation_settings(request: Request, session_id: str) -> Dict[str, Any]:
         _verify_session_owner(request, session_id, session_manager)
@@ -982,6 +1025,9 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
         mode = str(body.get("thinking_mode") or "").lower()
         if mode not in {"", "on", "off"}:
             raise HTTPException(400, "Invalid thinking mode")
+        from src.model_profiles import supports_user_thinking_toggle
+        if not supports_user_thinking_toggle(session.model):
+            mode = "off"
         temperature = body.get("temperature_override")
         temperature = None if temperature in (None, "") else max(0.0, min(2.0, float(temperature)))
         max_tokens = body.get("max_tokens_override")

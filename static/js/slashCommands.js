@@ -10,13 +10,13 @@ window.cancelActiveTour = function cancelActiveTour() {
 };
 
 import Storage from './storage.js';
-import uiModule from './ui.js?v=20260908weekhoverfix1';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import sessionModule from './sessions.js';
 import modelsModule from './models.js';
-import chatRenderer from './chatRenderer.js?v=20260910streamlinks2';
+import chatRenderer from './chatRenderer.js?v=20260913richdiff1';
 import spinnerModule from './spinner.js';
-import themeModule from './theme.js?v=20260909effectspeed1';
-import documentModule from './document.js?v=20260911removealignrightshortcut1';
+import themeModule from './theme.js?v=20260911organsrain1';
+import documentModule from './document.js?v=20260916docctx2';
 import workspaceModule from './workspace.js';
 import settingsModule from './settings.js?v=20260909defaultmodelfix1';
 import cookbookModule from './cookbook.js';

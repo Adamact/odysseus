@@ -8,6 +8,7 @@ import {AMBIGUOUS_CASES,expectedNoteTitles,compareNoteState} from './note_test_o
 
 const root = path.resolve(new URL('..', import.meta.url).pathname);
 const base = process.env.BASE_URL || 'http://127.0.0.1:7011';
+const model = process.env.MODEL || 'odysseus-qwen3.5-tools-pre-heretic';
 const routingMode = process.env.ROUTING_MODE || 'baseline';
 const followupCase = process.env.FOLLOWUP_CASE || 'original';
 const plainTitles = process.env.TITLE_STYLE === 'plain';
@@ -73,7 +74,7 @@ try {
   } });
   await context.addCookies([{ name: 'odysseus_session', value: token, url: base }]);
   const created = await context.request.post(`${base}/api/session`, { multipart: {
-    name: `[multi-note-followup] ${marker}`, model: 'odysseus-qwen3.5-tools-pre-heretic',
+    name: `[multi-note-followup] ${marker}`, model,
     endpoint_id: process.env.ENDPOINT_ID || '1d1022ef',
     endpoint_url: process.env.ENDPOINT_URL || (() => { throw new Error("ENDPOINT_URL is required"); })(),
     skip_validation: 'true', rag: 'false',

@@ -117,6 +117,43 @@ export function createLayerPanelRenderer(deps) {
       : [layer];
   }
 
+  let previewSession;
+  const previewSignatures = new Map();
+
+  function refreshPreviews() {
+    const list = document.getElementById('ge-layers-list');
+    if (!list || !state.editorOpen) return;
+    if (previewSession !== state.editorSessionToken) {
+      previewSession = state.editorSessionToken;
+      previewSignatures.clear();
+    }
+    const initialized = previewSignatures.size > 0;
+    const currentIds = new Set();
+    for (const row of list.children) {
+      const id = row.dataset.layerId || row.dataset.groupId || row.dataset.maskId || row.dataset.groupMaskId;
+      const thumb = row.querySelector('.ge-layer-inline-thumb');
+      if (!id || !thumb) continue;
+      currentIds.add(id);
+      thumb._refreshPreview?.();
+      const layer = state.layers.find(item => item.id === id);
+      const signature = thumb.toDataURL() + JSON.stringify(layer ? {
+        offset: state.layerOffsets.get(id), opacity: layer.opacity,
+        visible: layer.visible, locked: layer.locked, name: layer.name,
+      } : {});
+      const previous = previewSignatures.get(id);
+      previewSignatures.set(id, signature);
+      if (initialized && previous !== signature) {
+        row.classList.remove('ge-layer-action-flash');
+        void row.offsetWidth;
+        row.classList.add('ge-layer-action-flash');
+        row.addEventListener('animationend', () => row.classList.remove('ge-layer-action-flash'), { once: true });
+      }
+    }
+    for (const id of previewSignatures.keys()) {
+      if (!currentIds.has(id)) previewSignatures.delete(id);
+    }
+  }
+
   function createInlineThumbnail(source, title, extraClass = '') {
     const thumb = document.createElement('canvas');
     thumb.className = `ge-layer-inline-thumb${extraClass ? ` ${extraClass}` : ''}`;
@@ -126,23 +163,28 @@ export function createLayerPanelRenderer(deps) {
     thumb.setAttribute('role', 'img');
     thumb.setAttribute('aria-label', title);
     const ctx = thumb.getContext('2d');
-    if (!ctx || !source?.width || !source?.height) return thumb;
-    const tile = 8;
-    for (let y = 0; y < thumb.height; y += tile) {
-      for (let x = 0; x < thumb.width; x += tile) {
-        ctx.fillStyle = ((x / tile + y / tile) & 1) ? '#464646' : '#303030';
-        ctx.fillRect(x, y, tile, tile);
+    const draw = () => {
+      const image = typeof source === 'function' ? source() : source;
+      if (!ctx || !image?.width || !image?.height) return;
+      const tile = 8;
+      for (let y = 0; y < thumb.height; y += tile) {
+        for (let x = 0; x < thumb.width; x += tile) {
+          ctx.fillStyle = ((x / tile + y / tile) & 1) ? '#464646' : '#303030';
+          ctx.fillRect(x, y, tile, tile);
+        }
       }
-    }
-    const scale = Math.min(thumb.width / source.width, thumb.height / source.height);
-    const width = source.width * scale;
-    const height = source.height * scale;
-    ctx.drawImage(source, (thumb.width - width) / 2, (thumb.height - height) / 2, width, height);
+      const scale = Math.min(thumb.width / image.width, thumb.height / image.height);
+      const width = image.width * scale;
+      const height = image.height * scale;
+      ctx.drawImage(image, (thumb.width - width) / 2, (thumb.height - height) / 2, width, height);
+    };
+    thumb._refreshPreview = draw;
+    draw();
     return thumb;
   }
 
   function createMaskThumbnail(mask) {
-    return createInlineThumbnail(mask.canvas, `${mask.name || 'Mask'} preview`, 'ge-mask-inline-thumb');
+    return createInlineThumbnail(() => mask.canvas, `${mask.name || 'Mask'} preview`, 'ge-mask-inline-thumb');
   }
 
   function applyLayerMask(layer, mask) {
@@ -1152,8 +1194,7 @@ export function createLayerPanelRenderer(deps) {
       // Retained text/shape layers keep their editable metadata separately
       // from the raster canvas. Use the normal renderer when available so
       // their layer previews match what the document actually displays.
-      const previewCanvas = renderLayer?.(layer) || layer.canvas;
-      const thumb = createInlineThumbnail(previewCanvas, `${layer.name} preview`);
+      const thumb = createInlineThumbnail(() => renderLayer?.(layer) || layer.canvas, `${layer.name} preview`);
       item.appendChild(thumb);
 
       const nameEl = document.createElement('span');
@@ -2062,6 +2103,7 @@ export function createLayerPanelRenderer(deps) {
   // shortcuts so undo, confirmations, and layer normalization stay aligned.
   return {
     render,
+    refreshPreviews,
     deleteSelectedLayers: () => deleteLayers(selectedLayers(state)),
     duplicateActiveLayer: () => {
       const button = [...document.querySelectorAll('button[title="Duplicate layer"]')]

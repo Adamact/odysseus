@@ -1354,6 +1354,11 @@ def _normalize_fixture_account_selector(account=None) -> str:
     match = re.search(r"\(([^)]+@[^)]+)\)", selector)
     if match:
         return match.group(1).strip().lower()
+    # "primary" and "default" are common unambiguous selectors for the
+    # fixture's canonical primary-inbox account. Treating them as literal
+    # account names otherwise produces a misleading empty search result.
+    if selector in {"primary", "default"}:
+        return "primary-inbox"
     return selector
 
 
@@ -1472,7 +1477,7 @@ def _fixture_list_emails(folder="INBOX", max_results=20, unresponded_only=False,
         return None
     if not _fixture_owner_has_rows(_current_owner()):
         return None
-    if account and str(account).strip().lower() not in _fixture_account_aliases():
+    if account and _normalize_fixture_account_selector(account) not in _fixture_account_aliases():
         return []
     rows = [
         row for row in _fixture_email_rows(_current_owner())

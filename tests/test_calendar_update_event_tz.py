@@ -81,6 +81,41 @@ async def test_update_event_dtstart_anchored_to_user_tz(tokyo_offset):
     finally:
         db.close()
 
+async def test_update_event_new_start_preserves_duration_when_end_is_omitted(tokyo_offset):
+    from src.tool_implementations import do_manage_calendar
+
+    owner = "move-duration-" + uuid.uuid4().hex[:6]
+    created = await do_manage_calendar(json.dumps({
+        "action": "create_event",
+        "summary": "Dinner",
+        "dtstart": "2026-10-11T09:30:00",
+        "dtend": "2026-10-11T11:00:00",
+    }), owner=owner)
+    assert created.get("exit_code", 0) == 0, created
+
+    updated = await do_manage_calendar(json.dumps({
+        "action": "update_event",
+        "uid": created["uid"],
+        "dtstart": "2026-10-12T21:30:00",
+    }), owner=owner)
+    assert updated.get("exit_code", 0) == 0, updated
+
+    db = _TS()
+    try:
+        event = db.query(CalendarEvent).filter(CalendarEvent.uid == created["uid"]).first()
+        assert (event.dtend - event.dtstart).total_seconds() == 90 * 60
+        assert event.dtend > event.dtstart
+    finally:
+        db.close()
+
+    listed = await do_manage_calendar(json.dumps({
+        "action": "list_events",
+        "start": "2026-10-12T18:00:00",
+        "end": "2026-10-13T00:00:00",
+    }), owner=owner)
+    assert listed.get("exit_code", 0) == 0, listed
+    assert [event["summary"] for event in listed["events"]] == ["Dinner"]
+
 
 async def test_update_event_with_time_converts_all_day_event_to_timed(tokyo_offset):
     from src.tool_implementations import do_manage_calendar

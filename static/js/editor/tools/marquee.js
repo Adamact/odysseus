@@ -1,6 +1,7 @@
 /** Rectangle and ellipse marquee interaction producing a document-space mask. */
 
 import { state } from '../state.js';
+import { selectionModeForEvent } from '../selection-modifiers.js';
 import { canvasCoords } from '../canvas-coords.js';
 import {
   createMarqueeMask,
@@ -60,9 +61,7 @@ export function createMarqueeTool({
         gesture.begin(e, { mode: 'move' }, { captureTarget: e.currentTarget });
         return;
       }
-      pendingMode = state.wandMode || 'replace';
-      if (e.shiftKey) pendingMode = 'add';
-      else if (e.altKey) pendingMode = 'subtract';
+      pendingMode = selectionModeForEvent(e, state.wandMode || 'replace');
       state.marqueeStart = coords;
       state.marqueeRect = normalizeConstrainedSelectionRect(
         coords,

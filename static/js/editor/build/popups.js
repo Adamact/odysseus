@@ -5,6 +5,8 @@
  * el.querySelector after appending.
  */
 
+import { TOOL_SHORTCUTS } from '../tool-shortcuts.js';
+
 /** Keyboard-shortcuts popover. */
 export function shortcutsPopupHTML() {
   return `
@@ -27,12 +29,11 @@ export function shortcutsPopupHTML() {
           <div><kbd>T</kbd> Text</div>
           <div><kbd>B</kbd> Brush</div>
           <div><kbd>E</kbd> Eraser</div>
-          <div><kbd>K</kbd> Clone Stamp <span style="opacity:0.5">(Alt-click = set source)</span></div>
+          <div><kbd>${TOOL_SHORTCUTS.clone}</kbd> Clone Stamp <span style="opacity:0.5">(Alt-click = set source)</span></div>
           <div><kbd>L</kbd> Lasso</div>
           <div><kbd>W</kbd> Wand</div>
-          <div><kbd>M</kbd> Inpaint</div>
+          <div><kbd>${TOOL_SHORTCUTS.marquee}</kbd> Marquee</div>
           <div><kbd>C</kbd> Crop</div>
-          <div><kbd>S</kbd> Sharpen</div>
         </div>
         <div class="ge-shortcuts-col">
           <h5>Edit</h5>
@@ -48,10 +49,11 @@ export function shortcutsPopupHTML() {
         <div class="ge-shortcuts-col">
           <h5>Selection</h5>
           <div><kbd>Ctrl</kbd>+<kbd>A</kbd> Select All</div>
-          <div><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> Deselect</div>
-          <div><kbd>Ctrl</kbd>+<kbd>C</kbd> Copy to layer</div>
-          <div><kbd>Ctrl</kbd>+<kbd>X</kbd> Cut lasso</div>
-          <div><kbd>Ctrl</kbd>+<kbd>D</kbd> Delete pixels</div>
+          <div><kbd>Ctrl</kbd>+<kbd>D</kbd> Deselect</div>
+          <div><kbd>Ctrl</kbd>+<kbd>C</kbd> Copy</div>
+          <div><kbd>Ctrl</kbd>+<kbd>X</kbd> Cut</div>
+          <div><kbd>Ctrl</kbd>+<kbd>J</kbd> Copy selection to layer / duplicate layer</div>
+          <div><kbd>Delete</kbd> Delete pixels</div>
           <div><kbd>Esc</kbd> Cancel selection / crop</div>
         </div>
         <div class="ge-shortcuts-col">

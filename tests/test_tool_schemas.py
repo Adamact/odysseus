@@ -51,6 +51,31 @@ def test_web_search_native_command_arg_repairs_to_query_before_required_check() 
     assert block.content == "PISA 2022 OECD report Japan Sweden scores mathematics reading science"
 
 
+def test_web_search_native_query_wins_over_redundant_tool_name_command() -> None:
+    block = function_call_to_tool_block(
+        "web_search",
+        '{"command":"web_search","query":"gpt-4 official source site:openai.com","time_filter":"year"}',
+    )
+
+    assert block is not None
+    assert block.tool_type == "web_search"
+    assert json.loads(block.content) == {
+        "query": "gpt-4 official source site:openai.com",
+        "time_filter": "year",
+    }
+
+
+def test_create_document_human_language_code_does_not_pollute_body() -> None:
+    block = function_call_to_tool_block(
+        "create_document",
+        '{"title":"Repair Notes","language":"en","content":"The harness is fixed."}',
+    )
+
+    assert block is not None
+    assert block.tool_type == "create_document"
+    assert block.content == "Repair Notes\nThe harness is fixed."
+
+
 def test_web_search_native_q_arg_repairs_to_query_before_required_check() -> None:
     block = function_call_to_tool_block("web_search", '{"q":"latest Apple Mac mini specs"}')
 

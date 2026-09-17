@@ -243,11 +243,22 @@ def _process_office_document(
         if session_id:
             try:
                 from src.office_doc import create_office_document
+                is_docx = str(path).lower().endswith(".docx")
+                stored_body = markdown
+                if is_docx:
+                    # Keep the original upload addressable so the document
+                    # pane can render a Word-style preview instead of only
+                    # exposing the extracted Markdown.
+                    stored_body = (
+                        f'<!-- docx_source upload_id="{os.path.basename(path)}" -->\n'
+                        f'{markdown}'
+                    )
                 doc_id = create_office_document(
                     session_id=session_id,
                     upload_id=os.path.basename(path),
                     title=title,
-                    body_text=markdown,
+                    body_text=stored_body,
+                    language="docx" if is_docx else "markdown",
                 )
                 if doc_id and auto_opened_docs is not None:
                     from src.database import SessionLocal, Document

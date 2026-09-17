@@ -175,6 +175,9 @@ class TestLookupKnown:
     def test_deepseek_r1(self):
         assert _lookup_known("deepseek-r1") == 64000
 
+    def test_deepseek_flash_provider_alias(self):
+        assert _lookup_known("deepseek-flash") == 64000
+
     def test_gemini_pro(self):
         assert _lookup_known("gemini-2.5-pro") == 1048576
 

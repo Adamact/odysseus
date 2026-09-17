@@ -469,6 +469,10 @@ def _truthy(value: str | None) -> bool:
 _ENDPOINT_KINDS = {"auto", "local", "api", "proxy"}
 _REFRESH_MODES = {"auto", "manual", "disabled"}
 _MODEL_TOOL_MODES = {"none", "compact", "full"}
+_MODEL_TOOL_MODE_ALIASES = {
+    "regular": "full",
+    "odysseus_compact": "compact",
+}
 
 
 def _normalize_endpoint_kind(value: Any) -> str:
@@ -478,6 +482,7 @@ def _normalize_endpoint_kind(value: Any) -> str:
 
 def _normalize_model_tool_mode(value: Any) -> str:
     mode = str(value or "").strip().lower()
+    mode = _MODEL_TOOL_MODE_ALIASES.get(mode, mode)
     return mode if mode in _MODEL_TOOL_MODES else ""
 
 

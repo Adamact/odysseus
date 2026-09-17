@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 from fastapi import HTTPException
 from typing import Optional, Dict, List, Tuple
 from src.model_context import get_context_length, DEFAULT_CONTEXT, is_local_endpoint
+from src.model_profiles import is_odysseus_merged_tools_model
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -38,9 +39,9 @@ def _is_managed_stream_endpoint(url: str) -> bool:
     except ValueError:
         return False
 
-_LOCAL_MODEL_LOCK = asyncio.Lock()
-_LOCAL_MODEL_WAITING_FOREGROUND = 0
-_LOCAL_MODEL_CURRENT: Dict[str, object] = {}
+_LOCAL_MODEL_LOCKS: Dict[str, asyncio.Lock] = {}
+_LOCAL_MODEL_WAITING_FOREGROUND: Dict[str, int] = {}
+_LOCAL_MODEL_CURRENT: Dict[str, Dict[str, object]] = {}
 
 
 def _normalize_usage_counts(input_value=0, output_value=0):
@@ -94,6 +95,14 @@ def _local_model_gate_enabled() -> bool:
     return os.getenv("ODYSSEUS_LOCAL_MODEL_GATE", "true").lower() not in {"0", "false", "no", "off"}
 
 
+def _local_model_gate_key(target_url: str) -> str:
+    """Identify one independently schedulable local inference endpoint."""
+    parsed = urlparse(str(target_url or ""))
+    host = (parsed.hostname or "").lower()
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    return f"{parsed.scheme.lower()}://{host}:{port}"
+
+
 def _gate_workload(workload: Optional[str]) -> str:
     return "background" if str(workload or "").lower() == "background" else "foreground"
 
@@ -111,12 +120,15 @@ async def _local_model_slot(target_url: str, model: str, workload: Optional[str]
         yield
         return
 
-    global _LOCAL_MODEL_WAITING_FOREGROUND
+    gate_key = _local_model_gate_key(target_url)
+    gate_lock = _LOCAL_MODEL_LOCKS.setdefault(gate_key, asyncio.Lock())
     kind = _gate_workload(workload)
     current_task = asyncio.current_task()
     if kind == "foreground":
-        _LOCAL_MODEL_WAITING_FOREGROUND += 1
-        current = dict(_LOCAL_MODEL_CURRENT)
+        _LOCAL_MODEL_WAITING_FOREGROUND[gate_key] = (
+            _LOCAL_MODEL_WAITING_FOREGROUND.get(gate_key, 0) + 1
+        )
+        current = dict(_LOCAL_MODEL_CURRENT.get(gate_key, {}))
         if current.get("workload") == "background":
             task = current.get("task")
             if isinstance(task, asyncio.Task) and not task.done():
@@ -132,32 +144,38 @@ async def _local_model_slot(target_url: str, model: str, workload: Optional[str]
             from src.interactive_gate import has_foreground_activity
         except Exception:
             has_foreground_activity = lambda: False  # type: ignore
-        while _LOCAL_MODEL_WAITING_FOREGROUND > 0 or has_foreground_activity():
+        while (
+            _LOCAL_MODEL_WAITING_FOREGROUND.get(gate_key, 0) > 0
+            or has_foreground_activity()
+        ):
             await asyncio.sleep(0.25)
 
     acquired = False
     try:
-        await _LOCAL_MODEL_LOCK.acquire()
+        await gate_lock.acquire()
         acquired = True
         if kind == "foreground":
-            _LOCAL_MODEL_WAITING_FOREGROUND = max(0, _LOCAL_MODEL_WAITING_FOREGROUND - 1)
-        _LOCAL_MODEL_CURRENT.clear()
-        _LOCAL_MODEL_CURRENT.update({
+            _LOCAL_MODEL_WAITING_FOREGROUND[gate_key] = max(
+                0, _LOCAL_MODEL_WAITING_FOREGROUND.get(gate_key, 0) - 1
+            )
+        _LOCAL_MODEL_CURRENT[gate_key] = {
             "task": current_task,
             "workload": kind,
             "url": target_url,
             "model": model,
             "started": time.time(),
-        })
+        }
         yield
     finally:
-        if kind == "foreground":
-            _LOCAL_MODEL_WAITING_FOREGROUND = max(0, _LOCAL_MODEL_WAITING_FOREGROUND - 1)
-        if acquired and _LOCAL_MODEL_LOCK.locked():
-            owner = _LOCAL_MODEL_CURRENT.get("task")
+        if kind == "foreground" and not acquired:
+            _LOCAL_MODEL_WAITING_FOREGROUND[gate_key] = max(
+                0, _LOCAL_MODEL_WAITING_FOREGROUND.get(gate_key, 0) - 1
+            )
+        if acquired and gate_lock.locked():
+            owner = _LOCAL_MODEL_CURRENT.get(gate_key, {}).get("task")
             if owner is current_task:
-                _LOCAL_MODEL_CURRENT.clear()
-            _LOCAL_MODEL_LOCK.release()
+                _LOCAL_MODEL_CURRENT.pop(gate_key, None)
+            gate_lock.release()
 
 class LLMConfig:
     """Configuration constants for LLM operations."""
@@ -1166,7 +1184,7 @@ def _is_odysseus_qwen_tool_router_model(model: str) -> bool:
         or "qwen35-9b-tool-router" in value
         or "qwen3.5-9b-tool-router" in value
         or "odysseus-qwen3.5-9b" in value
-        or value.startswith("odysseus-qwen3.5-tools-")
+        or is_odysseus_merged_tools_model(value)
         or "qwen35-email" in value
         or "qwen3.5-email" in value
         or "qwen35-calendar" in value
@@ -2519,6 +2537,24 @@ async def llm_call_async(
     else:
         messages_copy = non_sys
 
+    # Non-streaming background callers historically inherited the 32k global
+    # default even when the selected local endpoint exposed a smaller context
+    # window.  Streaming requests already apply this bound; enforce the same
+    # invariant here before cache-key construction and payload creation.
+    if max_tokens and max_tokens > 0:
+        try:
+            from src.generation_budget import fit_output_token_budget
+
+            max_tokens = fit_output_token_budget(
+                max_tokens,
+                get_context_length(url, model),
+                messages_copy,
+            )
+        except Exception:
+            # Context discovery is best-effort. Preserve the established call
+            # path when endpoint metadata is unavailable.
+            pass
+
     cache_key = _get_cache_key(
         url, model, messages_copy, temperature, max_tokens, headers=headers,
         thinking_mode=thinking_mode,
@@ -3554,7 +3590,15 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                                             if thinking_part:
                                                 reasoning = (reasoning + thinking_part) if reasoning else thinking_part
                                             content = text_part
-                                        if reasoning and _normalize_thinking_mode(thinking_mode) != "off":
+                                        # DeepSeek may return reasoning_content even when the
+                                        # caller requests thinking=off, and its API requires that
+                                        # exact field on subsequent tool rounds. Preserve it in the
+                                        # reasoning channel for protocol continuity; consumers keep
+                                        # reasoning out of the visible final answer.
+                                        if reasoning and (
+                                            _normalize_thinking_mode(thinking_mode) != "off"
+                                            or "deepseek" in str(model or "").lower()
+                                        ):
                                             _degenerate = degenerate_guard.check(reasoning)
                                             if _degenerate:
                                                 yield _degenerate

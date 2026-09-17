@@ -141,3 +141,30 @@ def test_general_web_search_keeps_comprehensive_fetch(monkeypatch):
     assert result["exit_code"] == 0
     assert seen[0][0] == "best way to repair a bicycle tire"
     assert "full fetched answer" in result["output"]
+
+
+def test_general_web_search_degrades_to_metadata_when_content_fetch_times_out(monkeypatch):
+    monkeypatch.setattr(
+        search,
+        "comprehensive_web_search",
+        lambda *args, **kwargs: (_ for _ in ()).throw(asyncio.TimeoutError()),
+    )
+    monkeypatch.setattr(
+        search,
+        "searxng_search_results",
+        lambda query, count: [{
+            "title": "HTTP Semantics",
+            "url": "https://www.rfc-editor.org/rfc/rfc9110.html",
+            "snippet": "The Retry-After field indicates how long to wait.",
+        }],
+    )
+
+    result = asyncio.run(WebSearchTool().execute(
+        json.dumps({"query": "HTTP Retry-After semantics", "max_pages": 3}),
+        {},
+    ))
+
+    assert result["exit_code"] == 0
+    assert result["evidence_status"] == "available"
+    assert result["degraded_mode"] == "metadata_after_content_timeout"
+    assert "https://www.rfc-editor.org/rfc/rfc9110.html" in result["output"]
