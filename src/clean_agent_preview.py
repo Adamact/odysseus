@@ -3156,7 +3156,8 @@ def requested_web_source_links(user_text):
     return bool(re.search(
         r'\b(?:return|give|show|include|provide|cite|find)\b.{0,35}\b(?:source\s+)?links?\b'
         r'|\b(?:\d+|one|two|three|four|five)\s+(?:official\s+)?(?:source\s+)?links?\b'
-        r'|\bofficial\s+source\b',
+        r'|\bofficial\s+source\b'
+        r'|\b(?:find|locate|get|download)\b.{0,80}\b(?:manual|guide|handbook|pdf)\b.{0,40}\b(?:online|official)\b',
         str(user_text or ''),
         re.IGNORECASE,
     ))
@@ -3184,6 +3185,7 @@ def web_source_links(raw, *, max_items=1, prefer_official=False, query=''):
         secondary_hosts = {
             'wikipedia.org', 'reddit.com', 'medium.com', 'youtube.com',
             'facebook.com', 'linkedin.com', 'x.com', 'twitter.com',
+            'manuals.plus', 'manualslib.com',
         }
         primary = []
         official_domains = official_domains_for_text(query)
@@ -3196,7 +3198,7 @@ def web_source_links(raw, *, max_items=1, prefer_official=False, query=''):
                 host == domain or host.endswith('.' + domain)
                 for domain in official_domains
             )
-            if query_host_match or (not official_domains and host.endswith(('.gov', '.edu'))):
+            if query_host_match or not official_domains:
                 primary.append(row)
         rows = primary
     links = []
@@ -3350,7 +3352,7 @@ def requested_web_link_limit(user_text):
         re.IGNORECASE,
     )
     if not match:
-        return None
+        return 1 if requested_web_source_links(text) else None
     token = (match.group(1) or match.group(2)).casefold()
     return max(1, min(5, int(token) if token.isdigit() else words[token]))
 

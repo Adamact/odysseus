@@ -1913,6 +1913,31 @@ def test_web_fetch_collapses_single_and_batch_url_fields_without_losing_targets(
     }
 
 
+def test_manual_locator_prefers_manufacturer_link_and_requests_one_result():
+    from src.clean_agent_preview import (
+        requested_web_link_limit, requested_web_source_links, web_source_links,
+    )
+
+    prompt = 'Find the official WIKING Miro 3 English manual online'
+    raw = (
+        '[1] WIKING Miro manual\nhttps://manuals.plus/wiking-miro\n'
+        '[2] WIKING Miro 3 manuals\nhttps://www.manualslib.com/wiking-miro-3\n'
+        '[3] WIKING Miro English manual PDF\n'
+        'https://www.hwam.com/media/wiking/miro-en.pdf\n'
+    )
+
+    assert requested_web_source_links(prompt)
+    assert requested_web_link_limit(prompt) == 1
+    assert web_source_links(
+        raw, max_items=1, prefer_official=True, query=prompt,
+    ) == [
+        (
+            'https://www.hwam.com/media/wiking/miro-en.pdf',
+            '[Source: WIKING Miro English manual PDF](https://www.hwam.com/media/wiking/miro-en.pdf)',
+        )
+    ]
+
+
 def test_preview_allows_only_reversible_client_local_ui_control():
     assert preview_call_allowed(
         'ui_control', {'action': 'open_panel', 'name': 'gallery'}, 'open gallery'
