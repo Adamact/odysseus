@@ -75,6 +75,10 @@ Further provider inspection found that the news-to-general fallback dropped the 
 
 ### Additional informal/multi-part live checks
 
+`reports/clean-v3-search-quality-2026-09-17T21-46-32-630Z.json`: all three context-free referential prompts asked sensible clarification questions, zero tools, 7.2–8.2s UI latency. Grounded follow-up searched the correct Python topic, but setup wording “Remember…” also created test-owner memory `5f3eab27-99f1-45cb-8c81-7fb66420b296`. Removed only that exact ID after API owner/text verification; subsequent GET returned 404. Its text remains recoverable in the report. Revised setup explicitly forbids saving, and launched a clean follow-up replay. Never count that setup mutation as a no-tool pass.
+
+Answer-style controls `reports/search-synthesis-probe-1789681656044.json` (Firefox) and `1789681683794.json` (battery) replace only the canonical concise-answer sentence with completeness/uncertainty guidance. Results were mixed: Firefox became shorter; battery answer remained broad and introduced unsupported sustainability/cost assertions. No production prompt change made. More prose or links alone is not a factual-quality improvement.
+
 `a8646d86` adds missing-subject clarification for complete referential lookup requests only when history has no prior user turn/assistant/tool evidence and there is no active editor, attachment/image, or native workspace. It omits tool schemas and asks the model to clarify; explicit subjects and context-bearing follow-ups retain normal routing. 1,257 related tests pass. Added live no-context variants and a same-wording follow-up with an established Python topic; four-case replay launched after deployment. This is conservative coverage of unresolved references, not a claim to resolve all linguistic ambiguity.
 
 Ambiguity controls with exact compact search schema/canonical base prompt: `reports/search-tool-choice-probe-1789681406232.json` reproduces invented game-release query even with auto choice. Adding an explicit missing-subject clarification instruction (`1789681407057`) merely changes invented query to France's capital. No network tool was executed by these probes.

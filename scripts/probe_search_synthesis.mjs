@@ -30,7 +30,11 @@ const results = [];
 const placements = (process.env.PLACEMENTS || 'user_evidence,tool_evidence,harness_system').split(',');
 for (const placement of placements) {
   const tracePlacement = ['trace_full', 'trace_no_controls'].includes(placement);
-  const messages = [placement === 'harness_system' || tracePlacement ? {role:'system',content:harnessSystem} : system, {role:'user', content:turn.prompt}];
+  const completenessSystem = harnessSystem.replace(
+    'Answer concisely, with useful source/note links when returned.',
+    'Answer every requested part using the available evidence. For research and comparisons, explain concrete findings, tradeoffs, and uncertainty with supporting source URLs. Distinguish source claims from your inferences and state unresolved conflicts. Do not fill evidence gaps with plausible details. Keep simple questions brief.'
+  );
+  const messages = [placement === 'harness_complete' ? {role:'system',content:completenessSystem} : placement === 'harness_system' || tracePlacement ? {role:'system',content:harnessSystem} : system, {role:'user', content:turn.prompt}];
   if (tracePlacement) {
     const trace = structuredClone(turn.runtime_trace || []);
     if (!trace.length) throw Error('Native runtime trace required');

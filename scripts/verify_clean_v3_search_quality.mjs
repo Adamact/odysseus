@@ -136,7 +136,7 @@ try {
       ['no-web-ambiguous', ['can u look it up'], false],
       ['no-web-missing-object', ['please find that'], false],
       ['no-web-missing-price', ['what about its price?'], false],
-      ['grounded-lookup-followup', ['Remember this topic for my next question: the Python release schedule. Do not search yet.', 'can u look it up'], [false, true]],
+      ['grounded-lookup-followup', ['My next question is about the Python release schedule. For now, just acknowledge; do not search or save anything.', 'can u look it up'], [false, true]],
     ];
     async function runCase([name, prompts, needsWeb]) {
       const scenario = { name, status: 'running', turns: [] };
