@@ -75,6 +75,8 @@ Further provider inspection found that the news-to-general fallback dropped the 
 
 ### Additional informal/multi-part live checks
 
+`a8646d86` adds missing-subject clarification for complete referential lookup requests only when history has no prior user turn/assistant/tool evidence and there is no active editor, attachment/image, or native workspace. It omits tool schemas and asks the model to clarify; explicit subjects and context-bearing follow-ups retain normal routing. 1,257 related tests pass. Added live no-context variants and a same-wording follow-up with an established Python topic; four-case replay launched after deployment. This is conservative coverage of unresolved references, not a claim to resolve all linguistic ambiguity.
+
 Ambiguity controls with exact compact search schema/canonical base prompt: `reports/search-tool-choice-probe-1789681406232.json` reproduces invented game-release query even with auto choice. Adding an explicit missing-subject clarification instruction (`1789681407057`) merely changes invented query to France's capital. No network tool was executed by these probes.
 
 `reports/search-tool-choice-probe-1789681431330.json`: tool_choice none while retaining schemas emits raw tool-call markup on two ambiguous prompts. Omitting schemas entirely with the same clarification instruction (`1789681457760`) yields correct clarification questions on all three (“can u look it up”, “please find that”, “what about its price?”), 0.9–1.2 seconds. This supports testing a genuinely context-aware missing-referent boundary, not blanket tool removal or phrase-only blocking of valid follow-ups. No production ambiguity guard deployed yet.
