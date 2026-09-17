@@ -305,23 +305,28 @@ def searxng_search_api(query: str, count: Optional[int] = None, categories: str 
         return parsed
     except Exception as e:
         logger.warning(f"SearXNG JSON API search failed: {e}")
-        html_results = searxng_search(query, max_results=count)
+        html_results = searxng_search(query, max_results=count, search_params=active_params)
         if html_results:
             logger.info(f"SearXNG HTML fallback returned {len(html_results)} results for: {query}")
         return html_results
 
 
-def searxng_search(query, max_results=10):
+def searxng_search(query, max_results=10, *, search_params=None):
     """Search using SearXNG instance - parsing HTML."""
     instance = _get_search_instance()
     api_key = ""
     req_headers = {"User-Agent": WEB_FETCH_USER_AGENT}
     if api_key:
         req_headers["Authorization"] = f"Bearer {api_key}"
+    # Transport fallback must not change the user's retrieval constraints.
+    # In particular omit only JSON formatting, not publication time/category.
+    params = {key: value for key, value in (search_params or {}).items()
+              if key in {'categories', 'engines', 'language', 'time_range'}}
+    params.update({'q': query, 'safesearch': _safesearch_for('searxng')})
     try:
         response = httpx.get(
             f"{instance}/search",
-            params={"q": query, "safesearch": _safesearch_for("searxng")},
+            params=params,
             headers=req_headers,
             timeout=10,
         )

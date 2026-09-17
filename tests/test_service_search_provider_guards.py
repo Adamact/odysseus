@@ -11,6 +11,27 @@ from services.search import core
 from services.search import providers
 
 
+def test_html_transport_fallback_preserves_query_constraints(monkeypatch):
+    seen = []
+    class Response:
+        is_success = True
+        text = '<article class="result"><h3><a href="https://example.org/report">Report</a></h3><p class="content">Evidence</p></article>'
+    def get(*args, **kwargs):
+        seen.append(dict(kwargs['params']))
+        if len(seen) == 1:
+            raise ValueError('JSON transport unavailable')
+        return Response()
+    monkeypatch.setattr(providers, '_get_search_instance', lambda: 'http://searx.test')
+    monkeypatch.setattr(providers, '_get_search_settings', lambda: {'search_safesearch': 'strict'})
+    monkeypatch.setattr(providers, '_get_provider_key', lambda name: '')
+    monkeypatch.setattr(providers.httpx, 'get', get)
+    results = providers.searxng_search_api('AI news site:example.org', time_filter='week', engines='test-engine')
+    assert len(results) == 1
+    assert len(seen) == 2
+    assert seen[1] == {k: v for k, v in seen[0].items() if k != 'format'}
+    assert seen[1]['time_range'] == 'week'
+
+
 @pytest.mark.parametrize('query,category', [
     ('AI developments this week', 'news'),
     ('recent developments in battery manufacturing', 'news'),
