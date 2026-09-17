@@ -38,6 +38,11 @@ def test_explicit_publication_constraints_are_preserved():
     assert args['time_filter'] == 'month'
 
 
+def test_corrected_version_query_does_not_invent_a_date_window_for_typo_request():
+    args = preserve_requested_web_recency('web_search', {'query': 'latest Python version', 'time_filter': 'month'}, user_text='latest pythno verison? official source pls')
+    assert 'time_filter' not in args
+
+
 def test_provider_does_not_silently_widen_news_window(monkeypatch):
     from services.search import providers
     seen = {}

@@ -2,11 +2,11 @@
 import re
 
 
-def reference_lookup_without_date_window(text: str) -> bool:
+def reference_lookup_without_date_window(text: str, query_hint: str = '') -> bool:
     """Current reference information need not have been published recently."""
     reference = re.search(
-        r'\b(?:documentation|docs|manuals?|guides?|reference|installation|configuration)\b'
-        r'|\bprivacy\s+(?:features|settings|protections)\b', text, re.I,
+        r'\b(?:documentation|docs|manuals?|guides?|reference|installation|configuration|versions?|releases?)\b'
+        r'|\bprivacy\s+(?:features|settings|protections)\b', text + ' ' + query_hint, re.I,
     )
     publication = re.search(
         r'\b(?:published|publication|announced|released|news|headlines|recent|today|yesterday)\b'

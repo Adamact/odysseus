@@ -3496,7 +3496,7 @@ def preserve_requested_web_recency(name, args, *, user_text='', prior_search_int
     requested_window = requested_search_publication_window(user)
     if requested_window:
         normalized['time_filter'] = requested_window
-    elif reference_lookup_without_date_window(user):
+    elif reference_lookup_without_date_window(user, query):
         # A model-generated publication cutoff must not hide still-current
         # reference pages when the user did not ask for recent publications.
         normalized.pop('time_filter', None)
