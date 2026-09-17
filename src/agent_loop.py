@@ -6211,6 +6211,34 @@ def _email_fact_lookup_requested(user_text: str) -> bool:
     ))
 
 
+_EMAIL_TERMINAL_ACTION_TOOLS = {
+    "draft_email",
+    "mcp__email__draft_email",
+    "draft_email_reply",
+    "mcp__email__draft_email_reply",
+    "ai_draft_email_reply",
+    "mcp__email__ai_draft_email_reply",
+    "send_email",
+    "mcp__email__send_email",
+    "reply_to_email",
+    "mcp__email__reply_to_email",
+}
+
+
+def _email_lookup_needs_post_synthesis(
+    user_text: str,
+    tool_events: list[dict[str, Any]],
+) -> bool:
+    """Avoid a redundant lookup synthesis after a completed email action."""
+    if not _email_fact_lookup_requested(user_text):
+        return False
+    return not any(
+        _resolved_tool_event_name(event) in _EMAIL_TERMINAL_ACTION_TOOLS
+        and tool_result_is_successful(event)
+        for event in (tool_events or [])
+    )
+
+
 def _email_attachment_summaries_from_tool_events(tool_events: list[dict[str, Any]]) -> list[str]:
     summaries: list[str] = []
     for event in tool_events or []:
@@ -36447,7 +36475,10 @@ async def stream_agent_loop(
         if _resolved_tool_event_name(event) in {"read_email", "mcp__email__read_email"}
         and tool_result_is_successful(event)
     ]
-    if _email_lookup_events and _email_fact_lookup_requested(_email_lookup_request):
+    if _email_lookup_events and _email_lookup_needs_post_synthesis(
+        _email_lookup_request,
+        tool_events,
+    ):
         _email_evidence_parts: list[str] = []
         _email_evidence_chars = 0
         for _event in _email_lookup_events[-8:]:
