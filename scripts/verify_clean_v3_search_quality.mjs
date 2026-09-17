@@ -13,6 +13,8 @@ const endpointId = process.env.ENDPOINT_ID || '1d1022ef';
 const endpointUrl = process.env.ENDPOINT_URL || (() => { throw new Error("ENDPOINT_URL is required"); })();
 const model = process.env.MODEL || 'odysseus-qwen3.5-tools-pre-heretic';
 const varietyOnly = process.env.VARIETY_ONLY === '1';
+const temperatureOverride = process.env.TEMPERATURE === undefined ? null : Number(process.env.TEMPERATURE);
+if (temperatureOverride !== null && (!Number.isFinite(temperatureOverride) || temperatureOverride < 0 || temperatureOverride > 2)) throw Error('TEMPERATURE must be between 0 and 2');
 const run = new Date().toISOString().replace(/[:.]/g, '-');
 const reportPath = path.resolve(process.env.REPORT_PATH || path.join(root, `reports/clean-v3-search-quality-${run}.json`));
 if (!reportPath.startsWith(path.join(root, 'reports') + path.sep) || fs.existsSync(reportPath)) throw Error('Report path must be new and under reports/');
@@ -22,7 +24,7 @@ if (!token) throw Error(`No active ${owner} session`);
 
 const marker = `ody-search-${crypto.randomUUID()}`;
 const harnessCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
-const report = { run, owner, marker, model, endpointUrl, checkout_commit: harnessCommit,
+const report = { run, owner, marker, model, endpointUrl, temperature_override: temperatureOverride, checkout_commit: harnessCommit,
   provenance_note: 'Checkout commit; confirm deployment separately. Per-turn contract/model are recorded.',
   status: 'running', scenarios: [], turns: [], privacy: 'Public test queries and bounded public tool evidence; no private account data.' };
 const save = () => fs.writeFileSync(reportPath, JSON.stringify(report, null, 2) + '\n');
@@ -41,7 +43,17 @@ async function createSession(context, name) {
     endpoint_url: endpointUrl, skip_validation: 'true', rag: 'false',
   }});
   if (!response.ok()) throw Error(`Session create HTTP ${response.status()}`);
-  return (await response.json()).id;
+  const id = (await response.json()).id;
+  if (temperatureOverride !== null) {
+    const settings = await context.request.post(`${base}/api/session/${id}/generation-settings`, {
+      data: {temperature_override: temperatureOverride},
+    });
+    if (!settings.ok()) {
+      await context.request.delete(`${base}/api/session/${id}`);
+      throw Error(`Generation settings HTTP ${settings.status()}`);
+    }
+  }
+  return id;
 }
 
 async function preparePage(context, id) {

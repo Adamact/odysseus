@@ -31,6 +31,16 @@ Further code inspection identified **automatic citation fabrication by the harne
 
 A temporary loopback relay captured zero requests because registered endpoint IDs override submitted URLs. It was shut down and removed. Endpoint record `1518b6ee` was checked read-only and does map to the same `19211` Model F used by the direct probe. Future evidence capture must respect that registered routing rather than claiming an unused proxy observed traffic.
 
+### Sampling and system-prompt controls
+
+`reports/search-synthesis-probe-1789677241866.json` used the actual canonical base system-prompt expression with the same tool-evidence messages and no tools offered. It still produced concrete news stories (7.96s), although citations were missing. Therefore the base system prompt alone does **not** explain the live failures; do not replace it on the earlier short-prompt comparison alone.
+
+Code inspection found a sampling mismatch: UI default temperature is 1.0; the model-name-based deterministic override recognizes Odysseus/Ajax names, not `model-f`, even though that endpoint explicitly uses compact tool mode. Direct controls used temperature 0. Added an explicit per-test-session temperature option to the verifier and confirmed its persistence in the database. No global or existing user-session defaults changed.
+
+Temperature-0 live run: `reports/clean-v3-search-quality-2026-09-17T20-35-39-951Z.json`. News became more concrete, but some claims/citations still need verification; browser comparison still had empty search evidence, and spelling correction was still incorrectly refused. Latency was 41.5s for news, 30.0s for its follow-up, 16.3s for comparison, and 6.6s for spelling. This does not demonstrate an overall quality/speed fix. Search results were not frozen, so this is diagnostic rather than a clean statistical A/B.
+
+Post-citation-fix live replay `reports/clean-v3-search-quality-2026-09-17T20-34-07-667Z.json` returned a Python version in 15.9s without appending the unrelated Python 2.7 citation. It still omitted a useful supporting link, so the requested answer is not fully satisfactory.
+
 ## Outstanding work
 
 1. Finish and manually audit all 16 conversations; inspect claim/source alignment, request completion, follow-up referents, and latency.
