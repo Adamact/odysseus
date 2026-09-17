@@ -36,6 +36,28 @@ class _FakeErrorResponse:
         )
 
 
+@pytest.mark.parametrize('title,body,blocked', [
+    ('Client Challenge', 'A required part of this site couldn’t load. Try using a different browser.', True),
+    ('Just a moment...', 'Checking your browser. Enable JavaScript to continue.', True),
+    ('Understanding browser challenges', 'Checking your browser is a common security message.', False),
+    ('Client Challenge', 'An article about designing client challenges for a programming exercise.', False),
+    ('Client Challenge', 'A required part of this site ' + 'substantive discussion ' * 150, False),
+])
+def test_access_interstitial_is_not_article_evidence(title, body, blocked, tmp_path, monkeypatch):
+    monkeypatch.setattr(service_content, 'CONTENT_CACHE_DIR', tmp_path)
+    html = f'<html><title>{title}</title><body><main>{body}</main></body></html>'
+    monkeypatch.setattr(service_content, '_get_public_url', lambda *a, **k: _FakeResponse(html))
+    result = service_content.fetch_webpage_content('https://example.com/challenge')
+    assert result['success'] is not blocked
+    if blocked:
+        assert result['content'] == ''
+        assert result['error_kind'] == 'access_challenge'
+        assert 'private_browser' in result['error']
+        assert not list(tmp_path.iterdir()), 'Transient challenge must not be cached as article content'
+    else:
+        assert body.strip() in result['content']
+
+
 @pytest.mark.parametrize('wrapper', ['main', 'article', 'div class="content"'])
 def test_extraction_does_not_repeat_nested_content_or_include_navigation(wrapper, tmp_path, monkeypatch):
     closing = wrapper.split()[0]

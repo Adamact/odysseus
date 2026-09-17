@@ -233,7 +233,7 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0,
     effective_cap = min(max_bytes or WEB_FETCH_SOFT_MAX_BYTES, WEB_FETCH_HARD_MAX_BYTES)
     # The cap is part of the cache identity: a truncated soft-cap fetch must
     # not be served to a later full-budget request for the same URL.
-    cache_key = generate_cache_key(f"{url}#cap={effective_cap}#extract=semantic-v2")
+    cache_key = generate_cache_key(f"{url}#cap={effective_cap}#extract=semantic-v3")
     cache_file = CONTENT_CACHE_DIR / f"{cache_key}.cache"
 
     # Check cache
@@ -436,6 +436,20 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0,
             body_text = re.sub(r"\s+", " ", body_copy.get_text(separator=" ", strip=True)).strip()
             if len(body_text) > len(main_content):
                 main_content = body_text
+
+    # HTTP 200 does not imply an article was retrieved. Classify only short
+    # interstitials with both a challenge title and corroborating body text;
+    # ordinary articles mentioning CAPTCHA must remain readable evidence.
+    challenge_title = title_text.strip().lower().rstrip('.!')
+    challenge_titles = {'client challenge', 'just a moment', 'security verification', 'verify you are human'}
+    if (challenge_title in challenge_titles and len(main_content) < 2000
+            and re.search(r"required part of this site|verify (?:that )?you are human|checking your browser|enable javascript|security verification|performing security", main_content, re.I)):
+        return {
+            **_empty_result(url, 'Page access challenge: article content was not retrieved. Try private_browser or another authoritative source; do not treat the challenge page as evidence.'),
+            'title': title_text,
+            'error_kind': 'access_challenge',
+            **_size_fields,
+        }
 
     result = {
         "url": url,
