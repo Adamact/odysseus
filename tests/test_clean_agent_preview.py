@@ -1987,14 +1987,19 @@ def test_missing_refinement_query_is_grounded_in_user_request():
     assert args['time_filter'] == 'day'
 
 
-def test_official_manual_search_requests_direct_pdf_results():
+def test_official_manual_does_not_invent_pdf_requirement():
     args = preserve_requested_web_recency(
         'web_search',
         {'query': 'WIKING Miro stove manual official source'},
         user_text='Find the official English WIKING Miro stove manual online.',
     )
 
-    assert args['query'].endswith('filetype:pdf')
+    assert 'filetype:pdf' not in args['query']
+    explicit = preserve_requested_web_recency(
+        'web_search', {'query': 'camera manual'},
+        user_text='Find the official camera manual PDF.',
+    )
+    assert explicit['query'].endswith('filetype:pdf')
 
 
 def test_unknown_official_domain_rejects_reseller_but_accepts_direct_document():

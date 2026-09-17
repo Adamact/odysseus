@@ -3441,7 +3441,7 @@ def preserve_requested_web_recency(name, args, *, user_text='', prior_search_int
         query = f'{query} site:{domains[0]}'
     if (
         re.search(r'\bofficial\b', user, re.I)
-        and re.search(r'\b(?:manual|handbook|pdf)\b', user, re.I)
+        and re.search(r'\bpdf\b', user, re.I)
         and not re.search(r'(?:filetype:pdf|\.pdf)\b', query, re.I)
     ):
         query = f'{query} filetype:pdf'
@@ -3912,7 +3912,9 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     budget_completion_attempted = False
     answer_recovery_attempts = 0
     force_no_tools_next_round = False
-    force_web_search_next_round = False
+    force_web_search_next_round = (
+        broad_current_web_request(direct_user_text) and not native_workspace_enabled
+    )
     force_private_browser_next_round = False
     suggestion_retry_required = False
     suggestion_retry_attempted = False

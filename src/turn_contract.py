@@ -3991,6 +3991,8 @@ def broad_web_briefing_request(message: str) -> bool:
         return True
     if re.search(r"\b(?:research|investigate|deep[ -]?dive)\b", text, re.I):
         return True
+    if re.search(r"\b(?:find|gather|look\s+for)\s+(?:supporting\s+)?evidence\b", text, re.I):
+        return True
     if (
         re.search(r"\b(?:latest|recent|current|today(?:'s)?|right\s+now)\b", text, re.I)
         and re.search(
