@@ -425,6 +425,16 @@ def test_prompt_output_path_is_tracked_without_its_source_path():
     ) == ('/workspace/output.html',)
 
 
+def test_preferences_are_inputs_not_required_outputs_for_a_saved_digest():
+    from src.clean_agent_preview import declared_workspace_artifacts
+
+    assert declared_workspace_artifacts(
+        'Local preferences live at /workspace/config/interests.json and '
+        '/workspace/config/categories.json; they contain input data. '
+        'Save everything to /workspace/results/paper_digest.md.'
+    ) == ('/workspace/results/paper_digest.md',)
+
+
 def test_compact_writer_advertises_parallel_independent_file_calls():
     writer = next(
         schema for schema in compact_schemas(FUNCTION_TOOL_SCHEMAS)
