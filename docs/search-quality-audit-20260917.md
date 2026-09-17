@@ -41,6 +41,14 @@ Temperature-0 live run: `reports/clean-v3-search-quality-2026-09-17T20-35-39-951
 
 Post-citation-fix live replay `reports/clean-v3-search-quality-2026-09-17T20-34-07-667Z.json` returned a Python version in 15.9s without appending the unrelated Python 2.7 citation. It still omitted a useful supporting link, so the requested answer is not fully satisfactory.
 
+### Supplied-text boundary and date-filter investigation
+
+`reports/clean-v3-search-quality-2026-09-17T20-38-19-942Z.json` captured the actual denial for the spelling task: `manage_calendar`, `write_family_not_authorized`. The safety guard was correct; supplied text was being mistaken for operation intent. `e9993b65` introduces a shared explicit text-transformation boundary used by selection, write authority, and the compact offered-tool surface. `4f2cffb1` applies it to the independent document-review completion shortcut too. Ordinary external-editor requests remain outside this narrow classification.
+
+Live reports `20-40-14-629Z` and `20-42-04-396Z`: spelling became “I received the calendar invite”; translation no longer called search/email; proofreading no longer demanded an open document. All made zero tool calls. **Proofreading still left a tense error** (“I have deleted ... yesterday”), so this demonstrates a routing/control fix, not full model correctness. Regression suite: 1,207 passed.
+
+A direct paired SearXNG query `Firefox Chrome privacy features` returned five results without a publication window (4.02s), and zero with `time_filter=month` (7.04s). Returned pages were mostly generic Firefox pages, so this does not prove adequate comparison evidence. It does show an overly restrictive window can cause avoidable emptiness. Next retrieval work must distinguish current-valid documentation from recently published articles, without silently widening explicit user date restrictions.
+
 ## Outstanding work
 
 1. Finish and manually audit all 16 conversations; inspect claim/source alignment, request completion, follow-up referents, and latency.
