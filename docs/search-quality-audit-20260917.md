@@ -61,6 +61,16 @@ Temperature-0 replay: `reports/clean-v3-search-quality-2026-09-17T20-47-17-632Z.
 
 Live `reports/clean-v3-search-quality-2026-09-17T20-51-12-931Z.json`: the Sony lookup now returns the exact official manuals-page URL seen in evidence (18.9s, three rounds, one search), versus omitting it in the preceding 17.5s run. This is a successful link-completion replay, not a statistical latency result. The Python task failed on a model-added month filter; `5cf17293` extends reference-date semantics to version/release lookups and allows a corrected query to identify reference intent while the user's own wording remains authoritative for date constraints. Regression run: 1,226 passed; live version replay pending.
 
+### Empty-result latency and relevance audit
+
+`b7ed9e58` removes duplicate same-provider requests after a completed empty/irrelevant result set in both search orchestrators. Transport exceptions retain one retry; failure followed by empty response is reported as empty, not a stale transport error. Tests verify exact provider call sequences.
+
+`8c090102` prevents a temporal qualifier such as “latest 2026” from being treated as a product model number when filtering documentation. Actual model numbers remain required. It also records effective temperature/output limits in runtime metrics; public test reports now retain the native trace so recovery behavior can be inspected rather than guessed. Regression suite: 1,232 passed.
+
+`reports/clean-v3-search-quality-2026-09-17T20-58-28-001Z.json` confirms temperature 0 and max output 768. Mozilla lookup took 10.9s but still failed to find the requested page; Chrome follow-up took 22.6s and linked the generic Chrome homepage, not a proper comparison. These are **not quality passes**. Earlier short-news run `20-55-39-393Z` did perform a follow-up search based on a first-result story and synthesized a concrete answer in 37.1s; factual completeness still needs review. Neither run proves a statistical latency improvement.
+
+Further provider inspection found that the news-to-general fallback dropped the date window even after the initial news request retained it. The fallback now inherits constraints and only activates for an actual news-category request (not an explicitly selected general engine). Narrow provider/filter tests: 72 passed.
+
 ## Outstanding work
 
 1. Finish and manually audit all 16 conversations; inspect claim/source alignment, request completion, follow-up referents, and latency.
