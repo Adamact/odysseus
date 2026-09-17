@@ -1307,6 +1307,8 @@ async def test_stream_research_prerequisite_precedes_broad_web_answer(monkeypatc
         for event in events
     )
     assert sum(event.get('reason') == 'research_before_synthesis' for event in events) == 1
+    phase_index = next(i for i, event in enumerate(events) if event.get('reason') == 'research_before_synthesis')
+    assert not any(event.get('delta') for event in events[:phase_index])
     assert any(
         event.get('type') == 'final_response'
         and 'fuller evidence-based briefing' in event.get('content', '')
