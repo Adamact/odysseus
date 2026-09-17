@@ -902,7 +902,7 @@ def incomplete_broad_web_answer(content, user_text):
     words = re.findall(r"[A-Za-z0-9][A-Za-z0-9'’-]*", answer)
     # A broad briefing cannot be fulfilled by one headline fragment. This is
     # intentionally inapplicable to narrow quick-fact searches.
-    return len(words) < 80
+    return len(words) < 80 or not re.search(r'https?://\S+', str(content or ''))
 
 
 def progressive_thinking_for_turn(model, offered_schemas):
@@ -4440,8 +4440,8 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                 force_web_search_next_round = True
                                 calls += 1
                                 raise ValueError(
-                                    'This follow-up search is equivalent to an earlier successful '
-                                    'query. Change the angle, missing subtopic, source type, or '
+                                    'An equivalent search already returned evidence. Change the '
+                                    'angle, missing subtopic, source type, or '
                                     'corroboration target instead of only changing freshness wording.'
                                 )
                             if search_intent and empty_search_intents.get(search_intent, 0) >= 2:
@@ -4784,7 +4784,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     if not failed and canonical(actual_tool) == 'web_search':
                         successful_web_searches += 1
                         successful_intent = normalized_search_intent(args.get('query'))
-                        if successful_intent:
+                        if successful_intent and result.get('evidence_status') != 'empty':
                             successful_search_intents.append(successful_intent)
                         if successful_web_searches == 2 and not required_artifacts:
                             round_recovery_messages.append(

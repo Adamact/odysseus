@@ -1864,6 +1864,17 @@ def test_broad_current_web_request_covers_natural_phrasings(prompt):
     assert broad_current_web_request(prompt)
 
 
+def test_broad_briefing_requires_substance_and_clickable_source_links():
+    from src.clean_agent_preview import incomplete_broad_web_answer
+
+    substantial = ' '.join(['substantive'] * 90)
+    assert incomplete_broad_web_answer(substantial, 'AI news')
+    assert not incomplete_broad_web_answer(
+        substantial + ' https://example.org/report', 'AI news'
+    )
+    assert not incomplete_broad_web_answer('Short answer.', 'What is Python?')
+
+
 def test_followup_search_must_change_subject_angle_not_only_freshness():
     from src.clean_agent_preview import repeated_search_refinement
 
