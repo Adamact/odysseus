@@ -137,10 +137,11 @@ def _build_provider_chain(primary: str) -> List[str]:
     configured = [provider for provider in chain if provider_configured(provider)]
     for provider in set(chain) - set(configured):
         logger.warning("Skipping unconfigured search provider: %s", provider)
-    if primary == "searxng" and configured == ["searxng"]:
-        # No usable configured fallback: try a separate engine on the same
-        # private metasearch instance before reporting retrieval failure.
-        configured.append("searxng_yep")
+    if primary == "searxng" and "searxng_yep" not in configured:
+        # The no-key DuckDuckGo fallback can be configured yet unavailable or
+        # CAPTCHA-limited. Always retain a distinct engine on the private
+        # metasearch instance before reporting retrieval failure.
+        configured.insert(1, "searxng_yep")
     return configured
 
 
@@ -163,6 +164,41 @@ _SEARCH_QUERY_FILLER = {
 }
 
 _SHORT_QUERY_SUBJECTS = {"ai", "ar", "eu", "uk", "us", "vr"}
+
+_EMPTY_RESULT_RELAXATION_TERMS = {
+    "find", "search", "lookup", "look", "online", "official", "source",
+    "sources", "english", "download", "please", "latest", "current",
+}
+
+
+def _relaxed_query_after_empty(query: str) -> str:
+    """Remove request scaffolding once an exact provider query returns nothing."""
+    tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9_.+-]*", str(query or ""))
+    retained = [
+        token for token in tokens
+        if token.casefold() not in _EMPTY_RESULT_RELAXATION_TERMS
+    ]
+    relaxed = " ".join(retained).strip()
+    return relaxed if len(retained) >= 2 and relaxed.casefold() != str(query or "").strip().casefold() else ""
+
+
+def _empty_result_query_relaxations(query: str) -> list[str]:
+    """Return bounded increasingly broad discovery queries for an empty SERP."""
+    first = _relaxed_query_after_empty(query)
+    candidates = [first] if first else []
+    if first:
+        document_terms = {
+            "manual", "manuals", "guide", "guides", "instructions", "instruction",
+            "operator", "owners", "owner", "pdf", "documentation", "docs",
+        }
+        entity_tokens = [
+            token for token in first.split()
+            if token.casefold() not in document_terms
+        ]
+        entity_query = " ".join(entity_tokens).strip()
+        if len(entity_tokens) >= 2 and entity_query.casefold() != first.casefold():
+            candidates.append(entity_query)
+    return list(dict.fromkeys(candidate for candidate in candidates if candidate))
 
 _WEATHER_QUERY_HINTS = {
     "weather", "forecast", "forecasts", "temperature", "temperatures",
@@ -698,6 +734,25 @@ def searxng_search_results(query: str, count: int = 10, time_filter: str = None)
         if results:
             break
 
+    if not results:
+        for relaxed_query in _empty_result_query_relaxations(provider_query):
+            logger.info(
+                "Exact search returned no evidence for %r; retrying broadened query %r",
+                provider_query, relaxed_query,
+            )
+            for provider_name in provider_chain:
+                try:
+                    results = _call_provider(provider_name, relaxed_query, count, time_filter)
+                    results = _filter_low_relevance_results(relaxed_query, results)
+                except Exception as exc:
+                    error_logger.error("Relaxed %s search failed: %s", provider_name, exc)
+                    results = []
+                if results:
+                    break
+            if results:
+                provider_query = relaxed_query
+                break
+
     results = _augment_scholarly_results(provider_query, results, count)
 
     success = bool(results)
@@ -814,6 +869,33 @@ def comprehensive_web_search(
             provider_attempts[provider_name] = f"error: {last_err}"
         elif empty:
             provider_attempts[provider_name] = "empty"
+
+    if not search_results:
+        for relaxed_query in _empty_result_query_relaxations(provider_query):
+            logger.info(
+                "Comprehensive search empty for %r; retrying broadened query %r",
+                provider_query, relaxed_query,
+            )
+            for provider_name in provider_chain:
+                try:
+                    search_results = _call_provider(
+                        provider_name, relaxed_query, fetch_count, time_filter,
+                    )
+                    search_results = _filter_low_relevance_results(
+                        relaxed_query, search_results,
+                    )
+                except Exception as exc:
+                    provider_attempts[f"{provider_name}:relaxed"] = f"error: {exc}"
+                    search_results = []
+                if search_results:
+                    provider_attempts[f"{provider_name}:relaxed"] = (
+                        f"ok ({len(search_results)})"
+                    )
+                    provider_query = relaxed_query
+                    break
+                provider_attempts[f"{provider_name}:relaxed"] = "empty"
+            if search_results:
+                break
 
     search_results = _augment_scholarly_results(
         provider_query,

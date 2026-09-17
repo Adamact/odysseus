@@ -3796,6 +3796,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     successful_web_searches = 0
     successful_web_retrievals = 0
     retrieved_web_sources = []
+    discovered_web_sources = []
     browser_navigation_outcomes = {}
     failed_call_counts = {}
     semantic_attempt_counts = {}
@@ -4294,6 +4295,14 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     # it or ask the model for another round just for formatting.
                     missing_links = [link for target, link in entity_result_links.items()
                                      if f']({target})' not in content]
+                    if (
+                        broad_current_web_request(direct_user_text)
+                        and not re.search(r'https?://\S+', content or '')
+                    ):
+                        missing_links.extend(
+                            link for link in discovered_web_sources[:5]
+                            if link not in missing_links
+                        )
                     if missing_links:
                         suffix = ('\n\n' if content else '') + '\n'.join(missing_links)
                         content += suffix
@@ -4796,6 +4805,11 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     if not failed and canonical(actual_tool) == 'web_search':
                         if result.get('evidence_status') != 'empty':
                             successful_web_searches += 1
+                            for _title, source_url in web_source_links(
+                                output, max_items=5, query=args.get('query', ''),
+                            ):
+                                if source_url not in discovered_web_sources:
+                                    discovered_web_sources.append(source_url)
                         successful_intent = normalized_search_intent(args.get('query'))
                         if successful_intent and result.get('evidence_status') != 'empty':
                             successful_search_intents.append(successful_intent)
