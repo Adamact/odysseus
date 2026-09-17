@@ -12,11 +12,12 @@ import pytest
 ])
 def test_supplied_text_is_not_tool_authority(prompt):
     from src.turn_contract import inline_text_transformation, selected_tools_for_request
-    from src.clean_agent_preview import authorized_write_families, requests_mutation
+    from src.clean_agent_preview import authorized_write_families, requests_mutation, inline_suggestion_request
     assert inline_text_transformation(prompt)
     assert selected_tools_for_request(prompt) == frozenset()
     assert not authorized_write_families(prompt)
     assert not requests_mutation(prompt)
+    assert not inline_suggestion_request(prompt)
 
 
 @pytest.mark.parametrize('prompt', [

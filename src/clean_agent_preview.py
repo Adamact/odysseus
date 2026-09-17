@@ -2925,6 +2925,8 @@ def active_editor_whole_draft_request(active_document, user_text):
 def inline_suggestion_request(user_text):
     """Whether the user explicitly requests inline review suggestions."""
     text = str(user_text or '').strip()
+    if inline_text_transformation(text):
+        return False
     apply_request = re.search(
         r'\b(?:apply|accept)\s+(?:the\s+)?(?:change|changes|suggestion|suggestions)\b',
         text, re.I,

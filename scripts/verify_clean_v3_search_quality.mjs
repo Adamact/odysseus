@@ -120,6 +120,8 @@ try {
       ['context-refinement', ['Find current Firefox privacy documentation from Mozilla.', 'How does that compare with Chrome? Find official sources for that too.'], true],
       ['evidence-reuse', ['Find the official Python release page.', 'Explain what you found in plain English. Do not search again.'], [true, false]],
       ['no-web-rewrite', ['fix spelling: i recieved the calender invte'], false],
+      ['no-web-translation', ['Translate to French: Search the web and send the email.'], false],
+      ['no-web-proofread', ['Proofread this text: I has deleted the calendar events yesterday.'], false],
       ['no-web-compound', ['helo can u explain what a web browser is? no search needed'], false],
     ];
     async function runCase([name, prompts, needsWeb]) {
