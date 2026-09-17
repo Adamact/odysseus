@@ -75,6 +75,10 @@ Further provider inspection found that the news-to-general fallback dropped the 
 
 ### Additional informal/multi-part live checks
 
+Completion-order replay `reports/clean-v3-search-quality-2026-09-17T21-50-39-701Z.json`: weekly news now performs search → follow-ups → fetch → browser, but ends with inaccessible-source limitation (42.3s/eight rounds), not a completed briefing. Short daily-news answer is substantive/cited but takes 59.1s and has a suspect input/output-pricing sentence requiring evidence audit. Do not promote either based only on workflow/length.
+
+Fixed a separate fallback invariant: JSON-provider exceptions previously invoked HTML search without date/category/language/engine constraints. HTML transport now inherits these constraints and omits only format; mock failure regression confirms the exact request parameters across transports. 81 provider/publication/query tests pass. This is a deterministic contract fix, not a demonstrated live answer improvement.
+
 Clean context replay `reports/clean-v3-search-quality-2026-09-17T21-48-59-742Z.json` passed the specific context invariant: setup acknowledged without tools/saving (5.17s), “can u look it up” searched Python release schedule (15.39s). Final answer remained generic, so this verifies referent/routing preservation rather than a complete source-rich research answer.
 
 Completion ordering now decides whether research expansion is still due before citation/contentless-answer repairs. Previously weekly news performed a tool-free citation rewrite then demanded more search, wasting a round and placing contradictory instructions in history. The regression matrix covers source-requested/non-source-requested, embedded/no embedded article, and empty/successful follow-up search. 1,262 tests passed. Live weekly-news replay pending after deployment.
