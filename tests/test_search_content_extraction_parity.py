@@ -36,6 +36,23 @@ class _FakeErrorResponse:
         )
 
 
+@pytest.mark.parametrize('wrapper', ['main', 'article', 'div class="content"'])
+def test_extraction_does_not_repeat_nested_content_or_include_navigation(wrapper, tmp_path, monkeypatch):
+    closing = wrapper.split()[0]
+    html = (f'<html><body><nav>{"Navigation item " * 100}</nav><{wrapper}>'
+            '<header>Article title and publication date</header>'
+            '<div class="article-body"><div class="entry-content">'
+            '<p>Unique substantive evidence.</p></div></div>'
+            f'</{closing}><footer>Unrelated links</footer></body></html>')
+    monkeypatch.setattr(service_content, 'CONTENT_CACHE_DIR', tmp_path)
+    monkeypatch.setattr(service_content, '_get_public_url', lambda *a, **k: _FakeResponse(html))
+    result = service_content.fetch_webpage_content('https://example.com/nested')
+    assert result['content'].count('Unique substantive evidence.') == 1
+    assert 'Navigation item' not in result['content']
+    assert 'Unrelated links' not in result['content']
+    assert 'Article title' in result['content']
+
+
 @pytest.mark.parametrize("module", [service_content])
 def test_content_fetcher_extracts_og_image_and_body_fallback(module, tmp_path, monkeypatch):
     html = """

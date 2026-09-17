@@ -1,4 +1,13 @@
 from src.clean_agent_preview import preview_tool_result_text
+from src.clean_agent_preview import preserve_requested_web_recency
+
+
+def test_news_intent_survives_query_rewording_without_changing_other_fresh_queries():
+    result = preserve_requested_web_recency('web_search', {'query': 'artificial intelligence today'}, user_text='ai news today')
+    assert result['query'] == 'artificial intelligence today news'
+    assert result['time_filter'] == 'day'
+    result = preserve_requested_web_recency('web_search', {'query': 'current browser privacy features'}, user_text='compare current browser privacy features')
+    assert result['query'] == 'current browser privacy features'
 
 
 def test_all_fetched_sources_survive_observation_budget():

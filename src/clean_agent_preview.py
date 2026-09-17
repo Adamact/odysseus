@@ -3458,6 +3458,11 @@ def preserve_requested_web_recency(name, args, *, user_text='', prior_search_int
         if not query:
             return args
     normalized = dict(args)
+    # Keep the user's explicit news intent when a model rewrites it to a
+    # subject plus "today". Freshness alone does not select the news vertical.
+    if (re.search(r'\b(?:news|neews|headlines)\b', user, re.I)
+            and not re.search(r'\b(?:news|headlines)\b', query, re.I)):
+        query += ' news'
     current_year = datetime.now(timezone.utc).year
     current_intent = bool(re.search(
         r"\b(?:latest|recent|current|today(?:'s)?|news|updates?|"

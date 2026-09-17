@@ -233,7 +233,7 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0,
     effective_cap = min(max_bytes or WEB_FETCH_SOFT_MAX_BYTES, WEB_FETCH_HARD_MAX_BYTES)
     # The cap is part of the cache identity: a truncated soft-cap fetch must
     # not be served to a later full-budget request for the same URL.
-    cache_key = generate_cache_key(f"{url}#cap={effective_cap}")
+    cache_key = generate_cache_key(f"{url}#cap={effective_cap}#extract=semantic-v2")
     cache_file = CONTENT_CACHE_DIR / f"{cache_key}.cache"
 
     # Check cache
@@ -398,15 +398,26 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0,
     js_rendered = _detect_js_frameworks(soup)
     js_message = "Page appears to be rendered by a JavaScript framework; content may be incomplete." if js_rendered else ""
 
-    # Main textual content (heuristic): prefer semantic / "content"-classed
-    # containers to skip nav/footer/boilerplate; tuned for article pages.
+    # Prefer semantic containers even without CSS classes. Work on a copy so
+    # lists/tables and metadata extraction below still see the original DOM.
+    text_soup = copy.copy(soup)
+    for noise in text_soup.select('script, style, noscript, template, nav, footer, aside, [role="navigation"], [role="banner"], [role="contentinfo"]'):
+        noise.extract()
     main_content = ""
-    content_areas = soup.find_all(
-        ["main", "article", "section", "div"],
-        class_=re.compile("content|main|body|article|post|entry|text", re.I),
-    )
+    semantic_main = text_soup.find('main') or text_soup.find(attrs={'role': 'main'})
+    content_areas = [semantic_main] if semantic_main else text_soup.find_all('article')
+    if not content_areas:
+        content_areas = text_soup.find_all(
+            ["section", "div"],
+            class_=re.compile("content|main|body|article|post|entry|text", re.I),
+        )
+    # Ancestor and child matches contain the same text. Emit each subtree once,
+    # while retaining separate sibling articles/cards.
+    candidate_ids = {id(area) for area in content_areas}
+    content_areas = [area for area in content_areas
+                     if not any(id(parent) in candidate_ids for parent in area.parents)]
     if content_areas:
-        for area in content_areas[:3]:
+        for area in content_areas:
             main_content += area.get_text(separator=" ", strip=True) + " "
     main_content = re.sub(r"\s+", " ", main_content).strip()
 
@@ -414,8 +425,8 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0,
     # obvious boilerplate stripped so UI/deep-research search results do not
     # look empty for app/landing pages.
     THIN_CONTENT_CHARS = 600
-    if len(main_content) < THIN_CONTENT_CHARS:
-        body = soup.find("body")
+    if len(main_content) < THIN_CONTENT_CHARS and not semantic_main:
+        body = text_soup.find("body")
         if body:
             body_copy = copy.copy(body)
             for noise in body_copy.find_all(
