@@ -75,6 +75,8 @@ Further provider inspection found that the news-to-general fallback dropped the 
 
 ### Additional informal/multi-part live checks
 
+The broad sweep exposed an independent synthesis bypass: “more about the second story, with sources” was rendered as a single source link. Source-only detection was the absence of several explanation keywords rather than a positive link-only command. `87d1edaf` requires a complete explicit link-return request before deterministic source-only rendering; ordinary follow-up explanation remains model synthesis. Related suites: 1,237 passed, followed by 35 focused tests including runtime preservation of explanatory answers. Pending deployment together with forced-search dispatch while the original sweep finishes.
+
 Canonical-system confirmation `reports/search-tool-choice-probe-1789680586200.json`: auto and required supplied queries for both prompts; named search choice omitted query in both (and typo prompt emitted `command`). The same compact schema and model were used. Implemented forced-search dispatch as one offered web_search schema with required choice, preserving the forced-tool intent and original schema. Other tool choices remain unchanged. 1,230 routing/runtime regressions pass. **Not deployed yet:** the pre-change 23-conversation sweep remains active (nine conversations complete at this checkpoint); wait for its terminal state before restart and paired replay. This is a demonstrated argument-generation difference, not yet an end-to-end quality/speed win.
 
 Full 23-conversation regression launched on `6000b718`/current deployed harness: `reports/clean-v3-search-quality-2026-09-17T21-27-27-686Z.json`. Active handle recorded in session; do not restart based on elapsed observation time.
