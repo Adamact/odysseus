@@ -11,6 +11,33 @@ from services.search import core
 from services.search import providers
 
 
+@pytest.mark.parametrize('query,category', [
+    ('AI developments this week', 'news'),
+    ('recent developments in battery manufacturing', 'news'),
+    ('latest developments in quantum computing', 'news'),
+    ('web development tutorial this week', 'general'),
+    ('current Firefox privacy documentation', 'general'),
+    ('historical developments in mathematics', 'general'),
+    ('latest Python version developments', 'general'),
+])
+def test_temporal_developments_select_news_not_reference_search(monkeypatch, query, category):
+    seen = []
+    class Response:
+        def raise_for_status(self): pass
+        def json(self):
+            return {'results': [{'title': 'Result', 'url': 'https://example.org/report'}]}
+    def get(*args, **kwargs):
+        seen.append(kwargs['params'])
+        return Response()
+    monkeypatch.setattr(providers, '_get_search_instance', lambda: 'http://searx.test')
+    monkeypatch.setattr(providers, '_get_search_settings', lambda: {})
+    monkeypatch.setattr(providers, '_get_provider_key', lambda name: '')
+    monkeypatch.setattr(providers.httpx, 'get', get)
+    providers.searxng_search_api(query, time_filter='week')
+    assert seen[0]['categories'] == category
+    assert seen[0]['time_range'] == 'week'
+
+
 def test_dead_credentialed_fallback_is_skipped_for_same_instance_engine(monkeypatch):
     monkeypatch.setattr(core, "_get_search_settings", lambda: {"search_fallback_chain": ["google_pse"]})
     monkeypatch.setattr(providers, "_get_search_settings", lambda: {})

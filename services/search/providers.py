@@ -215,6 +215,10 @@ def searxng_search_api(query: str, count: Optional[int] = None, categories: str 
         and (
             any(h in q_lc for h in _NEWS_HINTS)
             or bool(_NEWS_EVENT_HINT_RE.search(query))
+            or (
+                bool(re.search(r'\bdevelopments\b', query, re.I))
+                and bool(re.search(r'\b(?:latest|recent|today|this\s+(?:week|month)|past\s+(?:week|month))\b', query, re.I))
+            )
         )
     )
     if is_news and categories == "general":
