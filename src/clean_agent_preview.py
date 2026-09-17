@@ -1934,7 +1934,7 @@ def dependent_write_prerequisite_error(turn_contract, name, successful_required_
     return None
 
 
-def bounded_research_tool_policy(offered, *, searches=0, retrievals=0):
+def bounded_research_tool_policy(offered, *, searches=0, retrievals=0, search_limit=2):
     """Bound research loops after enough discovery evidence has been gathered.
 
     Two searches are enough to choose a source in the ordinary research flow.
@@ -1943,7 +1943,7 @@ def bounded_research_tool_policy(offered, *, searches=0, retrievals=0):
     so unrelated calendar, email, document, and media turns are unchanged.
     """
     schemas = list(offered or ())
-    if searches < 2:
+    if searches < max(1, int(search_limit)):
         return schemas, None, False
     schemas = [
         schema for schema in schemas
@@ -3791,6 +3791,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     successful_duplicate_counts = {}
     empty_search_intents = {}
     successful_search_intents = []
+    web_search_attempts = 0
     empty_web_search_attempts = 0
     successful_web_searches = 0
     successful_web_retrievals = 0
@@ -3922,6 +3923,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         round_offered,
                         searches=successful_web_searches,
                         retrievals=successful_web_retrievals,
+                        search_limit=(2 if broad_current_web_request(direct_user_text) else 1),
                     )
                 round_max_tokens = (
                     min(request_max_tokens, 4096)
@@ -4433,6 +4435,16 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                     'page evidence or a different navigation strategy.'
                                 )
                         if tool_type == 'web_search':
+                            web_search_attempts += 1
+                            if web_search_attempts > 4:
+                                suppressed_tool_until_round['web_search'] = round_limit + 1
+                                force_no_tools_next_round = True
+                                calls += 1
+                                raise ValueError(
+                                    'The bounded search-attempt budget is exhausted. Do not search '
+                                    'again; answer from usable evidence already gathered, or clearly '
+                                    'report what could not be verified and suggest a concrete next step.'
+                                )
                             search_intent = normalized_search_intent(args.get('query'))
                             if repeated_search_refinement(
                                 args.get('query'), successful_search_intents,
@@ -4782,7 +4794,8 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             'reason': 'web_fetch_boilerplate_fallback',
                         })
                     if not failed and canonical(actual_tool) == 'web_search':
-                        successful_web_searches += 1
+                        if result.get('evidence_status') != 'empty':
+                            successful_web_searches += 1
                         successful_intent = normalized_search_intent(args.get('query'))
                         if successful_intent and result.get('evidence_status') != 'empty':
                             successful_search_intents.append(successful_intent)

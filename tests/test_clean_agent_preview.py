@@ -1054,6 +1054,22 @@ def test_bounded_research_policy_forces_fetch_after_two_searches():
     assert active is True
 
 
+def test_narrow_lookup_policy_forces_retrieval_after_one_successful_search():
+    schemas = [
+        {'type': 'function', 'function': {'name': name, 'parameters': {}}}
+        for name in ('web_search', 'web_fetch', 'private_browser')
+    ]
+    offered, choice, active = bounded_research_tool_policy(
+        schemas, searches=1, retrievals=0, search_limit=1,
+    )
+
+    assert [schema['function']['name'] for schema in offered] == [
+        'web_fetch', 'private_browser',
+    ]
+    assert choice == {'type': 'function', 'function': {'name': 'web_fetch'}}
+    assert active is True
+
+
 def test_bounded_research_policy_reserves_synthesis_after_retrieval():
     schemas = [
         {'type': 'function', 'function': {'name': name, 'parameters': {}}}

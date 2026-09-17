@@ -3961,6 +3961,8 @@ def broad_web_briefing_request(message: str) -> bool:
         return True
     if re.search(r"\b(?:news|headlines?|top\s+stories|news\s+roundup)\b", text, re.I):
         return True
+    if re.search(r"\b(?:research|investigate|deep[ -]?dive)\b", text, re.I):
+        return True
     if (
         re.search(r"\b(?:latest|recent|current|today(?:'s)?|right\s+now)\b", text, re.I)
         and re.search(
@@ -3985,7 +3987,10 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
         text = lead["request"].strip()
     history = tuple(history)
     concrete_urls = re.findall(r"\bhttps?://[^\s<>\"']+", raw_text, re.I)
-    if broad_web_briefing_request(text):
+    if (
+        broad_web_briefing_request(text)
+        and not re.search(r"\b(?:research|investigate|deep[ -]?dive)\b", text, re.I)
+    ):
         return frozenset({"search_browser"})
     if re.search(r"\b(?:web_search|web_fetch)\b", raw_text, re.I):
         # Explicit native-tool requests are stronger than incidental domain
