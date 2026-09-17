@@ -18111,6 +18111,22 @@ def _tool_routing_audit_payload(
     }
 
 
+def _unoffered_web_search_should_synthesize(
+    requested_not_accepted: Sequence[str],
+    *,
+    accepted_tools: Sequence[str],
+    tool_events: Sequence[dict[str, Any]],
+) -> bool:
+    """Recover an unavailable search request after usable evidence exists."""
+    if accepted_tools or "web_search" not in set(requested_not_accepted or ()):
+        return False
+    return any(
+        _resolved_tool_event_name(event) in {"web_fetch", "private_browser"}
+        and tool_result_is_successful(event)
+        for event in (tool_events or ())
+    )
+
+
 def _web_search_safety_touch_hygiene_postprocess(user_text: str, answer: str) -> str:
     """Keep safety-touch web answers practical instead of just descriptive."""
     text = str(answer or "").strip()
@@ -26651,6 +26667,24 @@ async def stream_agent_loop(
             _resolution_audit["requested_not_accepted"]
         )
         yield f'data: {json.dumps(_resolution_audit)}\n\n'
+        if _unoffered_web_search_should_synthesize(
+            _resolution_audit["requested_not_accepted"],
+            accepted_tools=_accepted_tool_names,
+            tool_events=tool_events,
+        ):
+            _force_answer = True
+            messages.append({
+                "role": "system",
+                "content": (
+                    "Web search is not available in this round, but authoritative "
+                    "source evidence has already been retrieved. Stop using tools and "
+                    "answer the user's complete request from that evidence now. Cover "
+                    "every requested fact, comparison, and caveat, and cite the source "
+                    "URLs present in the retrieved evidence."
+                ),
+            })
+            yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+            continue
         _malformed_write_missing = (
             tuple(
                 EvidenceLedger.from_tool_events(

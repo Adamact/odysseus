@@ -1,4 +1,7 @@
-from src.agent_loop import _tool_routing_audit_payload
+from src.agent_loop import (
+    _tool_routing_audit_payload,
+    _unoffered_web_search_should_synthesize,
+)
 
 
 def test_tool_routing_audit_preserves_each_stage_and_gap():
@@ -111,4 +114,28 @@ def test_local_media_artifact_compaction_identifies_web_as_intentional_exclusion
     assert payload["selected_not_offered"] == []
     assert {"web_search", "web_fetch"} <= set(
         payload["intentionally_excluded_tools"]
+    )
+
+
+def test_unoffered_search_after_successful_fetch_requires_synthesis():
+    fetched = [{
+        "tool": "web_fetch",
+        "exit_code": 0,
+        "output": "Authoritative evidence",
+    }]
+
+    assert _unoffered_web_search_should_synthesize(
+        ["web_search"],
+        accepted_tools=[],
+        tool_events=fetched,
+    )
+    assert not _unoffered_web_search_should_synthesize(
+        ["web_search"],
+        accepted_tools=["web_fetch"],
+        tool_events=fetched,
+    )
+    assert not _unoffered_web_search_should_synthesize(
+        ["web_search"],
+        accepted_tools=[],
+        tool_events=[{"tool": "web_fetch", "exit_code": 1, "output": "failed"}],
     )
