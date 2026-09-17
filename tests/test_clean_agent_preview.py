@@ -1169,11 +1169,12 @@ async def test_stream_bounds_research_to_two_searches_fetch_then_synthesis(monke
 
 
 @pytest.mark.asyncio
-async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatch):
+@pytest.mark.parametrize('embedded_article', [False, True])
+async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatch, embedded_article):
     """Broad current research expands, retrieves evidence, then synthesizes."""
     import src.clean_agent_preview as module
 
-    packets = iter([
+    packets = [
         {'choices': [{'delta': {'tool_calls': [{
             'index': 0, 'id': 'search-1', 'function': {
                 'name': 'web_search',
@@ -1206,7 +1207,11 @@ async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatc
             'check the linked primary material because this is a changing story. '
             'Sources: https://example.org/ai-news and https://example.org/ai-policy'
         )}}]},
-    ])
+    ]
+    article = packets[-1]['choices'][0]['delta']['content']
+    if embedded_article:
+        packets.pop(3)
+    packets = iter(packets)
     requests = []
 
     class Response:
@@ -1228,7 +1233,10 @@ async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatc
 
     async def execute(block, **kwargs):
         return block.tool_type, {
-            'output': '[1] AI News\n    https://example.org/ai-news',
+            'output': '[1] AI News\n    https://example.org/ai-news' + (
+                '\n[CONTENT 1] From: https://example.org/ai-news\nTitle: Report\n-----\n'
+                + article if embedded_article else ''
+            ),
             'exit_code': 0,
             'evidence_status': 'available',
         }
@@ -1248,14 +1256,15 @@ async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatc
     )]
     events = [json.loads(chunk[6:]) for chunk in raw if '[DONE]' not in chunk]
 
-    assert len(requests) == 5
+    assert len(requests) == (4 if embedded_article else 5)
     assert requests[2]['tool_choice'] == {
         'type': 'function', 'function': {'name': 'web_search'},
     }
-    assert requests[3]['tool_choice'] == {
-        'type': 'function', 'function': {'name': 'web_fetch'},
-    }
-    assert 'tools' not in requests[4]
+    if not embedded_article:
+        assert requests[3]['tool_choice'] == {
+            'type': 'function', 'function': {'name': 'web_fetch'},
+        }
+    assert 'tools' not in requests[-1]
     assert any(
         event.get('type') == 'completion_recovery'
         and event.get('reason') == 'insufficient_research_breadth'
