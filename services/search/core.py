@@ -173,6 +173,10 @@ _EMPTY_RESULT_RELAXATION_TERMS = {
 
 def _relaxed_query_after_empty(query: str) -> str:
     """Remove request scaffolding once an exact provider query returns nothing."""
+    # Token-based relaxation cannot preserve search operators, quoted phrases,
+    # or exclusions. Do not silently broaden an explicit source constraint.
+    if re.search(r'\b\w+:|["\u201c\u201d]|(?:^|\s)-\S', str(query or "")):
+        return ""
     tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9_.+-]*", str(query or ""))
     retained = [
         token for token in tokens
@@ -281,10 +285,38 @@ def _result_has_query_overlap(query: str, result: dict) -> bool:
 def _filter_low_relevance_results(query: str, results: list[dict]) -> list[dict]:
     if not results:
         return []
-    relevant = [result for result in results if _result_has_query_overlap(query, result)]
+    relevant = [result for result in results
+                if _result_matches_site_scope(query, result)
+                and _result_has_query_overlap(query, result)]
     # Only reject a provider when it returned a fully off-topic page set. Mixed
     # result pages are common; ranking can handle those.
     return relevant if relevant else []
+
+
+def _result_matches_site_scope(query: str, result: dict) -> bool:
+    """Enforce explicit site constraints even when a provider ignores them."""
+    scopes = re.findall(r'(?<!\S)(-?)site:([^\s()]+)', query, re.IGNORECASE)
+    if not scopes:
+        return True
+    try:
+        target = urlparse(str(result.get("url") or ""))
+        if target.scheme not in {"https", "http"} or not target.hostname:
+            return False
+        host = target.hostname.lower().rstrip(".")
+        included = []
+        for excluded, scope in scopes:
+            parsed = urlparse(scope if "://" in scope else "https://" + scope)
+            domain = (parsed.hostname or "").lower().rstrip(".")
+            matches = bool(domain) and (host == domain or host.endswith("." + domain))
+            if parsed.path and parsed.path != "/":
+                matches = matches and target.path.startswith(parsed.path)
+            if excluded and matches:
+                return False
+            if not excluded:
+                included.append(matches)
+        return any(included) if included else True
+    except ValueError:
+        return False
 
 
 _SCHOLARLY_QUERY_CUE_RE = re.compile(
@@ -689,7 +721,8 @@ def searxng_search_results(query: str, count: int = 10, time_filter: str = None)
     # providers; the returned official URL lets the agent proceed to PDF tools.
     scholarly_title = _scholarly_title_from_query(provider_query)
     if scholarly_title:
-        direct_results = _direct_scholarly_title_results(scholarly_title, count)
+        direct_results = [result for result in _direct_scholarly_title_results(scholarly_title, count)
+                          if _result_matches_site_scope(provider_query, result)]
         if direct_results:
             _record_query(provider_query, True, cache_hit=False)
             return direct_results[:count]

@@ -1,4 +1,65 @@
 from services.search import core
+import pytest
+
+
+@pytest.mark.parametrize('url,accepted', [
+    ('https://python.org/downloads/', True),
+    ('https://docs.python.org/3/', True),
+    ('https://python.org.evil.example/downloads/', False),
+    ('https://evil.example/python.org', False),
+    ('https://evil.example/?site=python.org', False),
+    ('https://python.org@evil.example/', False),
+    ('https://en.wikipedia.org/wiki/Microsoft_campus', False),
+])
+def test_provider_results_must_obey_site_scope(url, accepted):
+    result = {'url': url, 'title': 'Python official release source python.org'}
+    assert bool(core._filter_low_relevance_results(
+        'latest Python release site:python.org', [result],
+    )) is accepted
+
+
+def test_site_scope_exclusions_and_unrestricted_queries():
+    result = {'url': 'https://docs.python.org/3/'}
+    assert core._result_matches_site_scope('Python documentation', result)
+    assert not core._result_matches_site_scope('Python -site:python.org', result)
+    assert core._result_matches_site_scope('site:example.org OR site:python.org', result)
+    assert not core._result_matches_site_scope('site:python.org/downloads/', result)
+
+
+@pytest.mark.parametrize('query', [
+    'latest Python official site:python.org',
+    'Python manual -site:example.org',
+    'official manual filetype:pdf',
+    'official "exact phrase" manual',
+])
+def test_relaxation_never_drops_explicit_query_constraints(query):
+    assert core._empty_result_query_relaxations(query) == []
+
+
+@pytest.mark.parametrize('comprehensive', [False, True])
+def test_out_of_scope_provider_results_never_become_evidence(monkeypatch, tmp_path, comprehensive):
+    queries = []
+    def provider(name, query, count, time_filter=None):
+        queries.append(query)
+        return [{'title': 'Python release official python.org',
+                 'url': 'https://evil.example/python.org', 'snippet': 'Python release'}]
+    monkeypatch.setattr(core, 'SEARCH_CACHE_DIR', tmp_path)
+    monkeypatch.setattr(core, 'search_cache_index', {})
+    monkeypatch.setattr(core, '_get_search_settings', lambda: {'search_provider': 'searxng'})
+    monkeypatch.setattr(core, '_build_provider_chain', lambda primary: ['searxng'])
+    monkeypatch.setattr(core, '_call_provider', provider)
+    monkeypatch.setattr(core, '_record_query', lambda *a, **k: None)
+    monkeypatch.setattr(core, 'cleanup_cache', lambda *a, **k: None)
+    def forbidden_fetch(*a, **k):
+        pytest.fail('Out-of-scope results must not be fetched')
+    monkeypatch.setattr(core, 'fetch_webpage_content', forbidden_fetch)
+    query = 'latest Python release site:python.org'
+    if comprehensive:
+        _, sources = core.comprehensive_web_search(query, return_sources=True)
+    else:
+        sources = core.searxng_search_results(query)
+    assert sources == []
+    assert queries and set(queries) == {query}
 
 
 def test_searxng_chain_always_keeps_distinct_private_engine_fallback(monkeypatch):

@@ -20,7 +20,7 @@ const token = Object.entries(sessions).find(([, value]) => value?.username === o
 if (!token) throw Error(`No active ${owner} session`);
 
 const marker = `ody-search-${crypto.randomUUID()}`;
-const report = { run, owner, marker, model, endpointUrl, status: 'running', scenarios: [], turns: [], privacy: 'Public synthetic queries only; fetched bodies and private data are not retained.' };
+const report = { run, owner, marker, model, endpointUrl, status: 'running', scenarios: [], turns: [], privacy: 'Public test queries and bounded public tool evidence; no private account data.' };
 const save = () => fs.writeFileSync(reportPath, JSON.stringify(report, null, 2) + '\n');
 fs.mkdirSync(path.dirname(reportPath), { recursive: true }); save();
 const canonical = value => String(value || '').replace(/^mcp__email__/, '');
@@ -68,6 +68,10 @@ async function send(page, prompt) {
     rounds: metrics?.agent_rounds ?? null,
     actual_model: metrics?.model ?? null,
     tools: starts, outputs, final,
+    evidence: events.filter(event => event.type === 'tool_output').map(event => ({
+      tool: canonical(event.tool), arguments: event.command,
+      output: String(event.output || '').slice(0, 10000), error: Boolean(event.error),
+    })),
     runtime_error: events.some(event => event.type === 'error') || /v3 test encountered an error/i.test(final),
   };
   report.turns.push(observation); save();
@@ -90,6 +94,14 @@ try {
       ['research', ['How do sodium ion batteries compare with lithium ion for home storage? Find evidence and explain tradeoffs.'], true],
       ['no-web-typo', ['whats 12 tims 7'], false],
       ['no-web-greeting', ['helo'], false],
+      ['news-short', ['ai news today'], true],
+      ['news-natural', ['Catch me up on the biggest AI developments this week. Explain why they matter and link your sources.'], true],
+      ['research-typo', ['reserch sodium ion vs lithium batterys for home stroage. whats the tradeof? sources pls'], true],
+      ['official-domain', ['latest Python stable release? use only python.org sources'], true],
+      ['context-refinement', ['Find current Firefox privacy documentation from Mozilla.', 'How does that compare with Chrome? Find official sources for that too.'], true],
+      ['evidence-reuse', ['Find the official Python release page.', 'Explain what you found in plain English. Do not search again.'], [true, false]],
+      ['no-web-rewrite', ['fix spelling: i recieved the calender invte'], false],
+      ['no-web-compound', ['helo can u explain what a web browser is? no search needed'], false],
     ];
     async function runCase([name, prompts, needsWeb]) {
       const scenario = { name, status: 'running', turns: [] };
@@ -98,7 +110,8 @@ try {
       try {
         id = await createSession(context, `[search-variety] ${name} ${marker}`);
         page = await preparePage(context, id);
-        for (const prompt of prompts) {
+        for (const [turnIndex, prompt] of prompts.entries()) {
+          const turnNeedsWeb = Array.isArray(needsWeb) ? needsWeb[turnIndex] : needsWeb;
           const turn = await send(page, prompt);
           const tools = turn.starts.map(x => x.tool);
           const checks = {
@@ -106,7 +119,7 @@ try {
             model_matches: turn.actual_model === model,
             nonempty_answer: turn.final.trim().length > 0,
             no_reasoning_leak: noLeak(turn.final),
-            expected_web_use: needsWeb ? tools.some(x => ['web_search', 'web_fetch', 'private_browser'].includes(x)) : tools.length === 0,
+            expected_web_use: turnNeedsWeb ? tools.some(x => ['web_search', 'web_fetch', 'private_browser'].includes(x)) : tools.length === 0,
           };
           scenario.turns.push({ prompt, checks, seconds: turn.seconds, tools,
             status: Object.values(checks).every(Boolean) ? 'mechanics_passed' : 'failed',
@@ -121,7 +134,8 @@ try {
       }
     }
     // Two simultaneous conversations keep endpoint contention bounded.
-    const queue = [...cases];
+    const selected = new Set((process.env.CASES || '').split(',').filter(Boolean));
+    const queue = cases.filter(([name]) => !selected.size || selected.has(name));
     await Promise.all([0, 1].map(async () => { while (queue.length) await runCase(queue.shift()); }));
   } else {
 
