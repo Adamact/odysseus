@@ -32,18 +32,22 @@ def test_external_edits_are_not_mistaken_for_inline_text(prompt):
 
 
 @pytest.mark.asyncio
-async def test_runtime_does_not_append_unverified_search_result_as_citation(monkeypatch):
+@pytest.mark.parametrize('repair_missing_link', [False, True])
+async def test_runtime_does_not_append_unverified_search_result_as_citation(monkeypatch, repair_missing_link):
     import src.clean_agent_preview as runtime
     from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
     from src.tool_policy import ToolPolicy
     from src.turn_contract import resolve_full_inventory_contract
     answer = 'The retrieved page describes an older version; it does not establish the latest release.'
-    packets = iter([
+    packets_list = [
         {'choices': [{'delta': {'tool_calls': [{'index': 0, 'id': 'lookup', 'function': {
             'name': 'web_search', 'arguments': '{"query":"latest Python official source"}',
         }}]}}]},
         {'choices': [{'delta': {'content': answer}}]},
-    ])
+    ]
+    if repair_missing_link:
+        packets_list.append({'choices': [{'delta': {'content': answer + ' See the older release: https://python.org/old-release/'}}]})
+    packets = iter(packets_list)
     class Response:
         def __init__(self, payload): self.payload = payload
         async def __aenter__(self): return self
@@ -68,12 +72,17 @@ async def test_runtime_does_not_append_unverified_search_result_as_citation(monk
         endpoint_url='http://test', model='test',
         messages=[{'role': 'user', 'content': 'latest Python version? official source please'}],
         headers={}, turn_contract=contract, session_id='test', owner='test',
-        disabled_tools=set(), tool_policy=ToolPolicy(), max_rounds=3,
+        disabled_tools=set(), tool_policy=ToolPolicy(), max_rounds=3 if repair_missing_link else 2,
     )]
     events = [json.loads(chunk[6:]) for chunk in raw if '[DONE]' not in chunk]
-    final = ''.join(event.get('delta', '') for event in events)
+    finals = [event['content'] for event in events if event.get('type') == 'final_response']
+    final = finals[-1] if finals else ''.join(event.get('delta', '') for event in events)
     assert answer in final
-    assert 'old-release' not in final
+    if repair_missing_link:
+        assert 'https://python.org/old-release/' in final
+        assert sum(event.get('reason') == 'requested_source_link_missing' for event in events) == 1
+    else:
+        assert 'old-release' not in final
     assert '[Source:' not in final
     assert not any(event.get('type') == 'error' for event in events)
 

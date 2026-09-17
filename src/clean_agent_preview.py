@@ -3249,6 +3249,8 @@ def requested_web_source_links(user_text):
         r'\b(?:return|give|show|include|provide|cite|find)\b.{0,35}\b(?:source\s+)?links?\b'
         r'|\b(?:\d+|one|two|three|four|five)\s+(?:official\s+)?(?:source\s+)?links?\b'
         r'|\bofficial\s+source\b'
+        r'|\b(?:with|include|provide|cite|show|give|find)\s+(?:the\s+)?(?:official\s+)?(?:sources|citations)\b'
+        r'|\b(?:find|locate|get|download)\b.{0,60}\bofficial\b.{0,60}\b(?:manual|guide|handbook|pdf|documentation)\b'
         r'|\b(?:find|locate|get|download)\b.{0,80}\b(?:manual|guide|handbook|pdf)\b.{0,40}\b(?:online|official)\b',
         str(user_text or ''),
         re.IGNORECASE,
@@ -3959,6 +3961,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     search_completion_attempted = False
     budget_completion_attempted = False
     answer_recovery_attempts = 0
+    citation_recovery_attempted = False
     force_no_tools_next_round = False
     force_web_search_next_round = (
         broad_current_web_request(direct_user_text) and not native_workspace_enabled
@@ -3970,7 +3973,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     official_source_retry_attempted = False
     note_search_recovery_attempted = False
     replace_streamed_draft_on_finish = False
-    buffer_completion_drafts = broad_current_web_request(direct_user_text)
+    buffer_completion_drafts = broad_current_web_request(direct_user_text) or requested_web_source_links(direct_user_text)
     usage_in = usage_out = 0
     has_real_usage = False
     first_request_tokens = last_request_tokens = 0
@@ -4222,6 +4225,33 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         history[-1]['content'] = content
                         yield event({'delta': content})
                         break
+                    if (
+                        requested_web_source_links(direct_user_text)
+                        and successful_web_searches
+                        and not re.search(r'https?://\S+', content or '')
+                        and not citation_recovery_attempted
+                        and answer_recovery_attempts < 2
+                        and round_number < round_limit
+                    ):
+                        citation_recovery_attempted = True
+                        answer_recovery_attempts += 1
+                        force_no_tools_next_round = True
+                        replace_streamed_draft_on_finish = True
+                        history.pop()
+                        history.append({
+                            'role': 'user', '_harness_control': True,
+                            'content': (
+                                'The user explicitly requested a source or document link, but the '
+                                'draft omitted it. Complete the answer using exact URLs already '
+                                'present in the tool evidence. Choose only a URL that supports the '
+                                'associated claim or requested document; do not invent a URL or '
+                                'choose the first result merely because it is first. If the '
+                                'requested source was not found, state that limitation plainly. '
+                                'No additional tool call is needed for this completion check.'
+                            ),
+                        })
+                        yield event({'type': 'completion_recovery', 'reason': 'requested_source_link_missing'})
+                        continue
                     if (
                         contentless_final_response(content)
                         and answer_recovery_attempts == 0
