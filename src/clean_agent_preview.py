@@ -3776,6 +3776,11 @@ async def preview_model_response(client, endpoint_url, headers, request, recover
                 if (getattr(response, 'status_code', 200) in (400, 413)
                         and recovery.get('attempts', 0) < 2):
                     await response.aread()
+                    logging.getLogger(__name__).warning(
+                        'Provider rejected clean preview request status=%s detail=%s',
+                        response.status_code,
+                        response.text[:1000].replace('\n', ' '),
+                    )
                     plan = plan_context_recovery(
                         response.text, request['max_tokens'], request['messages'], request.get('tools'))
                     if plan is not None:
