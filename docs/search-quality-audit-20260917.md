@@ -75,6 +75,10 @@ Further provider inspection found that the news-to-general fallback dropped the 
 
 ### Additional informal/multi-part live checks
 
+News replay `reports/clean-v3-search-quality-2026-09-17T21-15-25-609Z.json` completed: the short misspelled request now synthesizes rather than exhausting the contradictory breadth loop, but takes 47.4 seconds; “ai news today” takes 62.6 seconds and omits actual source URLs. Neither is an accuracy/latency pass. Broad source/claim alignment still requires review.
+
+Browser evidence handling now recognizes a structured challenge-page title followed by an empty snapshot, without treating ordinary empty pages or articles with that title as challenges. Failure of both transports for one source no longer forces tool-free completion of the entire research request. Regression exercises failed static fetch → blocked browser → successful alternate fetch. Related suites: 1,218 passed; live replay pending. The older keyword-based gate detector remains broader than the new structured check and needs false-positive audit.
+
 Targeted replay `reports/clean-v3-search-quality-2026-09-17T21-13-13-145Z.json`: correction-only request made zero tool calls (7.3s), but only corrected some words rather than returning the whole corrected sentence. Firefox (26.5s) now follows failed `web_fetch` with `private_browser`, proving recovery was exercised. The browser still returned a challenge title and empty snapshot; the final omitted links and was incomplete. Browser navigation success must not be conflated with successful evidence acquisition.
 
 The preceding short-news trace exposed contradictory harness controls: “no more tools” was followed twice by a demand to search again because the breadth check counted successful searches, not attempted follow-ups. Breadth recovery is now one-shot, only before a second attempt and before terminal search completion. A stream regression covers a successful first search and empty second search, preserving the final answer rather than demanding endless breadth. Related suites: 1,226 passed. Live replay remains required.
