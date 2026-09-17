@@ -75,6 +75,10 @@ Further provider inspection found that the news-to-general fallback dropped the 
 
 ### Additional informal/multi-part live checks
 
+`reports/clean-v3-search-quality-2026-09-17T21-18-22-350Z.json` remains unsatisfactory: Mozilla lookup 13.9s failed to locate documentation, multi-part privacy request 22.0s omitted requested links and details, Chrome follow-up 28.8s supplied generic homepages instead of comparison. Do not promote based on mechanics.
+
+News trace inspection found another synthetic harness distortion: a missing follow-up query was filled with the original user text plus “corroborating analysis authoritative sources.” This reintroduced misspellings and returned no evidence. `63488776` instead raises an explicit argument error asking for an evidence-based follow-up. This avoids an invented network query but does not yet prove reduced total latency or successful model repair. Related suites: 371 passed; live typo-news and natural-news replay launched.
+
 News replay `reports/clean-v3-search-quality-2026-09-17T21-15-25-609Z.json` completed: the short misspelled request now synthesizes rather than exhausting the contradictory breadth loop, but takes 47.4 seconds; “ai news today” takes 62.6 seconds and omits actual source URLs. Neither is an accuracy/latency pass. Broad source/claim alignment still requires review.
 
 Browser evidence handling now recognizes a structured challenge-page title followed by an empty snapshot, without treating ordinary empty pages or articles with that title as challenges. Failure of both transports for one source no longer forces tool-free completion of the entire research request. Regression exercises failed static fetch → blocked browser → successful alternate fetch. Related suites: 1,218 passed; live replay pending. The older keyword-based gate detector remains broader than the new structured check and needs false-positive audit.
