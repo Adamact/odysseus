@@ -155,6 +155,10 @@ Streaming repair `7cdd7886`: user session 6067439a-0e23-4c8c-8c1f-410f3b3acf94 e
 
 Completed-answer streaming replay `reports/clean-v3-search-quality-2026-09-17T22-12-10-396Z.json`: 36 text deltas followed by one canonical final response, no runtime error, 12.1 seconds. This exercises both progressive delivery and final reconciliation in the live UI request path.
 
+`b12181a1` addresses user session cac81b51-f5b9-40b7-a9e7-245d12af4d91: a streamed draft and its recovered answer remained in separate bubbles because unscoped streamed finals only deduplicated identical text. Corrected-draft first deltas and canonical research finals now explicitly replace prose across the current turn, preserving tool activity. A browser regression verifies one remaining answer with heading/bold/link structure and the same tool node. The original stored answer had plain paragraphs, not lost Markdown; system guidance now asks for headings or bold topic labels and descriptive links for multi-topic research while leaving simple answers brief. Related tests: 1,265 passed. Deployed on 7011; live Japan replay pending manual DOM review in reports/clean-v3-search-quality-2026-09-17T22-25-47-509Z.json.
+
+The Japan replay completed: 688 streamed chunks, one canonical final, one visible answer body, nine rendered bold elements and three links. This validates single-bubble final reconciliation and actual Markdown rendering. It took 48.1 seconds, and source/claim quality remains separately unverified; formatting is not evidence of factual correctness or a speed improvement.
+
 1. Finish and manually audit all 16 conversations; inspect claim/source alignment, request completion, follow-up referents, and latency.
 2. Distinguish provider emptiness from model query drift and unsupported synthesis. Do not label every weak answer a routing defect.
 3. Preserve explicit user source constraints even when model queries omit them; do not infer official provenance from URL appearance.
