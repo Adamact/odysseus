@@ -1939,6 +1939,23 @@ def bounded_research_tool_policy(offered, *, searches=0, retrievals=0):
     return schemas, None, True
 
 
+def retrieved_source_urls(arguments):
+    """Return explicit HTTP(S) sources actually passed to a retrieval tool."""
+    if not isinstance(arguments, dict):
+        return []
+    values = arguments.get('urls') or arguments.get('url') or arguments.get('target_url') or []
+    if isinstance(values, str):
+        values = re.findall(r'https?://[^\s,\]\)]+', values)
+    if not isinstance(values, (list, tuple)):
+        return []
+    urls = []
+    for value in values:
+        value = str(value or '').strip()
+        if value.startswith(('http://', 'https://')) and value not in urls:
+            urls.append(value)
+    return urls
+
+
 def serialize_required_email_attachment_chain(proposed, required_tools, executions):
     """Keep speculative email attachment batches on one grounded stage."""
     stages = ('search_emails', 'read_email', 'download_attachment', 'draft_email')
@@ -3712,6 +3729,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     empty_web_search_attempts = 0
     successful_web_searches = 0
     successful_web_retrievals = 0
+    retrieved_web_sources = []
     browser_navigation_outcomes = {}
     failed_call_counts = {}
     semantic_attempt_counts = {}
@@ -4602,12 +4620,18 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             )
                     if not failed and canonical(actual_tool) in {'web_fetch', 'private_browser'}:
                         successful_web_retrievals += 1
+                        for source_url in retrieved_source_urls(args):
+                            if source_url not in retrieved_web_sources:
+                                retrieved_web_sources.append(source_url)
                         if successful_web_searches >= 2 and not required_artifacts:
                             force_no_tools_next_round = True
                             round_recovery_messages.append(
                                 'Evidence retrieval is complete. Stop using tools and deliver the '
                                 'complete answer now, covering every requested fact, comparison, and '
-                                'caveat with the source URLs supported by the retrieved evidence.'
+                                'caveat with the source URLs supported by the retrieved evidence. '
+                                'Retrieved source URLs: '
+                                + (', '.join(retrieved_web_sources) or 'none recorded')
+                                + '.'
                             )
                     if (execution_attempted
                             and canonical(actual_tool) in contract_required_tools):
