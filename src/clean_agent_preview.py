@@ -31,7 +31,7 @@ from src.tool_schemas import (
 from src.tool_types import ToolBlock
 from src.turn_contract import (
     FAMILY_TOOLS, broad_web_briefing_request, required_read_operation_for_request,
-    targets_bound_editor_request,
+    targets_bound_editor_request, inline_text_transformation,
 )
 from src.prompt_security import untrusted_context_message
 from src.model_profiles import (
@@ -1436,6 +1436,8 @@ def tool_family(name):
 def authorized_write_families(user_text):
     """Conservative action authority; never controls which schemas are offered."""
     text = str(user_text or '').casefold()
+    if inline_text_transformation(text):
+        return frozenset()
     families = set()
     patterns = {
         'email': r'\b(?:e.?mail|emil|inbox|mail)\b',
@@ -3783,7 +3785,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
             suggestion_only=suggestion_target,
         )
     offered = compact_schemas(turn_contract.schemas())
-    if standalone_social_turn(direct_user_text):
+    if standalone_social_turn(direct_user_text) or inline_text_transformation(direct_user_text):
         offered = []
     external_schema_by_name = {
         str((schema.get('function') or {}).get('name') or ''): copy.deepcopy(schema)

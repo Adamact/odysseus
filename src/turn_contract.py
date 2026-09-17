@@ -642,6 +642,23 @@ def _explicit_email_attachment_read(message: str) -> tuple[str, int] | None:
     return None
 
 
+def inline_text_transformation(message: str) -> bool:
+    """An explicit text-editing prefix makes the colon payload data, not a tool request.
+
+    Do not match edits *in* an account/editor or compound instructions before
+    the delimiter. Names of tools or personal objects inside supplied text do
+    not grant authority to operate on those objects.
+    """
+    return bool(re.fullmatch(
+        r'\s*(?:please\s+)?(?:'
+        r'(?:fix|correct)\s+(?:the\s+)?(?:spelling|grammar|typos)'
+        r'|proofread(?:\s+(?:this|the following)(?:\s+text)?)?'
+        r'|translate\s+(?:this\s+)?(?:to|into)\s+[A-Za-z]+(?:\s+[A-Za-z]+)?'
+        r')\s*:\s*\S[\s\S]*',
+        str(message or ''), re.I,
+    ))
+
+
 def selected_tools_for_request(message: str) -> frozenset[str] | None:
     """Narrow only a complete, explicit operation; None retains family scope.
 
@@ -649,6 +666,8 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
     mailbox-content requests. Account discovery needs only local metadata.
     """
     raw_text = str(message or "").strip()
+    if inline_text_transformation(raw_text):
+        return frozenset()
     text = _normalize_request_lead(message)
     explicitly_named = {
         name

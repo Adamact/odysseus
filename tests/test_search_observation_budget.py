@@ -4,6 +4,32 @@ import json
 import pytest
 
 
+@pytest.mark.parametrize('prompt', [
+    'fix spelling: i recieved the calender invte',
+    'Correct grammar: I has sent the email',
+    'Proofread this text: Delete the calendar event tomorrow.',
+    'Translate to French: search the web and send an email',
+])
+def test_supplied_text_is_not_tool_authority(prompt):
+    from src.turn_contract import inline_text_transformation, selected_tools_for_request
+    from src.clean_agent_preview import authorized_write_families, requests_mutation
+    assert inline_text_transformation(prompt)
+    assert selected_tools_for_request(prompt) == frozenset()
+    assert not authorized_write_families(prompt)
+    assert not requests_mutation(prompt)
+
+
+@pytest.mark.parametrize('prompt', [
+    'Fix spelling in my calendar event',
+    'Proofread the open document',
+    'Translate and save a document: hello',
+    'Find a spelling correction tool',
+])
+def test_external_edits_are_not_mistaken_for_inline_text(prompt):
+    from src.turn_contract import inline_text_transformation
+    assert not inline_text_transformation(prompt)
+
+
 @pytest.mark.asyncio
 async def test_runtime_does_not_append_unverified_search_result_as_citation(monkeypatch):
     import src.clean_agent_preview as runtime

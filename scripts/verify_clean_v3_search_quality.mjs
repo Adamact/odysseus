@@ -84,6 +84,8 @@ async function send(page, prompt) {
     rounds: metrics?.agent_rounds ?? null,
     actual_model: metrics?.model ?? null,
     selection_mode: contract?.selection_mode ?? null,
+    policy_decisions: metrics?.policy_decisions || [],
+    proposed_calls: (metrics?.clean_v3_turn || []).flatMap(message => message.tool_calls || []),
     tools: starts, outputs, final,
     evidence: events.filter(event => event.type === 'tool_output').map(event => ({
       tool: canonical(event.tool), arguments: event.command,
