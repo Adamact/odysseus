@@ -75,6 +75,10 @@ Further provider inspection found that the news-to-general fallback dropped the 
 
 ### Additional informal/multi-part live checks
 
+Clean context replay `reports/clean-v3-search-quality-2026-09-17T21-48-59-742Z.json` passed the specific context invariant: setup acknowledged without tools/saving (5.17s), “can u look it up” searched Python release schedule (15.39s). Final answer remained generic, so this verifies referent/routing preservation rather than a complete source-rich research answer.
+
+Completion ordering now decides whether research expansion is still due before citation/contentless-answer repairs. Previously weekly news performed a tool-free citation rewrite then demanded more search, wasting a round and placing contradictory instructions in history. The regression matrix covers source-requested/non-source-requested, embedded/no embedded article, and empty/successful follow-up search. 1,262 tests passed. Live weekly-news replay pending after deployment.
+
 `reports/clean-v3-search-quality-2026-09-17T21-46-32-630Z.json`: all three context-free referential prompts asked sensible clarification questions, zero tools, 7.2–8.2s UI latency. Grounded follow-up searched the correct Python topic, but setup wording “Remember…” also created test-owner memory `5f3eab27-99f1-45cb-8c81-7fb66420b296`. Removed only that exact ID after API owner/text verification; subsequent GET returned 404. Its text remains recoverable in the report. Revised setup explicitly forbids saving, and launched a clean follow-up replay. Never count that setup mutation as a no-tool pass.
 
 Answer-style controls `reports/search-synthesis-probe-1789681656044.json` (Firefox) and `1789681683794.json` (battery) replace only the canonical concise-answer sentence with completeness/uncertainty guidance. Results were mixed: Firefox became shorter; battery answer remained broad and introduced unsupported sustainability/cost assertions. No production prompt change made. More prose or links alone is not a factual-quality improvement.
