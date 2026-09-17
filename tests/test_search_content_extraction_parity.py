@@ -36,6 +36,26 @@ class _FakeErrorResponse:
         )
 
 
+def test_single_article_inside_main_excludes_related_links_and_comment_form(tmp_path, monkeypatch):
+    body = 'The measured storage comparison includes uncertainty and cost limitations. ' * 8
+    html = f'<main><article><h1>Storage comparison</h1><p>{body}</p></article><section>Related posts: home battery storage tags</section><form>Leave a comment</form></main>'
+    monkeypatch.setattr(service_content, 'CONTENT_CACHE_DIR', tmp_path)
+    monkeypatch.setattr(service_content, '_get_public_url', lambda *a, **k: _FakeResponse(html))
+    result = service_content.fetch_webpage_content('https://example.org/article')
+    assert body.strip() in result['content']
+    assert 'Related posts' not in result['content']
+    assert 'Leave a comment' not in result['content']
+
+
+def test_multiple_article_cards_retain_main_context(tmp_path, monkeypatch):
+    html = '<main><h1>Search results for storage</h1><article>First result</article><article>Second result</article></main>'
+    monkeypatch.setattr(service_content, 'CONTENT_CACHE_DIR', tmp_path)
+    monkeypatch.setattr(service_content, '_get_public_url', lambda *a, **k: _FakeResponse(html))
+    result = service_content.fetch_webpage_content('https://example.org/listing')
+    assert 'Search results for storage' in result['content']
+    assert 'First result' in result['content'] and 'Second result' in result['content']
+
+
 @pytest.mark.parametrize('title,body,blocked', [
     ('Client Challenge', 'A required part of this site couldn’t load. Try using a different browser.', True),
     ('Just a moment...', 'Checking your browser. Enable JavaScript to continue.', True),

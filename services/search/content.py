@@ -233,7 +233,7 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0,
     effective_cap = min(max_bytes or WEB_FETCH_SOFT_MAX_BYTES, WEB_FETCH_HARD_MAX_BYTES)
     # The cap is part of the cache identity: a truncated soft-cap fetch must
     # not be served to a later full-budget request for the same URL.
-    cache_key = generate_cache_key(f"{url}#cap={effective_cap}#extract=semantic-v3")
+    cache_key = generate_cache_key(f"{url}#cap={effective_cap}#extract=semantic-v4")
     cache_file = CONTENT_CACHE_DIR / f"{cache_key}.cache"
 
     # Check cache
@@ -405,7 +405,14 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0,
         noise.extract()
     main_content = ""
     semantic_main = text_soup.find('main') or text_soup.find(attrs={'role': 'main'})
-    content_areas = [semantic_main] if semantic_main else text_soup.find_all('article')
+    articles = semantic_main.find_all('article') if semantic_main else text_soup.find_all('article')
+    # A single substantive article is a more precise content boundary than
+    # main, which commonly also contains tags, related links and comment forms.
+    # Multiple article cards usually form a listing: keep its main context.
+    if semantic_main and len(articles) == 1 and len(articles[0].get_text(strip=True)) >= 200:
+        content_areas = articles
+    else:
+        content_areas = [semantic_main] if semantic_main else articles
     if not content_areas:
         content_areas = text_soup.find_all(
             ["section", "div"],
