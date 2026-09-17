@@ -3267,6 +3267,7 @@ def repeated_search_refinement(query, prior_intents):
 def requested_web_source_links(user_text):
     return bool(re.search(
         r'\b(?:return|give|show|include|provide|cite|find)\b.{0,35}\b(?:source\s+)?links?\b'
+        r'|(?:^|[.!?;,\n])\s*(?:(?:pls|please)\s+)?(?:sources?|citations?|links?)\s*(?:pls|please)?\s*[.!?]*$'
         r'|\b(?:\d+|one|two|three|four|five)\s+(?:official\s+)?(?:source\s+)?links?\b'
         r'|\bofficial\s+source\b'
         r'|\b(?:with|include|provide|cite|show|give|find)\s+(?:the\s+)?(?:official\s+)?(?:sources|citations)\b'

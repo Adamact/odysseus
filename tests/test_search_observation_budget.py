@@ -39,13 +39,16 @@ def test_forced_search_dispatch_preserves_schema_without_mutating_request():
     'Explain the settings and link the instructions, not just the homepage.',
     'Can you link to the original studies?',
     'Summarize this and link your sources.',
+    'reserch sodium ion vs lithium batterys. whats the tradeof? sources pls',
+    'Why does this matter? pls sources',
+    'sources?',
 ])
 def test_link_as_a_verb_requests_source_completion(prompt):
     from src.clean_agent_preview import requested_web_source_links
     assert requested_web_source_links(prompt)
 
 
-@pytest.mark.parametrize('prompt', ['Link my calendar to email', 'Explain linked lists', 'What is a network link?'])
+@pytest.mark.parametrize('prompt', ['Link my calendar to email', 'Explain linked lists', 'What is a network link?', 'Explain energy sources', 'Compare batteries. No sources please.'])
 def test_non_source_link_intent_does_not_require_citations(prompt):
     from src.clean_agent_preview import requested_web_source_links
     assert not requested_web_source_links(prompt)
@@ -84,7 +87,7 @@ def test_external_edits_are_not_mistaken_for_inline_text(prompt):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('repair_missing_link', [False, True])
-@pytest.mark.parametrize('prompt', ['latest Python version? official source please', 'more about the second story, with sources'])
+@pytest.mark.parametrize('prompt', ['latest Python version? official source please', 'more about the second story, with sources', 'why does that matter? sources pls'])
 async def test_runtime_does_not_append_unverified_search_result_as_citation(monkeypatch, repair_missing_link, prompt):
     import src.clean_agent_preview as runtime
     from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
