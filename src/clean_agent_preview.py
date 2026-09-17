@@ -186,6 +186,18 @@ def provider_compatible_tool_choice_request(request, model):
     """Keep tools but avoid forced choice unsupported by thinking providers."""
     if canonical(model) == 'deepseek-flash' and 'tool_choice' in request:
         compatible = dict(request)
+        choice = compatible.get('tool_choice')
+        selected_name = (
+            (choice.get('function') or {}).get('name')
+            if isinstance(choice, dict) else None
+        )
+        if selected_name:
+            selected = [
+                schema for schema in compatible.get('tools') or []
+                if (schema.get('function') or {}).get('name') == selected_name
+            ]
+            if selected:
+                compatible['tools'] = selected
         compatible.pop('tool_choice', None)
         return compatible
     return request

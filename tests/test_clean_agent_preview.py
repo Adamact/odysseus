@@ -100,12 +100,15 @@ def test_provider_wire_messages_drops_empty_assistant_placeholder():
 def test_deepseek_flash_keeps_tools_but_drops_unsupported_forced_choice():
     request = {
         'model': 'deepseek-flash',
-        'tools': [{'type': 'function', 'function': {'name': 'inspect_media'}}],
+        'tools': [
+            {'type': 'function', 'function': {'name': 'inspect_media'}},
+            {'type': 'function', 'function': {'name': 'python'}},
+        ],
         'tool_choice': {'type': 'function', 'function': {'name': 'inspect_media'}},
     }
 
     compatible = provider_compatible_tool_choice_request(request, 'deepseek-flash')
-    assert compatible['tools'] == request['tools']
+    assert [tool['function']['name'] for tool in compatible['tools']] == ['inspect_media']
     assert 'tool_choice' not in compatible
     assert request['tool_choice']['function']['name'] == 'inspect_media'
     assert provider_compatible_tool_choice_request(request, 'qwen3.5-9b') is request
