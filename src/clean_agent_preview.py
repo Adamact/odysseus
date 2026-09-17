@@ -1993,6 +1993,25 @@ def bounded_research_tool_policy(offered, *, searches=0, retrievals=0, search_li
     return schemas, None, True
 
 
+def search_embedded_article_urls(output):
+    """Identify substantial article bodies actually delivered in search output."""
+    text = str(output or '')
+    urls = []
+    for match in re.finditer(
+        r'\[CONTENT(?: \d+)?\] From: (https?://\S+)\nTitle: [^\n]*\n-+\n'
+        r'([\s\S]*?)(?=\n\[CONTENT|\n(?:Key Points:|TL;DR:|Important Quotes:|Data / Statistics:|={5,})|\Z)',
+        text,
+    ):
+        url, body = match.groups()
+        if (len(body.split()) >= 80
+                and not browser_observation_access_blocked(body)
+                and not browser_observation_page_missing(body)
+                and not web_fetch_observation_is_boilerplate(body)):
+            if url not in urls:
+                urls.append(url)
+    return urls
+
+
 def retrieved_source_urls(arguments):
     """Return explicit HTTP(S) sources actually passed to a retrieval tool."""
     if not isinstance(arguments, dict):
@@ -3492,6 +3511,16 @@ def private_browser_effective_url(result):
     return urls[-1] if urls else ''
 
 
+def browser_observation_page_missing(raw):
+    """Recognize a rendered error page, rather than an article mentioning 404."""
+    text = str(raw or '')
+    return bool(re.search(
+        r"(?:heading[^\n]{0,120}(?:Whoops!|Page not found|404)|"
+        r"This page doesn[’']t exist or can[’']t be found\.)",
+        text, re.I,
+    ))
+
+
 def browser_observation_access_blocked(raw):
     """Identify browser observations containing only an access gate."""
     return bool(re.search(
@@ -4878,6 +4907,12 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             'reason': 'web_fetch_boilerplate_fallback',
                         })
                     if not failed and canonical(actual_tool) == 'web_search':
+                        embedded_urls = search_embedded_article_urls(output)
+                        if embedded_urls:
+                            successful_web_retrievals += 1
+                            for source_url in embedded_urls:
+                                if source_url not in retrieved_web_sources:
+                                    retrieved_web_sources.append(source_url)
                         if result.get('evidence_status') != 'empty':
                             successful_web_searches += 1
                             for _title, source_url in web_source_links(
@@ -4890,19 +4925,34 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             successful_search_intents.append(successful_intent)
                         if successful_web_searches == 2 and not required_artifacts:
                             round_recovery_messages.append(
+                                ('Search already returned readable article content. Use that '
+                                 'evidence to synthesize the answer now with source URLs.'
+                                 if successful_web_retrievals else
                                 'Research discovery is complete after two searches. Do not search '
                                 'again. Retrieve the strongest authoritative result with web_fetch, '
-                                'then answer every requested fact, comparison, and caveat with source URLs.'
+                                'then answer every requested fact, comparison, and caveat with source URLs.')
                             )
                     browser_access_blocked = (
                         canonical(actual_tool) == 'private_browser'
                         and not failed
                         and browser_observation_access_blocked(output)
                     )
+                    browser_page_missing = (
+                        canonical(actual_tool) == 'private_browser'
+                        and not failed
+                        and browser_observation_page_missing(output)
+                    )
+                    if browser_page_missing:
+                        round_recovery_messages.append(
+                            'The browser displayed a missing-page error, not article evidence. '
+                            'Use another exact source URL already returned by search. Do not '
+                            'rewrite URL paths or claim this page was read successfully.'
+                        )
                     if (
                         not failed
                         and canonical(actual_tool) in {'web_fetch', 'private_browser'}
                         and not browser_access_blocked
+                        and not browser_page_missing
                     ):
                         successful_web_retrievals += 1
                         for source_url in retrieved_source_urls(args):

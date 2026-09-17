@@ -1863,6 +1863,39 @@ def test_browser_access_gate_is_not_treated_as_page_evidence():
     )
 
 
+def test_rendered_missing_page_is_not_article_evidence():
+    from src.clean_agent_preview import browser_observation_page_missing
+
+    assert browser_observation_page_missing(
+        '- heading "Whoops!" [level=1]\n'
+        '- paragraph: This page doesn’t exist or can’t be found.'
+    )
+    assert browser_observation_page_missing('- heading "404 Page not found" [level=1]')
+    assert not browser_observation_page_missing(
+        '- heading "HTTP error handling" [level=1]\n'
+        '- paragraph: A 404 indicates a missing resource.'
+    )
+
+
+def test_search_embedded_article_requires_readable_body_not_source_metadata():
+    from src.clean_agent_preview import search_embedded_article_urls
+    header = '[CONTENT 1] From: https://example.org/story\nTitle: Report\n------------------------------\n'
+    body = (
+        'The council published its transport review on Tuesday following a six month study. '
+        'Researchers counted journeys at twelve stations and interviewed residents about access. '
+        'Their findings showed that evening services were less reliable than morning departures. '
+        'Officials proposed additional buses on weekends while retaining existing train schedules. '
+        'The proposal will go through public consultation before any funding decision is made. '
+        'Several community groups welcomed the announcement but requested detailed cost estimates. '
+        'The report includes methodology, regional comparisons, and limitations of the passenger survey. '
+        'A further review is scheduled after the consultation closes next month.'
+    )
+    assert search_embedded_article_urls(header + body) == ['https://example.org/story']
+    assert search_embedded_article_urls('[1] Report\n    https://example.org/story') == []
+    assert search_embedded_article_urls(header + 'Short snippet.') == []
+    assert search_embedded_article_urls(header + 'Verify you are human. ' + body) == []
+
+
 def test_repeated_navigation_only_fetch_is_not_treated_as_page_evidence():
     navigation = (
         'World SECTIONS Politics Tech TOP STORIES Newsletter Sign In Subscribe '
