@@ -671,6 +671,24 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
     }
     if explicitly_named_web:
         return frozenset(explicitly_named_web)
+    if (
+        re.search(r"\b(?:look\s*up|search|find)\b", text, re.I)
+        and re.search(
+            r"\b(?:current|latest|today(?:'s)?|right\s+now|this\s+(?:week|month|year))\b",
+            text,
+            re.I,
+        )
+        and not re.search(r"\bhttps?://", text, re.I)
+        and not re.match(
+            r"^\s*" + _REQUEST_PREFIX + r"(?:open|browse|visit|navigate|go\s+to)\b",
+            text,
+            re.I,
+        )
+    ):
+        # Current lookups need discovery before navigation. Letting the model
+        # begin on an arbitrary browser page can ground an answer in stale or
+        # unrelated content without ever establishing a current source set.
+        return frozenset({"web_search"})
     if re.search(
         r"\buse\s+(?:the\s+)?(?:odysseus\s+)?web_search\b",
         raw_text,

@@ -4945,24 +4945,19 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             canonical(schema['function']['name']) == 'private_browser'
                             for schema in offered
                         )
-                        and re.search(
-                            r'\b(?:HTTP\s+(?:401|403|429)|access\s+(?:denied|blocked)|'
-                            r'captcha|needs?\s+JS|login|no\s+readable\s+text|timed?\s*out)\b',
-                            output,
-                            re.I,
-                        )
+                        and retrieved_source_urls(args)
                     ):
                         # Static fetchers are routinely rejected by publisher
                         # bot protection.  That is a transport failure, not
                         # evidence that the source is unavailable.  Offer one
                         # rendered-browser attempt at the same evidenced URL.
                         suppressed_tool_until_round['web_fetch'] = round_number + 1
-                        fetch_url = str(args.get('url') or '').strip().rstrip('/')
-                        if fetch_url:
-                            static_fetch_failed_urls.add(fetch_url)
+                        for fetch_url in retrieved_source_urls(args):
+                            static_fetch_failed_urls.add(fetch_url.rstrip('/'))
+                        force_private_browser_next_round = True
                         round_recovery_messages.append(
-                            'The static page fetch was blocked or returned no readable content. '
-                            'Use private_browser once to open the same known URL and inspect the '
+                            'The static page fetch failed or returned no readable content. Use '
+                            'private_browser once to open the strongest known URL and inspect the '
                             'rendered page; if that also fails, report the limitation without '
                             'inventing page content.'
                         )

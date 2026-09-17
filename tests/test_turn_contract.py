@@ -67,6 +67,15 @@ def test_latest_topic_info_and_common_news_typo_route_to_web_search():
         assert requested_capabilities(prompt) == frozenset({"search_browser"})
 
 
+@pytest.mark.parametrize('prompt', [
+    'Look up the current stock market and summarize the major US indexes.',
+    'Find the latest Nvidia driver for Linux.',
+    'Search for today\'s exchange rate for USD to JPY.',
+])
+def test_explicit_current_lookup_starts_with_native_search(prompt):
+    assert selected_tools_for_request(prompt) == frozenset({'web_search'})
+
+
 @pytest.mark.parametrize("prompt", [
     "I'm using a WIKING fireplace; can I find an English manual online?",
     "Can you look online",

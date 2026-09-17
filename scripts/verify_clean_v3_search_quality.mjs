@@ -10,6 +10,7 @@ const base = process.env.BASE_URL || 'http://127.0.0.1:7011';
 const owner = 'sft_alex_creator';
 const endpointId = process.env.ENDPOINT_ID || '1d1022ef';
 const endpointUrl = process.env.ENDPOINT_URL || (() => { throw new Error("ENDPOINT_URL is required"); })();
+const model = process.env.MODEL || 'odysseus-qwen3.5-tools-pre-heretic';
 const run = new Date().toISOString().replace(/[:.]/g, '-');
 const reportPath = path.resolve(process.env.REPORT_PATH || path.join(root, `reports/clean-v3-search-quality-${run}.json`));
 if (!reportPath.startsWith(path.join(root, 'reports') + path.sep) || fs.existsSync(reportPath)) throw Error('Report path must be new and under reports/');
@@ -31,7 +32,7 @@ const parseSSE = body => body.replace(/\r\n/g, '\n').split('\n\n').flatMap(frame
 
 async function createSession(context, name) {
   const response = await context.request.post(`${base}/api/session`, { multipart: {
-    name, model: 'odysseus-qwen3.5-tools-pre-heretic', endpoint_id: endpointId,
+    name, model, endpoint_id: endpointId,
     endpoint_url: endpointUrl, skip_validation: 'true', rag: 'false',
   }});
   if (!response.ok()) throw Error(`Session create HTTP ${response.status()}`);
