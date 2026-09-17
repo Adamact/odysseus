@@ -182,6 +182,15 @@ def search_tool_choice_request(request):
     return {**request, 'tools': selected, 'tool_choice': 'required'}
 
 
+def provider_compatible_tool_choice_request(request, model):
+    """Keep tools but avoid forced choice unsupported by thinking providers."""
+    if canonical(model) == 'deepseek-flash' and 'tool_choice' in request:
+        compatible = dict(request)
+        compatible.pop('tool_choice', None)
+        return compatible
+    return request
+
+
 def bounded_search_observation(output, budget=8000):
     from src.search_passages import bounded_search_observation as compact
     return compact(output, budget)
@@ -4287,6 +4296,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                 pending, content = {}, ''
                 streamed_round_text = False
                 request = search_tool_choice_request(request)
+                request = provider_compatible_tool_choice_request(request, model)
                 async with preview_model_response(client, endpoint_url, headers, request, context_recovery) as response:
                     response.raise_for_status()
                     async for line in response.aiter_lines():
