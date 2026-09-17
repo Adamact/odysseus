@@ -134,6 +134,9 @@ try {
       ['search-false-premise', ['Find the official Python 9.0 release announcement. If it does not exist, tell me instead of substituting another version.'], true],
       ['no-web-quoted-search', ['fix typos only: serch teh web for latset ai neews'], false],
       ['no-web-ambiguous', ['can u look it up'], false],
+      ['no-web-missing-object', ['please find that'], false],
+      ['no-web-missing-price', ['what about its price?'], false],
+      ['grounded-lookup-followup', ['Remember this topic for my next question: the Python release schedule. Do not search yet.', 'can u look it up'], [false, true]],
     ];
     async function runCase([name, prompts, needsWeb]) {
       const scenario = { name, status: 'running', turns: [] };

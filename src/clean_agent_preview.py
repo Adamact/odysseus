@@ -3290,6 +3290,27 @@ def source_link_only_request(user_text):
     )) and not re.search(r'\b(?:and|then|explain|compare|summari[sz]e)\b', str(user_text or ''), re.I)
 
 
+def unbound_lookup_reference(user_text, history, *, supplied_context=False):
+    """Recognize subject-less lookup turns only when no referent can exist.
+
+    Existing conversations and supplied objects stay under normal model
+    resolution; this is not a general pronoun blocker or a topic classifier.
+    """
+    if supplied_context:
+        return False
+    if sum(m.get('role') == 'user' for m in history) > 1 or any(
+        m.get('role') in {'assistant', 'tool'} for m in history
+    ):
+        return False
+    return bool(re.fullmatch(
+        r'\s*(?:(?:can|could|would)\s+(?:you|u)\s+)?(?:please\s+)?(?:'
+        r'look\s+(?:it|that|this)\s+up'
+        r'|(?:look\s+up|find|search\s+for)\s+(?:it|that|this)'
+        r'|what\s+about\s+(?:its\s+price|that|this)'
+        r')(?:\s+(?:please|pls))?[.!?]*\s*', str(user_text or ''), re.I,
+    ))
+
+
 def web_source_links(raw, *, max_items=1, prefer_official=False, query=''):
     """Extract stable title/URL pairs from the web tool's source preamble."""
     text = str(raw or '')
@@ -3943,6 +3964,18 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
         history.insert(max(1, len(history) - 1), editor_context)
     image_context_count = multimodal_image_count(history)
     attachment_refs = attachment_reference_count(history_session)
+    needs_subject_clarification = unbound_lookup_reference(
+        direct_user_text, history,
+        supplied_context=bool(native_workspace_enabled or image_context_count or attachment_refs
+                              or active_document is not None or active_email is not None),
+    )
+    if needs_subject_clarification:
+        offered = []
+        history[0]['content'] += (
+            ' If the requested subject or referenced item cannot be identified from the '
+            'conversation or supplied context, ask a concise clarification question before '
+            'using tools. Never invent the missing subject.'
+        )
     latest_user = next((m.get('content', '') for m in reversed(history) if m.get('role') == 'user'), '')
     contextual_write_families = set(recent_successful_write_families(history_session))
     if active_document is not None:
@@ -5731,6 +5764,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
         'temperature': temperature,
         'max_output_tokens': request_max_tokens,
         'tool_calls': calls,
+        'needs_subject_clarification': needs_subject_clarification,
         'tool_execution_timings': tool_execution_timings,
         'tool_events': executions, 'clean_v3_turn': text_only_clean_trace(history[initial_length:]),
         'policy_decisions': policy_decisions,
