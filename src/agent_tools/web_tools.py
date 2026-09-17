@@ -232,7 +232,10 @@ class WebSearchTool:
             query = raw.split("\n")[0].strip()
         if time_filter is None:
             q_lc = query.lower()
-            if any(kw in q_lc for kw in ("today", "latest", "breaking", "this morning", "right now", "currently")):
+            if any(kw in q_lc for kw in (
+                "today", "latest", "breaking", "this morning", "right now",
+                "currently", "current events", "what's happening", "what is happening",
+            )):
                 time_filter = "day"
             elif any(kw in q_lc for kw in ("this week", "past week", "recent news", "last few days")):
                 time_filter = "week"

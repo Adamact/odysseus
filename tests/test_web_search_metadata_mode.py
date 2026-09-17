@@ -20,6 +20,24 @@ def test_search_reports_evidence_availability_independently_of_execution(monkeyp
     assert result['evidence_status'] == status
 
 
+@pytest.mark.parametrize('query', [
+    'Norway current events',
+    "What's happening in Norway",
+])
+def test_current_event_phrasing_uses_recent_search_mode(monkeypatch, query):
+    seen = {}
+
+    def search_call(*args, **kwargs):
+        seen.update(kwargs)
+        return 'Current reporting.', [{'title': 'Report', 'url': 'https://example.org/news'}]
+
+    monkeypatch.setattr(search, 'comprehensive_web_search', search_call)
+    result = asyncio.run(WebSearchTool().execute(json.dumps({'query': query}), {}))
+
+    assert result['evidence_status'] == 'available'
+    assert seen['time_filter'] == 'day'
+
+
 
 def test_scholarly_metadata_intent_accepts_title_only_queries():
     assert _is_scholarly_metadata_query(

@@ -149,7 +149,10 @@ def _safesearch_for(provider: str) -> Optional[str]:
 
 # ── SearXNG ──
 
-_NEWS_HINTS = ("news", "nyheter", "headlines", "breaking", "latest", "today", "idag")
+_NEWS_HINTS = (
+    "news", "nyheter", "headlines", "breaking", "latest", "today", "idag",
+    "current events", "what's happening", "what is happening",
+)
 _NEWS_EVENT_HINT_RE = re.compile(
     r"\b(?:deport(?:ation|ed|ing)?|arrest(?:ed|s)?|election(?:s)?|"
     r"evacuat(?:e|ed|ion)|flood(?:ing|s|ed)?|sanction(?:s|ed)?)\b",

@@ -21,7 +21,9 @@ def test_valid_configured_fallback_is_preserved(monkeypatch):
     monkeypatch.setattr(core, "_get_search_settings", lambda: {"search_fallback_chain": ["google_pse"]})
     monkeypatch.setattr(providers, "_get_search_settings", lambda: {"google_pse_cx": "test-cx"})
     monkeypatch.setattr(providers, "_get_provider_key", lambda name: "test-key")
-    assert core._build_provider_chain("searxng") == ["searxng", "google_pse"]
+    assert core._build_provider_chain("searxng") == [
+        "searxng", "searxng_yep", "google_pse",
+    ]
 
 
 def test_service_safesearch_values_match_provider_contract(monkeypatch):

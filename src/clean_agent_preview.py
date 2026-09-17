@@ -4447,9 +4447,10 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                 )
                         if tool_type == 'web_search':
                             web_search_attempts += 1
-                            if web_search_attempts > 4:
+                            if not native_workspace_enabled and web_search_attempts > 4:
                                 suppressed_tool_until_round['web_search'] = round_limit + 1
                                 force_no_tools_next_round = True
+                                terminal_budget_violation = True
                                 calls += 1
                                 raise ValueError(
                                     'The bounded search-attempt budget is exhausted. Do not search '
