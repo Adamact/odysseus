@@ -5,6 +5,7 @@ behavior at the single implementation point.
 """
 
 import sys
+import pytest
 
 from services.search import core
 from services.search import providers
@@ -74,7 +75,12 @@ def test_service_searxng_json_sends_safesearch(monkeypatch):
     assert seen["params"]["safesearch"] == "1"
 
 
-def test_service_searxng_latest_release_uses_general_search(monkeypatch):
+@pytest.mark.parametrize('query,expected_time', [
+    ('latest ollama release version github', None),
+    ('current Firefox Chrome privacy features comparison', 'day'),
+    ('Sony headphone manual', 'day'),
+])
+def test_service_searxng_latest_release_uses_general_search(monkeypatch, query, expected_time):
     seen = {}
 
     class _Response:
@@ -101,7 +107,7 @@ def test_service_searxng_latest_release_uses_general_search(monkeypatch):
     monkeypatch.setattr(providers.httpx, "get", fake_get)
 
     results = providers.searxng_search_api(
-        "latest ollama release version github",
+        query,
         count=1,
         time_filter="day",
     )
@@ -109,7 +115,7 @@ def test_service_searxng_latest_release_uses_general_search(monkeypatch):
     assert results
     assert seen["params"]["categories"] == "general"
     assert seen["params"]["engines"] == providers._GENERAL_ENGINES
-    assert "time_range" not in seen["params"]
+    assert seen['params'].get('time_range') == expected_time
 
 
 def test_service_searxng_specific_current_event_uses_news_search(monkeypatch):

@@ -150,7 +150,7 @@ def _safesearch_for(provider: str) -> Optional[str]:
 # ── SearXNG ──
 
 _NEWS_HINTS = (
-    "news", "nyheter", "headlines", "breaking", "latest", "today", "idag",
+    "news", "nyheter", "headlines", "breaking", "idag",
     "current events", "what's happening", "what is happening",
 )
 _NEWS_EVENT_HINT_RE = re.compile(
@@ -213,8 +213,7 @@ def searxng_search_api(query: str, count: Optional[int] = None, categories: str 
     is_news = (
         not is_software_release_query
         and (
-            time_filter is not None
-            or any(h in q_lc for h in _NEWS_HINTS)
+            any(h in q_lc for h in _NEWS_HINTS)
             or bool(_NEWS_EVENT_HINT_RE.search(query))
         )
     )
@@ -226,6 +225,10 @@ def searxng_search_api(query: str, count: Optional[int] = None, categories: str 
             params["time_range"] = "week" if time_filter in ("day", "week") else time_filter
     else:
         params["categories"] = categories
+        # Freshness and source category are independent: current manuals,
+        # comparisons and documentation still belong in general search.
+        if not is_software_release_query and time_filter in ("day", "week", "month", "year"):
+            params["time_range"] = time_filter
         # Route general queries to engines that aren't blocked (default general
         # set returns 0 on this instance — see _GENERAL_ENGINES).
         if categories == "general" and _GENERAL_ENGINES:
