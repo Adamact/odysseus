@@ -49,6 +49,12 @@ Live reports `20-40-14-629Z` and `20-42-04-396Z`: spelling became “I received 
 
 A direct paired SearXNG query `Firefox Chrome privacy features` returned five results without a publication window (4.02s), and zero with `time_filter=month` (7.04s). Returned pages were mostly generic Firefox pages, so this does not prove adequate comparison evidence. It does show an overly restrictive window can cause avoidable emptiness. Next retrieval work must distinguish current-valid documentation from recently published articles, without silently widening explicit user date restrictions.
 
+### Publication-date repair
+
+`54abfb9f` shares publication-intent inference between argument repair and the search tool. It removes model-invented windows from reference lookups without requested publication dates, preserves named user windows, stops provider day-to-week widening, and carries explicit filters through metadata/timeout paths. A date-filtered scholarly lookup no longer bypasses the provider through the unfiltered direct-title shortcut. Broader regression run: 1,293 passed.
+
+Temperature-0 replay: `reports/clean-v3-search-quality-2026-09-17T20-47-17-632Z.json` (three conversations, four turns). The Firefox/Chrome comparison now retrieved sources and produced a substantive answer (44.3s) instead of the preceding empty-search refusal (16.3s). This is not a validated accuracy win: several current-feature claims still need support checks. Sony's actual official manuals page appeared in evidence; the 17.5s final omitted its link. Mozilla documentation lookup still failed to identify the requested page (14.6s), and its Chrome follow-up supplied an unverified URL (17.6s). No overall promotion claimed.
+
 ## Outstanding work
 
 1. Finish and manually audit all 16 conversations; inspect claim/source alignment, request completion, follow-up referents, and latency.
