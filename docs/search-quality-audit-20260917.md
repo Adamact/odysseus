@@ -75,6 +75,10 @@ Further provider inspection found that the news-to-general fallback dropped the 
 
 ### Additional informal/multi-part live checks
 
+Full 23-conversation regression launched on `6000b718`/current deployed harness: `reports/clean-v3-search-quality-2026-09-17T21-27-27-686Z.json`. Active handle recorded in session; do not restart based on elapsed observation time.
+
+Read-only tool-choice control `reports/search-tool-choice-probe-1789680509169.json` uses the exact compact web_search schema, a short system prompt, identical user prompts/temperature/model, and never executes emitted calls. For both weekly-news and typo-news prompts, auto/required emitted nonempty queries. Forced named mode emitted an extraneous `command` field in both; typo-news omitted query entirely. Six calls are preliminary evidence of tool-choice/schema behavior, not proof of a universal backend defect or a production fix. Next test should use the canonical harness system/history before changing dispatch. Probe script saves full schemas and public emitted calls for reproducibility.
+
 `reports/search-synthesis-probe-1789680321559.json` compares identical saved native tool history with/without `_harness_control` messages, same canonical base prompt, no offered tools. Full trace: short answer without links, 2.59s. Controls removed: longer answer with links, 6.39s, but introduced a Do Not Track URL not established by the recorded evidence. This is not grounds to remove recovery controls wholesale or claim a factual quality win.
 
 Weekly-news replay `reports/clean-v3-search-quality-2026-09-17T21-24-11-361Z.json` corrected the missing query but still returned no evidence (16.35s). Direct simultaneous provider control with exact query `AI developments this week`, `time_filter=week`: general returned zero, news five. `3ea5a348` recognizes time-qualified developments as news intent while retaining general routing for tutorials, historical discussion, software versions and documentation. Provider/publication/query-relaxation tests: 80 passed. Live weekly-news replay launched after deployment; returned results still require relevance/source review.
