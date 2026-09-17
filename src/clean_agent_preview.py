@@ -5662,6 +5662,8 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
         'request_context_tokens': last_request_tokens,
         'tool_schema_count': len(offered),
         'agent_rounds': rounds_used,
+        'temperature': temperature,
+        'max_output_tokens': request_max_tokens,
         'tool_calls': calls,
         'tool_events': executions, 'clean_v3_turn': text_only_clean_trace(history[initial_length:]),
         'policy_decisions': policy_decisions,

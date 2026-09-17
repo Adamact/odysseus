@@ -2,6 +2,20 @@ from services.search import core
 import pytest
 
 
+def test_documentation_freshness_year_is_not_a_product_model_number():
+    result = {'title': 'Enhanced Tracking Protection in Firefox',
+              'url': 'https://support.mozilla.org/en-US/kb/enhanced-tracking-protection-firefox-desktop',
+              'snippet': 'Firefox privacy settings and tracking protection documentation.'}
+    assert core._result_has_query_overlap('Mozilla Firefox privacy documentation latest 2026', result)
+
+
+def test_documentation_filter_keeps_real_product_number_requirements():
+    result = {'title': 'WIKING Miro 3 manual', 'url': 'https://example.org/wiking-miro-3', 'snippet': 'WIKING Miro installation guide'}
+    assert core._result_has_query_overlap('WIKING Miro 3 manual latest 2026', result)
+    assert not core._result_has_query_overlap('WIKING Miro 4 manual latest 2026', result)
+    assert not core._result_has_query_overlap('WIKING Miro 2026 manual', result)
+
+
 @pytest.mark.parametrize('comprehensive', [False, True])
 @pytest.mark.parametrize('transient_error', [False, True])
 def test_empty_results_advance_provider_but_transport_errors_get_one_retry(monkeypatch, tmp_path, comprehensive, transient_error):

@@ -86,6 +86,9 @@ async function send(page, prompt) {
     selection_mode: contract?.selection_mode ?? null,
     policy_decisions: metrics?.policy_decisions || [],
     proposed_calls: (metrics?.clean_v3_turn || []).flatMap(message => message.tool_calls || []),
+    runtime_trace: metrics?.clean_v3_turn || [],
+    actual_temperature: metrics?.temperature ?? null,
+    actual_max_output_tokens: metrics?.max_output_tokens ?? null,
     tools: starts, outputs, final,
     evidence: events.filter(event => event.type === 'tool_output').map(event => ({
       tool: canonical(event.tool), arguments: event.command,

@@ -260,6 +260,16 @@ def _result_has_query_overlap(query: str, result: dict) -> bool:
         if entity_terms and entity_terms[0] not in result_tokens:
             return False
         model_numbers = {token for token in ordered_query_tokens if token.isdigit()}
+        # Temporal qualifiers are not product identifiers. In particular,
+        # query normalization may append "latest 2026" to a documentation
+        # lookup; an evergreen official page need not put that year in its
+        # title/snippet/URL. Retain actual product numbers (including years
+        # used as model names without an explicit temporal qualifier).
+        temporal_years = set(re.findall(
+            r'\b(?:latest|current|updated|as\s+of)\s+(20\d{2})\b',
+            str(query or ''), re.I,
+        ))
+        model_numbers -= temporal_years
         if model_numbers and not model_numbers.issubset(result_tokens):
             return False
 

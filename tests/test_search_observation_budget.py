@@ -85,6 +85,9 @@ async def test_runtime_does_not_append_unverified_search_result_as_citation(monk
         assert 'old-release' not in final
     assert '[Source:' not in final
     assert not any(event.get('type') == 'error' for event in events)
+    metrics = next(event['data'] for event in events if event.get('type') == 'metrics')
+    assert metrics['temperature'] == 0.0
+    assert metrics['max_output_tokens'] == 768
 
 
 def test_news_intent_survives_query_rewording_without_changing_other_fresh_queries():
