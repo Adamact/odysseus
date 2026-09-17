@@ -60,6 +60,25 @@ def test_provider_does_not_silently_widen_news_window(monkeypatch):
     assert seen['time_range'] == 'day'
 
 
+def test_provider_keeps_news_date_window_across_empty_fallbacks(monkeypatch):
+    from services.search import providers
+    calls = []
+    class Response:
+        def raise_for_status(self): pass
+        def json(self): return {'results': []}
+    def get(url, **kwargs):
+        calls.append(dict(kwargs['params']))
+        return Response()
+    monkeypatch.setattr(providers, '_get_search_instance', lambda: 'http://searx.test')
+    monkeypatch.setattr(providers, '_get_search_settings', lambda: {})
+    monkeypatch.setattr(providers.httpx, 'get', get)
+    providers.searxng_search_api('AI news today', time_filter='day')
+    assert len(calls) >= 2
+    assert calls[0]['categories'] == 'news'
+    assert calls[1]['categories'] == 'general'
+    assert all(call['time_range'] == 'day' for call in calls)
+
+
 @pytest.mark.parametrize('arguments,expected', [
     ({'query': 'latest browser documentation'}, None),
     ({'query': 'browser documentation', 'time_filter': 'month'}, 'month'),

@@ -263,17 +263,11 @@ def searxng_search_api(query: str, count: Optional[int] = None, categories: str 
 
         active_params = params
         parsed, data = _run(active_params)
-        if not parsed and is_news and categories == "general":
+        if not parsed and active_params.get("categories") == "news":
             # Some self-hosted SearXNG configs have no working news engines.
             # Fall back to the known-good general engines before reporting an
             # empty search, otherwise common queries like "Canada news" fail.
-            fallback = {
-                "q": query,
-                "format": "json",
-                "language": "en",
-                "categories": "general",
-                "safesearch": _safesearch_for("searxng"),
-            }
+            fallback = {**active_params, "categories": "general"}
             if _GENERAL_ENGINES:
                 fallback["engines"] = _GENERAL_ENGINES
             logger.info(
