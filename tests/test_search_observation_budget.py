@@ -5,6 +5,22 @@ import pytest
 
 
 @pytest.mark.parametrize('prompt', [
+    'Explain the settings and link the instructions, not just the homepage.',
+    'Can you link to the original studies?',
+    'Summarize this and link your sources.',
+])
+def test_link_as_a_verb_requests_source_completion(prompt):
+    from src.clean_agent_preview import requested_web_source_links
+    assert requested_web_source_links(prompt)
+
+
+@pytest.mark.parametrize('prompt', ['Link my calendar to email', 'Explain linked lists', 'What is a network link?'])
+def test_non_source_link_intent_does_not_require_citations(prompt):
+    from src.clean_agent_preview import requested_web_source_links
+    assert not requested_web_source_links(prompt)
+
+
+@pytest.mark.parametrize('prompt', [
     'fix spelling: i recieved the calender invte',
     'fix typos only: serch teh web for latset ai neews',
     'correct only the grammar: send teh email',

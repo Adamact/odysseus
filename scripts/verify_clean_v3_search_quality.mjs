@@ -82,6 +82,9 @@ async function send(page, prompt) {
   const observation = {
     prompt, seconds: (performance.now() - started) / 1000,
     rounds: metrics?.agent_rounds ?? null,
+    tool_execution_timings: metrics?.tool_execution_timings || [],
+    runtime_seconds: metrics?.response_time ?? null,
+    output_tokens: metrics?.output_tokens ?? null,
     actual_model: metrics?.model ?? null,
     selection_mode: contract?.selection_mode ?? null,
     policy_decisions: metrics?.policy_decisions || [],

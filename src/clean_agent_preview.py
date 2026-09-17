@@ -3251,6 +3251,7 @@ def requested_web_source_links(user_text):
         r'|\b(?:\d+|one|two|three|four|five)\s+(?:official\s+)?(?:source\s+)?links?\b'
         r'|\bofficial\s+source\b'
         r'|\b(?:with|include|provide|cite|show|give|find)\s+(?:the\s+)?(?:official\s+)?(?:sources|citations)\b'
+        r'|\blink\s+(?:to\s+)?(?:the\s+|your\s+)?(?:original\s+|official\s+)?(?:instructions|sources|documentation|articles?|reports?|studies|manuals?|guides?)\b'
         r'|\b(?:find|locate|get|download)\b.{0,60}\bofficial\b.{0,60}\b(?:manual|guide|handbook|pdf|documentation)\b'
         r'|\b(?:find|locate|get|download)\b.{0,80}\b(?:manual|guide|handbook|pdf)\b.{0,40}\b(?:online|official)\b',
         str(user_text or ''),
@@ -3798,6 +3799,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     if is_odysseus_merged_tools_model(model):
         temperature = 0.0
     started = time.monotonic()
+    tool_execution_timings = []
     model_choice_experiment = getattr(turn_contract, 'routing_experiment', 'baseline') != 'baseline'
     direct_user_text = next(
         (_conversation_user_text(m.get('content', '')) for m in reversed(messages)
@@ -4871,6 +4873,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         else:
                             from src.tool_routing_experiment import note_fixture_scope
                             fixture_token = note_fixture_scope.set(experiment_fixture_ids or None)
+                            tool_started = time.monotonic()
                             try:
                                 execution_attempted = True
                                 desc, result = await execute_tool_block(
@@ -4886,6 +4889,10 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                 ):
                                     result = ui_toggle_state_result(client_runtime_context)
                             finally:
+                                tool_execution_timings.append({
+                                    'tool': canonical(block.tool_type), 'round': round_number,
+                                    'seconds': round(time.monotonic() - tool_started, 3),
+                                })
                                 note_fixture_scope.reset(fixture_token)
                                 if (tool_type == 'private_browser'
                                         and not (result or {}).get('blocked')
@@ -5692,6 +5699,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
         'temperature': temperature,
         'max_output_tokens': request_max_tokens,
         'tool_calls': calls,
+        'tool_execution_timings': tool_execution_timings,
         'tool_events': executions, 'clean_v3_turn': text_only_clean_trace(history[initial_length:]),
         'policy_decisions': policy_decisions,
         'schema_mode': 'compact_contract_v5', 'clean_v3_preview': True,
