@@ -5503,7 +5503,7 @@ def test_masked_shell_pipeline_failure_accepts_adapter_combined_output():
     assert error == "find: 'images': No such file or directory"
 
 
-def test_semantic_repeat_scope_treats_still_image_queries_as_one_inspection():
+def test_semantic_repeat_scope_distinguishes_focused_still_image_inspections():
     import src.clean_agent_preview as module
 
     first = module.semantic_repeat_scope(
@@ -5512,15 +5512,18 @@ def test_semantic_repeat_scope_treats_still_image_queries_as_one_inspection():
     second = module.semantic_repeat_scope(
         'inspect_media', {'path': '/workspace/map.png', 'query': 'identify colors'},
     )
-    assert first == ('still_image_inspection', '/workspace/map.png')
-    assert second == first
+    assert first == ('still_image_inspection', '/workspace/map.png', 'read labels', 0)
+    assert second != first
+    assert module.semantic_repeat_scope(
+        'inspect_media', {'path': '/workspace/map.png', 'query': '  READ   labels '},
+    ) == first
     assert module.semantic_repeat_scope(
         'inspect_media', {'path': '/workspace/video.mp4', 'start': 0, 'end': 10},
     ) is None
 
 
 @pytest.mark.asyncio
-async def test_native_stream_does_not_reinspect_one_still_image_with_a_new_query(monkeypatch):
+async def test_native_stream_allows_focused_reinspection_but_blocks_exact_repeat(monkeypatch):
     import src.clean_agent_preview as module
 
     responses = iter([
@@ -5529,6 +5532,10 @@ async def test_native_stream_does_not_reinspect_one_still_image_with_a_new_query
                 'path': '/workspace/map.png', 'query': 'read labels',
             })}}]}}]},
         {'choices': [{'delta': {'tool_calls': [{'index': 0, 'id': 'inspect-2',
+            'function': {'name': 'inspect_media', 'arguments': json.dumps({
+                'path': '/workspace/map.png', 'query': 'identify colors',
+            })}}]}}]},
+        {'choices': [{'delta': {'tool_calls': [{'index': 0, 'id': 'inspect-3',
             'function': {'name': 'inspect_media', 'arguments': json.dumps({
                 'path': '/workspace/map.png', 'query': 'identify colors',
             })}}]}}]},
@@ -5578,11 +5585,11 @@ async def test_native_stream_does_not_reinspect_one_still_image_with_a_new_query
         client_runtime_context={
             'surface': 'odysseus-native', 'terminal_agent': True,
             'unattended_mode': True,
-        }, max_rounds=4,
+        }, max_rounds=5,
     )]
 
     events = [json.loads(chunk[6:]) for chunk in raw if '[DONE]' not in chunk]
-    assert len(executions) == 1
+    assert len(executions) == 2
     duplicate = [
         event for event in events
         if event.get('type') == 'tool_output' and event.get('error')
@@ -5590,7 +5597,7 @@ async def test_native_stream_does_not_reinspect_one_still_image_with_a_new_query
     assert len(duplicate) == 1
     assert 'already inspected' in duplicate[0]['output'].lower()
     assert 'inspect_media' not in [
-        schema['function']['name'] for schema in requests[2].get('tools', [])
+        schema['function']['name'] for schema in requests[3].get('tools', [])
     ]
 
 

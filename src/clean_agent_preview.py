@@ -243,7 +243,14 @@ def semantic_repeat_scope(name, args):
         raw_path = str(args.get('path') or '').strip()
         suffix = os.path.splitext(raw_path.casefold())[1]
         if raw_path and suffix in {'.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'}:
-            return ('still_image_inspection', os.path.normpath(raw_path))
+            query = re.sub(r'\s+', ' ', str(args.get('query') or '')).strip().casefold()
+            try:
+                max_dimension = int(args.get('max_dimension') or 0)
+            except (TypeError, ValueError):
+                max_dimension = 0
+            return (
+                'still_image_inspection', os.path.normpath(raw_path), query, max_dimension,
+            )
     if tool == 'bash':
         command = str(args.get('command') or '')
         lowered = command.casefold()
