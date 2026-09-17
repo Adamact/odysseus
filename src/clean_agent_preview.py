@@ -2006,10 +2006,10 @@ def dependent_write_prerequisite_error(turn_contract, name, successful_required_
 def bounded_research_tool_policy(offered, *, searches=0, retrievals=0, search_limit=2):
     """Bound research loops after enough discovery evidence has been gathered.
 
-    Two searches are enough to choose a source in the ordinary research flow.
-    The next step must retrieve source evidence, and the following step belongs
-    to final synthesis.  This is deliberately activated by observed web calls,
-    so unrelated calendar, email, document, and media turns are unchanged.
+    Bound discovery without treating retrieved text as proof of sufficiency.
+    After discovery, source inspection and browser recovery stay available:
+    an obsolete page or partial excerpt may need another source. The global
+    turn/call budget still prevents unbounded research.
     """
     schemas = list(offered or ())
     if searches < max(1, int(search_limit)):
@@ -2019,7 +2019,7 @@ def bounded_research_tool_policy(offered, *, searches=0, retrievals=0, search_li
         if canonical((schema.get('function') or {}).get('name')) != 'web_search'
     ]
     if retrievals:
-        return [], 'none', True
+        return schemas, None, True
     fetch = next(
         (
             (schema.get('function') or {}).get('name')
@@ -4058,7 +4058,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         round_offered,
                         searches=successful_web_searches,
                         retrievals=successful_web_retrievals,
-                        search_limit=(2 if broad_current_web_request(direct_user_text) else 1),
+                        search_limit=2,
                     )
                 round_max_tokens = (
                     min(request_max_tokens, 4096)
@@ -4962,8 +4962,9 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             successful_search_intents.append(successful_intent)
                         if successful_web_searches == 2 and not required_artifacts:
                             round_recovery_messages.append(
-                                ('Search already returned readable article content. Use that '
-                                 'evidence to synthesize the answer now with source URLs.'
+                                ('Search returned readable article content. Assess whether it '
+                                 'answers the request; inspect another source if facts are missing, '
+                                 'outdated, or contradictory. Otherwise answer with source URLs.'
                                  if successful_web_retrievals else
                                 'Research discovery is complete after two searches. Do not search '
                                 'again. Retrieve the strongest authoritative result with web_fetch, '
@@ -4996,11 +4997,11 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             if source_url not in retrieved_web_sources:
                                 retrieved_web_sources.append(source_url)
                         if successful_web_searches >= 2 and not required_artifacts:
-                            force_no_tools_next_round = True
                             round_recovery_messages.append(
-                                'Evidence retrieval is complete. Stop using tools and deliver the '
-                                'complete answer now, covering every requested fact, comparison, and '
-                                'caveat with the source URLs supported by the retrieved evidence. '
+                                'Source text was retrieved, but retrieval alone does not prove the '
+                                'question is answered. If evidence is sufficient, answer now. '
+                                'Otherwise inspect a relevant source for the missing facts. '
+                                'Cite only URLs supporting the associated claims. '
                                 'Retrieved source URLs: '
                                 + (', '.join(retrieved_web_sources) or 'none recorded')
                                 + '.'

@@ -1080,7 +1080,7 @@ def test_narrow_lookup_policy_forces_retrieval_after_one_successful_search():
     assert active is True
 
 
-def test_bounded_research_policy_reserves_synthesis_after_retrieval():
+def test_bounded_research_policy_keeps_source_inspection_after_retrieval():
     schemas = [
         {'type': 'function', 'function': {'name': name, 'parameters': {}}}
         for name in ('web_search', 'web_fetch', 'manage_calendar')
@@ -1088,8 +1088,8 @@ def test_bounded_research_policy_reserves_synthesis_after_retrieval():
     offered, choice, active = bounded_research_tool_policy(
         schemas, searches=2, retrievals=1,
     )
-    assert offered == []
-    assert choice == 'none'
+    assert [schema['function']['name'] for schema in offered] == ['web_fetch', 'manage_calendar']
+    assert choice is None
     assert active is True
 
 
@@ -1116,7 +1116,14 @@ async def test_stream_bounds_research_to_two_searches_fetch_then_synthesis(monke
         {'choices': [{'delta': {'tool_calls': [call(0, 'web_search', {'query': 'topic overview'})]}}]},
         {'choices': [{'delta': {'tool_calls': [call(1, 'web_search', {'query': 'topic official source'})]}}]},
         {'choices': [{'delta': {'tool_calls': [call(2, 'web_fetch', {'url': 'https://example.org/source'})]}}]},
-        {'choices': [{'delta': {'content': 'Complete evidence-grounded answer with https://example.org/source'}}]},
+        {'choices': [{'delta': {'content': 'Complete evidence-grounded answer with https://example.org/source. ' +
+            'The sources describe the topic and explain how the findings were obtained. '
+            'Their methods support the reported observations but do not establish every broader claim. '
+            'The official source supplies the definitions needed to interpret the comparison. '
+            'Independent coverage adds context while also noting the limitations of the available evidence. '
+            'These limitations matter when applying the findings to a different setting. '
+            'The conclusion should therefore stay within the conditions actually examined, and any '
+            'unanswered questions should be checked against additional primary evidence.'}}]},
     ])
     requests = []
     executions = []
@@ -1159,7 +1166,7 @@ async def test_stream_bounds_research_to_two_searches_fetch_then_synthesis(monke
         endpoint_url='http://test', model='test',
         messages=[{'role': 'user', 'content': 'Research this topic using authoritative sources.'}],
         headers={}, turn_contract=contract, session_id='test', owner='test',
-        disabled_tools=set(), tool_policy=ToolPolicy(), max_rounds=4,
+        disabled_tools=set(), tool_policy=ToolPolicy(), max_rounds=5,
     )]
 
     assert executions == ['web_search', 'web_search', 'web_fetch']
@@ -1170,7 +1177,8 @@ async def test_stream_bounds_research_to_two_searches_fetch_then_synthesis(monke
         schema['function']['name'] != 'web_search'
         for schema in requests[2]['tools']
     )
-    assert 'tools' not in requests[3]
+    assert [schema['function']['name'] for schema in requests[3]['tools']] == ['web_fetch']
+    assert requests[3].get('tool_choice') != 'none'
     assert any(
         'Retrieved source URLs: https://example.org/source' in str(message.get('content', ''))
         for message in requests[3]['messages']
@@ -1274,7 +1282,8 @@ async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatc
         assert requests[3]['tool_choice'] == {
             'type': 'function', 'function': {'name': 'web_fetch'},
         }
-    assert 'tools' not in requests[-1]
+    assert any(s['function']['name'] == 'web_fetch' for s in requests[-1]['tools'])
+    assert requests[-1].get('tool_choice') != 'none'
     assert any(
         event.get('type') == 'completion_recovery'
         and event.get('reason') == 'insufficient_research_breadth'
