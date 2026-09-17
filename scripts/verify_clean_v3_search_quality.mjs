@@ -137,6 +137,10 @@ try {
       ['no-web-missing-object', ['please find that'], false],
       ['no-web-missing-price', ['what about its price?'], false],
       ['grounded-lookup-followup', ['My next question is about the Python release schedule. For now, just acknowledge; do not search or save anything.', 'can u look it up'], [false, true]],
+      ['official-release-polished', ['Find the latest stable Python release on the official website. Give its version, release date, and source link.'], true],
+      ['official-release-casual', ['whats the newest stable python? version + date + official link pls'], true],
+      ['official-release-misspelled', ['whats teh newst stable pythno? verison date n offical link pls'], true],
+      ['no-web-quoted-release', ['Correct spelling only: whats teh newst stable pythno? verison date n offical link pls'], false],
     ];
     async function runCase([name, prompts, needsWeb]) {
       const scenario = { name, status: 'running', turns: [] };
