@@ -162,6 +162,25 @@ SAFE_ACTIONS = {
 }
 
 
+def search_tool_choice_request(request):
+    """Enforce a search via one offered tool, not named-tool argument decoding.
+
+    The served model emits missing query fields under named search choice.
+    Required choice over the same single schema preserves the policy intent.
+    Other tools and auto/none requests retain their existing dispatch.
+    """
+    choice = request.get('tool_choice')
+    if not isinstance(choice, dict) or choice.get('type') != 'function':
+        return request
+    name = (choice.get('function') or {}).get('name')
+    if name != 'web_search':
+        return request
+    selected = [s for s in request.get('tools', []) if s.get('function', {}).get('name') == name]
+    if len(selected) != 1:
+        return request
+    return {**request, 'tools': selected, 'tool_choice': 'required'}
+
+
 def bounded_search_observation(output, budget=8000):
     """Share the observation budget across fetched sources, not prefix order.
 
@@ -4190,6 +4209,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             }
                         force_private_browser_next_round = False
                 pending, content = {}, ''
+                request = search_tool_choice_request(request)
                 async with preview_model_response(client, endpoint_url, headers, request, context_recovery) as response:
                     response.raise_for_status()
                     async for line in response.aiter_lines():

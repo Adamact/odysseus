@@ -1283,9 +1283,8 @@ async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatc
     events = [json.loads(chunk[6:]) for chunk in raw if '[DONE]' not in chunk]
 
     assert len(requests) == (4 if embedded_article or empty_second_search else 5)
-    assert requests[2]['tool_choice'] == {
-        'type': 'function', 'function': {'name': 'web_search'},
-    }
+    assert requests[2]['tool_choice'] == 'required'
+    assert [s['function']['name'] for s in requests[2]['tools']] == ['web_search']
     if not embedded_article and not empty_second_search:
         assert requests[3]['tool_choice'] == {
             'type': 'function', 'function': {'name': 'web_fetch'},
@@ -4351,9 +4350,8 @@ async def test_blocked_search_engine_browser_forces_native_web_search(monkeypatc
     )]
 
     assert executions == ['private_browser', 'web_search']
-    assert requests[1]['tool_choice'] == {
-        'type': 'function', 'function': {'name': 'web_search'},
-    }
+    assert requests[1]['tool_choice'] == 'required'
+    assert [s['function']['name'] for s in requests[1]['tools']] == ['web_search']
     events = [json.loads(chunk[6:]) for chunk in raw if '[DONE]' not in chunk]
     assert any(
         event.get('type') == 'tool_loop_recovery'

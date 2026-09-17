@@ -4,6 +4,23 @@ import json
 import pytest
 
 
+def test_forced_search_dispatch_preserves_schema_without_mutating_request():
+    from src.clean_agent_preview import search_tool_choice_request
+    search = {'type': 'function', 'function': {'name': 'web_search', 'parameters': {'required': ['query']}}}
+    other = {'type': 'function', 'function': {'name': 'web_fetch'}}
+    request = {'tools': [search, other], 'tool_choice': {'type': 'function', 'function': {'name': 'web_search'}}, 'messages': []}
+    converted = search_tool_choice_request(request)
+    assert converted['tools'] == [search]
+    assert converted['tools'][0] is search
+    assert converted['tool_choice'] == 'required'
+    assert len(request['tools']) == 2
+    for choice in ['auto', 'none', 'required', {'type': 'function', 'function': {'name': 'web_fetch'}}]:
+        other_request = {**request, 'tool_choice': choice}
+        assert search_tool_choice_request(other_request) is other_request
+    missing = {**request, 'tools': [other]}
+    assert search_tool_choice_request(missing) is missing
+
+
 @pytest.mark.parametrize('prompt', [
     'Explain the settings and link the instructions, not just the homepage.',
     'Can you link to the original studies?',
