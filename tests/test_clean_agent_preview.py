@@ -312,8 +312,8 @@ def test_native_execution_limits_allow_multi_artifact_work_without_unbounded_rou
 
 
 def test_compact_preview_honors_configured_interactive_round_limit():
-    assert interactive_execution_limit(100) == 100
-    assert interactive_execution_limit(1000) == 200
+    assert interactive_execution_limit(100) == 8
+    assert interactive_execution_limit(1000) == 8
     assert interactive_execution_limit(0) == 1
     assert interactive_execution_limit(None) == 8
     assert interactive_execution_limit("invalid") == 8
@@ -1264,6 +1264,10 @@ async def test_stream_retries_an_obviously_truncated_broad_web_answer(monkeypatc
     assert any(
         event.get('type') == 'final_response'
         and 'fuller evidence-based briefing' in event.get('content', '')
+        for event in events
+    )
+    assert not any(
+        event.get('delta') == 'Current AI news includes reports about U.'
         for event in events
     )
 
