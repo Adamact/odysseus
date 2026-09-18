@@ -207,6 +207,29 @@ def _looks_like_youtube_video_id(value: str) -> bool:
     return bool(re.fullmatch(r"[A-Za-z0-9_-]{10,16}", str(value or "").strip()))
 
 
+def _arxiv_listing_api_hint(url: str, error: str) -> str:
+    """Return an explicit recovery path for a blocked arXiv date listing."""
+    if "406" not in str(error or ""):
+        return ""
+    parsed = urllib.parse.urlsplit(str(url or ""))
+    if parsed.hostname not in {"arxiv.org", "www.arxiv.org"}:
+        return ""
+    match = re.fullmatch(r"/list/([A-Za-z0-9.-]+)", parsed.path.rstrip("/"))
+    date = urllib.parse.parse_qs(parsed.query).get("date", [""])[0]
+    if not match or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+        return ""
+    day = date.replace("-", "")
+    query = f"cat:{match.group(1)} AND submittedDate:[{day}0000 TO {day}2359]"
+    api_url = "https://export.arxiv.org/api/query?" + urllib.parse.urlencode({
+        "search_query": query, "start": "0", "max_results": "100",
+    })
+    return (
+        " arXiv rejected its static listing (HTTP 406). The public Atom API is "
+        f"available for this category/day; call web_fetch on {api_url} to read "
+        "the dated feed, then inspect individual paper sources for details."
+    )
+
+
 class WebSearchTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.search import comprehensive_web_search, searxng_search_results
@@ -651,8 +674,9 @@ class WebFetchTool:
 
         if not text:
             if err:
+                arxiv_hint = _arxiv_listing_api_hint(url, str(err))
                 return {
-                    "error": f"web_fetch: {url}: {err}",
+                    "error": f"web_fetch: {url}: {err}{arxiv_hint}",
                     "exit_code": 1,
                     "untrusted_content": True,
                 }

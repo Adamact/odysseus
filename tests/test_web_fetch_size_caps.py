@@ -115,6 +115,16 @@ def test_body_under_cap_is_untouched(monkeypatch, no_cache):
     assert r["fetched_bytes"] == len(b"hello world")
 
 
+def test_atom_xml_api_response_is_preserved_as_readable_evidence(monkeypatch, no_cache):
+    body = b"<?xml version='1.0'?><feed><entry><title>Daily paper</title></entry></feed>"
+    _patch_stream(monkeypatch, _FakeStream(body, content_type="application/atom+xml"))
+
+    result = content_mod.fetch_webpage_content("https://example.com/api/feed")
+
+    assert result["success"] is True
+    assert "<title>Daily paper</title>" in result["content"]
+
+
 def test_body_over_soft_cap_truncates_with_flags(monkeypatch, no_cache):
     body = b"x" * (WEB_FETCH_SOFT_MAX_BYTES + 50_000)
     _patch_stream(monkeypatch, _FakeStream(body, content_length=len(body)))

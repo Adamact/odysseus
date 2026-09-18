@@ -358,11 +358,19 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0,
     # catches servers that mislabel text files as `application/octet-stream`.
     is_html = "html" in content_type
     is_json = "json" in content_type
+    # Atom and XML are common public API formats (for example scholarly,
+    # release, and government feeds). Parsing them through the HTML content
+    # heuristic can yield an empty body even though the response contains
+    # complete structured evidence. Preserve the source text so the caller
+    # can inspect the fields or process it with workspace tools.
+    is_xml = "xml" in content_type
     url_path = url.lower().split("?", 1)[0].split("#", 1)[0]
     looks_like_text_file = url_path.endswith(
         (".md", ".markdown", ".txt", ".text", ".json", ".jsonl")
     )
-    if not is_html and (content_type.startswith("text/") or is_json or looks_like_text_file):
+    if not is_html and (
+        content_type.startswith("text/") or is_json or is_xml or looks_like_text_file
+    ):
         text_body = (response.text or "").strip()
         result = {
             "url": url,

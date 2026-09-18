@@ -1,7 +1,7 @@
 import asyncio
 import json
 
-from src.agent_tools.web_tools import WebFetchTool
+from src.agent_tools.web_tools import WebFetchTool, _arxiv_listing_api_hint
 from src.search import content as content_mod
 from src.tool_schemas import FUNCTION_TOOL_SCHEMAS, function_call_to_tool_block
 from src.clean_agent_preview import normalize_preview_function_args
@@ -77,6 +77,20 @@ def test_web_fetch_does_not_decode_local_html_or_binary_media(tmp_path):
     assert "private_browser" in html["error"]
     assert video["exit_code"] == 1
     assert "inspect_media" in video["error"]
+
+
+def test_arxiv_list_406_offers_exact_public_api_recovery():
+    hint = _arxiv_listing_api_hint(
+        "https://arxiv.org/list/cs.CV?date=2026-02-25",
+        "HTTP 406: blocked",
+    )
+
+    assert "export.arxiv.org/api/query" in hint
+    assert "cat%3Acs.CV" in hint
+    assert "submittedDate%3A%5B202602250000" in hint
+    assert not _arxiv_listing_api_hint(
+        "https://example.com/list/cs.CV?date=2026-02-25", "HTTP 406"
+    )
 
 
 def test_web_fetch_schema_and_native_parser_accept_urls_batch():
