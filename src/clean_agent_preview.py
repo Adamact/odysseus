@@ -1436,7 +1436,8 @@ def runtime_required_artifacts(user_text, client_runtime_context):
                 path = str(value or '').strip().rstrip('/')
                 if path and path not in paths:
                     paths.append(path)
-            return tuple(paths)
+            if paths:
+                return tuple(paths)
     paths = []
     for value in declared_workspace_artifacts(user_text):
         path = str(value or '').strip().rstrip('/')

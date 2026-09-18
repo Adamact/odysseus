@@ -477,6 +477,13 @@ def test_prompt_output_path_is_tracked_without_its_source_path():
     ) == ('/workspace/output.html',)
 
 
+def test_empty_runner_artifact_list_falls_back_to_prompt_output_path():
+    assert runtime_required_artifacts(
+        'Create an HTML report at /workspace/output.html from /workspace/input.csv.',
+        {'completion_requirements': {'required_artifacts': []}},
+    ) == ('/workspace/output.html',)
+
+
 def test_preferences_are_inputs_not_required_outputs_for_a_saved_digest():
     from src.clean_agent_preview import declared_workspace_artifacts
 
