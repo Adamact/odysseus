@@ -143,6 +143,18 @@ def test_research_filter_followup_seals_a_library_search():
     assert operation.args == {"action": "list", "search": "battery tech"}
 
 
+def test_empty_family_contract_keeps_core_recovery_tools() -> None:
+    contract = resolve(
+        frozenset(),
+        selected_tools=None,
+    )
+
+    assert len(contract.offered & {
+        "bash", "python", "read_file", "web_search", "web_fetch", "ask_user",
+    }) >= 5
+    assert contract.offered
+
+
 def test_full_inventory_experiment_respects_disabled_families_without_blocking_others():
     from src.turn_contract import resolve_full_inventory_contract
     contract = resolve_full_inventory_contract(

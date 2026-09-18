@@ -40,6 +40,13 @@ FAMILY_TOOLS = {
     "media_inspection": frozenset({"inspect_media"}),
     "ocr": frozenset({"extract_text"}),
 }
+
+# Retrieval is selection, not authorization. A normal agent turn must retain
+# this small recovery surface when no family was recognized; explicit family
+# selections and policy denials remain narrower.
+CONTRACT_CORE_TOOLS = frozenset({
+    "bash", "python", "read_file", "web_search", "web_fetch", "ask_user",
+})
 _FAMILY_WORDS = {
     "calendar": r"\b(?:calendar|calender|events?|appointments?|meetings?|agenda)\b",
     "notes": r"\b(?:notes?|checklists?|groceries|remind\s+me)\b",
@@ -5655,6 +5662,8 @@ def resolve_turn_contract(*, capabilities: Iterable[str], schemas: Iterable[dict
         # Offer exactly that reader so the model cannot drift to a sibling
         # search/mutation tool after the router has already resolved intent.
         selected.intersection_update({canonical_tool(operation.tool)})
+    elif not families:
+        selected.update(CONTRACT_CORE_TOOLS)
     selected.update(canonical_tool(n) for n in warm_tools if str(n or "").strip())
     # Controls are neutral; enabling Web is permission, never a requested family.
     if selected:
