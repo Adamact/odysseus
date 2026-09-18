@@ -989,6 +989,22 @@ def contentless_final_response(content):
     ))
 
 
+def action_promise_response(content):
+    """Recognize a short promise to do work that contains no result yet."""
+    text = re.sub(r'\s+', ' ', str(content or '')).strip()
+    if not text or len(text.split()) > 48:
+        return False
+    if re.search(r'\b(?:answer|result|score|served|created|saved)\s*:', text, re.I):
+        return False
+    return bool(re.match(
+        r"^(?:okay[,.:]?\s*)?(?:let me|i(?:'ll| will)|next[,.:]?\s+i(?:'ll| will))\s+"
+        r"(?:now\s+)?(?:inspect|extract|read|check|review|analy[sz]e|verify|open|"
+        r"search|look|create|write|render|run|use|continue|finish|provide)\b",
+        text,
+        re.I,
+    ))
+
+
 def broad_current_web_request(user_text):
     """Whether the user requested a broad current-information briefing."""
     return broad_web_briefing_request(user_text)
@@ -4245,6 +4261,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     search_completion_attempted = False
     budget_completion_attempted = False
     answer_recovery_attempts = 0
+    action_promise_recovery_attempts = 0
     citation_recovery_attempted = False
     force_no_tools_next_round = False
     force_web_search_next_round = (
@@ -4784,6 +4801,34 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             ),
                         })
                         yield event({'type': 'completion_recovery', 'reason': 'contentless_answer'})
+                        continue
+                    if (
+                        not research_expansion_due
+                        and action_promise_response(content)
+                        and action_promise_recovery_attempts < 2
+                        and round_number < round_limit
+                    ):
+                        action_promise_recovery_attempts += 1
+                        force_no_tools_next_round = action_promise_recovery_attempts > 1
+                        replace_streamed_draft_on_finish = True
+                        history.pop()
+                        instruction = (
+                            'Completion check: the draft only promised a next action and did not '
+                            'answer the user. Execute the necessary next action with the offered '
+                            'tools now; do not narrate or promise it.'
+                            if not force_no_tools_next_round else
+                            'Completion check: a second action promise is not an answer. Using only '
+                            'the tool evidence already gathered, answer the original request '
+                            'directly now, state uncertainty plainly, and do not call another tool.'
+                        )
+                        history.append({
+                            'role': 'user', '_harness_control': True, 'content': instruction,
+                        })
+                        yield event({
+                            'type': 'completion_recovery',
+                            'reason': 'action_promise_without_result',
+                            'attempt': action_promise_recovery_attempts,
+                        })
                         continue
                     if research_expansion_due:
                         breadth_recovery_attempted = True

@@ -553,6 +553,23 @@ def test_required_binary_artifact_forces_python_instead_of_text_writer():
     ]
 
 
+def test_action_promise_response_rejects_future_work_but_not_real_answers():
+    import src.clean_agent_preview as module
+
+    assert module.action_promise_response(
+        'Let me extract frames and read the on-screen text directly.'
+    )
+    assert module.action_promise_response(
+        'I will now inspect the remaining segments before answering.'
+    )
+    assert not module.action_promise_response(
+        'I inspected all segments. Alex served: 6, Sam served: 6.'
+    )
+    assert not module.action_promise_response(
+        'Alex served 6 times. Let me know if you want the timestamps.'
+    )
+
+
 def test_repeated_off_contract_artifact_calls_trigger_single_file_body_handoff():
     import src.clean_agent_preview as module
 
@@ -729,6 +746,83 @@ async def test_binary_artifact_completion_requests_python_not_text_writer(monkey
     assert any(
         event.get('type') == 'agent_step'
         and event.get('offered_tools') == ['python']
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_action_promise_resumes_tools_then_forces_final_synthesis(monkeypatch):
+    import src.clean_agent_preview as module
+
+    call = lambda index: {'choices': [{'delta': {'tool_calls': [{
+            'index': 0, 'id': f'inspect-{index}',
+            'function': {'name': 'inspect_media', 'arguments': json.dumps({
+                'path': '/workspace/input/video.mp4',
+                'query': f'segment {index}',
+            })},
+    }]}}]}
+    responses = iter([
+        call(1),
+        {'choices': [{'delta': {'content': 'Let me inspect the remaining segment.'}}]},
+        call(2),
+        {'choices': [{'delta': {'content': 'I will now review the frames.'}}]},
+        {'choices': [{'delta': {'content': 'Alex served: 6, Sam served: 6.'}}]},
+    ])
+    requests = []
+
+    class Response:
+        def __init__(self, payload): self.payload = payload
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def raise_for_status(self): pass
+        async def aiter_lines(self):
+            yield 'data: ' + json.dumps(self.payload)
+            yield 'data: [DONE]'
+
+    class Client:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def stream(self, *args, **kwargs):
+            requests.append(kwargs['json'])
+            return Response(next(responses))
+
+    executed = []
+
+    async def execute(block, **kwargs):
+        executed.append(block.tool_type)
+        return block.tool_type, {'output': 'timestamped visual evidence', 'exit_code': 0}
+
+    monkeypatch.setattr(module.httpx, 'AsyncClient', Client)
+    monkeypatch.setattr(module, 'execute_tool_block', execute)
+    schema = next(
+        item for item in FUNCTION_TOOL_SCHEMAS
+        if item['function']['name'] == 'inspect_media'
+    )
+    contract = resolve_full_inventory_contract(schemas=[schema], policy=ToolPolicy())
+    raw = [chunk async for chunk in stream_preview(
+        endpoint_url='http://test', model='kimi-k3',
+        messages=[{'role': 'user', 'content': 'Inspect the full video and report counts.'}],
+        headers={}, turn_contract=contract, session_id='test', owner='test',
+        disabled_tools=set(), tool_policy=ToolPolicy(), workspace='/workspace',
+        client_runtime_context={
+            'surface': 'odysseus-native', 'terminal_agent': True,
+            'unattended_mode': True,
+        }, max_tokens=8192, max_rounds=6,
+    )]
+
+    assert executed == ['inspect_media', 'inspect_media']
+    assert requests[2].get('tools')
+    assert 'tools' not in requests[4]
+    events = [json.loads(chunk[6:]) for chunk in raw if '[DONE]' not in chunk]
+    recoveries = [
+        event for event in events
+        if event.get('reason') == 'action_promise_without_result'
+    ]
+    assert [event['attempt'] for event in recoveries] == [1, 2]
+    assert any(
+        event.get('type') == 'final_response'
+        and 'Alex served: 6' in event.get('content', '')
         for event in events
     )
 
