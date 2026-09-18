@@ -305,6 +305,14 @@ def _client_bridge(client_runtime_context: Optional[Dict]) -> Optional[Dict]:
 
 _ROUTED_BRIDGE_TOOLS = TUI_ROUTED_BRIDGE_TOOL_NAMES
 _BRIDGE_TOOL_TIMEOUT_S = 900.0
+# ``write_file`` transports UTF-8 source/text only.  Keep this guard on the
+# bridge route as well as the local WriteFileTool: native/Harbor runs use the
+# bridge for workspace files, so otherwise a model can overwrite a verified
+# PNG/PDF screenshot with a prose status message.
+_TEXT_WRITE_BINARY_SUFFIXES = frozenset({
+    ".bmp", ".gif", ".ico", ".jpeg", ".jpg", ".mp3", ".mp4", ".ogg",
+    ".pdf", ".png", ".wav", ".webm", ".webp", ".zip",
+})
 
 
 async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[str], client_runtime_context: Optional[Dict]):
@@ -659,6 +667,15 @@ async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[s
         return "write_file: invalid arguments", {
             "error": "write_file: path is required",
             "exit_code": 1,
+        }
+    if os.path.splitext(path)[1].casefold() in _TEXT_WRITE_BINARY_SUFFIXES:
+        return f"write_file: {path[:80]}", {
+            "error": (
+                f"write_file: refusing UTF-8 text for binary artifact path {path}. "
+                "Use Python or a format-specific creation tool, then inspect the result."
+            ),
+            "exit_code": 1,
+            "binary_artifact_preserved": True,
         }
     return f"write_file: {path[:80]}", await _bridge_post(
         bridge,

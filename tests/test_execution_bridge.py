@@ -153,3 +153,32 @@ def test_scoped_execution_bridge_failure_logs_compact_warning(caplog) -> None:
     assert "Command timed out after 900 seconds" in result["error"]
     assert "Traceback" not in caplog.text
     assert "Scoped execution bridge test-environment failed for tool=host_shell" in caplog.text
+
+
+def test_tui_bridge_write_file_rejects_text_for_binary_artifact(monkeypatch) -> None:
+    """The bridge path must preserve rendered media just like local writes."""
+    called = False
+
+    async def fake_post(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        return {"output": "should not run", "exit_code": 0}
+
+    monkeypatch.setattr(tool_execution, "_client_bridge", lambda _context: {"url": "http://bridge", "token": "x"})
+    monkeypatch.setattr(tool_execution, "_bridge_post", fake_post)
+
+    async def invoke():
+        return await tool_execution._route_tool_via_bridge(
+            "write_file",
+            '{"path":"/tmp_workspace/results/screenshot.png","content":"The screenshot is complete."}',
+            "run-1",
+            {"surface": "odysseus-tui"},
+        )
+
+    description, result = asyncio.run(invoke())
+
+    assert description == "write_file: /tmp_workspace/results/screenshot.png"
+    assert result["exit_code"] == 1
+    assert result["binary_artifact_preserved"] is True
+    assert "binary artifact path" in result["error"]
+    assert called is False
