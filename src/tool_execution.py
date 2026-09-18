@@ -315,6 +315,30 @@ _TEXT_WRITE_BINARY_SUFFIXES = frozenset({
 })
 
 
+def _text_write_to_binary_artifact_result(content: str) -> tuple[str, Dict] | None:
+    """Reject UTF-8 text writes that target a binary artifact path."""
+    raw = str(content or "")
+    path, _, _body = raw.partition("\n")
+    path = path.strip()
+    if raw.lstrip().startswith("{"):
+        try:
+            args = json.loads(raw)
+            if isinstance(args, dict) and isinstance(args.get("path"), str):
+                path = args["path"].strip()
+        except (TypeError, ValueError):
+            pass
+    if os.path.splitext(path)[1].casefold() not in _TEXT_WRITE_BINARY_SUFFIXES:
+        return None
+    return f"write_file: {path[:80]}", {
+        "error": (
+            f"write_file: refusing UTF-8 text for binary artifact path {path}. "
+            "Use Python or a format-specific creation tool, then inspect the result."
+        ),
+        "exit_code": 1,
+        "binary_artifact_preserved": True,
+    }
+
+
 async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[str], client_runtime_context: Optional[Dict]):
     import base64
     bridge = _client_bridge(client_runtime_context)
@@ -668,15 +692,9 @@ async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[s
             "error": "write_file: path is required",
             "exit_code": 1,
         }
-    if os.path.splitext(path)[1].casefold() in _TEXT_WRITE_BINARY_SUFFIXES:
-        return f"write_file: {path[:80]}", {
-            "error": (
-                f"write_file: refusing UTF-8 text for binary artifact path {path}. "
-                "Use Python or a format-specific creation tool, then inspect the result."
-            ),
-            "exit_code": 1,
-            "binary_artifact_preserved": True,
-        }
+    rejected = _text_write_to_binary_artifact_result(content)
+    if rejected is not None:
+        return rejected
     return f"write_file: {path[:80]}", await _bridge_post(
         bridge,
         "/write",
@@ -1588,6 +1606,14 @@ async def _execute_tool_block_impl(
         }
         logger.warning("Public tool policy blocked owner=%r tool=%s", owner, tool)
         return desc, result
+
+    # A request-scoped bridge owns where a task workspace lives, not the
+    # semantic contract of write_file.  Keep text writes from corrupting a
+    # rendered image/PDF even when the bridge handles the physical write.
+    if tool == "write_file":
+        rejected = _text_write_to_binary_artifact_result(content)
+        if rejected is not None:
+            return rejected
 
     if bridge_owns_tool:
         try:

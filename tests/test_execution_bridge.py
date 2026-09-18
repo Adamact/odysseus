@@ -182,3 +182,30 @@ def test_tui_bridge_write_file_rejects_text_for_binary_artifact(monkeypatch) -> 
     assert result["binary_artifact_preserved"] is True
     assert "binary artifact path" in result["error"]
     assert called is False
+
+
+def test_scoped_bridge_cannot_bypass_binary_text_write_guard() -> None:
+    called = False
+
+    async def route(tool, content, session_id, runtime):
+        nonlocal called
+        called = True
+        return tool, {"output": "should not run", "exit_code": 0}
+
+    bridge = AgentExecutionBridge(route, frozenset({"write_file"}), name="task-workspace")
+
+    async def invoke():
+        block = Block("/tmp_workspace/results/screenshot.png\ncompletion prose")
+        block.tool_type = "write_file"
+        with bind_execution_bridge(bridge):
+            return await execute_tool_block(
+                block,
+                security_context=NO_TOOL_SECURITY_CONTEXT,
+            )
+
+    description, result = asyncio.run(invoke())
+
+    assert description == "write_file: /tmp_workspace/results/screenshot.png"
+    assert result["exit_code"] == 1
+    assert result["binary_artifact_preserved"] is True
+    assert called is False
