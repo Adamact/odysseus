@@ -2226,10 +2226,8 @@ def test_native_workspace_tools_require_validated_native_scope():
     samples = {
         'inspect_media': {'path': '/workspace/fixture.webm'},
         'extract_text': {'path': '/workspace/fixture.png'},
-        'read_file': {'path': '/workspace/input.txt'},
         'ls': {'path': '/workspace'},
         'write_file': {'path': '/workspace/output.html', 'content': '<html></html>'},
-        'python': {'code': '2 + 2'},
     }
     for name, args in samples.items():
         assert not preview_call_allowed(
@@ -2455,6 +2453,9 @@ def test_saved_tool_trace_retains_only_latest_browser_screenshot():
 
 def test_every_compactly_offered_preview_tool_has_valid_policy_permitted_call():
     samples = {
+            'ask_user': ({'question': 'Which one?', 'options': [{'label': 'First'}, {'label': 'Second'}]}, 'ask me which one'),
+            'python': ({'code': 'print(2 + 2)'}, 'calculate this'),
+            'read_file': ({'path': '/workspace/input.txt'}, 'read this file'),
             'app_api': ({
             'action': 'call', 'method': 'GET',
             'path': '/api/hwfit/models?fit_only=true&limit=10&sort=fit',
@@ -2531,7 +2532,7 @@ def test_every_compactly_offered_preview_tool_has_valid_policy_permitted_call():
     for name, (args, prompt) in samples.items():
         jsonschema.validate(args, schemas[name]['function']['parameters'])
         decision = evaluate_preview_call(
-            name, args, prompt, allow_execute_code=(name == 'bash'),
+            name, args, prompt, allow_execute_code=(name in {'bash', 'python'}),
             turn_authorized_families=(
                 {'research'} if name == 'trigger_research'
                     else {'email'} if name in {'send_email', 'reply_to_email', 'draft_email', 'draft_email_reply'}

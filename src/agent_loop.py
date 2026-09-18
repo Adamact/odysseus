@@ -22760,8 +22760,11 @@ async def stream_agent_loop(
         # after that narrow surface was selected.
         and not (_low_signal_turn and workspace)
     ):
-        _core_agent_tools = {
-            "bash", "python", "read_file", "web_search", "web_fetch", "ask_user",
+        from src.turn_contract import CONTRACT_CORE_TOOLS
+        _core_agent_tools = set(CONTRACT_CORE_TOOLS)
+        _known_schema_names = {
+            schema.get("function", {}).get("name") or schema.get("name")
+            for schema in FUNCTION_TOOL_SCHEMAS
         }
         _core_agent_tools.difference_update(_hard_blocked_tools)
         _relevant_tools.update(_core_agent_tools)
