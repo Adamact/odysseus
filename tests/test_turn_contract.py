@@ -4296,10 +4296,15 @@ def test_watch_workspace_video_is_media_not_generic_shell():
 
 
 def test_review_workspace_video_is_media_not_document_or_web_review():
-    assert requested_capabilities(
-        "Review the video at /workspace/input/video.mp4, count every match point, "
-        "and provide the verified totals in the final message."
-    ) == {"media_inspection"}
+    message = (
+        "Review the video at /workspace/input/video.mp4 which shows a fictional table tennis "
+        "match between Alex Chen and Jamie Rivera. The video is a highlights reel. For each "
+        "player, count the total number of match points they faced and how many of those they "
+        "saved. Ensure you have watched the entire video and verified your counts. Output your "
+        "answer in the final message."
+    )
+    assert requested_capabilities(message) == {"media_inspection"}
+    assert selected_tools_for_request(message) is None
 
 
 def test_explicit_media_verification_does_not_require_browser_family():

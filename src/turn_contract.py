@@ -753,6 +753,37 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
                 {"read_file", "write_file", "edit_file", "python"}
             )
         return frozenset(explicitly_named_web)
+    workspace_media_request = bool(
+        re.search(
+            r"(?:file://)?/workspace/[^\s`\"']+\."
+            r"(?:avif|bmp|gif|jpe?g|png|svg|tiff?|webp|mp3|m4a|ogg|wav|flac|"
+            r"aac|mp4|m4v|mov|mkv|avi|webm)\b",
+            raw_text,
+            re.I,
+        )
+        and re.search(
+            r"\b(?:inspect|view|watch|review|study|look\s+at|analy[sz]e|read|"
+            r"transcribe|caption|recreate|reproduce|identify|describe|extract)\b|"
+            r"(?:浏览|查看|观看|分析|检查|识别|转录|截图)",
+            raw_text,
+            re.I,
+        )
+    )
+    named_media_chain = {
+        name for name in ("inspect_media", "extract_text", "write_file", "read_file")
+        if re.search(
+            rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])",
+            raw_text,
+        )
+    }
+    if workspace_media_request and not (
+        {"write_file", "read_file"}.issubset(named_media_chain)
+        and named_media_chain.intersection({"inspect_media", "extract_text"})
+    ):
+        # The concrete workspace asset already seals the evidence source.
+        # Content words such as "reviews", "which", "highlights", or
+        # "final" must not become a public-Web lookup operation.
+        return None
     if (
         re.search(r"\b(?:look\s*up|search|find)\b", text, re.I)
         and re.search(
