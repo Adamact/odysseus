@@ -4127,6 +4127,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     suppressed_tool_until_round = {}
     permanently_suppressed_tools = set()
     successful_duplicate_counts = {}
+    repeated_search_rejection_count = 0
     empty_search_intents = {}
     successful_search_intents = []
     web_search_attempts = 0
@@ -4995,8 +4996,24 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             if repeated_search_refinement(
                                 args.get('query'), successful_search_intents,
                             ):
-                                force_web_search_next_round = True
                                 calls += 1
+                                repeated_search_rejection_count += 1
+                                if repeated_search_rejection_count >= 2:
+                                    terminal_suppression_violation = True
+                                    permanently_suppressed_tools.add('web_search')
+                                    round_recovery_messages.append(
+                                        'web_search was disabled after the same search intent was '
+                                        'rejected twice. Use already returned evidence, a different '
+                                        'offered tool, or state the remaining limitation.'
+                                    )
+                                    raise ValueError(
+                                        'Equivalent search intent was repeated after a correction reminder; '
+                                        'web_search is disabled for this turn.'
+                                    )
+                                # One correction turn still matters: it permits a materially
+                                # different query immediately instead of hiding the tool after
+                                # a merely stale/freshness variant was rejected.
+                                force_web_search_next_round = True
                                 raise ValueError(
                                     'An equivalent search already returned evidence. Change the '
                                     'angle, missing subtopic, source type, or '
