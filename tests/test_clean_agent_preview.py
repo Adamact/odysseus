@@ -531,7 +531,7 @@ def test_repeated_off_contract_artifact_calls_trigger_single_file_body_handoff()
     )
 
 
-def test_provider_wire_keeps_deepseek_reasoning_only_turn_for_continuity():
+def test_provider_wire_drops_deepseek_reasoning_only_turn_rejected_by_provider():
     import src.clean_agent_preview as module
 
     messages = [{
@@ -540,7 +540,7 @@ def test_provider_wire_keeps_deepseek_reasoning_only_turn_for_continuity():
         'reasoning_content': 'private provider reasoning token stream',
     }]
 
-    assert module.provider_wire_messages(messages) == messages
+    assert module.provider_wire_messages(messages) == []
 
 
 @pytest.mark.asyncio

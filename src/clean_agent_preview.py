@@ -3899,7 +3899,6 @@ def provider_wire_messages(messages):
             item.get('role') == 'assistant'
             and not item.get('content')
             and not item.get('tool_calls')
-            and not item.get('reasoning_content')
         ):
             continue
         cleaned.append(item)
