@@ -1525,14 +1525,31 @@ def artifact_completion_tool_schemas(offered_schemas, required_artifacts):
     This applies only after native execution enters its reserved artifact-write
     phase.  A JSON-Schema ``const`` gives the provider the exact destination
     instead of relying on it to recover the path from a long conversation.
-    Multiple outputs and directory targets stay unconstrained because choosing
-    one of those paths requires model intent.
+    Multiple outputs stay unconstrained. A sole directory target constrains the
+    writer to a non-empty descendant path while leaving the filename to the
+    model.
     """
     targets = [str(path or '').strip().rstrip('/') for path in required_artifacts]
-    targets = [path for path in targets if path and Path(path).suffix]
+    targets = [path for path in targets if path]
     if len(targets) != 1 or len(tuple(required_artifacts or ())) != 1:
         return offered_schemas
     target = targets[0]
+    if not Path(target).suffix:
+        bound = copy.deepcopy(offered_schemas)
+        for schema in bound:
+            function = schema.get('function') or {}
+            if canonical(function.get('name')) != 'write_file':
+                continue
+            properties = (function.get('parameters') or {}).get('properties') or {}
+            path_schema = properties.get('path')
+            if not isinstance(path_schema, dict):
+                continue
+            path_schema['pattern'] = '^' + re.escape(target + '/') + '.+'
+            path_schema['description'] = (
+                f'Write a new file inside the required directory {target}; '
+                'do not use the directory path itself.'
+            )
+        return bound
     if Path(target).suffix.lower() in _NON_TEXT_ARTIFACT_SUFFIXES:
         # ``write_file`` deliberately accepts UTF-8 text only. Keeping it in
         # a binary artifact completion round lets a forced writer choice trap
@@ -1571,14 +1588,9 @@ def artifact_completion_tool_schemas(offered_schemas, required_artifacts):
 
 
 def required_artifact_completion_tool_choice(required_artifacts, offered_schemas):
-    """Choose a writer only when the contract names an exact output file.
-
-    A directory contract needs the model to choose one or more child filenames.
-    Forcing ``write_file`` there encourages an impossible write to the directory
-    path itself, so leave tool choice unconstrained for that case.
-    """
+    """Force the compatible writer during reserved artifact completion."""
     targets = [str(path or '').strip().rstrip('/') for path in required_artifacts]
-    if not targets or any(not Path(target).suffix for target in targets):
+    if not targets:
         return None
     offered = {
         canonical((schema.get('function') or {}).get('name')):
