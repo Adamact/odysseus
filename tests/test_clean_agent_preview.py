@@ -5,7 +5,7 @@ import jsonschema
 import pytest
 import re
 
-from src.clean_agent_preview import conversation, readonly_call, preview_call_allowed, evaluate_preview_call, authorized_write_families, compact_schemas, normalize_preview_function_args, normalize_preview_call_args, private_browser_dom_batch, private_browser_state_transition, private_browser_success_repeat_limit, stream_preview, denied_response, execution_has_write_effect, requests_mutation, claims_completion, recent_successful_write_families, scope_preview_contract, multimodal_image_count, attachment_reference_count, active_document_context_message, active_email_context_message, targets_active_editor, active_editor_whole_draft_request, active_editor_suggestion_request, scope_active_editor_contract, native_execution_limits, interactive_execution_limit, runtime_required_artifacts, execution_targets_required_artifact, document_suggestions_event, document_suggestion_quality_error, required_read_tool_choice, required_active_editor_tool_choice, sealed_read_arguments, email_identifier_error, requested_item_limit, contract_item_limit, notes_terminal_response, documents_terminal_response, shell_listing_terminal_response, shell_output_terminal_response, ui_panel_terminal_response, ui_toggle_state_result, calendar_terminal_response, memory_terminal_response, tasks_terminal_response, task_list_requires_synthesis, skills_terminal_response, cookbook_servers_terminal_response, prior_short_answer_for_no_tool_summary, prior_collection_repeat_answer, prior_failed_operation_answer, prior_cookbook_server_answer, prior_workspace_path_answer, prior_web_source_answer, bounded_web_evidence_answer, inherit_referential_read_arguments, normalized_search_intent, requested_web_source_links, web_source_links, requested_web_link_limit, preserve_requested_web_recency, ground_referenced_note_content, note_search_result_empty, note_referent_error, research_referent_error, private_browser_open_url, private_browser_effective_url, web_fetch_observation_is_boilerplate, broad_current_web_request, record_tool_execution, align_structured_tool_history, provider_request_messages, provider_compatible_tool_choice_request, offered_tool_alias, dependent_write_prerequisite_error, bounded_research_tool_policy, retrieved_source_urls, serialize_required_email_attachment_chain
+from src.clean_agent_preview import conversation, readonly_call, preview_call_allowed, evaluate_preview_call, authorized_write_families, compact_schemas, normalize_preview_function_args, normalize_preview_call_args, private_browser_dom_batch, private_browser_state_transition, private_browser_success_repeat_limit, stream_preview, denied_response, execution_has_write_effect, requests_mutation, claims_completion, recent_successful_write_families, scope_preview_contract, multimodal_image_count, attachment_reference_count, active_document_context_message, active_email_context_message, targets_active_editor, active_editor_whole_draft_request, active_editor_suggestion_request, scope_active_editor_contract, native_execution_limits, interactive_execution_limit, runtime_required_artifacts, execution_targets_required_artifact, document_suggestions_event, document_suggestion_quality_error, required_read_tool_choice, required_active_editor_tool_choice, sealed_read_arguments, email_identifier_error, requested_item_limit, contract_item_limit, notes_terminal_response, documents_terminal_response, shell_listing_terminal_response, shell_output_terminal_response, direct_shell_output_request, ui_panel_terminal_response, ui_toggle_state_result, calendar_terminal_response, memory_terminal_response, tasks_terminal_response, task_list_requires_synthesis, skills_terminal_response, cookbook_servers_terminal_response, prior_short_answer_for_no_tool_summary, prior_collection_repeat_answer, prior_failed_operation_answer, prior_cookbook_server_answer, prior_workspace_path_answer, prior_web_source_answer, bounded_web_evidence_answer, inherit_referential_read_arguments, normalized_search_intent, requested_web_source_links, web_source_links, requested_web_link_limit, preserve_requested_web_recency, ground_referenced_note_content, note_search_result_empty, note_referent_error, research_referent_error, private_browser_open_url, private_browser_effective_url, web_fetch_observation_is_boilerplate, broad_current_web_request, record_tool_execution, align_structured_tool_history, provider_request_messages, provider_compatible_tool_choice_request, offered_tool_alias, dependent_write_prerequisite_error, bounded_research_tool_policy, retrieved_source_urls, serialize_required_email_attachment_chain
 from src.tool_capabilities import capabilities_for_tool
 
 
@@ -1466,6 +1466,21 @@ def test_shell_listing_renderer_uses_successful_stdout_rows():
         {"output": "alpha\nbeta\ngamma"}, user_text="list whats in there, just names"
     )
     assert rendered == "Workspace items (3):\n- alpha\n- beta\n- gamma"
+
+
+def test_shell_listing_renderer_does_not_mistake_requested_answer_list_for_files():
+    assert shell_listing_terminal_response(
+        "f_001.png\nf_002.png\n2",
+        user_text="Inspect the video and list every chess move with timestamps.",
+    ) == ""
+
+
+def test_raw_shell_stdout_only_owns_explicit_shell_requests():
+    assert direct_shell_output_request("Run this command and return its stdout: uname -a")
+    assert direct_shell_output_request("What is the current working directory?")
+    assert not direct_shell_output_request(
+        "Inspect the poster, calculate the package price, and explain ambiguities."
+    )
 
 
 def test_workspace_path_followup_reuses_prior_pwd_evidence():
@@ -4210,7 +4225,7 @@ async def test_native_stream_explains_how_to_recover_from_timestamp_free_export(
 
 
 @pytest.mark.asyncio
-async def test_native_stream_terminates_on_first_post_budget_tool_call(monkeypatch):
+async def test_native_stream_synthesizes_after_first_post_budget_tool_call(monkeypatch):
     import src.clean_agent_preview as module
     responses = iter([
         {"choices": [{"delta": {"tool_calls": [{
@@ -4230,6 +4245,7 @@ async def test_native_stream_terminates_on_first_post_budget_tool_call(monkeypat
                 }),
             },
         }]}}]},
+        {"choices": [{"delta": {"content": "The visual evidence shows a complete result."}}]},
     ])
 
     class Response:
@@ -4282,8 +4298,13 @@ async def test_native_stream_terminates_on_first_post_budget_tool_call(monkeypat
     ]
     assert len(budget_errors) == 1
     final = [event for event in events if event.get("type") == "final_response"]
-    assert len(final) == 1
-    assert "budget was exhausted" in final[0]["content"]
+    assert not final
+    assert any(
+        event.get("type") == "completion_recovery"
+        and event.get("reason") == "tool_budget_final_synthesis"
+        for event in events
+    )
+    assert any("The visual evidence shows a complete result." in chunk for chunk in raw)
 
 
 @pytest.mark.asyncio
@@ -5808,5 +5829,8 @@ async def test_parallel_tool_results_precede_visual_evidence(monkeypatch):
 
     messages = requests[1]["messages"]
     assistant_index = max(i for i, message in enumerate(messages) if message["role"] == "assistant")
-    assert [message["role"] for message in messages[assistant_index + 1:]] == ["tool", "tool", "user"]
-    assert messages[-1]["content"][1]["type"] == "image_url"
+    assert [message["role"] for message in messages[assistant_index + 1:]] == [
+        "tool", "tool", "user", "user",
+    ]
+    assert "Final completion round" in messages[-1]["content"]
+    assert messages[-2]["content"][1]["type"] == "image_url"

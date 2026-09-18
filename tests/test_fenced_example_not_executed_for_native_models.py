@@ -449,6 +449,23 @@ def test_skip_fenced_still_recovers_dsml_markup():
     assert "latest python release" in blocks[0].content
 
 
+def test_short_dsml_calls_wrapper_is_parsed_and_fully_stripped():
+    dsml = (
+        "Evidence gathered.\n"
+        "<｜｜DSML｜｜ calls>"
+        '<｜｜DSML｜｜ invoke name="extract_text">'
+        '<｜｜DSML｜｜ parameter name="path" string="true">/workspace/frame.png'
+        '</｜｜DSML｜｜ parameter>'
+        "</｜｜DSML｜｜ invoke>"
+        "</｜｜DSML｜｜ calls>"
+    )
+    blocks = parse_tool_blocks(dsml, skip_fenced=True, additional_tool_names=["extract_text"])
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "extract_text"
+    assert json.loads(blocks[0].content) == {"path": "/workspace/frame.png"}
+    assert strip_tool_blocks(dsml, skip_fenced=True) == "Evidence gathered."
+
+
 def test_skip_fenced_ignores_only_the_fenced_pattern():
     text = "```bash\nnpm run plan:articles\n```"
     assert parse_tool_blocks(text, skip_fenced=True) == []

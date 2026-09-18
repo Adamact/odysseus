@@ -30,6 +30,7 @@ from src.tool_schemas import (
     normalized_native_function_argument_error,
 )
 from src.tool_types import ToolBlock
+from src.tool_parsing import parse_tool_blocks, strip_tool_blocks
 from src.turn_contract import (
     FAMILY_TOOLS, broad_web_briefing_request, required_read_operation_for_request,
     targets_bound_editor_request, inline_text_transformation,
@@ -684,7 +685,21 @@ def documents_terminal_response(raw, *, user_text='', max_items=8):
 
 def shell_listing_terminal_response(raw, *, user_text=''):
     """Return successful read-only listing evidence when prose omits the rows."""
-    if not re.search(r'\b(?:list|names?)\b', str(user_text or ''), re.I):
+    # Bare words such as "list every move" or "list the findings" describe
+    # the shape of the eventual answer; they do not ask for shell stdout. The
+    # old broad matcher made an intermediate ``ls`` (for example, after video
+    # frame extraction) terminate the whole agent turn as "Workspace items".
+    # Only let the shell own rendering when the user explicitly requested a
+    # filesystem/directory listing.
+    if not re.search(
+        r'\b(?:list|show|display|name)\b[^\n]{0,48}'
+        r'\b(?:files?|folders?|director(?:y|ies)|workspace items?|paths?|filenames?)\b'
+        r'|\b(?:files?|folders?|director(?:y|ies)|workspace items?|paths?|filenames?)\b'
+        r'[^\n]{0,48}\b(?:list|names?)\b'
+        r'|\blist\b[^\n]{0,32}\b(?:whats|what\'s|what is)\s+in\s+there\b',
+        str(user_text or ''),
+        re.I,
+    ):
         return ''
     payload = raw
     try:
@@ -716,6 +731,19 @@ def shell_output_terminal_response(raw, *, maximum=4000):
     if not text or text.casefold() in {'(no output)', 'no output'}:
         return ''
     return text[:maximum] + ('\n…' if len(text) > maximum else '')
+
+
+def direct_shell_output_request(user_text):
+    """Whether raw stdout itself is the deliverable requested by the user."""
+    text = str(user_text or '')
+    return bool(re.search(
+        r'\b(?:run|execute)\b[^\n]{0,32}\b(?:this\s+)?(?:command|script)\b'
+        r'|\b(?:bash|shell|terminal|stdout|command output)\b'
+        r'|\b(?:print|show|tell me|what(?:\'s| is))\b[^\n]{0,40}'
+        r'\b(?:hostname|working directory|current directory|workspace path|pwd)\b',
+        text,
+        re.I,
+    ))
 
 
 def ui_panel_terminal_response(raw, *, args=None):
@@ -4116,6 +4144,8 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     official_source_retry_attempted = False
     note_search_recovery_attempted = False
     replace_streamed_draft_on_finish = False
+    final_synthesis_reserved = False
+    emergency_completion_round = False
     # Stream model text immediately. A canonical final event reconciles any
     # draft that completion/research checks subsequently replace.
     finalize_search_answer = broad_current_web_request(direct_user_text) or requested_web_source_links(direct_user_text)
@@ -4167,9 +4197,46 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
             ),
             limits=preview_http_limits(),
         ) as client:
-            for round_number in range(1, round_limit + 1):
+            # One extra iteration is available only when a provider emits raw
+            # tool markup during the normal final no-tools round. Ordinary
+            # turns still obey ``round_limit`` exactly.
+            for round_number in range(1, round_limit + 2):
+                if round_number > round_limit and not emergency_completion_round:
+                    break
                 rounds_used = round_number
                 yield event({'type': 'agent_step', 'round': round_number})
+                # Preserve the final model round for an actual user-facing
+                # answer once tools have returned evidence. Previously the
+                # model could spend the last round emitting another tool call
+                # (or provider-native tool markup that was rendered as prose),
+                # leaving no opportunity to synthesize the result.
+                reserve_final_synthesis = bool(
+                    round_number >= round_limit
+                    and executions
+                    and (not required_artifacts or successful_artifact_write)
+                )
+                if reserve_final_synthesis and not final_synthesis_reserved:
+                    final_synthesis_reserved = True
+                    final_instruction = (
+                        'Final completion round: no more tools are available. Finish from the '
+                        'evidence already returned and answer the user directly and completely now. '
+                        'Do not emit tool-call markup, describe another planned action, or merely '
+                        'repeat raw tool output. State any remaining uncertainty explicitly.'
+                    )
+                    if history and history[-1].get('_harness_control'):
+                        history[-1]['content'] = (
+                            str(history[-1].get('content') or '') + ' ' + final_instruction
+                        )
+                    else:
+                        history.append({
+                            'role': 'user',
+                            '_harness_control': True,
+                            'content': final_instruction,
+                        })
+                    yield event({
+                        'type': 'completion_recovery',
+                        'reason': 'reserved_final_synthesis_round',
+                    })
                 # Enforce a known research prerequisite before asking the model
                 # for another response, not after streaming a premature answer.
                 if (
@@ -4218,7 +4285,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                 request_messages = provider_request_messages(
                     prune_multimodal_images(history, max_images=3)
                 )
-                if prior_summary_answer or force_no_tools_next_round:
+                if prior_summary_answer or force_no_tools_next_round or reserve_final_synthesis:
                     round_offered = []
                     force_no_tools_next_round = False
                 else:
@@ -4380,6 +4447,55 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     if content and not prior_summary_answer:
                         yield event({'delta': content})
                 proposed = [pending[i] for i in sorted(pending)]
+                unexecutable_dsml_completion = False
+                if not proposed and 'DSML' in content:
+                    offered_by_canonical = {
+                        canonical(schema['function']['name']): schema['function']['name']
+                        for schema in round_offered
+                    }
+                    parsed_dsml_blocks = parse_tool_blocks(
+                        content,
+                        skip_fenced=True,
+                        additional_tool_names=offered_by_canonical.values(),
+                        additional_tool_schemas=round_offered,
+                    )
+                    recovered = []
+                    for index, block in enumerate(parsed_dsml_blocks):
+                        actual_name = offered_by_canonical.get(canonical(block.tool_type))
+                        if not actual_name:
+                            continue
+                        try:
+                            recovered_args = json.loads(block.content or '{}')
+                        except (TypeError, ValueError, json.JSONDecodeError):
+                            continue
+                        if not isinstance(recovered_args, dict):
+                            continue
+                        recovered.append({
+                            'id': f'call_dsml_{round_number}_{index}',
+                            'type': 'function',
+                            'function': {
+                                'name': actual_name,
+                                'arguments': json.dumps(recovered_args, ensure_ascii=False),
+                            },
+                        })
+                    if recovered:
+                        proposed = recovered
+                    if parsed_dsml_blocks:
+                        content = strip_tool_blocks(
+                            content,
+                            skip_fenced=True,
+                            additional_tool_names=offered_by_canonical.values(),
+                        ).strip()
+                        replace_streamed_draft_on_finish = True
+                        if recovered:
+                            yield event({
+                                'type': 'tool_markup_recovery',
+                                'format': 'deepseek_dsml',
+                                'round': round_number,
+                                'calls': len(recovered),
+                            })
+                        else:
+                            unexecutable_dsml_completion = True
                 proposed = serialize_required_email_attachment_chain(
                     proposed, contract_required_tools, executions,
                 )
@@ -4392,6 +4508,33 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     message['tool_calls'] = protocol_safe_tool_calls(proposed)
                 history.append(message)
                 if not proposed:
+                    if (
+                        unexecutable_dsml_completion
+                        and (
+                            round_number < round_limit
+                            or (round_number == round_limit and not emergency_completion_round)
+                        )
+                    ):
+                        answer_recovery_attempts += 1
+                        force_no_tools_next_round = True
+                        if round_number == round_limit:
+                            emergency_completion_round = True
+                        history.pop()
+                        history.append({
+                            'role': 'user',
+                            '_harness_control': True,
+                            'content': (
+                                'Your draft emitted tool-call markup during the no-tools completion '
+                                'phase. That call was not executed. Do not emit DSML, XML, JSON tool '
+                                'calls, or another action plan. Answer the original request directly '
+                                'now from the evidence already present, and state uncertainty plainly.'
+                            ),
+                        })
+                        yield event({
+                            'type': 'completion_recovery',
+                            'reason': 'tool_markup_during_final_synthesis',
+                        })
+                        continue
                     if prior_summary_answer:
                         content = prior_summary_answer
                         history[-1]['content'] = content
@@ -5610,7 +5753,9 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     ):
                         shell_terminal_response = shell_listing_terminal_response(
                             output, user_text=latest_user,
-                        ) or shell_output_terminal_response(output)
+                        )
+                        if not shell_terminal_response and direct_shell_output_request(latest_user):
+                            shell_terminal_response = shell_output_terminal_response(output)
                         artifact_pending = bool(
                             required_artifacts and not successful_artifact_write
                         )
@@ -5817,9 +5962,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     break
                 if terminal_budget_violation:
                     if (
-                        getattr(turn_contract, 'routing_experiment', '') == MODEL_CHOICE_MODE
-                        and not native_workspace_enabled
-                        and not budget_completion_attempted
+                        not budget_completion_attempted
                         and round_number < round_limit
                     ):
                         budget_completion_attempted = True
