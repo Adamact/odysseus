@@ -4688,6 +4688,8 @@ async def test_native_stream_reserves_remaining_budget_for_required_artifact(mon
     )]
 
     events = [json.loads(chunk[6:]) for chunk in raw if "[DONE]" not in chunk]
+    turn_contract = next(event for event in events if event.get("type") == "turn_contract")
+    assert turn_contract["required_artifacts"] == ["/tmp_workspace/results"]
     recovery = next(
         event for event in events
         if event.get("type") == "completion_recovery"

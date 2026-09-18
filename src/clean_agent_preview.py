@@ -4212,6 +4212,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     ) if native_workspace_enabled else tuple()
     yield event({'type': 'turn_contract', **turn_contract.audit(), 'schema_mode': 'compact_contract_v5',
                  'native_workspace': native_workspace_enabled,
+                 'required_artifacts': list(required_artifacts),
                  'multimodal_image_count': image_context_count,
                  'attachment_reference_count': attachment_refs,
                  'image_rehydration': conversation_diagnostics.get('image_rehydration')})
