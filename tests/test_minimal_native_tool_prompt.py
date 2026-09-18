@@ -192,6 +192,16 @@ def test_typo_heavy_product_problem_is_complete_not_ambiguous_fragment() -> None
     assert not _is_ambiguous_short_low_signal(text)
 
 
+def test_product_review_request_routes_to_web_search_without_search_verb() -> None:
+    from src.turn_contract import selected_tools_for_request
+
+    assert selected_tools_for_request("What's Dyson pencil vac reviews") == frozenset({"web_search"})
+    assert "web" in _classify_agent_request(
+        [{"role": "user", "content": "What's Dyson pencil vac reviews"}],
+        "What's Dyson pencil vac reviews",
+    )["domains"]
+
+
 def test_standalone_link_fragment_gets_clarification_path() -> None:
     from pathlib import Path
 

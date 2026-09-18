@@ -2267,6 +2267,19 @@ def test_explicit_native_web_workflow_outranks_incidental_task_words():
     assert selected_tools_for_request(message) == {"web_search", "web_fetch"}
 
 
+def test_explicit_native_web_workflow_preserves_workspace_artifact_tools():
+    message = (
+        "Use Odysseus web_search to locate each RFC, then web_fetch every page. "
+        "Create /tmp_workspace/results/inventory.jsonl, read the local inputs, "
+        "and run the Python validator before finishing."
+    )
+    selected = selected_tools_for_request(message)
+    assert selected == {
+        "web_search", "web_fetch", "read_file", "write_file", "edit_file", "python",
+    }
+    assert requested_capabilities(message) == {"search_browser", "shell_files"}
+
+
 def test_typoed_webhook_inventory_selects_admin_reader():
     message = "list my webhoks again"
     assert selected_tools_for_request(message) == {"manage_webhooks"}

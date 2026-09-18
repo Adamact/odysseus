@@ -10448,6 +10448,11 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         or (_explicit_local_input and not _explicit_web_retrieval)
     ):
         domains.add("web")
+    if has(
+        r"\b(?:reviews?|ratings?|testimonials?|評判|レビュー)\b",
+        r"\b(?:worth|recommend(?:ed|ation)?|pros?\s+and\s+cons?|buying\s+guide)\b",
+    ):
+        domains.add("web")
     if _looks_like_explicit_browser_interaction(retrieval_query) and not (
         _personal_domain_turn and not _strong_web_target
     ):

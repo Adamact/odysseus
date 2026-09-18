@@ -699,6 +699,27 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
             )
         ):
             explicitly_named_web.add("web_fetch")
+        if (
+            re.search(r"(?:file://)?/(?:tmp_)?workspace(?:/|\b)", raw_text, re.I)
+            and re.search(
+                r"\b(?:build|create|edit|persist|produce|save|write)\b",
+                raw_text,
+                re.I,
+            )
+            and re.search(
+                r"\b(?:artifacts?|director(?:y|ies)|files?|outputs?|results?)\b|"
+                r"\.(?:csv|html|json|jsonl|md|tex|txt)\b",
+                raw_text,
+                re.I,
+            )
+        ):
+            # Explicit native Web names seal selection to the named tools.
+            # Compound autonomous jobs also require a bounded local
+            # read/write/verify surface; without it, requiring shell_files
+            # makes the whole contract fail closed and drops the Web tools.
+            explicitly_named_web.update(
+                {"read_file", "write_file", "edit_file", "python"}
+            )
         return frozenset(explicitly_named_web)
     if (
         re.search(r"\b(?:look\s*up|search|find)\b", text, re.I)
@@ -717,6 +738,21 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
         # Current lookups need discovery before navigation. Letting the model
         # begin on an arbitrary browser page can ground an answer in stale or
         # unrelated content without ever establishing a current source set.
+        return frozenset({"web_search"})
+    if re.search(
+        r"\b(?:reviews?|ratings?|評判|レビュー|testimonials?)\b",
+        text,
+        re.I,
+    ) and re.search(
+        r"\b(?:what(?:'s|\s+is)|how\s+are|which|best|good|bad|worth|recommend|"
+        r"compare|pros?|cons?|opinions?|thoughts?|about)\b",
+        text,
+        re.I,
+    ):
+        # Product/service review requests are current public-web lookups even
+        # when the user does not say "search". Route them to web_search before
+        # the model sees a schema; otherwise a no-tool contract invites raw
+        # provider-specific markup (notably DeepSeek DSML) that cannot execute.
         return frozenset({"web_search"})
     if re.search(
         r"\buse\s+(?:the\s+)?(?:odysseus\s+)?web_search\b",
@@ -3371,6 +3407,12 @@ def required_read_operation_for_request(message: str, history: Iterable = ()) ->
         re.search(r"\b(?:saved\s+)?memor(?:y|ies|es)\b", text, re.I)
         and re.search(r"\b(?:pull\s+up|peek|list|show|saved)\b", text, re.I)
         and not re.search(r"\b(?:add|edit|change|delete|forget)\b", text, re.I)
+        and not re.search(
+            r"\b(?:never|without)\s+(?:(?:using|relying\s+on)\s+)?(?:my\s+)?memory\b|"
+            r"\bdo\s+not\s+(?:use|rely\s+on)\s+(?:my\s+)?memory\b",
+            text,
+            re.I,
+        )
     ):
         return RequiredReadOperation("manage_memory", {"action": "list"}, maximum)
     if (
@@ -4073,8 +4115,15 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
         # Explicit native-tool requests are stronger than incidental domain
         # words in the research subject (for example, Git ``pull`` must not
         # route to scheduled tasks). Keep the whole read-only web family so a
-        # weak search can recover through fetch/browser without schema growth.
-        return frozenset({"search_browser"})
+        # weak search can recover through fetch/browser. A compound artifact
+        # workflow may also have been deliberately selected with a bounded
+        # workspace tool surface; preserve that independent family.
+        selected = selected_tools_for_request(raw_text)
+        selected_families = (
+            frozenset().union(*(_families_for_tool(tool) for tool in selected))
+            if selected else frozenset()
+        )
+        return selected_families or frozenset({"search_browser"})
     if (
         re.search(r"\b(?:latest|recent|current|today(?:'s)?)\b", text, re.I)
         and re.search(r"\b(?:info(?:rmation)?|news|nees|updates?)\b", text, re.I)
