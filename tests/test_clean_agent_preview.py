@@ -531,18 +531,30 @@ def test_repeated_off_contract_artifact_calls_trigger_single_file_body_handoff()
     )
 
 
+def test_provider_wire_keeps_deepseek_reasoning_only_turn_for_continuity():
+    import src.clean_agent_preview as module
+
+    messages = [{
+        'role': 'assistant',
+        'content': None,
+        'reasoning_content': 'private provider reasoning token stream',
+    }]
+
+    assert module.provider_wire_messages(messages) == messages
+
+
 @pytest.mark.asyncio
 async def test_repeated_off_contract_calls_recover_via_required_artifact_body(monkeypatch):
     import src.clean_agent_preview as module
 
     responses = iter([
-        {'choices': [{'delta': {'tool_calls': [{
+        {'choices': [{'delta': {'reasoning_content': 'reasoning-one', 'tool_calls': [{
             'index': 0, 'id': 'bad-bash',
             'function': {'name': 'bash', 'arguments': json.dumps({
                 'command': 'echo nope',
             })},
         }]}}]},
-        {'choices': [{'delta': {'tool_calls': [{
+        {'choices': [{'delta': {'reasoning_content': 'reasoning-two', 'tool_calls': [{
             'index': 0, 'id': 'bad-python',
             'function': {'name': 'python', 'arguments': json.dumps({
                 'code': 'print("nope")',
@@ -566,11 +578,14 @@ async def test_repeated_off_contract_calls_recover_via_required_artifact_body(mo
             yield 'data: ' + json.dumps(self.payload)
             yield 'data: [DONE]'
 
+    requests = []
+
     class Client:
         def __init__(self, **kwargs): pass
         async def __aenter__(self): return self
         async def __aexit__(self, *args): pass
         def stream(self, *args, **kwargs):
+            requests.append(kwargs['json'])
             return Response(next(responses))
 
     executed = []
@@ -602,6 +617,11 @@ async def test_repeated_off_contract_calls_recover_via_required_artifact_body(mo
     )]
 
     assert [block.tool_type for block in executed] == ['write_file']
+    prior_tool_turn = next(
+        message for message in requests[1]['messages']
+        if message.get('role') == 'assistant' and message.get('tool_calls')
+    )
+    assert prior_tool_turn['reasoning_content'] == 'reasoning-one'
     assert executed[0].content == (
         '/workspace/output.html\n<html><body>Recovered</body></html>'
     )

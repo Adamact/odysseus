@@ -3899,6 +3899,7 @@ def provider_wire_messages(messages):
             item.get('role') == 'assistant'
             and not item.get('content')
             and not item.get('tool_calls')
+            and not item.get('reasoning_content')
         ):
             continue
         cleaned.append(item)
@@ -4483,7 +4484,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                 'function': {'name': private_browser_name},
                             }
                         force_private_browser_next_round = False
-                pending, content = {}, ''
+                pending, content, round_reasoning = {}, '', ''
                 streamed_round_text = False
                 request = search_tool_choice_request(request)
                 request = provider_compatible_tool_choice_request(request, model)
@@ -4528,6 +4529,14 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         if not choices:
                             continue
                         delta = choices[0].get('delta') or {}
+                        reasoning = (
+                            delta.get('reasoning_content')
+                            or delta.get('reasoning')
+                            or delta.get('thinking')
+                            or ''
+                        )
+                        if reasoning:
+                            round_reasoning += str(reasoning)
                         text = delta.get('content') or ''
                         if text:
                             first_token = first_token or time.monotonic()
@@ -4610,6 +4619,12 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         yield event({'type': 'model_tool_proposal', 'round': round_number,
                                      'function': proposal.get('function', {})})
                 message = {'role': 'assistant', 'content': content or None}
+                if round_reasoning and 'deepseek' in str(model or '').casefold():
+                    # DeepSeek requires each tool-round reasoning payload to
+                    # be echoed verbatim on subsequent requests. Unlike local
+                    # Qwen/Nemotron templates, its API owns this structured
+                    # field and does not reinterpret it as visible output.
+                    message['reasoning_content'] = round_reasoning
                 if proposed:
                     message['tool_calls'] = protocol_safe_tool_calls(proposed)
                 history.append(message)
