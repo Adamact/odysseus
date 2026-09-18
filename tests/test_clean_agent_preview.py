@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 from dataclasses import replace
+from pathlib import Path
 import json
 import jsonschema
 import pytest
@@ -469,6 +470,131 @@ def test_runtime_required_artifacts_includes_runner_declared_directory():
         'Create the requested output.',
         {'completion_requirements': {'required_artifacts': ['/tmp_workspace/results/']}},
     ) == ('/tmp_workspace/results',)
+
+
+def test_required_artifact_content_rejects_empty_directories(tmp_path):
+    import src.clean_agent_preview as module
+
+    output = tmp_path / 'results'
+    output.mkdir()
+    (output / 'nested-empty').mkdir()
+
+    assert not module.required_artifacts_have_content((str(output),))
+
+
+def test_required_artifact_content_accepts_nonempty_files_and_nested_outputs(tmp_path):
+    import src.clean_agent_preview as module
+
+    output_file = tmp_path / 'output.html'
+    output_file.write_text('<h1>done</h1>')
+    output_dir = tmp_path / 'results'
+    nested = output_dir / 'part-01'
+    nested.mkdir(parents=True)
+    (nested / 'answer.json').write_text('{"done": true}')
+
+    assert module.required_artifacts_have_content((str(output_file),))
+    assert module.required_artifacts_have_content((str(output_dir),))
+    assert not module.required_artifacts_have_content((str(tmp_path / 'missing'),))
+
+
+def test_required_artifact_mutation_trusts_exact_files_but_not_empty_directory_setup(tmp_path):
+    import src.clean_agent_preview as module
+
+    output_dir = tmp_path / 'results'
+    output_dir.mkdir()
+    assert not module.successful_required_artifact_mutation(
+        'bash', {'command': f'mkdir -p {output_dir}'}, (str(output_dir),),
+    )
+    output_file = tmp_path / 'output.html'
+    assert module.successful_required_artifact_mutation(
+        'write_file', {'path': str(output_file), 'content': '<h1>done</h1>'},
+        (str(output_file),),
+    )
+
+
+@pytest.mark.asyncio
+async def test_empty_required_directory_keeps_native_turn_running(monkeypatch, tmp_path):
+    import src.clean_agent_preview as module
+
+    output = tmp_path / 'results'
+    responses = iter([
+        {'choices': [{'delta': {'tool_calls': [{
+            'index': 0,
+            'id': 'call-mkdir',
+            'type': 'function',
+            'function': {
+                'name': 'bash',
+                'arguments': json.dumps({'command': f'mkdir -p {output}'}),
+            },
+        }]}}]},
+        {'choices': [{'delta': {'tool_calls': [{
+            'index': 0,
+            'id': 'call-write',
+            'type': 'function',
+            'function': {
+                'name': 'write_file',
+                'arguments': json.dumps({
+                    'path': str(output / 'answer.txt'), 'content': 'done',
+                }),
+            },
+        }]}}]},
+        {'choices': [{'delta': {'content': 'Completed the requested output.'}}]},
+    ])
+    requests = []
+    executed = []
+
+    class Response:
+        def __init__(self, payload): self.payload = payload
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def raise_for_status(self): pass
+        async def aiter_lines(self):
+            yield 'data: ' + json.dumps(self.payload)
+            yield 'data: [DONE]'
+
+    class Client:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def stream(self, *args, **kwargs):
+            requests.append(kwargs['json'])
+            return Response(next(responses))
+
+    async def execute(block, **kwargs):
+        executed.append(block.tool_type)
+        if block.tool_type == 'bash':
+            output.mkdir()
+        else:
+            (output / 'answer.txt').write_text('done')
+        return block.tool_type, {'output': '(no output)', 'exit_code': 0}
+
+    monkeypatch.setattr(module.httpx, 'AsyncClient', Client)
+    monkeypatch.setattr(module, 'execute_tool_block', execute)
+    schemas = [
+        item for item in FUNCTION_TOOL_SCHEMAS
+        if item['function']['name'] in {'bash', 'write_file'}
+    ]
+    contract = resolve_full_inventory_contract(schemas=schemas, policy=ToolPolicy())
+    raw = [chunk async for chunk in stream_preview(
+        endpoint_url='http://test', model='qwen-test',
+        messages=[{'role': 'user', 'content': 'Create the requested output files.'}],
+        headers={}, turn_contract=contract, session_id='test', owner='test',
+        disabled_tools=set(), tool_policy=ToolPolicy(), workspace=str(tmp_path),
+        client_runtime_context={
+            'surface': 'odysseus-native', 'terminal_agent': True,
+            'unattended_mode': True,
+            'completion_requirements': {'required_artifacts': [str(output)]},
+        }, max_rounds=8,
+    )]
+
+    events = [json.loads(chunk[6:]) for chunk in raw if '[DONE]' not in chunk]
+    assert executed == ['bash', 'write_file']
+    after_mkdir = next(
+        event for event in events
+        if event.get('type') == 'agent_step' and event.get('calls_used') == 1
+    )
+    assert after_mkdir['required_artifact_pending'] is True
+    assert (output / 'answer.txt').read_text() == 'done'
 
 
 def test_artifact_completion_schema_binds_single_required_file_without_mutating_source():

@@ -1471,6 +1471,54 @@ def execution_targets_required_artifact(tool_name, arguments, required_artifacts
     return any(str(path or '').rstrip('/') in serialized for path in required_artifacts)
 
 
+def required_artifacts_have_content(required_artifacts):
+    """Return true only when every required output contains material evidence.
+
+    A runner may declare a directory such as ``/tmp_workspace/results`` as its
+    output contract.  Merely creating that directory is setup, not completion.
+    Directory outputs therefore require at least one non-empty regular file;
+    file outputs must themselves be non-empty.  Required workspace artifacts
+    are local to the native runtime, so checking their post-mutation state is
+    stronger than inferring completion from a shell command string.
+    """
+    targets = [Path(str(path or '').strip().rstrip('/')) for path in required_artifacts]
+    if not targets:
+        return False
+    for target in targets:
+        try:
+            if target.is_file():
+                if target.stat().st_size <= 0:
+                    return False
+                continue
+            if target.is_dir():
+                if not any(
+                    child.is_file() and child.stat().st_size > 0
+                    for child in target.rglob('*')
+                ):
+                    return False
+                continue
+        except OSError:
+            return False
+        return False
+    return True
+
+
+def successful_required_artifact_mutation(tool_name, arguments, required_artifacts):
+    """Recognize completed outputs without letting an empty directory pass.
+
+    Typed tools can authoritatively report a successful exact file write even
+    when their workspace is mounted outside this process.  Directory contracts
+    are different: mentioning or creating the directory only establishes a
+    container, so they require observable non-empty file content.
+    """
+    targets = [str(path or '').strip().rstrip('/') for path in required_artifacts]
+    if required_artifacts_have_content(targets):
+        return True
+    if not targets or any(not Path(target).suffix for target in targets):
+        return False
+    return execution_targets_required_artifact(tool_name, arguments, targets)
+
+
 def artifact_completion_tool_schemas(offered_schemas, required_artifacts):
     """Bind the sole artifact writer to the runner-declared output file.
 
@@ -5581,7 +5629,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                     successful_duplicate_counts.pop(prior_signature, None)
                             if canonical(block.tool_type) in {'edit_document', 'update_document'}:
                                 successful_editor_writer = canonical(block.tool_type)
-                            if execution_targets_required_artifact(
+                            if successful_required_artifact_mutation(
                                 block.tool_type, args, required_artifacts,
                             ):
                                 successful_artifact_write = True
