@@ -5049,6 +5049,24 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             name, args, user_text=direct_user_text,
                         )
                         if semantic_error:
+                            # Semantic/schema guards run before the ordinary
+                            # execution failure guard below.  Count their
+                            # rejected canonical call too, otherwise a model
+                            # can emit the same malformed request for every
+                            # remaining round without ever reaching that guard.
+                            if failed_call_counts.get(call_signature, 0) >= 2:
+                                calls += 1
+                                terminal_suppression_violation = True
+                                permanently_suppressed_tools.add(canonical(name))
+                                round_recovery_messages.append(
+                                    f'{name} was disabled after the same invalid arguments were '
+                                    'rejected twice. Use a corrected tool call, another offered tool, '
+                                    'or finish from existing evidence.'
+                                )
+                                raise ValueError(
+                                    'This exact invalid call was repeated after two validation failures; '
+                                    'the tool is disabled for this turn.'
+                                )
                             raise ValueError(semantic_error)
                         if canonical(name) == 'bash':
                             command = str(args.get('command') or '')
