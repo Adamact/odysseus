@@ -1469,6 +1469,14 @@ def artifact_completion_tool_schemas(offered_schemas, required_artifacts):
     if len(targets) != 1 or len(tuple(required_artifacts or ())) != 1:
         return offered_schemas
     target = targets[0]
+    if Path(target).suffix.lower() in _NON_TEXT_ARTIFACT_SUFFIXES:
+        # ``write_file`` deliberately accepts UTF-8 text only. Keeping it in
+        # a binary artifact completion round lets a forced writer choice trap
+        # the model in an impossible retry loop even when Python is offered.
+        return [
+            copy.deepcopy(schema) for schema in offered_schemas
+            if canonical((schema.get('function') or {}).get('name')) != 'write_file'
+        ]
     bound = copy.deepcopy(offered_schemas)
     for schema in bound:
         function = schema.get('function') or {}
@@ -1483,6 +1491,26 @@ def artifact_completion_tool_schemas(offered_schemas, required_artifacts):
             f'Write this exact required artifact path: {target}'
         )
     return bound
+
+
+def required_artifact_completion_tool_choice(required_artifacts, offered_schemas):
+    """Choose Python for one binary output; preserve the text-writer default."""
+    targets = [str(path or '').strip().rstrip('/') for path in required_artifacts]
+    offered = {
+        canonical((schema.get('function') or {}).get('name')):
+        (schema.get('function') or {}).get('name')
+        for schema in offered_schemas
+    }
+    preferred = (
+        'python'
+        if len(targets) == 1
+        and Path(targets[0]).suffix.lower() in _NON_TEXT_ARTIFACT_SUFFIXES
+        else 'write_file'
+    )
+    name = offered.get(preferred)
+    if not name:
+        return None
+    return {'type': 'function', 'function': {'name': name}}
 
 
 def repeated_off_contract_artifact_handoff_target(
@@ -4415,18 +4443,11 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     if sealed_read_choice is not None:
                         request['tool_choice'] = sealed_read_choice
                     if artifact_write_phase and not successful_artifact_write:
-                        writer = next(
-                            (
-                                schema['function']['name'] for schema in round_offered
-                                if canonical(schema['function']['name']) == 'write_file'
-                            ),
-                            None,
+                        completion_choice = required_artifact_completion_tool_choice(
+                            required_artifacts, round_offered,
                         )
-                        if writer:
-                            request['tool_choice'] = {
-                                'type': 'function',
-                                'function': {'name': writer},
-                            }
+                        if completion_choice is not None:
+                            request['tool_choice'] = completion_choice
                     # Whole rewrites and inline feedback each have one typed
                     # editor output owner. Bind that sole channel at protocol
                     # level so prose cannot masquerade as an applied edit or

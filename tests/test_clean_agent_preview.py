@@ -5,7 +5,7 @@ import jsonschema
 import pytest
 import re
 
-from src.clean_agent_preview import conversation, readonly_call, preview_call_allowed, evaluate_preview_call, authorized_write_families, compact_schemas, normalize_preview_function_args, normalize_preview_call_args, private_browser_dom_batch, private_browser_state_transition, private_browser_success_repeat_limit, stream_preview, denied_response, execution_has_write_effect, requests_mutation, claims_completion, recent_successful_write_families, scope_preview_contract, multimodal_image_count, attachment_reference_count, active_document_context_message, active_email_context_message, targets_active_editor, active_editor_whole_draft_request, active_editor_suggestion_request, scope_active_editor_contract, native_execution_limits, interactive_execution_limit, runtime_required_artifacts, execution_targets_required_artifact, artifact_completion_tool_schemas, document_suggestions_event, document_suggestion_quality_error, required_read_tool_choice, required_active_editor_tool_choice, sealed_read_arguments, email_identifier_error, requested_item_limit, contract_item_limit, notes_terminal_response, documents_terminal_response, shell_listing_terminal_response, shell_output_terminal_response, direct_shell_output_request, ui_panel_terminal_response, ui_toggle_state_result, calendar_terminal_response, memory_terminal_response, tasks_terminal_response, task_list_requires_synthesis, skills_terminal_response, cookbook_servers_terminal_response, prior_short_answer_for_no_tool_summary, prior_collection_repeat_answer, prior_failed_operation_answer, prior_cookbook_server_answer, prior_workspace_path_answer, prior_web_source_answer, bounded_web_evidence_answer, inherit_referential_read_arguments, normalized_search_intent, requested_web_source_links, web_source_links, requested_web_link_limit, preserve_requested_web_recency, ground_referenced_note_content, note_search_result_empty, note_referent_error, research_referent_error, private_browser_open_url, private_browser_effective_url, web_fetch_observation_is_boilerplate, broad_current_web_request, record_tool_execution, align_structured_tool_history, provider_request_messages, provider_compatible_tool_choice_request, offered_tool_alias, dependent_write_prerequisite_error, bounded_research_tool_policy, retrieved_source_urls, serialize_required_email_attachment_chain
+from src.clean_agent_preview import conversation, readonly_call, preview_call_allowed, evaluate_preview_call, authorized_write_families, compact_schemas, normalize_preview_function_args, normalize_preview_call_args, private_browser_dom_batch, private_browser_state_transition, private_browser_success_repeat_limit, stream_preview, denied_response, execution_has_write_effect, requests_mutation, claims_completion, recent_successful_write_families, scope_preview_contract, multimodal_image_count, attachment_reference_count, active_document_context_message, active_email_context_message, targets_active_editor, active_editor_whole_draft_request, active_editor_suggestion_request, scope_active_editor_contract, native_execution_limits, interactive_execution_limit, runtime_required_artifacts, execution_targets_required_artifact, artifact_completion_tool_schemas, required_artifact_completion_tool_choice, document_suggestions_event, document_suggestion_quality_error, required_read_tool_choice, required_active_editor_tool_choice, sealed_read_arguments, email_identifier_error, requested_item_limit, contract_item_limit, notes_terminal_response, documents_terminal_response, shell_listing_terminal_response, shell_output_terminal_response, direct_shell_output_request, ui_panel_terminal_response, ui_toggle_state_result, calendar_terminal_response, memory_terminal_response, tasks_terminal_response, task_list_requires_synthesis, skills_terminal_response, cookbook_servers_terminal_response, prior_short_answer_for_no_tool_summary, prior_collection_repeat_answer, prior_failed_operation_answer, prior_cookbook_server_answer, prior_workspace_path_answer, prior_web_source_answer, bounded_web_evidence_answer, inherit_referential_read_arguments, normalized_search_intent, requested_web_source_links, web_source_links, requested_web_link_limit, preserve_requested_web_recency, ground_referenced_note_content, note_search_result_empty, note_referent_error, research_referent_error, private_browser_open_url, private_browser_effective_url, web_fetch_observation_is_boilerplate, broad_current_web_request, record_tool_execution, align_structured_tool_history, provider_request_messages, provider_compatible_tool_choice_request, offered_tool_alias, dependent_write_prerequisite_error, bounded_research_tool_policy, retrieved_source_urls, serialize_required_email_attachment_chain
 from src.tool_capabilities import capabilities_for_tool
 
 
@@ -518,6 +518,32 @@ def test_artifact_completion_schema_does_not_bind_directory_or_multiple_outputs(
     ) == source
 
 
+def test_required_binary_artifact_forces_python_instead_of_text_writer():
+    offered = [
+        {'type': 'function', 'function': {'name': 'write_file'}},
+        {'type': 'function', 'function': {'name': 'python'}},
+    ]
+
+    assert required_artifact_completion_tool_choice(
+        ('/workspace/output.png',), offered,
+    ) == {'type': 'function', 'function': {'name': 'python'}}
+    assert required_artifact_completion_tool_choice(
+        ('/workspace/output.html',), offered,
+    ) == {'type': 'function', 'function': {'name': 'write_file'}}
+    assert required_artifact_completion_tool_choice(
+        ('/workspace/output.png',), offered[:1],
+    ) is None
+    assert [
+        schema['function']['name']
+        for schema in artifact_completion_tool_schemas(
+            offered, ('/workspace/output.png',),
+        )
+    ] == ['python']
+    assert [schema['function']['name'] for schema in offered] == [
+        'write_file', 'python',
+    ]
+
+
 def test_repeated_off_contract_artifact_calls_trigger_single_file_body_handoff():
     import src.clean_agent_preview as module
 
@@ -621,6 +647,81 @@ async def test_empty_artifact_writer_turn_recovers_via_body_handoff(monkeypatch)
     assert [block.tool_type for block in executed] == ['write_file']
     events = [json.loads(chunk[6:]) for chunk in raw if '[DONE]' not in chunk]
     assert any(event.get('type') == 'artifact_body_handoff' for event in events)
+
+
+@pytest.mark.asyncio
+async def test_binary_artifact_completion_requests_python_not_text_writer(monkeypatch):
+    import src.clean_agent_preview as module
+
+    responses = iter([
+        {'choices': [{'delta': {'tool_calls': [{
+            'index': 0, 'id': 'make-image',
+            'function': {'name': 'python', 'arguments': json.dumps({
+                'code': "open('/workspace/output.png', 'wb').write(b'png')",
+            })},
+        }]}}]},
+        {'choices': [{'delta': {'content': 'Created and verified the image.'}}]},
+    ])
+    requests = []
+
+    class Response:
+        def __init__(self, payload): self.payload = payload
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def raise_for_status(self): pass
+        async def aiter_lines(self):
+            yield 'data: ' + json.dumps(self.payload)
+            yield 'data: [DONE]'
+
+    class Client:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def stream(self, *args, **kwargs):
+            requests.append(kwargs['json'])
+            return Response(next(responses))
+
+    executed = []
+
+    async def execute(block, **kwargs):
+        executed.append(block.tool_type)
+        return block.tool_type, {'output': 'created', 'exit_code': 0}
+
+    monkeypatch.setattr(module, 'NATIVE_ARTIFACT_RESEARCH_LIMIT', 0)
+    monkeypatch.setattr(module.httpx, 'AsyncClient', Client)
+    monkeypatch.setattr(module, 'execute_tool_block', execute)
+    schemas = [
+        item for item in FUNCTION_TOOL_SCHEMAS
+        if item['function']['name'] in {'python', 'write_file'}
+    ]
+    contract = resolve_full_inventory_contract(schemas=schemas, policy=ToolPolicy())
+    raw = [chunk async for chunk in stream_preview(
+        endpoint_url='http://test', model='kimi-k3',
+        messages=[{'role': 'user', 'content': 'Create the requested image.'}],
+        headers={}, turn_contract=contract, session_id='test', owner='test',
+        disabled_tools=set(), tool_policy=ToolPolicy(), workspace='/workspace',
+        client_runtime_context={
+            'surface': 'odysseus-native', 'terminal_agent': True,
+            'unattended_mode': True,
+            'completion_requirements': {
+                'required_artifacts': ['/workspace/output.png'],
+            },
+        }, max_tokens=8192, max_rounds=3,
+    )]
+
+    assert executed == ['python']
+    assert [
+        schema['function']['name'] for schema in requests[0]['tools']
+    ] == ['python']
+    # Kimi's thinking API does not accept named tool_choice, so provider
+    # compatibility enforces the same choice by leaving only Python offered.
+    assert 'tool_choice' not in requests[0]
+    events = [json.loads(chunk[6:]) for chunk in raw if '[DONE]' not in chunk]
+    assert any(
+        event.get('type') == 'agent_step'
+        and event.get('offered_tools') == ['python']
+        for event in events
+    )
 
 
 @pytest.mark.asyncio
