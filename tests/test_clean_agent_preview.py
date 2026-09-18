@@ -521,7 +521,14 @@ def test_artifact_completion_schema_does_not_bind_directory_or_multiple_outputs(
 def test_required_binary_artifact_forces_python_instead_of_text_writer():
     offered = [
         {'type': 'function', 'function': {'name': 'write_file'}},
-        {'type': 'function', 'function': {'name': 'python'}},
+        {'type': 'function', 'function': {
+            'name': 'python',
+            'parameters': {
+                'type': 'object',
+                'properties': {'code': {'type': 'string'}},
+                'required': ['code'],
+            },
+        }},
     ]
 
     assert required_artifact_completion_tool_choice(
@@ -533,12 +540,14 @@ def test_required_binary_artifact_forces_python_instead_of_text_writer():
     assert required_artifact_completion_tool_choice(
         ('/workspace/output.png',), offered[:1],
     ) is None
-    assert [
-        schema['function']['name']
-        for schema in artifact_completion_tool_schemas(
-            offered, ('/workspace/output.png',),
-        )
-    ] == ['python']
+    binary_bound = artifact_completion_tool_schemas(
+        offered, ('/workspace/output.png',),
+    )
+    assert [schema['function']['name'] for schema in binary_bound] == ['python']
+    code_schema = binary_bound[0]['function']['parameters']['properties']['code']
+    assert re.search(code_schema['pattern'], "open('/workspace/output.png', 'wb')")
+    assert not re.search(code_schema['pattern'], "print('more analysis')")
+    assert '/workspace/output.png' in code_schema['description']
     assert [schema['function']['name'] for schema in offered] == [
         'write_file', 'python',
     ]

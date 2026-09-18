@@ -1473,10 +1473,23 @@ def artifact_completion_tool_schemas(offered_schemas, required_artifacts):
         # ``write_file`` deliberately accepts UTF-8 text only. Keeping it in
         # a binary artifact completion round lets a forced writer choice trap
         # the model in an impossible retry loop even when Python is offered.
-        return [
-            copy.deepcopy(schema) for schema in offered_schemas
-            if canonical((schema.get('function') or {}).get('name')) != 'write_file'
-        ]
+        bound = []
+        for source in offered_schemas:
+            if canonical((source.get('function') or {}).get('name')) == 'write_file':
+                continue
+            schema = copy.deepcopy(source)
+            function = schema.get('function') or {}
+            if canonical(function.get('name')) == 'python':
+                properties = (function.get('parameters') or {}).get('properties') or {}
+                code_schema = properties.get('code')
+                if isinstance(code_schema, dict):
+                    code_schema['pattern'] = re.escape(target)
+                    code_schema['description'] = (
+                        'Python code that creates or updates this exact required '
+                        f'binary artifact path: {target}'
+                    )
+            bound.append(schema)
+        return bound
     bound = copy.deepcopy(offered_schemas)
     for schema in bound:
         function = schema.get('function') or {}
