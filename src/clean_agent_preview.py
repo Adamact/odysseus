@@ -4450,6 +4450,13 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         ],
                         'tool_choice': request.get('tool_choice'),
                     })
+                    # Artifact completion deliberately narrows a broader round
+                    # contract to its writer on the wire. Validate that
+                    # response against the same list so a hallucinated call to
+                    # one of the earlier research tools cannot regain
+                    # execution permission. Other recovery modes retain their
+                    # established budget/error semantics.
+                    round_offered = list(request.get('tools') or [])
                 async with preview_model_response(client, endpoint_url, headers, request, context_recovery) as response:
                     response.raise_for_status()
                     async for line in response.aiter_lines():

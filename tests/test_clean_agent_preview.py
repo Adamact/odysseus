@@ -4638,6 +4638,12 @@ async def test_native_stream_reserves_remaining_budget_for_required_artifact(mon
     ])
     payloads.extend([
         {"choices": [{"delta": {"tool_calls": [{
+            "index": 0, "id": "hallucinated-bash",
+            "function": {"name": "bash", "arguments": json.dumps({
+                "command": "echo should-not-run",
+            })},
+        }]}}]},
+        {"choices": [{"delta": {"tool_calls": [{
             "index": 0, "id": "write",
             "function": {"name": "write_file", "arguments": json.dumps({
                 "path": "/tmp_workspace/results/out.md", "content": "evidence",
@@ -4647,6 +4653,7 @@ async def test_native_stream_reserves_remaining_budget_for_required_artifact(mon
     ])
     responses = iter(payloads)
     requests = []
+    executed = []
 
     class Response:
         def __init__(self, payload): self.payload = payload
@@ -4666,17 +4673,18 @@ async def test_native_stream_reserves_remaining_budget_for_required_artifact(mon
             return Response(next(responses))
 
     async def execute(block, **kwargs):
+        executed.append(block.tool_type)
         return block.tool_type, {"output": "ok", "exit_code": 0}
 
     monkeypatch.setattr(module.httpx, "AsyncClient", Client)
     monkeypatch.setattr(module, "execute_tool_block", execute)
     schemas = [
         item for item in FUNCTION_TOOL_SCHEMAS
-        if item["function"]["name"] in {"python", "web_search", "write_file"}
+        if item["function"]["name"] in {"bash", "python", "web_search", "write_file"}
     ]
     contract = resolve_full_inventory_contract(schemas=schemas, policy=ToolPolicy())
     raw = [chunk async for chunk in stream_preview(
-        endpoint_url="http://test", model="test",
+        endpoint_url="http://test", model="deepseek-flash",
         messages=[{"role": "user", "content": "Research and create the requested output."}],
         headers={}, turn_contract=contract, session_id="test", owner="test",
         disabled_tools=set(), tool_policy=ToolPolicy(), workspace="/tmp/workspace",
@@ -4711,15 +4719,11 @@ async def test_native_stream_reserves_remaining_budget_for_required_artifact(mon
     )
     assert "write_file" in request_contract["offered_tools"]
     assert "web_search" not in request_contract["offered_tools"]
-    assert request_contract["tool_choice"] == {
-        "type": "function", "function": {"name": "write_file"},
-    }
+    assert request_contract["tool_choice"] is None
     reserved_names = [tool["function"]["name"] for tool in requests[12]["tools"]]
-    assert "write_file" in reserved_names
-    assert "web_search" not in reserved_names
-    assert requests[12]["tool_choice"] == {
-        "type": "function", "function": {"name": "write_file"},
-    }
+    assert reserved_names == ["write_file"]
+    assert "tool_choice" not in requests[12]
+    assert "bash" not in executed
     assert any(
         event.get("type") == "tool_output" and event.get("tool") == "write_file"
         and not event.get("error") for event in events
