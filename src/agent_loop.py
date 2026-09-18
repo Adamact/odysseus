@@ -6788,6 +6788,49 @@ _COMPACT_EMAIL_UNSUBSCRIBE_TOOLS = {
 }
 
 
+def _blocked_network_recovery_tools(events: Sequence[Dict[str, Any]]) -> Set[str]:
+    """Preserve native recovery tools named by our own network guard.
+
+    Compact routing is recomputed after every tool result. When the native
+    shell/Python guard rejects ad-hoc HTTP it deliberately tells the model to
+    use bounded web/PDF tools instead. Dropping those schemas on the next
+    round makes that recovery impossible. Match only the harness-authored
+    guard prefix on tool-role results so user or fetched content cannot widen
+    the tool surface.
+    """
+    for event in reversed(list(events or [])[-6:]):
+        if not isinstance(event, dict):
+            continue
+        candidates: list[str] = []
+        if (
+            (event.get("type") == "tool_output" or isinstance(event.get("tool"), str))
+            and isinstance(event.get("output"), str)
+        ):
+            candidates.append(event["output"])
+        elif event.get("role") == "tool" and isinstance(event.get("content"), str):
+            candidates.append(event["content"])
+        elif event.get("role") == "user" and isinstance(event.get("content"), list):
+            for part in event["content"]:
+                if not isinstance(part, dict) or part.get("type") != "tool_result":
+                    continue
+                result = part.get("content")
+                if isinstance(result, str):
+                    candidates.append(result)
+                elif isinstance(result, list):
+                    candidates.extend(
+                        item.get("text", "") for item in result
+                        if isinstance(item, dict) and item.get("type") == "text"
+                    )
+        for content in candidates:
+            if re.match(
+                r"^(?:bash|python): ad-hoc HTTP (?:downloads are|access is) disabled "
+                r"when native web tools are available\.",
+                content.strip(),
+            ):
+                return {"pdf_extract", "web_fetch", "web_search"}
+    return set()
+
+
 def _compact_native_route_tools(
     tool_names: Optional[Set[str]],
     text: str,
@@ -23292,6 +23335,11 @@ async def stream_agent_loop(
                     route_tools.difference_update(_irrelevant_local_media_web_tools)
         if turn_contract is not None and tool_surface != "full":
             route_tools = set(turn_contract.offered)
+        if prompt_compact:
+            route_tools.update(
+                _blocked_network_recovery_tools(tool_events)
+                - set(disabled_tools)
+            )
         # Native OpenAI-compatible endpoints use the compact system prompt by
         # default even when no explicit per-model surface preference is stored.
         # Keep the schema bundle consistent with that prompt: artifact routes
@@ -23625,6 +23673,7 @@ async def stream_agent_loop(
     # demonstrably shorter than session history.  Keep route-local system and
     # injected context plus the source's newest request (which may be
     # multimodal), and restore only missing antecedent conversation.
+    tool_events = []   # Available to initial and follow-up route construction.
     _initial_route_source_messages = messages
     if history_session is not None:
         try:
@@ -23713,7 +23762,6 @@ async def stream_agent_loop(
     total_start = time.time()
     time_to_first_token = None
     first_token_received = False
-    tool_events = []   # Persist tool executions for history reload
     round_texts = []   # Cleaned text per round for history reload
     round_models = []  # Actual model for each corresponding round
     round_endpoint_ids = []
@@ -25049,6 +25097,16 @@ async def stream_agent_loop(
                 "apply_patch", "generate_image", "edit_image",
             } - _source_companion_tools)
             _relevant_tools.update(_source_companion_tools)
+
+        _network_recovery_floor = (
+            _blocked_network_recovery_tools(tool_events)
+            - set(disabled_tools)
+            - set(_hard_blocked_tools)
+        )
+        if _network_recovery_floor:
+            if _relevant_tools is None:
+                _relevant_tools = set()
+            _relevant_tools.update(_network_recovery_floor)
 
         _active_route_state = {
             "messages": messages,
