@@ -4150,6 +4150,56 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
         text = lead["request"].strip()
     history = tuple(history)
     concrete_urls = re.findall(r"\bhttps?://[^\s<>\"']+", raw_text, re.I)
+    workspace_media = re.search(
+        r"(?:file://)?/workspace/[^\s`\"']+\."
+        r"(?:avif|bmp|gif|jpe?g|png|svg|tiff?|webp|mp3|m4a|ogg|wav|flac|"
+        r"aac|mp4|m4v|mov|mkv|avi|webm)\b",
+        raw_text,
+        re.I,
+    )
+    media_action = re.search(
+        r"\b(?:inspect|view|study|look\s+at|analy[sz]e|read|transcribe|caption|"
+        r"recreate|reproduce|identify|describe|extract)\b",
+        raw_text,
+        re.I,
+    )
+    if workspace_media and media_action:
+        # A concrete media asset owns score "notes", timestamp ranges, and
+        # other content nouns. Those details must not authorize unrelated
+        # personal Notes or Calendar products. Preserve only explicit
+        # downstream artifact/browser work and deliberate personal-note
+        # mutations.
+        if re.search(r"\bOCR\b|\bextract\b[^.\n]{0,80}\b(?:exact\s+)?(?:visible\s+)?text\b", raw_text, re.I):
+            primary_media_family = "ocr"
+        elif re.search(r"\b(?:transcribe|transcription|captions?|subtitles?)\b", raw_text, re.I):
+            primary_media_family = "transcription"
+        else:
+            primary_media_family = "media_inspection"
+        families = {primary_media_family}
+        if (
+            re.search(r"\b(?:create|write|save|build|implement|produce|recreate|reproduce)\b", raw_text, re.I)
+            and re.search(
+                r"(?:file://)?/workspace/[^\s`\"']+\.(?:csv|html?|json|md|svg|txt)\b",
+                raw_text,
+                re.I,
+            )
+        ):
+            families.add("shell_files")
+        if re.search(
+            r"\b(?:preview|render|open|inspect|verify)\b[^.\n]{0,120}"
+            r"\b(?:page|html|browser|rendered\s+result)\b",
+            raw_text,
+            re.I,
+        ):
+            families.add("search_browser")
+        if re.search(
+            r"\b(?:create|add|write|save)\b[^.;\n]{0,80}\b(?:a\s+)?note\b"
+            r"[^.;\n]{0,80}\b(?:my\s+)?notes\b",
+            raw_text,
+            re.I,
+        ):
+            families.add("notes")
+        return frozenset(families)
     if (
         broad_web_briefing_request(text)
         and not re.search(r"\b(?:research|investigate|deep[ -]?dive)\b", text, re.I)

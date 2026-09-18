@@ -4253,3 +4253,36 @@ def test_recurring_calendar_event_remains_calendar():
     assert requested_capabilities(
         "Create a recurring calendar event every Monday morning for the team meeting."
     ) == {"calendar"}
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        (
+            "Inspect /workspace/input/reference.png, recreate all musical notes in "
+            "/workspace/output.html, then preview the page in a browser.",
+            {"media_inspection", "shell_files", "search_browser"},
+        ),
+        (
+            "First view /workspace/input/reference.png, recreate the piano score with "
+            "correct noteheads in /workspace/output.html, and inspect the rendered result.",
+            {"media_inspection", "shell_files", "search_browser"},
+        ),
+        (
+            "Transcribe every distinct caption in /workspace/input/video.mp4 from "
+            "00:04 through 00:12 and return only the words.",
+            {"transcription"},
+        ),
+    ],
+)
+def test_explicit_workspace_media_workflow_owns_content_nouns_and_timestamps(
+    message, expected
+):
+    assert requested_capabilities(message) == expected
+
+
+def test_explicit_personal_note_action_survives_media_workflow_sealing():
+    assert requested_capabilities(
+        "Inspect /workspace/input/score.png, then save a note in my notes called "
+        "Practice Review with the musical details."
+    ) == {"media_inspection", "notes"}
