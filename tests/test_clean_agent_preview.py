@@ -4703,6 +4703,16 @@ async def test_native_stream_reserves_remaining_budget_for_required_artifact(mon
         and event.get("reason") == "artifact_write_budget_reserved"
     )
     assert recovery["calls_used"] == module.NATIVE_ARTIFACT_RESEARCH_LIMIT
+    request_contract = next(
+        event for event in events
+        if event.get("type") == "provider_request_contract"
+        and event.get("artifact_write_phase") is True
+    )
+    assert "write_file" in request_contract["offered_tools"]
+    assert "web_search" not in request_contract["offered_tools"]
+    assert request_contract["tool_choice"] == {
+        "type": "function", "function": {"name": "write_file"},
+    }
     reserved_names = [tool["function"]["name"] for tool in requests[12]["tools"]]
     assert "write_file" in reserved_names
     assert "web_search" not in reserved_names

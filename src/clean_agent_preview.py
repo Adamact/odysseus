@@ -4436,6 +4436,17 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                 streamed_round_text = False
                 request = search_tool_choice_request(request)
                 request = provider_compatible_tool_choice_request(request, model)
+                if artifact_write_phase and not successful_artifact_write:
+                    yield event({
+                        'type': 'provider_request_contract',
+                        'round': round_number,
+                        'artifact_write_phase': True,
+                        'offered_tools': [
+                            schema.get('function', {}).get('name')
+                            for schema in request.get('tools', [])
+                        ],
+                        'tool_choice': request.get('tool_choice'),
+                    })
                 async with preview_model_response(client, endpoint_url, headers, request, context_recovery) as response:
                     response.raise_for_status()
                     async for line in response.aiter_lines():
