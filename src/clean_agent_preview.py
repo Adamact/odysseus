@@ -3329,6 +3329,20 @@ def repeated_search_refinement(query, prior_intents):
     return False
 
 
+def evidence_tool_keeps_distinct_requests_available(name):
+    """Whether rejecting one duplicate must not hide new evidence arguments.
+
+    Read-only tools routinely need a new URL, page, range, or query after a
+    model accidentally repeats a successful call.  Their exact-call guard is
+    already sufficient to block the duplicate; withholding the whole tool for
+    a round also rejects the valid corrective call.
+    """
+    return canonical(name) in {
+        'web_search', 'web_fetch', 'private_browser', 'pdf_extract',
+        'read_file', 'inspect_media', 'extract_text', 'transcribe_media',
+    }
+
+
 def requested_web_source_links(user_text):
     return bool(re.search(
         r'\b(?:return|give|show|include|provide|cite|find)\b.{0,35}\b(?:source\s+)?links?\b'
@@ -5105,7 +5119,12 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             calls += 1
                             duplicate_count = successful_duplicate_counts.get(call_signature, 0) + 1
                             successful_duplicate_counts[call_signature] = duplicate_count
-                            if duplicate_count >= 2:
+                            if evidence_tool_keeps_distinct_requests_available(name):
+                                suppression = (
+                                    'rejected only for this exact request; the tool remains '
+                                    'available with different arguments'
+                                )
+                            elif duplicate_count >= 2:
                                 permanently_suppressed_tools.add(canonical(name))
                                 suppression = 'disabled for the rest of this turn'
                             else:

@@ -2114,6 +2114,14 @@ def test_followup_search_must_change_subject_angle_not_only_freshness():
     )
 
 
+def test_evidence_tools_reject_only_exact_duplicates_not_distinct_followups():
+    from src.clean_agent_preview import evidence_tool_keeps_distinct_requests_available
+
+    assert evidence_tool_keeps_distinct_requests_available('web_fetch')
+    assert evidence_tool_keeps_distinct_requests_available('inspect_media')
+    assert not evidence_tool_keeps_distinct_requests_available('write_file')
+
+
 def test_current_search_arguments_repair_stale_year_and_add_freshness():
     args = preserve_requested_web_recency(
         'web_search',
@@ -4449,6 +4457,70 @@ async def test_failed_static_fetch_recovers_once_through_rendered_browser(monkey
     events = [json.loads(chunk[6:]) for chunk in raw if '[DONE]' not in chunk]
     assert any(event.get('type') == 'tool_loop_recovery' for event in events)
     assert any('blocked both access methods' in event.get('delta', '') for event in events)
+
+
+@pytest.mark.asyncio
+async def test_duplicate_fetch_does_not_hide_distinct_pagination_request(monkeypatch):
+    from dataclasses import replace
+    import src.clean_agent_preview as module
+
+    def tool_call(call_id, url):
+        return {
+            'index': 0, 'id': call_id,
+            'function': {'name': 'web_fetch', 'arguments': json.dumps({'url': url})},
+        }
+
+    first = 'https://api.example.org/feed?start=0'
+    next_page = 'https://api.example.org/feed?start=100'
+    responses = iter([
+        {'choices': [{'delta': {'tool_calls': [tool_call('first', first)]}}]},
+        {'choices': [{'delta': {'tool_calls': [tool_call('duplicate', first)]}}]},
+        {'choices': [{'delta': {'tool_calls': [tool_call('next', next_page)]}}]},
+        {'choices': [{'delta': {'content': 'Read both pages.'}}]},
+    ])
+    requests, executions = [], []
+
+    class Response:
+        def __init__(self, payload): self.payload = payload
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def raise_for_status(self): pass
+        async def aiter_lines(self):
+            yield 'data: ' + json.dumps(self.payload)
+            yield 'data: [DONE]'
+
+    class Client:
+        def __init__(self, **_kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def stream(self, *_args, **kwargs):
+            requests.append(kwargs['json'])
+            return Response(next(responses))
+
+    async def execute(block, **_kwargs):
+        executions.append(json.loads(block.content)['url'])
+        return 'web_fetch', {'output': 'Readable feed page.', 'exit_code': 0}
+
+    monkeypatch.setattr(module.httpx, 'AsyncClient', Client)
+    monkeypatch.setattr(module, 'execute_tool_block', execute)
+    schema = next(s for s in FUNCTION_TOOL_SCHEMAS if s['function']['name'] == 'web_fetch')
+    contract = replace(
+        resolve_full_inventory_contract(schemas=[schema], policy=ToolPolicy()),
+        routing_experiment='recent_model_choice',
+    )
+    raw = [chunk async for chunk in stream_preview(
+        endpoint_url='http://test', model='test',
+        messages=[{'role': 'user', 'content': 'Read the public feed pages.'}],
+        headers={}, turn_contract=contract, session_id='test', owner='test',
+        disabled_tools=set(), tool_policy=ToolPolicy(), max_rounds=4,
+    )]
+
+    assert executions == [first, next_page]
+    assert any('different arguments' in chunk for chunk in raw)
+    assert any(
+        schema['function']['name'] == 'web_fetch'
+        for schema in requests[2].get('tools', [])
+    )
 
 
 @pytest.mark.asyncio
