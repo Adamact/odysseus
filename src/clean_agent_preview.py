@@ -1455,6 +1455,36 @@ def execution_targets_required_artifact(tool_name, arguments, required_artifacts
     return any(str(path or '').rstrip('/') in serialized for path in required_artifacts)
 
 
+def artifact_completion_tool_schemas(offered_schemas, required_artifacts):
+    """Bind the sole artifact writer to the runner-declared output file.
+
+    This applies only after native execution enters its reserved artifact-write
+    phase.  A JSON-Schema ``const`` gives the provider the exact destination
+    instead of relying on it to recover the path from a long conversation.
+    Multiple outputs and directory targets stay unconstrained because choosing
+    one of those paths requires model intent.
+    """
+    targets = [str(path or '').strip().rstrip('/') for path in required_artifacts]
+    targets = [path for path in targets if path and Path(path).suffix]
+    if len(targets) != 1 or len(tuple(required_artifacts or ())) != 1:
+        return offered_schemas
+    target = targets[0]
+    bound = copy.deepcopy(offered_schemas)
+    for schema in bound:
+        function = schema.get('function') or {}
+        if canonical(function.get('name')) != 'write_file':
+            continue
+        properties = (function.get('parameters') or {}).get('properties') or {}
+        path_schema = properties.get('path')
+        if not isinstance(path_schema, dict):
+            continue
+        path_schema['const'] = target
+        path_schema['description'] = (
+            f'Write this exact required artifact path: {target}'
+        )
+    return bound
+
+
 def protocol_safe_tool_calls(calls):
     """Keep malformed model calls out of the next provider request."""
     safe_calls = copy.deepcopy(calls)
@@ -4334,6 +4364,10 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             canonical(schema['function']['name']), 0
                         ) < round_number
                     ]
+                if artifact_write_phase and not successful_artifact_write:
+                    round_offered = artifact_completion_tool_schemas(
+                        round_offered, required_artifacts,
+                    )
                 research_choice = None
                 if not required_artifacts:
                     round_offered, research_choice, _ = bounded_research_tool_policy(
