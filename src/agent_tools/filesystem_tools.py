@@ -242,7 +242,7 @@ class ReadFileTool:
 
 class WriteFileTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
+        from src.tool_execution import _display_tool_path, _resolve_tool_path, _resolve_search_root, _truncate
         lines = content.split("\n", 1)
         raw_path = lines[0].strip()
         body = lines[1] if len(lines) > 1 else ""
@@ -339,7 +339,10 @@ class WriteFileTool:
         except OSError as e:
             return {"error": f"write_file: {path}: {e}", "exit_code": 1}
         diff = _unified_diff(old_content, body, path)
-        result = {"output": f"Wrote {size} bytes to {path}", "exit_code": 0}
+        result = {
+            "output": f"Wrote {size} bytes to {_display_tool_path(path)}",
+            "exit_code": 0,
+        }
         if diff:
             result["diff"] = diff
         return result

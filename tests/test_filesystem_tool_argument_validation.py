@@ -95,6 +95,24 @@ async def test_write_file_still_rewrites_existing_text_file(tmp_path, monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_write_file_keeps_workspace_results_on_the_stable_virtual_path(tmp_path):
+    from src.tool_execution import _active_workspace
+
+    token = _active_workspace.set(str(tmp_path))
+    try:
+        result = await WriteFileTool().execute(
+            '{"path":"/workspace/results/report.txt","content":"done"}', {}
+        )
+    finally:
+        _active_workspace.reset(token)
+
+    assert result["exit_code"] == 0
+    assert "/workspace/results/report.txt" in result["output"]
+    assert str(tmp_path) not in result["output"]
+    assert (tmp_path / "results" / "report.txt").read_text() == "done"
+
+
+@pytest.mark.asyncio
 async def test_write_file_unwraps_markdown_fence_for_html_artifact(tmp_path, monkeypatch):
     import src.tool_execution as tool_execution
 
