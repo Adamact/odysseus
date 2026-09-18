@@ -4393,10 +4393,11 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         retrievals=successful_web_retrievals,
                         search_limit=2,
                     )
-                round_max_tokens = (
-                    min(request_max_tokens, 4096)
-                    if artifact_body_handoff_target else request_max_tokens
-                )
+                # Thinking providers can consume several thousand tokens before
+                # emitting the requested body.  Reusing the configured output
+                # budget avoids a reasoning-only response that leaves the
+                # required artifact unwritten.
+                round_max_tokens = request_max_tokens
                 request = {'model': model, 'messages': request_messages, 'temperature': temperature,
                            'max_tokens': round_max_tokens, 'stream': True,
                            'stream_options': {'include_usage': True},

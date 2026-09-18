@@ -613,7 +613,7 @@ async def test_repeated_off_contract_calls_recover_via_required_artifact_body(mo
             'completion_requirements': {
                 'required_artifacts': ['/workspace/output.html'],
             },
-        }, max_rounds=5,
+        }, max_tokens=8192, max_rounds=5,
     )]
 
     assert [block.tool_type for block in executed] == ['write_file']
@@ -622,6 +622,8 @@ async def test_repeated_off_contract_calls_recover_via_required_artifact_body(mo
         if message.get('role') == 'assistant' and message.get('tool_calls')
     )
     assert prior_tool_turn['reasoning_content'] == 'reasoning-one'
+    assert requests[2]['max_tokens'] == 8192
+    assert requests[3]['max_tokens'] == 8192
     assert executed[0].content == (
         '/workspace/output.html\n<html><body>Recovered</body></html>'
     )
