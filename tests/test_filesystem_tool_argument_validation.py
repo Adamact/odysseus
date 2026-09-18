@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from src.agent_tools.filesystem_tools import EditFileTool, ReadFileTool, WriteFileTool
@@ -90,3 +92,34 @@ async def test_write_file_still_rewrites_existing_text_file(tmp_path, monkeypatc
 
     assert result["exit_code"] == 0
     assert target.read_text(encoding="utf-8") == "new"
+
+
+@pytest.mark.asyncio
+async def test_write_file_unwraps_markdown_fence_for_html_artifact(tmp_path, monkeypatch):
+    import src.tool_execution as tool_execution
+
+    target = tmp_path / "output.html"
+    monkeypatch.setattr(tool_execution, "_resolve_tool_path", lambda _path: str(target))
+
+    result = await WriteFileTool().execute(
+        '{"path":"output.html","content":"```html\\n<div>clock</div>\\n```"}', {}
+    )
+
+    assert result["exit_code"] == 0
+    assert target.read_text(encoding="utf-8") == "<div>clock</div>"
+
+
+@pytest.mark.asyncio
+async def test_write_file_preserves_literal_fence_for_markdown(tmp_path, monkeypatch):
+    import src.tool_execution as tool_execution
+
+    target = tmp_path / "notes.md"
+    monkeypatch.setattr(tool_execution, "_resolve_tool_path", lambda _path: str(target))
+    content = "```python\\nprint('literal example')\\n```"
+
+    result = await WriteFileTool().execute(
+        json.dumps({"path": "notes.md", "content": content}), {}
+    )
+
+    assert result["exit_code"] == 0
+    assert target.read_text(encoding="utf-8") == content

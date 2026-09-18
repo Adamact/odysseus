@@ -25,6 +25,31 @@ _BINARY_ARTIFACT_SUFFIXES = _STRUCTURED_DOCUMENT_SUFFIXES | frozenset({
     ".png", ".wav", ".webm", ".webp", ".zip",
 })
 
+# Models frequently put source artifacts in a Markdown code fence even when a
+# tool schema asks for the raw file body. Persisting that fence makes HTML,
+# CSS, JavaScript, and source files invalid. Restrict normalization to
+# code-like targets so a user can still write a literal fence to Markdown.
+_FENCED_SOURCE_SUFFIXES = frozenset({
+    ".css", ".csv", ".html", ".htm", ".js", ".json", ".jsx", ".mjs",
+    ".py", ".sh", ".sql", ".svg", ".ts", ".tsx", ".xml", ".yaml", ".yml",
+})
+
+
+def _unwrap_fenced_source_body(body: str, path: str) -> str:
+    """Remove an accidental outer Markdown fence from a source artifact.
+
+    An opening fence is enough to normalize: generation can end during a tool
+    call while its argument remains otherwise usable, and retaining the fence
+    corrupts the artifact. This only applies to source-like file extensions.
+    """
+    if os.path.splitext(path)[1].casefold() not in _FENCED_SOURCE_SUFFIXES:
+        return body
+    match = re.match(r"^(\s*)```[^\r\n]*\r?\n", body)
+    if not match:
+        return body
+    unwrapped = body[match.end():]
+    return re.sub(r"\r?\n```\s*$", "", unwrapped)
+
 
 def _glob_to_regex(pat: str) -> "re.Pattern":
     """Translate a forward-slash glob (**, *, ?) into a compiled regex.
@@ -247,6 +272,7 @@ class WriteFileTool:
             path = _resolve_tool_path(raw_path)
         except ValueError as e:
             return {"error": f"write_file: {e}", "exit_code": 1}
+        body = _unwrap_fenced_source_body(body, path)
         # A frequent multimodal artifact failure is writing SVG markup to a
         # path whose extension promises a raster image. The file exists, so
         # ordinary artifact checks pass, but image judges cannot decode it.
