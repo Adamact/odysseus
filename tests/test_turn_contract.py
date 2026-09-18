@@ -2280,6 +2280,16 @@ def test_explicit_native_web_workflow_preserves_workspace_artifact_tools():
     assert requested_capabilities(message) == {"search_browser", "shell_files"}
 
 
+def test_negative_memory_evidence_rule_does_not_select_personal_memory():
+    message = (
+        "Use Odysseus web_search and web_fetch for every paper, then write "
+        "/tmp_workspace/results/paper_digest.md. Every value must come from "
+        "the fetched page, never memory. Sort every paper list and show the result."
+    )
+    assert required_read_operation_for_request(message) is None
+    assert requested_capabilities(message) == {"search_browser", "shell_files"}
+
+
 def test_typoed_webhook_inventory_selects_admin_reader():
     message = "list my webhoks again"
     assert selected_tools_for_request(message) == {"manage_webhooks"}
