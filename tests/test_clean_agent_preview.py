@@ -4690,6 +4690,13 @@ async def test_native_stream_reserves_remaining_budget_for_required_artifact(mon
     events = [json.loads(chunk[6:]) for chunk in raw if "[DONE]" not in chunk]
     turn_contract = next(event for event in events if event.get("type") == "turn_contract")
     assert turn_contract["required_artifacts"] == ["/tmp_workspace/results"]
+    artifact_boundary_step = next(
+        event for event in events
+        if event.get("type") == "agent_step"
+        and event.get("calls_used") == module.NATIVE_ARTIFACT_RESEARCH_LIMIT
+    )
+    assert artifact_boundary_step["required_artifact_pending"] is True
+    assert artifact_boundary_step["artifact_write_phase"] is False
     recovery = next(
         event for event in events
         if event.get("type") == "completion_recovery"

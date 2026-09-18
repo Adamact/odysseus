@@ -4230,7 +4230,15 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                 if round_number > round_limit and not emergency_completion_round:
                     break
                 rounds_used = round_number
-                yield event({'type': 'agent_step', 'round': round_number})
+                yield event({
+                    'type': 'agent_step',
+                    'round': round_number,
+                    'calls_used': calls,
+                    'required_artifact_pending': bool(
+                        required_artifacts and not successful_artifact_write
+                    ),
+                    'artifact_write_phase': artifact_write_phase,
+                })
                 # Preserve the final model round for an actual user-facing
                 # answer once tools have returned evidence. Previously the
                 # model could spend the last round emitting another tool call
