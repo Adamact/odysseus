@@ -4705,7 +4705,8 @@ async def test_native_stream_reserves_remaining_budget_for_required_artifact(mon
     assert recovery["calls_used"] == module.NATIVE_ARTIFACT_RESEARCH_LIMIT
     request_contract = next(
         event for event in events
-        if event.get("type") == "provider_request_contract"
+        if event.get("type") == "agent_step"
+        and event.get("stage") == "provider_request"
         and event.get("artifact_write_phase") is True
     )
     assert "write_file" in request_contract["offered_tools"]

@@ -4438,7 +4438,10 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                 request = provider_compatible_tool_choice_request(request, model)
                 if artifact_write_phase and not successful_artifact_write:
                     yield event({
-                        'type': 'provider_request_contract',
+                        # Reuse the native runner's preserved step event family
+                        # so request-boundary diagnostics survive normalization.
+                        'type': 'agent_step',
+                        'stage': 'provider_request',
                         'round': round_number,
                         'artifact_write_phase': True,
                         'offered_tools': [
