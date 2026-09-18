@@ -2287,6 +2287,32 @@ def test_negative_memory_evidence_rule_does_not_select_personal_memory():
         "the fetched page, never memory. Sort every paper list and show the result."
     )
     assert required_read_operation_for_request(message) is None
+
+
+@pytest.mark.parametrize(
+    "evidence_rule",
+    [
+        "extract every field without trusting memory",
+        "do not answer from memory alone",
+        "do not write the inventory from memory",
+    ],
+)
+def test_web_evidence_variants_do_not_select_personal_memory(evidence_rule):
+    message = (
+        "Use web_search and web_fetch, then show an author list and write "
+        f"/tmp_workspace/results/report.md; {evidence_rule}."
+    )
+    assert required_read_operation_for_request(message) is None
+
+
+def test_explicit_web_required_outputs_preserve_workspace_tools():
+    message = (
+        "Run web_search and web_fetch first. Required outputs in "
+        "/tmp_workspace/results: report.jsonl and provenance.md."
+    )
+    assert selected_tools_for_request(message) == frozenset(
+        {"web_search", "web_fetch", "read_file", "write_file", "edit_file", "python"}
+    )
     assert requested_capabilities(message) == {"search_browser", "shell_files"}
 
 

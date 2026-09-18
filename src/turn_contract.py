@@ -701,10 +701,13 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
             explicitly_named_web.add("web_fetch")
         if (
             re.search(r"(?:file://)?/(?:tmp_)?workspace(?:/|\b)", raw_text, re.I)
-            and re.search(
-                r"\b(?:build|create|edit|persist|produce|save|write)\b",
-                raw_text,
-                re.I,
+            and (
+                re.search(
+                    r"\b(?:build|create|edit|persist|produce|save|write)\b",
+                    raw_text,
+                    re.I,
+                )
+                or re.search(r"\brequired\s+outputs?\b", raw_text, re.I)
             )
             and re.search(
                 r"\b(?:artifacts?|director(?:y|ies)|files?|outputs?|results?)\b|"
@@ -2557,6 +2560,18 @@ def required_read_operation_for_request(message: str, history: Iterable = ()) ->
     normalized_text = _normalize_request_lead(message)
     text, maximum = _read_request_and_limit(message)
     rows = list(history)
+    if re.search(
+        r"\bwithout\s+(?:using|trusting|relying\s+on)\s+(?:my\s+)?memory\b|"
+        r"\b(?:do\s+not|don['’]?t|dont|never)\b[^.;\n]{0,80}\bfrom\s+memory(?:\s+alone)?\b|"
+        r"\b(?:do\s+not|don['’]?t|dont|never)\s+(?:use|trust|rely\s+on)\s+(?:my\s+)?memory\b",
+        text,
+        re.I,
+    ):
+        # These are source-grounding constraints, not requests to read the
+        # user's private Odysseus memory store.  Long research/artifact jobs
+        # often also contain words such as "list" or "show", which must not
+        # convert the evidence constraint into a sealed personal-data read.
+        return None
     # A user can switch families in one conversation and then explicitly come
     # back using ordinary shorthand (including a one-edit typo):
     # ``back to emaol show 2 latest``.  This is a complete inbox inventory
