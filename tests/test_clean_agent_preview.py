@@ -548,6 +548,13 @@ async def test_repeated_off_contract_calls_recover_via_required_artifact_body(mo
                 'code': 'print("nope")',
             })},
         }]}}]},
+        {'choices': [{'delta': {'content': ''}}]},
+        {'choices': [{'delta': {'tool_calls': [{
+            'index': 0, 'id': 'bad-inspect',
+            'function': {'name': 'inspect_media', 'arguments': json.dumps({
+                'path': '/workspace/input.png',
+            })},
+        }]}}]},
         {'choices': [{'delta': {'content': '<html><body>Recovered</body></html>'}}]},
     ])
 
@@ -604,7 +611,7 @@ async def test_repeated_off_contract_calls_recover_via_required_artifact_body(mo
         event.get('type') == 'tool_output'
         and event.get('execution_attempted') is False
         for event in events
-    ) == 2
+    ) == 3
     assert any(
         event.get('type') == 'artifact_body_handoff'
         and event.get('path') == '/workspace/output.html'

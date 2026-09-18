@@ -4196,7 +4196,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     successful_editor_writer = None
     successful_artifact_write = False
     artifact_recovery_attempts = 0
-    artifact_body_handoff_attempted = False
+    artifact_body_handoff_attempts = 0
     artifact_body_handoff_target = ''
     artifact_off_contract_failures = 0
     artifact_write_phase = False
@@ -5444,9 +5444,9 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             )
                             if (
                                 repeated_handoff_target
-                                and not artifact_body_handoff_attempted
+                                and artifact_body_handoff_attempts < 2
                             ):
-                                artifact_body_handoff_attempted = True
+                                artifact_body_handoff_attempts += 1
                                 artifact_body_handoff_target = repeated_handoff_target
                         if str(exc).startswith('The calendar read has not succeeded yet.'):
                             # Remove the dependent writer for one correction
@@ -5459,9 +5459,9 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         if (
                             handoff_target
                             and canonical(name) == 'write_file'
-                            and not artifact_body_handoff_attempted
+                            and artifact_body_handoff_attempts < 2
                         ):
-                            artifact_body_handoff_attempted = True
+                            artifact_body_handoff_attempts += 1
                             artifact_body_handoff_target = handoff_target
                         result = {'error': str(exc).splitlines()[0][:300], 'exit_code': 1}
                     output = preview_tool_result_text(result, block.tool_type if block is not None else name, args)
