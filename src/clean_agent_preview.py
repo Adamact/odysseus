@@ -5120,12 +5120,21 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             calls += 1
                             duplicate_count = successful_duplicate_counts.get(call_signature, 0) + 1
                             successful_duplicate_counts[call_signature] = duplicate_count
-                            if evidence_tool_keeps_distinct_requests_available(name):
+                            if (
+                                evidence_tool_keeps_distinct_requests_available(name)
+                                and duplicate_count < 2
+                            ):
                                 suppression = (
                                     'rejected only for this exact request; the tool remains '
                                     'available with different arguments'
                                 )
                             elif duplicate_count >= 2:
+                                # A first duplicate leaves evidence tools available so a
+                                # corrected page/range/URL/query can execute immediately.
+                                # Repeating that exact successful call after the reminder
+                                # proves the model is not taking that route; continuing to
+                                # advertise it produces no-op loops and starves completion.
+                                terminal_suppression_violation = True
                                 permanently_suppressed_tools.add(canonical(name))
                                 suppression = 'disabled for the rest of this turn'
                             else:

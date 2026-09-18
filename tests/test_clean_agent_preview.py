@@ -5251,7 +5251,10 @@ async def test_native_stream_permanently_withholds_tool_when_model_ignores_dupli
         and "already returned evidence" in event.get("output", "")
     ]
     assert len(duplicate_errors) == 2
-    assert 'tools' not in requests[2]
+    # The first exact duplicate leaves the evidence tool available so a
+    # changed request can run.  Ignoring that correction once more suppresses
+    # the looping tool and forces a completion-only turn.
+    assert any(item['function']['name'] == 'inspect_media' for item in requests[2]['tools'])
     assert 'tools' not in requests[3]
 
 
