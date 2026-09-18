@@ -4286,3 +4286,17 @@ def test_explicit_personal_note_action_survives_media_workflow_sealing():
         "Inspect /workspace/input/score.png, then save a note in my notes called "
         "Practice Review with the musical details."
     ) == {"media_inspection", "notes"}
+
+
+def test_watch_workspace_video_is_media_not_generic_shell():
+    assert requested_capabilities(
+        "Watch the entire match in /workspace/input/video.mp4 and count how many "
+        "points Bob won. Return a JSON object in the final answer."
+    ) == {"media_inspection"}
+
+
+def test_chinese_video_to_image_artifact_keeps_media_and_workspace_tools():
+    assert requested_capabilities(
+        "请完整浏览 /workspace/input/video.mp4，为每款零食截图并拼成清单图，"
+        "输出到 /workspace/snack_checklist.jpg，交付前打开成品图检查。"
+    ) == {"media_inspection", "shell_files"}

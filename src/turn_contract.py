@@ -4158,8 +4158,9 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
         re.I,
     )
     media_action = re.search(
-        r"\b(?:inspect|view|study|look\s+at|analy[sz]e|read|transcribe|caption|"
-        r"recreate|reproduce|identify|describe|extract)\b",
+        r"\b(?:inspect|view|watch|study|look\s+at|analy[sz]e|read|transcribe|caption|"
+        r"recreate|reproduce|identify|describe|extract)\b|"
+        r"(?:浏览|查看|观看|分析|检查|识别|转录|截图)",
         raw_text,
         re.I,
     )
@@ -4177,9 +4178,15 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
             primary_media_family = "media_inspection"
         families = {primary_media_family}
         if (
-            re.search(r"\b(?:create|write|save|build|implement|produce|recreate|reproduce)\b", raw_text, re.I)
+            re.search(
+                r"\b(?:create|write|save|build|implement|produce|recreate|reproduce)\b|"
+                r"(?:创建|写入|保存|生成|输出|拼成|制作)",
+                raw_text,
+                re.I,
+            )
             and re.search(
-                r"(?:file://)?/workspace/[^\s`\"']+\.(?:csv|html?|json|md|svg|txt)\b",
+                r"(?:file://)?/workspace/(?!input/)[^\s`\"']+\."
+                r"(?:csv|html?|json|md|svg|txt|avif|bmp|gif|jpe?g|png|webp|pdf|mp4|webm)\b",
                 raw_text,
                 re.I,
             )
