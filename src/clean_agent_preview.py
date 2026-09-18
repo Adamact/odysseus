@@ -1571,8 +1571,15 @@ def artifact_completion_tool_schemas(offered_schemas, required_artifacts):
 
 
 def required_artifact_completion_tool_choice(required_artifacts, offered_schemas):
-    """Choose Python for one binary output; preserve the text-writer default."""
+    """Choose a writer only when the contract names an exact output file.
+
+    A directory contract needs the model to choose one or more child filenames.
+    Forcing ``write_file`` there encourages an impossible write to the directory
+    path itself, so leave tool choice unconstrained for that case.
+    """
     targets = [str(path or '').strip().rstrip('/') for path in required_artifacts]
+    if not targets or any(not Path(target).suffix for target in targets):
+        return None
     offered = {
         canonical((schema.get('function') or {}).get('name')):
         (schema.get('function') or {}).get('name')
@@ -4451,6 +4458,17 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     and calls >= min(NATIVE_ARTIFACT_RESEARCH_LIMIT, tool_call_limit - 1)
                 ):
                     artifact_write_phase = True
+                    directory_artifact_guidance = ''
+                    directory_targets = [
+                        path for path in required_artifacts
+                        if not Path(str(path or '').strip().rstrip('/')).suffix
+                    ]
+                    if directory_targets:
+                        directory_artifact_guidance = (
+                            ' Each listed directory is a container: create one or more files '
+                            'inside it with meaningful content. Do not pass the directory itself '
+                            'as a file path.'
+                        )
                     history.append({
                         'role': 'user',
                         '_harness_control': True,
@@ -4459,7 +4477,9 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             'unwritten after substantial research: '
                             + ', '.join(required_artifacts)
                             + '. Use the evidence already gathered and the offered workspace tools '
-                            'to create and verify the required outputs now. Do not continue broad '
+                            'to create and verify the required outputs now.'
+                            + directory_artifact_guidance
+                            + ' Do not continue broad '
                             'web, document, or media research.'
                         ),
                     })

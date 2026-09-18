@@ -679,6 +679,17 @@ def test_required_binary_artifact_forces_python_instead_of_text_writer():
     ]
 
 
+def test_required_directory_artifact_does_not_force_writer_to_directory_path():
+    offered = [
+        {'type': 'function', 'function': {'name': 'bash'}},
+        {'type': 'function', 'function': {'name': 'write_file'}},
+    ]
+
+    assert required_artifact_completion_tool_choice(
+        ('/tmp_workspace/results',), offered,
+    ) is None
+
+
 def test_action_promise_response_rejects_future_work_but_not_real_answers():
     import src.clean_agent_preview as module
 
@@ -5317,9 +5328,11 @@ async def test_native_stream_reserves_remaining_budget_for_required_artifact(mon
     assert "web_search" not in request_contract["offered_tools"]
     assert request_contract["tool_choice"] is None
     reserved_names = [tool["function"]["name"] for tool in requests[12]["tools"]]
-    assert reserved_names == ["write_file"]
+    assert reserved_names == ["bash", "python", "write_file"]
     assert "tool_choice" not in requests[12]
-    assert "bash" not in executed
+    assert "create one or more files inside" in requests[12]["messages"][-1]["content"]
+    assert "Do not pass the directory itself as a file path" in requests[12]["messages"][-1]["content"]
+    assert "bash" in executed
     assert any(
         event.get("type") == "tool_output" and event.get("tool") == "write_file"
         and not event.get("error") for event in events
