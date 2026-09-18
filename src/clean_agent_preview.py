@@ -184,7 +184,8 @@ def search_tool_choice_request(request):
 
 def provider_compatible_tool_choice_request(request, model):
     """Keep tools but avoid forced choice unsupported by thinking providers."""
-    if canonical(model) == 'deepseek-flash' and 'tool_choice' in request:
+    model_name = canonical(str(model or '')).casefold()
+    if model_name.startswith('deepseek') and 'tool_choice' in request:
         compatible = dict(request)
         choice = compatible.get('tool_choice')
         selected_name = (
@@ -199,6 +200,23 @@ def provider_compatible_tool_choice_request(request, model):
             if selected:
                 compatible['tools'] = selected
         compatible.pop('tool_choice', None)
+        return compatible
+    if (
+        request.get('tool_choice') == 'required'
+        and len(request.get('tools') or []) == 1
+        and ('qwen' in model_name or model_name.startswith('odysseus-'))
+    ):
+        # Raw-policy capture accepts a named tool constraint (and records that
+        # turn as excluded from policy loss), but deliberately rejects the
+        # distribution-wide ``required`` mode. Search recovery narrows the
+        # schema to one tool before reaching this boundary, so preserving that
+        # exact name has the same runtime intent without a transport failure.
+        compatible = dict(request)
+        name = request['tools'][0]['function']['name']
+        compatible['tool_choice'] = {
+            'type': 'function',
+            'function': {'name': name},
+        }
         return compatible
     return request
 

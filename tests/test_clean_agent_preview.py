@@ -114,6 +114,29 @@ def test_deepseek_flash_keeps_tools_but_drops_unsupported_forced_choice():
     assert provider_compatible_tool_choice_request(request, 'qwen3.5-9b') is request
 
 
+def test_deepseek_v4_flash_drops_named_choice_for_thinking_mode():
+    request = {
+        'tools': [{'type': 'function', 'function': {'name': 'write_file'}}],
+        'tool_choice': {'type': 'function', 'function': {'name': 'write_file'}},
+    }
+    compatible = provider_compatible_tool_choice_request(request, 'deepseek-v4-flash')
+    assert [tool['function']['name'] for tool in compatible['tools']] == ['write_file']
+    assert 'tool_choice' not in compatible
+
+
+def test_qwen_capture_converts_single_required_tool_to_named_constraint():
+    request = {
+        'tools': [{'type': 'function', 'function': {'name': 'web_search'}}],
+        'tool_choice': 'required',
+    }
+    compatible = provider_compatible_tool_choice_request(
+        request, 'odysseus-qwen3.5-tools-pre-heretic'
+    )
+    assert compatible['tool_choice'] == {
+        'type': 'function', 'function': {'name': 'web_search'},
+    }
+
+
 def test_private_browser_observations_do_not_advance_page_revision():
     assert private_browser_state_transition({'action': 'snapshot'}, 'https://example.org') == (
         False, 'https://example.org')
