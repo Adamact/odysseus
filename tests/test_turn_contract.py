@@ -57,12 +57,12 @@ def test_narrow_lookups_are_not_misclassified_as_broad_briefings(prompt):
 
 
 def resolve(capabilities=(), *, schemas=FUNCTION_TOOL_SCHEMAS, policy=None, required_tools=(),
-            required_capabilities=None, selected_tools=None, warm_tools=()):
+            required_capabilities=None, selected_tools=None, warm_tools=(), message=None):
     return resolve_turn_contract(capabilities=capabilities, schemas=schemas,
                                  policy=policy or ToolPolicy(), required_tools=required_tools,
                                  required_capabilities=required_capabilities,
                                  selected_tools=selected_tools,
-                                 warm_tools=warm_tools)
+                                 warm_tools=warm_tools, message=message)
 
 
 def test_latest_topic_info_and_common_news_typo_route_to_web_search():
@@ -153,6 +153,20 @@ def test_empty_family_contract_keeps_core_recovery_tools() -> None:
         "bash", "python", "read_file", "web_search", "web_fetch", "ask_user",
     }) >= 5
     assert contract.offered
+
+
+def test_web_contract_keeps_private_browser_only_as_fallback() -> None:
+    contract = resolve(
+        frozenset(),
+        selected_tools={"web_search"},
+        message="find current reviews for a product",
+    )
+
+    assert "web_search" in contract.offered
+    assert "private_browser" in contract.offered
+    assert "private_browser" not in {
+        "bash", "python", "read_file", "web_search", "web_fetch", "ask_user",
+    }
 
 
 def test_full_inventory_experiment_respects_disabled_families_without_blocking_others():

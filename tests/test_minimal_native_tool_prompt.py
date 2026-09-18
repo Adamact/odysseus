@@ -196,6 +196,7 @@ def test_product_review_request_routes_to_web_search_without_search_verb() -> No
     from src.turn_contract import selected_tools_for_request
 
     assert selected_tools_for_request("What's Dyson pencil vac reviews") == frozenset({"web_search"})
+    assert selected_tools_for_request("What are current reviews for Dyson pencil vac?") == frozenset({"web_search"})
     assert "web" in _classify_agent_request(
         [{"role": "user", "content": "What's Dyson pencil vac reviews"}],
         "What's Dyson pencil vac reviews",

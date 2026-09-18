@@ -754,7 +754,7 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
         text,
         re.I,
     ) and re.search(
-        r"\b(?:what(?:'s|\s+is)|how\s+are|which|best|good|bad|worth|recommend|"
+        r"\b(?:what(?:'s|\s+is|\s+are)|how\s+are|which|best|good|bad|worth|recommend|"
         r"compare|pros?|cons?|opinions?|thoughts?|about)\b",
         text,
         re.I,
@@ -5656,7 +5656,14 @@ def resolve_turn_contract(*, capabilities: Iterable[str], schemas: Iterable[dict
                            and not (policy.disable_mcp and n.startswith("mcp__")))
     selected = set().union(*(FAMILY_TOOLS.get(f, frozenset()) for f in families))
     if selected_tools is not None:
-        selected.intersection_update(canonical_tool(n) for n in selected_tools)
+        requested = {canonical_tool(n) for n in selected_tools}
+        if not families:
+            # An exact operation selected by the request classifier is already
+            # a sufficient capability declaration. Do not erase it merely
+            # because the broader lexical family classifier was conservative.
+            selected = requested
+        else:
+            selected.intersection_update(requested)
     elif operation is not None:
         # A server-sealed safe read is an operation, not merely a family hint.
         # Offer exactly that reader so the model cannot drift to a sibling
@@ -5664,6 +5671,14 @@ def resolve_turn_contract(*, capabilities: Iterable[str], schemas: Iterable[dict
         selected.intersection_update({canonical_tool(operation.tool)})
     elif not families:
         selected.update(CONTRACT_CORE_TOOLS)
+    if (
+        message is not None
+        and selected_tools is not None
+        and set(selected_tools) & {"web_search", "web_fetch"}
+    ):
+        # Browser is not core. It is a bounded recovery capability for a web
+        # turn when static search/fetch cannot read the named site.
+        selected.add("private_browser")
     selected.update(canonical_tool(n) for n in warm_tools if str(n or "").strip())
     # Controls are neutral; enabling Web is permission, never a requested family.
     if selected:
