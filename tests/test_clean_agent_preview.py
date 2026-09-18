@@ -501,6 +501,117 @@ def test_artifact_completion_schema_does_not_bind_directory_or_multiple_outputs(
     ) == source
 
 
+def test_repeated_off_contract_artifact_calls_trigger_single_file_body_handoff():
+    import src.clean_agent_preview as module
+
+    assert module.repeated_off_contract_artifact_handoff_target(
+        artifact_write_phase=True,
+        successful_artifact_write=False,
+        required_artifacts=('/workspace/output.html',),
+        failures=2,
+    ) == '/workspace/output.html'
+
+    assert not module.repeated_off_contract_artifact_handoff_target(
+        artifact_write_phase=True,
+        successful_artifact_write=False,
+        required_artifacts=('/workspace/output.html',),
+        failures=1,
+    )
+    assert not module.repeated_off_contract_artifact_handoff_target(
+        artifact_write_phase=True,
+        successful_artifact_write=False,
+        required_artifacts=('/workspace/a.html', '/workspace/b.html'),
+        failures=2,
+    )
+    assert not module.repeated_off_contract_artifact_handoff_target(
+        artifact_write_phase=True,
+        successful_artifact_write=False,
+        required_artifacts=('/workspace/results',),
+        failures=2,
+    )
+
+
+@pytest.mark.asyncio
+async def test_repeated_off_contract_calls_recover_via_required_artifact_body(monkeypatch):
+    import src.clean_agent_preview as module
+
+    responses = iter([
+        {'choices': [{'delta': {'tool_calls': [{
+            'index': 0, 'id': 'bad-bash',
+            'function': {'name': 'bash', 'arguments': json.dumps({
+                'command': 'echo nope',
+            })},
+        }]}}]},
+        {'choices': [{'delta': {'tool_calls': [{
+            'index': 0, 'id': 'bad-python',
+            'function': {'name': 'python', 'arguments': json.dumps({
+                'code': 'print("nope")',
+            })},
+        }]}}]},
+        {'choices': [{'delta': {'content': '<html><body>Recovered</body></html>'}}]},
+    ])
+
+    class Response:
+        def __init__(self, payload): self.payload = payload
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def raise_for_status(self): pass
+        async def aiter_lines(self):
+            yield 'data: ' + json.dumps(self.payload)
+            yield 'data: [DONE]'
+
+    class Client:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def stream(self, *args, **kwargs):
+            return Response(next(responses))
+
+    executed = []
+
+    async def execute(block, **kwargs):
+        executed.append(block)
+        return block.tool_type, {'output': 'written', 'exit_code': 0}
+
+    monkeypatch.setattr(module, 'NATIVE_ARTIFACT_RESEARCH_LIMIT', 0)
+    monkeypatch.setattr(module.httpx, 'AsyncClient', Client)
+    monkeypatch.setattr(module, 'execute_tool_block', execute)
+    schema = next(
+        item for item in FUNCTION_TOOL_SCHEMAS
+        if item['function']['name'] == 'write_file'
+    )
+    contract = resolve_full_inventory_contract(schemas=[schema], policy=ToolPolicy())
+    raw = [chunk async for chunk in stream_preview(
+        endpoint_url='http://test', model='deepseek-flash',
+        messages=[{'role': 'user', 'content': 'Create the requested HTML.'}],
+        headers={}, turn_contract=contract, session_id='test', owner='test',
+        disabled_tools=set(), tool_policy=ToolPolicy(), workspace='/workspace',
+        client_runtime_context={
+            'surface': 'odysseus-native', 'terminal_agent': True,
+            'unattended_mode': True,
+            'completion_requirements': {
+                'required_artifacts': ['/workspace/output.html'],
+            },
+        }, max_rounds=5,
+    )]
+
+    assert [block.tool_type for block in executed] == ['write_file']
+    assert executed[0].content == (
+        '/workspace/output.html\n<html><body>Recovered</body></html>'
+    )
+    events = [json.loads(chunk[6:]) for chunk in raw if '[DONE]' not in chunk]
+    assert sum(
+        event.get('type') == 'tool_output'
+        and event.get('execution_attempted') is False
+        for event in events
+    ) == 2
+    assert any(
+        event.get('type') == 'artifact_body_handoff'
+        and event.get('path') == '/workspace/output.html'
+        for event in events
+    )
+
+
 def test_runtime_required_artifacts_does_not_promote_inputs_to_outputs():
     assert runtime_required_artifacts(
         'Read /workspace/input/data.json and write /workspace/results/report.json.',

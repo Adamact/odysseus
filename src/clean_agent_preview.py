@@ -1485,6 +1485,22 @@ def artifact_completion_tool_schemas(offered_schemas, required_artifacts):
     return bound
 
 
+def repeated_off_contract_artifact_handoff_target(
+    *, artifact_write_phase, successful_artifact_write, required_artifacts, failures,
+):
+    """Select the sole exact file for body-only recovery after two bad calls."""
+    if (
+        not artifact_write_phase
+        or successful_artifact_write
+        or failures < 2
+    ):
+        return ''
+    targets = [str(path or '').strip().rstrip('/') for path in required_artifacts]
+    if len(targets) != 1 or not Path(targets[0]).suffix:
+        return ''
+    return targets[0]
+
+
 def protocol_safe_tool_calls(calls):
     """Keep malformed model calls out of the next provider request."""
     safe_calls = copy.deepcopy(calls)
@@ -4182,6 +4198,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     artifact_recovery_attempts = 0
     artifact_body_handoff_attempted = False
     artifact_body_handoff_target = ''
+    artifact_off_contract_failures = 0
     artifact_write_phase = False
     suppression_completion_attempted = False
     search_completion_attempted = False
@@ -5415,6 +5432,22 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             ):
                                 successful_artifact_write = True
                     except (ValueError, jsonschema.ValidationError) as exc:
+                        if str(exc) == 'Tool is not offered or permitted.':
+                            artifact_off_contract_failures += 1
+                            repeated_handoff_target = (
+                                repeated_off_contract_artifact_handoff_target(
+                                    artifact_write_phase=artifact_write_phase,
+                                    successful_artifact_write=successful_artifact_write,
+                                    required_artifacts=required_artifacts,
+                                    failures=artifact_off_contract_failures,
+                                )
+                            )
+                            if (
+                                repeated_handoff_target
+                                and not artifact_body_handoff_attempted
+                            ):
+                                artifact_body_handoff_attempted = True
+                                artifact_body_handoff_target = repeated_handoff_target
                         if str(exc).startswith('The calendar read has not succeeded yet.'):
                             # Remove the dependent writer for one correction
                             # round so the model must repair the source read
