@@ -4814,6 +4814,32 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                     history[-1] = {'role': 'assistant', 'content': confirmation}
                                     yield event({'type': 'final_response', 'content': confirmation})
                                     break
+                        if (
+                            not successful_artifact_write
+                            and artifact_body_handoff_attempts < 2
+                            and round_number < round_limit
+                        ):
+                            artifact_body_handoff_attempts += 1
+                            artifact_body_handoff_target = target
+                            force_no_tools_next_round = True
+                            replace_streamed_draft_on_finish = True
+                            history.append({
+                                'role': 'user',
+                                '_harness_control': True,
+                                'content': (
+                                    'The prior body-only artifact response was empty or did not '
+                                    f'match the required format for {target}. Return only the '
+                                    'complete raw file body now. Do not emit a tool call, JSON '
+                                    'wrapper, commentary, or another action plan.'
+                                ),
+                            })
+                            yield event({
+                                'type': 'completion_recovery',
+                                'reason': 'invalid_artifact_body_retry',
+                                'path': target,
+                                'attempt': artifact_body_handoff_attempts,
+                            })
+                            continue
                     if (
                         native_workspace_enabled
                         and required_artifacts
