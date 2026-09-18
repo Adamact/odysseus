@@ -4551,13 +4551,19 @@ async def test_blocked_search_engine_browser_forces_native_web_search(monkeypatc
 async def test_native_stream_reserves_remaining_budget_for_required_artifact(monkeypatch):
     import src.clean_agent_preview as module
 
-    payloads = [
+    payloads = [{"choices": [{"delta": {"tool_calls": [{
+        "index": 0, "id": "scratch-write",
+        "function": {"name": "python", "arguments": json.dumps({
+            "code": "open('/tmp_workspace/scratch.txt', 'w').write('notes')",
+        })},
+    }]}}]}]
+    payloads.extend([
         {"choices": [{"delta": {"tool_calls": [{
             "index": 0, "id": f"search-{index}",
             "function": {"name": "web_search", "arguments": json.dumps({"query": f"topic {index}"})},
         }]}}]}
-        for index in range(module.NATIVE_ARTIFACT_RESEARCH_LIMIT)
-    ]
+        for index in range(module.NATIVE_ARTIFACT_RESEARCH_LIMIT - 1)
+    ])
     payloads.extend([
         {"choices": [{"delta": {"tool_calls": [{
             "index": 0, "id": "write",
@@ -4594,7 +4600,7 @@ async def test_native_stream_reserves_remaining_budget_for_required_artifact(mon
     monkeypatch.setattr(module, "execute_tool_block", execute)
     schemas = [
         item for item in FUNCTION_TOOL_SCHEMAS
-        if item["function"]["name"] in {"web_search", "write_file"}
+        if item["function"]["name"] in {"python", "web_search", "write_file"}
     ]
     contract = resolve_full_inventory_contract(schemas=schemas, policy=ToolPolicy())
     raw = [chunk async for chunk in stream_preview(
@@ -4616,7 +4622,9 @@ async def test_native_stream_reserves_remaining_budget_for_required_artifact(mon
         and event.get("reason") == "artifact_write_budget_reserved"
     )
     assert recovery["calls_used"] == module.NATIVE_ARTIFACT_RESEARCH_LIMIT
-    assert [tool["function"]["name"] for tool in requests[12]["tools"]] == ["write_file"]
+    reserved_names = [tool["function"]["name"] for tool in requests[12]["tools"]]
+    assert "write_file" in reserved_names
+    assert "web_search" not in reserved_names
     assert requests[12]["tool_choice"] == {
         "type": "function", "function": {"name": "write_file"},
     }

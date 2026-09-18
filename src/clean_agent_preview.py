@@ -4268,7 +4268,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     yield event({'type': 'completion_recovery', 'reason': 'research_before_synthesis'})
                 if (
                     required_artifacts
-                    and not successful_write
+                    and not successful_artifact_write
                     and not artifact_write_phase
                     and calls >= min(NATIVE_ARTIFACT_RESEARCH_LIMIT, tool_call_limit - 1)
                 ):
