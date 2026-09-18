@@ -5471,6 +5471,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             if (
                                 repeated_handoff_target
                                 and artifact_body_handoff_attempts < 2
+                                and not artifact_body_handoff_target
                             ):
                                 artifact_body_handoff_attempts += 1
                                 artifact_body_handoff_target = repeated_handoff_target
