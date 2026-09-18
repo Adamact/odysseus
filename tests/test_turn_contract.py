@@ -89,6 +89,31 @@ def test_explicit_online_lookup_requests_route_to_web_search(prompt):
     assert requested_capabilities(prompt) == frozenset({"search_browser"})
 
 
+def test_musical_notes_do_not_route_to_personal_notes_when_media_tool_is_explicit():
+    prompt = (
+        "Your first tool call must be inspect_media for /workspace/input/reference.png. "
+        "Study the supplied piano score image, then create /workspace/output.html. "
+        "Reproduce the score with noteheads and light each piano key while each note sounds. "
+        "Preview the page in a browser and fix visual or timing defects before finishing."
+    )
+
+    assert selected_tools_for_request(prompt) == frozenset({
+        "inspect_media", "write_file", "read_file", "private_browser",
+    })
+    capabilities = requested_capabilities(prompt)
+    assert "notes" not in capabilities
+    assert {"media_inspection", "shell_files", "search_browser"} <= capabilities
+
+
+def test_musical_note_language_alone_never_selects_personal_notes():
+    capabilities = requested_capabilities(
+        "Inspect the piano score image and identify each note, pitch, stave, clef, and notehead."
+    )
+
+    assert "notes" not in capabilities
+    assert "media_inspection" in capabilities
+
+
 def test_successfully_used_tool_stays_offered_when_next_turn_routes_elsewhere():
     contract = resolve(
         {"notes"},

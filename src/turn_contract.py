@@ -676,6 +676,28 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
     if inline_text_transformation(raw_text):
         return frozenset()
     text = _normalize_request_lead(message)
+    if re.search(
+        r"\bfirst\s+tool\s+call\s+(?:must|should|needs?\s+to)\s+be\s+inspect_media\b",
+        raw_text,
+        re.I,
+    ):
+        # A trusted user can prescribe the first native evidence operation.
+        # Keep the remainder of an explicit media-to-artifact workflow
+        # available without letting content nouns (for example musical
+        # "notes") route to an unrelated personal-data product.
+        tools = {"inspect_media"}
+        if (
+            re.search(r"\b(?:create|write|save|build|produce)\b", raw_text, re.I)
+            and re.search(
+                r"(?:file://)?/workspace/[^\s`\"']+\.(?:csv|html?|json|md|svg|txt)\b",
+                raw_text,
+                re.I,
+            )
+        ):
+            tools.update({"write_file", "read_file"})
+        if re.search(r"\b(?:preview|render|open)\b[^.\n]{0,100}\b(?:page|html|browser)\b", raw_text, re.I):
+            tools.add("private_browser")
+        return frozenset(tools)
     explicitly_named = {
         name
         for name in ("manage_notes", "manage_calendar", "manage_tasks")
