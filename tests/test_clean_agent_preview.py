@@ -124,6 +124,23 @@ def test_deepseek_v4_flash_drops_named_choice_for_thinking_mode():
     assert 'tool_choice' not in compatible
 
 
+def test_kimi_k3_drops_named_choice_incompatible_with_thinking_mode():
+    request = {
+        'tools': [
+            {'type': 'function', 'function': {'name': 'inspect_media'}},
+            {'type': 'function', 'function': {'name': 'write_file'}},
+        ],
+        'tool_choice': {'type': 'function', 'function': {'name': 'inspect_media'}},
+    }
+
+    compatible = provider_compatible_tool_choice_request(request, 'kimi-k3')
+
+    assert [tool['function']['name'] for tool in compatible['tools']] == [
+        'inspect_media'
+    ]
+    assert 'tool_choice' not in compatible
+
+
 def test_qwen_capture_converts_single_required_tool_to_named_constraint():
     request = {
         'tools': [{'type': 'function', 'function': {'name': 'web_search'}}],

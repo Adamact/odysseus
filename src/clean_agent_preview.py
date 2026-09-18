@@ -185,7 +185,7 @@ def search_tool_choice_request(request):
 def provider_compatible_tool_choice_request(request, model):
     """Keep tools but avoid forced choice unsupported by thinking providers."""
     model_name = canonical(str(model or '')).casefold()
-    if model_name.startswith('deepseek') and 'tool_choice' in request:
+    if model_name.startswith(('deepseek', 'kimi')) and 'tool_choice' in request:
         compatible = dict(request)
         choice = compatible.get('tool_choice')
         selected_name = (
