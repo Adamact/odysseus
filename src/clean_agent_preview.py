@@ -4629,6 +4629,40 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     message['tool_calls'] = protocol_safe_tool_calls(proposed)
                 history.append(message)
                 if not proposed:
+                    empty_artifact_target = (
+                        repeated_off_contract_artifact_handoff_target(
+                            artifact_write_phase=artifact_write_phase,
+                            successful_artifact_write=successful_artifact_write,
+                            required_artifacts=required_artifacts,
+                            failures=2,
+                        )
+                        if not content and not artifact_body_handoff_target else ''
+                    )
+                    if (
+                        empty_artifact_target
+                        and artifact_body_handoff_attempts < 2
+                        and round_number < round_limit
+                    ):
+                        artifact_body_handoff_attempts += 1
+                        artifact_body_handoff_target = empty_artifact_target
+                        force_no_tools_next_round = True
+                        replace_streamed_draft_on_finish = True
+                        history.append({
+                            'role': 'user',
+                            '_harness_control': True,
+                            'content': (
+                                'The writer-only artifact turn returned no usable content. '
+                                f'Return only the complete raw body for {empty_artifact_target}; '
+                                'do not emit JSON, a tool call, commentary, or an action promise.'
+                            ),
+                        })
+                        yield event({
+                            'type': 'completion_recovery',
+                            'reason': 'empty_artifact_writer_body_handoff',
+                            'path': empty_artifact_target,
+                            'attempt': artifact_body_handoff_attempts,
+                        })
+                        continue
                     if (
                         unexecutable_dsml_completion
                         and (
