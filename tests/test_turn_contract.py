@@ -4295,6 +4295,20 @@ def test_watch_workspace_video_is_media_not_generic_shell():
     ) == {"media_inspection"}
 
 
+def test_review_workspace_video_is_media_not_document_or_web_review():
+    assert requested_capabilities(
+        "Review the video at /workspace/input/video.mp4, count every match point, "
+        "and provide the verified totals in the final message."
+    ) == {"media_inspection"}
+
+
+def test_explicit_media_verification_does_not_require_browser_family():
+    assert requested_capabilities(
+        "First inspect /workspace/input/reference.png. Create /workspace/output.html, "
+        "then inspect the rendered result using inspect_media on the file or a screenshot."
+    ) == {"media_inspection", "shell_files"}
+
+
 def test_chinese_video_to_image_artifact_keeps_media_and_workspace_tools():
     assert requested_capabilities(
         "请完整浏览 /workspace/input/video.mp4，为每款零食截图并拼成清单图，"

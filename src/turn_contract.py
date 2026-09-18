@@ -4158,7 +4158,7 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
         re.I,
     )
     media_action = re.search(
-        r"\b(?:inspect|view|watch|study|look\s+at|analy[sz]e|read|transcribe|caption|"
+        r"\b(?:inspect|view|watch|review|study|look\s+at|analy[sz]e|read|transcribe|caption|"
         r"recreate|reproduce|identify|describe|extract)\b|"
         r"(?:浏览|查看|观看|分析|检查|识别|转录|截图)",
         raw_text,
@@ -4194,9 +4194,17 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
             families.add("shell_files")
         if re.search(
             r"\b(?:preview|render|open|inspect|verify)\b[^.\n]{0,120}"
-            r"\b(?:page|html|browser|rendered\s+result)\b",
+            r"\b(?:page|html|browser)\b",
             raw_text,
             re.I,
+        ) or (
+            re.search(
+                r"\b(?:preview|render|open|inspect|verify)\b[^.\n]{0,120}"
+                r"\brendered\s+result\b",
+                raw_text,
+                re.I,
+            )
+            and not re.search(r"\binspect_media\b", raw_text, re.I)
         ):
             families.add("search_browser")
         if re.search(

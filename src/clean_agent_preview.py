@@ -3004,6 +3004,14 @@ def inline_suggestion_request(user_text):
     text = str(user_text or '').strip()
     if inline_text_transformation(text):
         return False
+    if re.search(
+        r"(?:file://)?/workspace/[^\s`\"']+\."
+        r"(?:avif|bmp|gif|jpe?g|png|svg|tiff?|webp|mp3|m4a|ogg|wav|flac|"
+        r"aac|mp4|m4v|mov|mkv|avi|webm)\b",
+        text,
+        re.I,
+    ):
+        return False
     apply_request = re.search(
         r'\b(?:apply|accept)\s+(?:the\s+)?(?:change|changes|suggestion|suggestions)\b',
         text, re.I,

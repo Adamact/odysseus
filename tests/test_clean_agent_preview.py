@@ -3059,6 +3059,12 @@ def test_inline_suggestion_intent_is_independent_from_document_visibility():
         'create inline suggestions only; do not apply changes.'
     )
     assert not inline_suggestion_request('Apply the suggestions to this document')
+    assert not inline_suggestion_request(
+        'Review the video at /workspace/input/video.mp4 and count every match point.'
+    )
+    assert not inline_suggestion_request(
+        'Review the short handheld clip at /workspace/input/video.mp4 and save an index image.'
+    )
     assert not active_editor_suggestion_request(None, 'give suggestions to this document')
 
 
