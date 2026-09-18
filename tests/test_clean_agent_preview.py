@@ -5388,7 +5388,12 @@ async def test_native_stream_stops_reexecuting_an_identical_failed_call(monkeypa
     assert len(executions) == 2
     assert any(event.get('type') == 'tool_loop_recovery' for event in events)
     assert any(s['function']['name'] == 'inspect_media' for s in requests[3]['tools'])
-    assert len(requests) == 5
+    # Two execution failures plus two ignored correction prompts terminate
+    # instead of consuming the remaining round budget with the same no-op call.
+    assert len(requests) == 4
+    final = [event for event in events if event.get('type') == 'final_response']
+    assert len(final) == 1
+    assert 'could not complete' in final[0]['content'].lower()
     assert any(
         event.get('type') == 'tool_output'
         and 'already failed twice' in event.get('output', '')

@@ -4138,6 +4138,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     discovered_web_sources = []
     browser_navigation_outcomes = {}
     failed_call_counts = {}
+    blocked_failed_call_counts = {}
     semantic_attempt_counts = {}
     successful_semantic_scopes = set()
     successful_target_write_counts = {}
@@ -5146,6 +5147,28 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             )
                         if failed_call_counts.get(call_signature, 0) >= 2:
                             calls += 1
+                            blocked_count = (
+                                blocked_failed_call_counts.get(call_signature, 0) + 1
+                            )
+                            blocked_failed_call_counts[call_signature] = blocked_count
+                            # Keep one blocked reminder permissive: the model may still
+                            # correct the arguments on its next turn.  If it ignores that
+                            # reminder and emits the same failed call again, continuing to
+                            # offer the tool only creates an unbounded no-op loop.  Suppress
+                            # that tool for the remainder of this turn and enter the normal
+                            # evidence-only completion path instead.
+                            if blocked_count >= 2:
+                                terminal_suppression_violation = True
+                                permanently_suppressed_tools.add(canonical(name))
+                                round_recovery_messages.append(
+                                    f'{name} was disabled for this turn after repeatedly emitting '
+                                    'the same call that had already failed twice. Finish from '
+                                    'existing evidence or state the remaining limitation.'
+                                )
+                                raise ValueError(
+                                    'This exact failed call was repeated after a correction reminder; '
+                                    'the tool is disabled for this turn. Finish from existing evidence.'
+                                )
                             round_recovery_messages.append(
                                 f'This exact {name} call failed twice and is blocked. '
                                 'The tool remains available with corrected arguments; use the returned '
