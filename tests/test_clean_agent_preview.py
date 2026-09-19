@@ -693,6 +693,10 @@ def test_required_directory_artifact_allows_any_offered_mutation_tool():
     assert required_artifact_completion_tool_choice(
         ('/tmp_workspace/results',), offered,
     ) == 'required'
+    offered.append({'type': 'function', 'function': {'name': 'python'}})
+    assert required_artifact_completion_tool_choice(
+        ('/tmp_workspace/results',), offered,
+    ) == {'type': 'function', 'function': {'name': 'python'}}
 
 
 def test_action_promise_response_rejects_future_work_but_not_real_answers():
@@ -5513,15 +5517,14 @@ async def test_native_stream_reserves_remaining_budget_for_required_artifact(mon
     ])
     payloads.extend([
         {"choices": [{"delta": {"tool_calls": [{
-            "index": 0, "id": "hallucinated-bash",
-            "function": {"name": "bash", "arguments": json.dumps({
-                "command": "echo should-not-run",
-            })},
-        }]}}]},
-        {"choices": [{"delta": {"tool_calls": [{
-            "index": 0, "id": "write",
-            "function": {"name": "write_file", "arguments": json.dumps({
-                "path": "/tmp_workspace/results/out.md", "content": "evidence",
+            "index": 0, "id": "programmatic-directory-write",
+            "function": {"name": "python", "arguments": json.dumps({
+                "code": (
+                    "from pathlib import Path\n"
+                    "p = Path('/tmp_workspace/results/out.md')\n"
+                    "p.parent.mkdir(parents=True, exist_ok=True)\n"
+                    "p.write_text('evidence')"
+                ),
             })},
         }]}}]},
         {"choices": [{"delta": {"content": "Saved."}}]},
@@ -5592,20 +5595,21 @@ async def test_native_stream_reserves_remaining_budget_for_required_artifact(mon
         and event.get("stage") == "provider_request"
         and event.get("artifact_write_phase") is True
     )
-    assert "write_file" in request_contract["offered_tools"]
+    assert request_contract["offered_tools"] == ["python"]
     assert "web_search" not in request_contract["offered_tools"]
-    assert request_contract["tool_choice"] == "required"
+    assert request_contract["tool_choice"] == {
+        "type": "function", "function": {"name": "python"},
+    }
     reserved_names = [tool["function"]["name"] for tool in requests[12]["tools"]]
-    assert reserved_names == ["bash", "python", "write_file"]
-    assert requests[12]["tool_choice"] == "required"
-    directory_path = requests[12]["tools"][2]["function"]["parameters"]["properties"]["path"]
-    assert re.search(directory_path["pattern"], "/tmp_workspace/results/out.md")
-    assert not re.search(directory_path["pattern"], "/tmp_workspace/results")
+    assert reserved_names == ["python"]
+    assert requests[12]["tool_choice"] == {
+        "type": "function", "function": {"name": "python"},
+    }
     assert "create one or more files inside" in requests[12]["messages"][-1]["content"]
     assert "Do not pass the directory itself as a file path" in requests[12]["messages"][-1]["content"]
-    assert "bash" in executed
+    assert executed[-1] == "python"
     assert any(
-        event.get("type") == "tool_output" and event.get("tool") == "write_file"
+        event.get("type") == "tool_output" and event.get("tool") == "python"
         and not event.get("error") for event in events
     )
 

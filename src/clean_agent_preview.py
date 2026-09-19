@@ -1603,16 +1603,21 @@ def required_artifact_completion_tool_choice(required_artifacts, offered_schemas
     targets = [str(path or '').strip().rstrip('/') for path in required_artifacts]
     if not targets:
         return None
-    # A required directory commonly contains several files and may need a
-    # programmatic extractor.  Requiring *a* tool call preserves forward
-    # progress without trapping the model in one enormous write_file payload.
-    if len(targets) == 1 and not Path(targets[0]).suffix:
-        return 'required'
     offered = {
         canonical((schema.get('function') or {}).get('name')):
         (schema.get('function') or {}).get('name')
         for schema in offered_schemas
     }
+    # A required directory commonly contains several files and needs a
+    # programmatic extractor.  Native Python avoids shell-quoting failures and
+    # one enormous multi-file write_file payload.  If Python is unavailable,
+    # require any offered tool rather than forcing the text writer.
+    if len(targets) == 1 and not Path(targets[0]).suffix:
+        name = offered.get('python')
+        return (
+            {'type': 'function', 'function': {'name': name}}
+            if name else 'required'
+        )
     preferred = (
         'python'
         if len(targets) == 1
@@ -4689,6 +4694,16 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         )
                         if completion_choice is not None:
                             request['tool_choice'] = completion_choice
+                            if isinstance(completion_choice, dict):
+                                selected_name = (
+                                    completion_choice.get('function') or {}
+                                ).get('name')
+                                selected = [
+                                    schema for schema in request.get('tools') or []
+                                    if (schema.get('function') or {}).get('name') == selected_name
+                                ]
+                                if selected:
+                                    request['tools'] = selected
                     # Whole rewrites and inline feedback each have one typed
                     # editor output owner. Bind that sole channel at protocol
                     # level so prose cannot masquerade as an applied edit or
