@@ -1603,6 +1603,11 @@ def required_artifact_completion_tool_choice(required_artifacts, offered_schemas
     targets = [str(path or '').strip().rstrip('/') for path in required_artifacts]
     if not targets:
         return None
+    # A required directory commonly contains several files and may need a
+    # programmatic extractor.  Requiring *a* tool call preserves forward
+    # progress without trapping the model in one enormous write_file payload.
+    if len(targets) == 1 and not Path(targets[0]).suffix:
+        return 'required'
     offered = {
         canonical((schema.get('function') or {}).get('name')):
         (schema.get('function') or {}).get('name')
@@ -1688,6 +1693,51 @@ def expand_concatenated_write_calls(calls, *, max_calls=16):
                 if len(items) > max_calls:
                     raise ValueError('too many concatenated write calls')
         except (TypeError, ValueError, json.JSONDecodeError):
+            # Qwen's native parser can leave one complete, grounded writer
+            # object followed by textual <tool_call> blocks in the same
+            # argument.  Execute only that leading writer.  The trailing calls
+            # may depend on reads that have not run yet, so they stay inert and
+            # the next model round can propose them normally with fresh
+            # evidence.
+            try:
+                leading, end = decoder.raw_decode(raw)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                leading, end = None, 0
+            tail = raw[end:].strip() if end else ''
+            markup_openers = tail.count('<tool_call>')
+            markup_closers = tail.count('</tool_call>')
+            bounded_markup = (
+                tail.startswith('<tool_call>')
+                and 1 <= markup_openers <= 32
+                # A provider may truncate the last textual call at its output
+                # limit.  It remains inert; only the complete leading JSON
+                # writer is recovered.
+                and markup_closers in {markup_openers, markup_openers - 1}
+                and not strip_tool_blocks(
+                    tail,
+                    skip_fenced=True,
+                    additional_tool_names=('bash', 'python', 'read_file', 'write_file'),
+                ).strip()
+            )
+            if (
+                bounded_markup
+                and isinstance(leading, dict)
+                and set(leading) == {'path', 'content'}
+                and isinstance(leading['path'], str)
+                and bool(leading['path'].strip())
+                and isinstance(leading['content'], str)
+            ):
+                base_id = str(call.get('id') or 'call_write')
+                expanded.append({
+                    'id': f'{base_id}_0',
+                    'type': 'function',
+                    'function': {
+                        'name': function.get('name', 'write_file'),
+                        'arguments': json.dumps(leading, ensure_ascii=False),
+                    },
+                })
+                recovered_count += 1
+                continue
             expanded.append(call)
             continue
         if not (2 <= len(items) <= max_calls) or not all(

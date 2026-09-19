@@ -684,7 +684,7 @@ def test_required_binary_artifact_forces_python_instead_of_text_writer():
     ]
 
 
-def test_required_directory_artifact_forces_writer_with_descendant_schema():
+def test_required_directory_artifact_allows_any_offered_mutation_tool():
     offered = [
         {'type': 'function', 'function': {'name': 'bash'}},
         {'type': 'function', 'function': {'name': 'write_file'}},
@@ -692,7 +692,7 @@ def test_required_directory_artifact_forces_writer_with_descendant_schema():
 
     assert required_artifact_completion_tool_choice(
         ('/tmp_workspace/results',), offered,
-    ) == {'type': 'function', 'function': {'name': 'write_file'}}
+    ) == 'required'
 
 
 def test_action_promise_response_rejects_future_work_but_not_real_answers():
@@ -1033,6 +1033,38 @@ def test_concatenated_writer_recovery_fails_closed_for_ambiguous_or_large_batche
 
     assert expand_concatenated_write_calls([ambiguous]) == ([ambiguous], 0)
     assert expand_concatenated_write_calls([too_large]) == ([too_large], 0)
+
+
+def test_mixed_writer_argument_recovers_only_grounded_leading_json_write():
+    from src.clean_agent_preview import expand_concatenated_write_calls
+
+    first = {'path': '/workspace/results/1.tex', 'content': 'grounded table'}
+    trailing = '''
+<tool_call>
+<function=bash>
+<parameter=command>sed -n '2,3p' /workspace/paper.tex</parameter>
+</function>
+</tool_call>
+<tool_call>
+<function=write_file>
+<parameter=path>/workspace/results/2.tex</parameter>
+<parameter=content>ungrounded table</parameter>
+</function>
+</tool_call>
+'''
+    source = {
+        'id': 'mixed', 'type': 'function', 'function': {
+            'name': 'write_file',
+            'arguments': json.dumps(first) + trailing,
+        },
+    }
+
+    recovered, count = expand_concatenated_write_calls([source])
+
+    assert count == 1
+    assert len(recovered) == 1
+    assert recovered[0]['id'] == 'mixed_0'
+    assert json.loads(recovered[0]['function']['arguments']) == first
 
 
 def test_malformed_writer_handoff_uses_descendant_file_not_required_directory():
@@ -5527,7 +5559,7 @@ async def test_native_stream_reserves_remaining_budget_for_required_artifact(mon
     ]
     contract = resolve_full_inventory_contract(schemas=schemas, policy=ToolPolicy())
     raw = [chunk async for chunk in stream_preview(
-        endpoint_url="http://test", model="deepseek-flash",
+        endpoint_url="http://test", model="test",
         messages=[{"role": "user", "content": "Research and create the requested output."}],
         headers={}, turn_contract=contract, session_id="test", owner="test",
         disabled_tools=set(), tool_policy=ToolPolicy(), workspace="/tmp/workspace",
@@ -5562,16 +5594,16 @@ async def test_native_stream_reserves_remaining_budget_for_required_artifact(mon
     )
     assert "write_file" in request_contract["offered_tools"]
     assert "web_search" not in request_contract["offered_tools"]
-    assert request_contract["tool_choice"] is None
+    assert request_contract["tool_choice"] == "required"
     reserved_names = [tool["function"]["name"] for tool in requests[12]["tools"]]
-    assert reserved_names == ["write_file"]
-    assert "tool_choice" not in requests[12]
-    directory_path = requests[12]["tools"][0]["function"]["parameters"]["properties"]["path"]
+    assert reserved_names == ["bash", "python", "write_file"]
+    assert requests[12]["tool_choice"] == "required"
+    directory_path = requests[12]["tools"][2]["function"]["parameters"]["properties"]["path"]
     assert re.search(directory_path["pattern"], "/tmp_workspace/results/out.md")
     assert not re.search(directory_path["pattern"], "/tmp_workspace/results")
     assert "create one or more files inside" in requests[12]["messages"][-1]["content"]
     assert "Do not pass the directory itself as a file path" in requests[12]["messages"][-1]["content"]
-    assert "bash" not in executed
+    assert "bash" in executed
     assert any(
         event.get("type") == "tool_output" and event.get("tool") == "write_file"
         and not event.get("error") for event in events
