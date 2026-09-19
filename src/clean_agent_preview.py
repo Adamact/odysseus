@@ -1436,6 +1436,29 @@ def native_execution_limits(max_rounds):
     return round_limit, NATIVE_TOOL_CALL_LIMIT
 
 
+def native_artifact_completion_timing(client_runtime_context):
+    """Return the research deadline and completion reserve for trusted runtimes.
+
+    The caller owns the outer wall clock.  Invalid or absent timing metadata
+    leaves the existing call-count boundary unchanged.
+    """
+    context = (
+        client_runtime_context
+        if isinstance(client_runtime_context, dict) else {}
+    )
+    try:
+        wall_seconds = float(context.get('agent_wall_time_seconds'))
+        reserve_seconds = float(context.get('artifact_completion_reserve_seconds'))
+    except (TypeError, ValueError):
+        return None, None
+    if (
+        not 60 <= wall_seconds <= 86400
+        or not 30 <= reserve_seconds < wall_seconds
+    ):
+        return None, None
+    return wall_seconds - reserve_seconds, reserve_seconds
+
+
 def standalone_social_turn(text):
     """A complete social utterance cannot authorize a tool action."""
     return bool(re.fullmatch(
@@ -4346,6 +4369,10 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     native_workspace_enabled = native_workspace_runtime(
         client_runtime_context, workspace,
     )
+    artifact_research_seconds, artifact_completion_reserve_seconds = (
+        native_artifact_completion_timing(client_runtime_context)
+        if native_workspace_enabled else (None, None)
+    )
     executable_tools = EXPLICIT_EXECUTE_TOOLS | (
         NATIVE_WORKSPACE_EXECUTE_TOOLS
         if native_workspace_enabled else frozenset()
@@ -4648,11 +4675,19 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         'source evidence and prepare the briefing. Do not repeat the same query.'
                     )})
                     yield event({'type': 'completion_recovery', 'reason': 'research_before_synthesis'})
+                artifact_research_elapsed = time.monotonic() - started
+                artifact_time_reserved = bool(
+                    artifact_research_seconds is not None
+                    and artifact_research_elapsed >= artifact_research_seconds
+                )
                 if (
                     required_artifacts
                     and not successful_artifact_write
                     and not artifact_write_phase
-                    and calls >= min(NATIVE_ARTIFACT_RESEARCH_LIMIT, tool_call_limit - 1)
+                    and (
+                        calls >= min(NATIVE_ARTIFACT_RESEARCH_LIMIT, tool_call_limit - 1)
+                        or artifact_time_reserved
+                    )
                 ):
                     artifact_write_phase = True
                     directory_artifact_guidance = ''
@@ -4682,9 +4717,15 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     })
                     yield event({
                         'type': 'completion_recovery',
-                        'reason': 'artifact_write_budget_reserved',
+                        'reason': (
+                            'artifact_write_time_reserved'
+                            if artifact_time_reserved
+                            else 'artifact_write_budget_reserved'
+                        ),
                         'required_artifacts': list(required_artifacts),
                         'calls_used': calls,
+                        'elapsed_seconds': round(artifact_research_elapsed, 3),
+                        'completion_reserve_seconds': artifact_completion_reserve_seconds,
                     })
                 request_messages = provider_request_messages(
                     prune_multimodal_images(history, max_images=3)
