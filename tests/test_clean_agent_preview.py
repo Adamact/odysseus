@@ -5965,6 +5965,108 @@ async def test_native_stream_terminates_after_calling_a_permanently_suppressed_t
 
 
 @pytest.mark.asyncio
+async def test_suppressed_evidence_tool_recovers_missing_artifact_with_writer(
+    monkeypatch, tmp_path,
+):
+    import src.clean_agent_preview as module
+
+    output = tmp_path / 'results' / 'report.md'
+    output_alias = '/workspace/results/report.md'
+    search_arguments = json.dumps({'query': 'arxiv cs.CV 2026-02-25'})
+    responses = iter([
+        {'choices': [{'delta': {'tool_calls': [{
+                'index': 0, 'id': f'search-{index}', 'function': {
+                'name': 'web_search', 'arguments': search_arguments,
+                },
+            }]}}]}
+        for index in range(1, 4)
+    ] + [
+        {'choices': [{'delta': {'tool_calls': [{
+            'index': 0, 'id': 'write-1', 'function': {
+                'name': 'write_file', 'arguments': json.dumps({
+                    'path': output_alias, 'content': '# Verified report\nEvidence retained.\n',
+                }),
+            },
+        }]}}]},
+        {'choices': [{'delta': {'content': 'Created and verified the report.'}}]},
+    ])
+
+    class Response:
+        def __init__(self, payload): self.payload = payload
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def raise_for_status(self): pass
+        async def aiter_lines(self):
+            yield 'data: ' + json.dumps(self.payload)
+            yield 'data: [DONE]'
+
+    requests = []
+
+    class Client:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def stream(self, *args, **kwargs):
+            requests.append(kwargs['json'])
+            return Response(next(responses))
+
+    executions = []
+
+    async def execute(block, **kwargs):
+        executions.append(block.tool_type)
+        if block.tool_type == 'write_file':
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text('# Verified report\nEvidence retained.\n')
+            return 'write_file', {'output': f'wrote {output}', 'exit_code': 0}
+        return 'web_search', {'output': 'useful arxiv evidence', 'exit_code': 0}
+
+    monkeypatch.setattr(module.httpx, 'AsyncClient', Client)
+    monkeypatch.setattr(module, 'execute_tool_block', execute)
+    monkeypatch.setattr(module, 'NATIVE_ARTIFACT_RESEARCH_LIMIT', 100)
+    schemas = [
+        next(s for s in FUNCTION_TOOL_SCHEMAS if s['function']['name'] == name)
+        for name in ('web_search', 'write_file')
+    ]
+    contract = resolve_full_inventory_contract(schemas=schemas, policy=ToolPolicy())
+    raw = [chunk async for chunk in stream_preview(
+        endpoint_url='http://test', model='test', headers={},
+        messages=[{'role': 'user', 'content': (
+            'Find cs.CV papers submitted on 2026-02-25 and create '
+            f'{output_alias} from the returned evidence.'
+        )}],
+        turn_contract=contract, session_id='test', owner='test',
+        disabled_tools=set(), tool_policy=ToolPolicy(), workspace=str(tmp_path),
+        client_runtime_context={
+            'surface': 'odysseus-native', 'terminal_agent': True,
+            'unattended_mode': True,
+            'completion_requirements': {'required_artifacts': [output_alias]},
+        }, max_rounds=8,
+    )]
+
+    events = [json.loads(chunk[6:]) for chunk in raw if '[DONE]' not in chunk]
+    assert executions == ['web_search', 'write_file'], [
+        (event.get('type'), event.get('reason'), event.get('tool')) for event in events
+    ]
+    recovery_events = [
+        event for event in events
+        if event.get('reason') == 'suppressed_tool_artifact_recovery'
+    ]
+    assert recovery_events, [
+        (event.get('type'), event.get('reason'), event.get('tool'), event.get('output'))
+        for event in events
+    ]
+    recovery = recovery_events[0]
+    assert recovery['missing_artifacts'] == [output_alias]
+    assert any(
+        tool['function']['name'] == 'write_file'
+        for tool in requests[4].get('tools', [])
+    )
+    final = [event for event in events if event.get('type') == 'final_response']
+    assert all('repeated a tool call' not in event.get('content', '') for event in final)
+    assert output.read_text().startswith('# Verified report')
+
+
+@pytest.mark.asyncio
 async def test_native_stream_stops_reexecuting_an_identical_failed_call(monkeypatch):
     import src.clean_agent_preview as module
     arguments = json.dumps({

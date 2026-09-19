@@ -6357,6 +6357,44 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     break
                 if terminal_suppression_violation:
                     missing_artifacts = missing_workspace_artifacts(latest_user, workspace)
+                    remaining_artifact_tools = artifact_completion_tool_schemas(
+                        [
+                            schema for schema in offered
+                            if canonical(schema['function']['name'])
+                            not in permanently_suppressed_tools
+                        ],
+                        required_artifacts,
+                    )
+                    if (
+                        missing_artifacts
+                        and remaining_artifact_tools
+                        and not suppression_completion_attempted
+                        and round_number < round_limit
+                    ):
+                        suppression_completion_attempted = True
+                        artifact_write_phase = True
+                        force_no_tools_next_round = False
+                        recovery = (
+                            'Completion recovery: the repeated evidence tool is disabled. '
+                            'Do not call it again. Use the evidence already returned and an '
+                            'available workspace writer to create and verify the missing '
+                            'artifact(s): ' + ', '.join(missing_artifacts) + '. '
+                            'Do not perform more research before writing.'
+                        )
+                        if history and history[-1].get('_harness_control'):
+                            history[-1]['content'] = (
+                                str(history[-1].get('content') or '') + ' ' + recovery
+                            )
+                        else:
+                            history.append({
+                                'role': 'user', '_harness_control': True, 'content': recovery,
+                            })
+                        yield event({
+                            'type': 'completion_recovery',
+                            'reason': 'suppressed_tool_artifact_recovery',
+                            'missing_artifacts': list(missing_artifacts),
+                        })
+                        continue
                     if (
                         not missing_artifacts
                         and not suppression_completion_attempted
