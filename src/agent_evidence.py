@@ -239,11 +239,48 @@ def _artifact_match_is_email_host(instruction: str, match: re.Match[str]) -> boo
     return bool(re.search(r"[A-Za-z0-9_.+-]+@$", prefix))
 
 
+def _workspace_path_identity(value: str) -> str:
+    """Return a stable identity for native workspace path aliases."""
+
+    path = _clean_path(value).replace("\\", "/")
+    for prefix in ("/tmp_workspace/", "/workspace/"):
+        if path.startswith(prefix):
+            return path[len(prefix):]
+    return path
+
+
+def _known_input_is_explicit_mutation_target(instruction: str, path: str) -> bool:
+    """Preserve a known input only when the user explicitly asks to edit it.
+
+    Input descriptions commonly say that a file is "saved in" or is a
+    "post-write checklist".  Those phrases must not turn read-only evidence
+    into a required output artifact.  Direct edit/update requests remain
+    supported.
+    """
+
+    escaped = re.escape(_clean_path(path))
+    active_edit = rf"(?<![-\w])(?:edit|modify|update|fix)\s+(?:the\s+)?[`'\"]?{escaped}"
+    direct_create = (
+        rf"(?<![-\w])(?:write|create|make|save|produce|generate|export|put|place)"
+        rf"\s+[`'\"]?{escaped}"
+    )
+    directed_create = (
+        rf"(?<![-\w])(?:write|create|make|save|produce|generate|export|put|place)"
+        rf"\b[^\n]{{0,80}}?\b(?:to|into|at|as|under|inside)\s+"
+        rf"(?:the\s+|a\s+)?[`'\"]?{escaped}"
+    )
+    return any(
+        re.search(pattern, instruction, re.IGNORECASE)
+        for pattern in (active_edit, direct_create, directed_create)
+    )
+
+
 def infer_completion_requirements(
     instruction: str,
     *,
     executable_verifier_available: bool = False,
     verifier_commands: Sequence[str] = (),
+    known_input_paths: Sequence[str] = (),
 ) -> CompletionRequirements:
     """Infer only explicitly requested output/edit paths from an instruction."""
 
@@ -270,6 +307,18 @@ def infer_completion_requirements(
                 paths.append(path)
     paths = [path.rstrip("/") if path != "/" else path for path in paths]
     paths = list(dict.fromkeys(paths))
+    input_identities = {
+        _workspace_path_identity(path)
+        for path in known_input_paths
+        if _clean_path(path)
+    }
+    if input_identities:
+        paths = [
+            path
+            for path in paths
+            if _workspace_path_identity(path) not in input_identities
+            or _known_input_is_explicit_mutation_target(text, path)
+        ]
     # When the instruction names an absolute output directory and then gives
     # relative example filenames (for example ``1.tex, 2.tex, ...``), the
     # directory is the actual completion contract.  Treating the first example
@@ -321,9 +370,27 @@ def requirements_from_runtime_context(
     *,
     instruction: str = "",
 ) -> CompletionRequirements:
-    raw = (context or {}).get("completion_requirements")
+    runtime_context = context or {}
+    known_inputs: list[str] = []
+    for value in runtime_context.get("input_files") or ():
+        path = _clean_path(str(value or ""))
+        if path:
+            known_inputs.append(path)
+    media_ingress = runtime_context.get("media_ingress")
+    if isinstance(media_ingress, Mapping):
+        for artifact in media_ingress.get("artifacts") or ():
+            if not isinstance(artifact, Mapping):
+                continue
+            path = _clean_path(str(artifact.get("source_path") or ""))
+            if path:
+                known_inputs.append(path)
+
+    raw = runtime_context.get("completion_requirements")
     if not isinstance(raw, Mapping):
-        return infer_completion_requirements(instruction)
+        return infer_completion_requirements(
+            instruction,
+            known_input_paths=known_inputs,
+        )
     paths = raw.get("required_artifacts")
     if not isinstance(paths, (list, tuple)):
         paths = ()
@@ -332,6 +399,16 @@ def requirements_from_runtime_context(
         for value in paths
         if (path := _clean_path(str(value or "")))
     )
+    input_identities = {
+        _workspace_path_identity(path) for path in known_inputs
+    }
+    if input_identities:
+        cleaned = tuple(
+            path
+            for path in cleaned
+            if _workspace_path_identity(path) not in input_identities
+            or _known_input_is_explicit_mutation_target(instruction, path)
+        )
     verifier_commands = raw.get("verifier_commands")
     if not isinstance(verifier_commands, (list, tuple)):
         verifier_commands = ()

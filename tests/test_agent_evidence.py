@@ -19,6 +19,36 @@ def test_infers_only_explicit_output_or_edit_paths():
     assert requirements.verifier_required is True
 
 
+def test_known_workspace_inputs_are_not_inferred_as_output_artifacts():
+    requirements = infer_completion_requirements(
+        "My clues are saved in /tmp_workspace/inputs/clues.md, the required answer "
+        "template is /tmp_workspace/inputs/template.md, and a post-write verification "
+        "list is /tmp_workspace/inputs/validation_checklist.txt. Read all three first. "
+        "Fill in /tmp_workspace/inputs/template.md exactly and save the completed "
+        "document to /tmp_workspace/results/results.md.",
+        known_input_paths=(
+            "/workspace/inputs/clues.md",
+            "/workspace/inputs/template.md",
+            "/workspace/inputs/validation_checklist.txt",
+        ),
+    )
+
+    assert requirements.required_artifacts == (
+        "/tmp_workspace/results/results.md",
+    )
+
+
+def test_known_workspace_input_remains_required_when_explicitly_updated():
+    requirements = infer_completion_requirements(
+        "Update /tmp_workspace/inputs/config.json and then verify it.",
+        known_input_paths=("/workspace/inputs/config.json",),
+    )
+
+    assert requirements.required_artifacts == (
+        "/tmp_workspace/inputs/config.json",
+    )
+
+
 def test_infers_artifact_from_common_past_participle_request():
     requirements = infer_completion_requirements(
         "Build a digest saved to /workspace/results/ops_digest.md."
@@ -123,6 +153,36 @@ def test_runtime_requirements_override_instruction_inference():
     assert requirements.required_artifacts == ("/workspace/output.html",)
     assert requirements.executable_verifier_available is True
     assert requirements.verifier_commands == ("./test.sh",)
+
+
+def test_runtime_requirements_drop_media_inputs_misclassified_as_outputs():
+    requirements = requirements_from_runtime_context(
+        {
+            "media_ingress": {
+                "artifacts": [
+                    {"source_path": "/workspace/inputs/clues.md"},
+                    {"source_path": "/workspace/inputs/template.md"},
+                ],
+            },
+            "completion_requirements": {
+                "required_artifacts": [
+                    "/tmp_workspace/inputs/clues.md",
+                    "/tmp_workspace/inputs/template.md",
+                    "/tmp_workspace/results/results.md",
+                ],
+                "verifier_required": True,
+            },
+        },
+        instruction=(
+            "Clues are saved in /tmp_workspace/inputs/clues.md and the template is "
+            "/tmp_workspace/inputs/template.md. Save the completed document to "
+            "/tmp_workspace/results/results.md."
+        ),
+    )
+
+    assert requirements.required_artifacts == (
+        "/tmp_workspace/results/results.md",
+    )
 
 
 def test_available_verifier_is_required_and_declared_command_is_evidence():
