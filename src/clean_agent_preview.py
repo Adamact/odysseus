@@ -56,7 +56,10 @@ NATIVE_ROUND_LIMIT = 64
 INTERACTIVE_TOOL_CALL_LIMIT = 18
 INTERACTIVE_BROWSER_TOOL_CALL_LIMIT = 30
 INTERACTIVE_ROUND_LIMIT = 8
-NATIVE_ARTIFACT_RESEARCH_LIMIT = 12
+# Multi-record research tasks routinely need several search/fetch/inspection
+# pairs before an artifact can be grounded. Preserve twelve calls for writing,
+# verification, and final recovery within the bounded 32-call native budget.
+NATIVE_ARTIFACT_RESEARCH_LIMIT = 20
 SAME_TARGET_WRITE_LIMIT = 3
 ARTIFACT_RESEARCH_TOOLS = frozenset({
     'web_search', 'web_fetch', 'private_browser', 'pdf_extract', 'youtube_tool',
