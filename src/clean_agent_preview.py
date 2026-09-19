@@ -1514,7 +1514,9 @@ def required_artifacts_have_content(required_artifacts):
     return True
 
 
-def successful_required_artifact_mutation(tool_name, arguments, required_artifacts):
+def successful_required_artifact_mutation(
+    tool_name, arguments, required_artifacts, execution_result=None,
+):
     """Recognize completed outputs without letting an empty directory pass.
 
     Typed tools can authoritatively report a successful exact file write even
@@ -1523,6 +1525,13 @@ def successful_required_artifact_mutation(tool_name, arguments, required_artifac
     container, so they require observable non-empty file content.
     """
     targets = [str(path or '').strip().rstrip('/') for path in required_artifacts]
+    materialized = {
+        str(path or '').strip().rstrip('/')
+        for path in (execution_result or {}).get('materialized_artifacts', ())
+        if str(path or '').strip()
+    }
+    if targets and all(target in materialized for target in targets):
+        return True
     if required_artifacts_have_content(targets):
         return True
     if not targets or any(not Path(target).suffix for target in targets):
@@ -5864,7 +5873,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             if canonical(block.tool_type) in {'edit_document', 'update_document'}:
                                 successful_editor_writer = canonical(block.tool_type)
                             if successful_required_artifact_mutation(
-                                block.tool_type, args, required_artifacts,
+                                block.tool_type, args, required_artifacts, result,
                             ):
                                 successful_artifact_write = True
                     except (ValueError, jsonschema.ValidationError) as exc:

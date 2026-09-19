@@ -504,6 +504,12 @@ def test_required_artifact_mutation_trusts_exact_files_but_not_empty_directory_s
     output_dir.mkdir()
     assert not module.successful_required_artifact_mutation(
         'bash', {'command': f'mkdir -p {output_dir}'}, (str(output_dir),),
+        {'workspace_mutated': True, 'mutated_artifacts': [str(output_dir)]},
+    )
+    assert module.successful_required_artifact_mutation(
+        'python', {'code': f"open('{output_dir}/1.tex', 'w').write('table')"},
+        (str(output_dir),),
+        {'materialized_artifacts': [str(output_dir)]},
     )
     output_file = tmp_path / 'output.html'
     assert module.successful_required_artifact_mutation(
