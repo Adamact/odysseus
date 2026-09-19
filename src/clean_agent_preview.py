@@ -1530,6 +1530,37 @@ def successful_required_artifact_mutation(tool_name, arguments, required_artifac
     return execution_targets_required_artifact(tool_name, arguments, targets)
 
 
+def artifact_completion_python_code_error(arguments, required_artifacts):
+    """Reject path-only or off-target Python during reserved completion.
+
+    JSON-Schema regex guidance on a free-form code string encourages structured
+    decoders to emit the shortest matching value (often the bare output path),
+    which is not executable Python.  Validate syntax and the declared target
+    explicitly instead; post-execution artifact inspection remains the
+    authoritative proof that a non-empty output was actually created.
+    """
+    targets = [str(path or '').strip().rstrip('/') for path in required_artifacts]
+    targets = [path for path in targets if path]
+    if len(targets) != 1:
+        return ''
+    code = str((arguments or {}).get('code') or '')
+    try:
+        compile(code, '<artifact-completion>', 'exec')
+    except (SyntaxError, TypeError, ValueError):
+        return (
+            'Artifact completion requires valid executable Python, not only a path '
+            'string. Provide complete Python code that creates the required output.'
+        )
+    target = targets[0]
+    if target not in code:
+        kind = 'output directory' if not Path(target).suffix else 'output file'
+        return (
+            f'Artifact completion Python must reference the required {kind} {target} '
+            'and create non-empty output there; do not only inspect or delete sources.'
+        )
+    return ''
+
+
 def artifact_completion_tool_schemas(offered_schemas, required_artifacts):
     """Bind the sole artifact writer to the runner-declared output file.
 
@@ -1561,11 +1592,11 @@ def artifact_completion_tool_schemas(offered_schemas, required_artifacts):
             elif canonical(function.get('name')) == 'python':
                 code_schema = properties.get('code')
                 if isinstance(code_schema, dict):
-                    code_schema['pattern'] = re.escape(target + '/')
                     code_schema['description'] = (
-                        'Python code that creates one or more non-empty files inside '
-                        f'the required directory {target}. The code must reference a '
-                        'descendant path; do not only inspect or delete source files.'
+                        'Complete executable Python that creates one or more non-empty '
+                        f'files inside the required directory {target}; not only a path '
+                        'string. Reference a descendant path and do not only inspect or '
+                        'delete source files.'
                     )
         return bound
     if Path(target).suffix.lower() in _NON_TEXT_ARTIFACT_SUFFIXES:
@@ -1582,10 +1613,9 @@ def artifact_completion_tool_schemas(offered_schemas, required_artifacts):
                 properties = (function.get('parameters') or {}).get('properties') or {}
                 code_schema = properties.get('code')
                 if isinstance(code_schema, dict):
-                    code_schema['pattern'] = re.escape(target)
                     code_schema['description'] = (
-                        'Python code that creates or updates this exact required '
-                        f'binary artifact path: {target}'
+                        'Complete executable Python that creates or updates this exact '
+                        f'required binary artifact path, not only a path string: {target}'
                     )
             bound.append(schema)
         return bound
@@ -5701,6 +5731,17 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         if schema is None or not turn_contract.permits(name):
                             raise ValueError('Tool is not offered or permitted.')
                         jsonschema.validate(args, schema['function']['parameters'])
+                        if (
+                            artifact_write_phase
+                            and canonical(name) == 'python'
+                            and not successful_artifact_write
+                        ):
+                            artifact_code_error = artifact_completion_python_code_error(
+                                args, required_artifacts,
+                            )
+                            if artifact_code_error:
+                                round_recovery_messages.append(artifact_code_error)
+                                raise ValueError(artifact_code_error)
                         decision = evaluate_preview_call(
                             name, args, latest_user,
                             experiment_fixture_ids=experiment_fixture_ids,
@@ -5892,6 +5933,22 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         result.get('error')
                         or result.get('exit_code') not in (None, 0)
                     )
+                    if (
+                        artifact_write_phase
+                        and not failed
+                        and canonical(actual_tool) == 'python'
+                        and required_artifacts
+                        and not successful_artifact_write
+                    ):
+                        recovery = (
+                            'The Python call ran but did not create a non-empty file at the '
+                            'required output path. Correct the code and write the actual '
+                            'artifact before finishing.'
+                        )
+                        round_recovery_messages.append(recovery)
+                        result = {**result, 'error': recovery, 'exit_code': 1}
+                        output = preview_tool_result_text(result, actual_tool, args)
+                        failed = True
                     if (
                         not failed
                         and canonical(actual_tool) == 'web_fetch'

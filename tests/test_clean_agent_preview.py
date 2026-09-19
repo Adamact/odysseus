@@ -6,7 +6,7 @@ import jsonschema
 import pytest
 import re
 
-from src.clean_agent_preview import conversation, readonly_call, preview_call_allowed, evaluate_preview_call, authorized_write_families, compact_schemas, normalize_preview_function_args, normalize_preview_call_args, private_browser_dom_batch, private_browser_state_transition, private_browser_success_repeat_limit, stream_preview, denied_response, execution_has_write_effect, requests_mutation, claims_completion, recent_successful_write_families, scope_preview_contract, multimodal_image_count, attachment_reference_count, active_document_context_message, active_email_context_message, targets_active_editor, active_editor_whole_draft_request, active_editor_suggestion_request, scope_active_editor_contract, native_execution_limits, interactive_execution_limit, runtime_required_artifacts, execution_targets_required_artifact, artifact_completion_tool_schemas, required_artifact_completion_tool_choice, document_suggestions_event, document_suggestion_quality_error, required_read_tool_choice, required_active_editor_tool_choice, sealed_read_arguments, email_identifier_error, requested_item_limit, contract_item_limit, notes_terminal_response, documents_terminal_response, shell_listing_terminal_response, shell_output_terminal_response, direct_shell_output_request, ui_panel_terminal_response, ui_toggle_state_result, calendar_terminal_response, memory_terminal_response, tasks_terminal_response, task_list_requires_synthesis, skills_terminal_response, cookbook_servers_terminal_response, prior_short_answer_for_no_tool_summary, prior_collection_repeat_answer, prior_failed_operation_answer, prior_cookbook_server_answer, prior_workspace_path_answer, prior_web_source_answer, bounded_web_evidence_answer, inherit_referential_read_arguments, normalized_search_intent, requested_web_source_links, web_source_links, requested_web_link_limit, preserve_requested_web_recency, ground_referenced_note_content, note_search_result_empty, note_referent_error, research_referent_error, private_browser_open_url, private_browser_effective_url, web_fetch_observation_is_boilerplate, broad_current_web_request, record_tool_execution, align_structured_tool_history, provider_request_messages, provider_compatible_tool_choice_request, offered_tool_alias, dependent_write_prerequisite_error, bounded_research_tool_policy, retrieved_source_urls, serialize_required_email_attachment_chain
+from src.clean_agent_preview import conversation, readonly_call, preview_call_allowed, evaluate_preview_call, authorized_write_families, compact_schemas, normalize_preview_function_args, normalize_preview_call_args, private_browser_dom_batch, private_browser_state_transition, private_browser_success_repeat_limit, stream_preview, denied_response, execution_has_write_effect, requests_mutation, claims_completion, recent_successful_write_families, scope_preview_contract, multimodal_image_count, attachment_reference_count, active_document_context_message, active_email_context_message, targets_active_editor, active_editor_whole_draft_request, active_editor_suggestion_request, scope_active_editor_contract, native_execution_limits, interactive_execution_limit, runtime_required_artifacts, execution_targets_required_artifact, artifact_completion_python_code_error, artifact_completion_tool_schemas, required_artifact_completion_tool_choice, document_suggestions_event, document_suggestion_quality_error, required_read_tool_choice, required_active_editor_tool_choice, sealed_read_arguments, email_identifier_error, requested_item_limit, contract_item_limit, notes_terminal_response, documents_terminal_response, shell_listing_terminal_response, shell_output_terminal_response, direct_shell_output_request, ui_panel_terminal_response, ui_toggle_state_result, calendar_terminal_response, memory_terminal_response, tasks_terminal_response, task_list_requires_synthesis, skills_terminal_response, cookbook_servers_terminal_response, prior_short_answer_for_no_tool_summary, prior_collection_repeat_answer, prior_failed_operation_answer, prior_cookbook_server_answer, prior_workspace_path_answer, prior_web_source_answer, bounded_web_evidence_answer, inherit_referential_read_arguments, normalized_search_intent, requested_web_source_links, web_source_links, requested_web_link_limit, preserve_requested_web_recency, ground_referenced_note_content, note_search_result_empty, note_referent_error, research_referent_error, private_browser_open_url, private_browser_effective_url, web_fetch_observation_is_boilerplate, broad_current_web_request, record_tool_execution, align_structured_tool_history, provider_request_messages, provider_compatible_tool_choice_request, offered_tool_alias, dependent_write_prerequisite_error, bounded_research_tool_policy, retrieved_source_urls, serialize_required_email_attachment_chain
 from src.tool_capabilities import capabilities_for_tool
 
 
@@ -657,15 +657,32 @@ def test_artifact_completion_schema_binds_directory_descendant_but_not_multiple_
     assert 'inside the required directory' in directory_path['description']
     assert 'pattern' not in source[0]['function']['parameters']['properties']['path']
     directory_code = directory_bound[1]['function']['parameters']['properties']['code']
-    assert re.search(
-        directory_code['pattern'],
-        "Path('/workspace/results/1.tex').write_text('table')",
-    )
-    assert not re.search(directory_code['pattern'], "Path('/workspace/source.tar').unlink()")
+    assert 'pattern' not in directory_code
     assert 'non-empty files inside' in directory_code['description']
+    assert 'Complete executable Python' in directory_code['description']
+    assert 'not only a path string' in directory_code['description']
     assert artifact_completion_tool_schemas(
         source, ('/workspace/a.txt', '/workspace/b.txt'),
     ) == source
+
+
+def test_artifact_completion_python_code_requires_valid_code_and_output_reference():
+    required = ('/workspace/results',)
+
+    assert 'valid executable Python' in artifact_completion_python_code_error(
+        {'code': '/workspace/results/'}, required,
+    )
+    assert 'required output directory' in artifact_completion_python_code_error(
+        {'code': "Path('/workspace/source.tar').unlink()"}, required,
+    )
+    assert artifact_completion_python_code_error(
+        {'code': (
+            "from pathlib import Path\n"
+            "p = Path('/workspace/results/1.tex')\n"
+            "p.write_text('table')"
+        )},
+        required,
+    ) == ''
 
 
 def test_required_binary_artifact_forces_python_instead_of_text_writer():
@@ -695,8 +712,9 @@ def test_required_binary_artifact_forces_python_instead_of_text_writer():
     )
     assert [schema['function']['name'] for schema in binary_bound] == ['python']
     code_schema = binary_bound[0]['function']['parameters']['properties']['code']
-    assert re.search(code_schema['pattern'], "open('/workspace/output.png', 'wb')")
-    assert not re.search(code_schema['pattern'], "print('more analysis')")
+    assert 'pattern' not in code_schema
+    assert 'Complete executable Python' in code_schema['description']
+    assert 'not only a path string' in code_schema['description']
     assert '/workspace/output.png' in code_schema['description']
     assert [schema['function']['name'] for schema in offered] == [
         'write_file', 'python',
@@ -5624,6 +5642,11 @@ async def test_native_stream_reserves_remaining_budget_for_required_artifact(mon
     assert requests[12]["tool_choice"] == {
         "type": "function", "function": {"name": "python"},
     }
+    completion_code_schema = (
+        requests[12]["tools"][0]["function"]["parameters"]["properties"]["code"]
+    )
+    assert "pattern" not in completion_code_schema
+    assert "Complete executable Python" in completion_code_schema["description"]
     assert "create one or more files inside" in requests[12]["messages"][-1]["content"]
     assert "Do not pass the directory itself as a file path" in requests[12]["messages"][-1]["content"]
     assert executed[-1] == "python"
