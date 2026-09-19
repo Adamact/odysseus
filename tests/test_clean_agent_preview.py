@@ -927,6 +927,128 @@ async def test_malformed_writer_body_handoff_reopens_writer_after_two_tool_viola
 
 
 @pytest.mark.asyncio
+async def test_concatenated_writer_arguments_execute_as_bounded_ordered_calls(monkeypatch):
+    import src.clean_agent_preview as module
+
+    concatenated = ''.join(json.dumps(item) for item in (
+        {'path': '/workspace/results/1.tex', 'content': '1.tex'},
+        {'path': '/workspace/results/1.tex', 'content': '\\begin{table}One\\end{table}'},
+        {'path': '/workspace/results/2.tex', 'content': '2.tex'},
+        {'path': '/workspace/results/2.tex', 'content': '\\begin{table}Two\\end{table}'},
+    ))
+    responses = iter([
+        {'choices': [{'delta': {'tool_calls': [{
+            'index': 0, 'id': 'concatenated-writes',
+            'function': {'name': 'write_file', 'arguments': concatenated},
+        }]}}]},
+        {'choices': [{'delta': {'content': 'Created the requested TeX files.'}}]},
+    ])
+
+    class Response:
+        def __init__(self, payload): self.payload = payload
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def raise_for_status(self): pass
+        async def aiter_lines(self):
+            yield 'data: ' + json.dumps(self.payload)
+            yield 'data: [DONE]'
+
+    requests = []
+
+    class Client:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def stream(self, *args, **kwargs):
+            requests.append(kwargs['json'])
+            return Response(next(responses))
+
+    executed = []
+
+    async def execute(block, **kwargs):
+        path, content = block.content.split('\n', 1)
+        executed.append({'path': path, 'content': content})
+        return block.tool_type, {'output': 'written', 'exit_code': 0}
+
+    monkeypatch.setattr(module, 'NATIVE_ARTIFACT_RESEARCH_LIMIT', 0)
+    monkeypatch.setattr(module.httpx, 'AsyncClient', Client)
+    monkeypatch.setattr(module, 'execute_tool_block', execute)
+    schema = next(
+        item for item in FUNCTION_TOOL_SCHEMAS
+        if item['function']['name'] == 'write_file'
+    )
+    contract = resolve_full_inventory_contract(schemas=[schema], policy=ToolPolicy())
+    raw = [chunk async for chunk in stream_preview(
+        endpoint_url='http://test', model='test',
+        messages=[{'role': 'user', 'content': 'Extract every table into the results directory.'}],
+        headers={}, turn_contract=contract, session_id='test', owner='test',
+        disabled_tools=set(), tool_policy=ToolPolicy(), workspace='/workspace',
+        client_runtime_context={
+            'surface': 'odysseus-native', 'terminal_agent': True,
+            'unattended_mode': True,
+            'completion_requirements': {
+                'required_artifacts': ['/workspace/results'],
+            },
+        }, max_tokens=8192, max_rounds=2,
+    )]
+
+    assert len(requests) == 2
+    assert executed == [
+        {'path': '/workspace/results/1.tex', 'content': '1.tex'},
+        {'path': '/workspace/results/1.tex', 'content': '\\begin{table}One\\end{table}'},
+        {'path': '/workspace/results/2.tex', 'content': '2.tex'},
+        {'path': '/workspace/results/2.tex', 'content': '\\begin{table}Two\\end{table}'},
+    ]
+    events = [json.loads(chunk[6:]) for chunk in raw if '[DONE]' not in chunk]
+    assert any(
+        event.get('type') == 'tool_argument_recovery'
+        and event.get('format') == 'concatenated_json_objects'
+        and event.get('calls') == 4
+        for event in events
+    )
+    assert not any(
+        event.get('reason') == 'malformed_write_body_handoff'
+        for event in events
+    )
+
+
+def test_concatenated_writer_recovery_fails_closed_for_ambiguous_or_large_batches():
+    from src.clean_agent_preview import expand_concatenated_write_calls
+
+    ambiguous = {
+        'id': 'ambiguous', 'type': 'function', 'function': {
+            'name': 'write_file',
+            'arguments': '{"path":"/workspace/a","content":"a"}{"path":"/workspace/b","mode":"x"}',
+        },
+    }
+    too_large = {
+        'id': 'large', 'type': 'function', 'function': {
+            'name': 'write_file',
+            'arguments': ''.join(
+                json.dumps({'path': f'/workspace/{index}', 'content': 'x'})
+                for index in range(17)
+            ),
+        },
+    }
+
+    assert expand_concatenated_write_calls([ambiguous]) == ([ambiguous], 0)
+    assert expand_concatenated_write_calls([too_large]) == ([too_large], 0)
+
+
+def test_malformed_writer_handoff_uses_descendant_file_not_required_directory():
+    from src.clean_agent_preview import malformed_write_handoff_target
+
+    assert malformed_write_handoff_target(
+        '{"path":"/workspace/results/1.tex"}{"content":"body"}',
+        ['/workspace/results'],
+    ) == '/workspace/results/1.tex'
+    assert malformed_write_handoff_target(
+        '{"path":"/workspace/outside.tex"}{"content":"body"}',
+        ['/workspace/results'],
+    ) == ''
+
+
+@pytest.mark.asyncio
 async def test_binary_artifact_completion_requests_python_not_text_writer(monkeypatch):
     import src.clean_agent_preview as module
 
