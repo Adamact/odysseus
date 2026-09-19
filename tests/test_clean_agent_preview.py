@@ -818,6 +818,115 @@ async def test_empty_artifact_writer_turn_recovers_via_body_handoff(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_malformed_writer_body_handoff_reopens_writer_after_two_tool_violations(monkeypatch):
+    import src.clean_agent_preview as module
+
+    responses = iter([
+        {'choices': [{'delta': {'tool_calls': [{
+            'index': 0, 'id': 'malformed-write',
+            'function': {
+                'name': 'write_file',
+                'arguments': '{"path":"/workspace/output.tex"}\n{"content":"truncated"}',
+            },
+        }]}}]},
+        {'choices': [{'delta': {'tool_calls': [{
+            'index': 0, 'id': 'off-contract-bash-one',
+            'function': {
+                'name': 'bash',
+                'arguments': json.dumps({'command': 'echo nope > /workspace/output.tex'}),
+            },
+        }]}}]},
+        {'choices': [{'delta': {'tool_calls': [{
+            'index': 0, 'id': 'off-contract-bash-two',
+            'function': {
+                'name': 'bash',
+                'arguments': json.dumps({'command': 'echo nope > /workspace/output.tex'}),
+            },
+        }]}}]},
+        {'choices': [{'delta': {'tool_calls': [{
+            'index': 0, 'id': 'recovered-write',
+            'function': {
+                'name': 'write_file',
+                'arguments': json.dumps({
+                    'path': '/workspace/output.tex',
+                    'content': '\\begin{tabular}{ll}A & B\\\\\\end{tabular}',
+                }),
+            },
+        }]}}]},
+        {'choices': [{'delta': {'content': 'Created the requested TeX artifact.'}}]},
+    ])
+
+    class Response:
+        def __init__(self, payload): self.payload = payload
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def raise_for_status(self): pass
+        async def aiter_lines(self):
+            yield 'data: ' + json.dumps(self.payload)
+            yield 'data: [DONE]'
+
+    requests = []
+
+    class Client:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def stream(self, *args, **kwargs):
+            requests.append(kwargs['json'])
+            return Response(next(responses))
+
+    executed = []
+
+    async def execute(block, **kwargs):
+        executed.append(block)
+        return block.tool_type, {'output': 'written', 'exit_code': 0}
+
+    monkeypatch.setattr(module, 'NATIVE_ARTIFACT_RESEARCH_LIMIT', 0)
+    monkeypatch.setattr(module.httpx, 'AsyncClient', Client)
+    monkeypatch.setattr(module, 'execute_tool_block', execute)
+    schemas = [
+        item for item in FUNCTION_TOOL_SCHEMAS
+        if item['function']['name'] in {'write_file', 'bash'}
+    ]
+    contract = resolve_full_inventory_contract(schemas=schemas, policy=ToolPolicy())
+    raw = [chunk async for chunk in stream_preview(
+        endpoint_url='http://test', model='test',
+        messages=[{'role': 'user', 'content': 'Create the requested TeX table.'}],
+        headers={}, turn_contract=contract, session_id='test', owner='test',
+        disabled_tools=set(), tool_policy=ToolPolicy(), workspace='/workspace',
+        client_runtime_context={
+            'surface': 'odysseus-native', 'terminal_agent': True,
+            'unattended_mode': True,
+            'completion_requirements': {
+                'required_artifacts': ['/workspace/output.tex'],
+            },
+        }, max_tokens=8192, max_rounds=6,
+    )]
+
+    assert len(requests) == 5
+    assert 'tools' not in requests[1]
+    assert 'tools' not in requests[2]
+    assert requests[3]['tool_choice'] == {
+        'type': 'function', 'function': {'name': 'write_file'},
+    }
+    assert [block.tool_type for block in executed] == ['write_file']
+    events = [json.loads(chunk[6:]) for chunk in raw if '[DONE]' not in chunk]
+    assert sum(
+        event.get('reason') == 'malformed_write_body_handoff'
+        for event in events
+    ) == 2
+    assert any(
+        event.get('reason') == 'malformed_write_body_handoff_exhausted'
+        for event in events
+    )
+    assert any(
+        event.get('type') == 'final_response'
+        and event.get('content') == 'Created the requested TeX artifact.'
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
 async def test_binary_artifact_completion_requests_python_not_text_writer(monkeypatch):
     import src.clean_agent_preview as module
 

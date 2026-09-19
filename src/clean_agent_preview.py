@@ -4321,6 +4321,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     successful_artifact_write = False
     artifact_recovery_attempts = 0
     artifact_body_handoff_attempts = 0
+    artifact_body_handoff_tool_violations = 0
     artifact_body_handoff_target = ''
     artifact_off_contract_failures = 0
     artifact_write_phase = False
@@ -4402,6 +4403,9 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                 if round_number > round_limit and not emergency_completion_round:
                     break
                 rounds_used = round_number
+                artifact_body_handoff_active_at_round_start = bool(
+                    artifact_body_handoff_target
+                )
                 yield event({
                     'type': 'agent_step',
                     'round': round_number,
@@ -6279,6 +6283,29 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     ]
                     history.append(visual_message)
                 if artifact_body_handoff_target:
+                    if artifact_body_handoff_active_at_round_start:
+                        artifact_body_handoff_tool_violations += 1
+                    if artifact_body_handoff_tool_violations >= 2:
+                        exhausted_target = artifact_body_handoff_target
+                        artifact_body_handoff_target = ''
+                        force_no_tools_next_round = False
+                        history.append({
+                            'role': 'user',
+                            '_harness_control': True,
+                            'content': (
+                                'The bounded body-only recovery is exhausted because tool calls '
+                                'were emitted instead of a raw file body. Use the artifact writer '
+                                f'offered on the next round to create {exhausted_target} with valid '
+                                'arguments. Do not use another tool or repeat the rejected call.'
+                            ),
+                        })
+                        yield event({
+                            'type': 'completion_recovery',
+                            'reason': 'malformed_write_body_handoff_exhausted',
+                            'path': exhausted_target,
+                            'tool_violations': artifact_body_handoff_tool_violations,
+                        })
+                        continue
                     force_no_tools_next_round = True
                     replace_streamed_draft_on_finish = True
                     history.append({
