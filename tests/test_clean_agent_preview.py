@@ -625,16 +625,28 @@ def test_artifact_completion_schema_binds_single_required_file_without_mutating_
 
 
 def test_artifact_completion_schema_binds_directory_descendant_but_not_multiple_outputs():
-    source = [{
-        'type': 'function',
-        'function': {
-            'name': 'write_file',
-            'parameters': {
-                'type': 'object',
-                'properties': {'path': {'type': 'string'}},
+    source = [
+        {
+            'type': 'function',
+            'function': {
+                'name': 'write_file',
+                'parameters': {
+                    'type': 'object',
+                    'properties': {'path': {'type': 'string'}},
+                },
             },
         },
-    }]
+        {
+            'type': 'function',
+            'function': {
+                'name': 'python',
+                'parameters': {
+                    'type': 'object',
+                    'properties': {'code': {'type': 'string'}},
+                },
+            },
+        },
+    ]
 
     directory_bound = artifact_completion_tool_schemas(
         source, ('/workspace/results/',),
@@ -644,6 +656,13 @@ def test_artifact_completion_schema_binds_directory_descendant_but_not_multiple_
     assert not re.search(directory_path['pattern'], '/workspace/results')
     assert 'inside the required directory' in directory_path['description']
     assert 'pattern' not in source[0]['function']['parameters']['properties']['path']
+    directory_code = directory_bound[1]['function']['parameters']['properties']['code']
+    assert re.search(
+        directory_code['pattern'],
+        "Path('/workspace/results/1.tex').write_text('table')",
+    )
+    assert not re.search(directory_code['pattern'], "Path('/workspace/source.tar').unlink()")
+    assert 'non-empty files inside' in directory_code['description']
     assert artifact_completion_tool_schemas(
         source, ('/workspace/a.txt', '/workspace/b.txt'),
     ) == source

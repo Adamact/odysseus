@@ -1549,17 +1549,24 @@ def artifact_completion_tool_schemas(offered_schemas, required_artifacts):
         bound = copy.deepcopy(offered_schemas)
         for schema in bound:
             function = schema.get('function') or {}
-            if canonical(function.get('name')) != 'write_file':
-                continue
             properties = (function.get('parameters') or {}).get('properties') or {}
-            path_schema = properties.get('path')
-            if not isinstance(path_schema, dict):
-                continue
-            path_schema['pattern'] = '^' + re.escape(target + '/') + '.+'
-            path_schema['description'] = (
-                f'Write a new file inside the required directory {target}; '
-                'do not use the directory path itself.'
-            )
+            if canonical(function.get('name')) == 'write_file':
+                path_schema = properties.get('path')
+                if isinstance(path_schema, dict):
+                    path_schema['pattern'] = '^' + re.escape(target + '/') + '.+'
+                    path_schema['description'] = (
+                        f'Write a new file inside the required directory {target}; '
+                        'do not use the directory path itself.'
+                    )
+            elif canonical(function.get('name')) == 'python':
+                code_schema = properties.get('code')
+                if isinstance(code_schema, dict):
+                    code_schema['pattern'] = re.escape(target + '/')
+                    code_schema['description'] = (
+                        'Python code that creates one or more non-empty files inside '
+                        f'the required directory {target}. The code must reference a '
+                        'descendant path; do not only inspect or delete source files.'
+                    )
         return bound
     if Path(target).suffix.lower() in _NON_TEXT_ARTIFACT_SUFFIXES:
         # ``write_file`` deliberately accepts UTF-8 text only. Keeping it in
