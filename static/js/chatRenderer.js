@@ -6,7 +6,7 @@ import markdownModule from './markdown.js';
 import { svgifyEmoji } from './markdown.js';
 import { addAITTSButton } from './tts-ai.js';
 import { providerLogo, providerLabel } from './providers.js';
-import settingsModule from './settings.js?v=20260909defaultmodelfix1';
+import settingsModule from './settings.js?v=20260912writingstyle3';
 import spinnerModule from './spinner.js';
 import { bindMenuDismiss } from './escMenuStack.js';
 import { loadPanel } from './panels.js?v=20260909movepicklayer1';
@@ -1800,7 +1800,7 @@ function _activateEntityAnchor(e, forcedAnchor = null) {
     } else if (panel === 'skills') {
       document.getElementById('tool-skills-btn')?.click();
     } else if (panel === 'research') {
-        import('./research/panel.js?v=20260911researchmenu1').then(mod => {
+        import('./research/panel.js?v=20260913researchrailerrors1').then(mod => {
         const open = mod.openPanel || (mod.default && mod.default.openPanel);
         if (open) open();
       }).catch(() => {});
@@ -1855,7 +1855,7 @@ function _activateEntityAnchor(e, forcedAnchor = null) {
       if (open) open(id);
     }).catch(() => {});
   } else if (kind === 'note') {
-      import('./notes.js?v=20260910drawmerge1').then(mod => {
+      import('./notes.js?v=20260911notesselectioncancel1').then(mod => {
       const open = mod.openNote || (mod.default && mod.default.openNote);
       if (open) open(id);
       try {
@@ -1905,7 +1905,7 @@ function _activateEntityAnchor(e, forcedAnchor = null) {
       if (open) open(id);
     }).catch(() => {});
   } else if (kind === 'research') {
-    import('./research/panel.js?v=20260911researchmenu1').then(mod => {
+    import('./research/panel.js?v=20260913researchrailerrors1').then(mod => {
       const open = mod.openPanel || (mod.default && mod.default.openPanel);
       if (open) open(id);
     }).catch(() => {});
@@ -2659,8 +2659,8 @@ export function displayMetrics(messageElement, metrics) {
       <div class="ctx-popup-title">Message stats</div>
       <div class="ctx-stat-section">
         <div class="ctx-stat-row"><span class="ctx-label">Model</span><span class="ctx-stat-value">${model.split('/').pop()}</span></div>
-        <div class="ctx-stat-row"><span class="ctx-label">Input · all rounds</span><span class="ctx-stat-value">${inputTokens.toLocaleString()} tokens${isReal ? '' : '~'}</span></div>
-        ${injectedTokens != null ? `<div class="ctx-stat-row"><span class="ctx-label">Injected · first request</span><span class="ctx-stat-value">${Number(injectedTokens).toLocaleString()} tokens</span></div>` : ''}
+        <div class="ctx-stat-row"><span class="ctx-label">Input</span><span class="ctx-stat-value">${inputTokens.toLocaleString()} tokens${isReal ? '' : '~'}</span></div>
+        ${injectedTokens != null ? `<div class="ctx-stat-row"><span class="ctx-label">Injected</span><span class="ctx-stat-value">${Number(injectedTokens).toLocaleString()} tokens</span></div>` : ''}
         <div class="ctx-stat-row"><span class="ctx-label">Output</span><span class="ctx-stat-value">${outputTokens.toLocaleString()} tokens${isReal ? '' : '~'}</span></div>
         <div class="ctx-stat-row"><span class="ctx-label">Total</span><span class="ctx-stat-value">${totalTok.toLocaleString()} tokens</span></div>
       </div>

@@ -12,11 +12,57 @@ from src.tool_policy import ToolPolicy, WEB_ACCESS_TOOL_NAMES
 from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
 from src.turn_contract import (
     FAMILY_TOOLS, RequiredReadOperation, active_turn_contract, bind_turn_contract, canonical_tool,
-    requested_capabilities, required_read_operation_for_request,
+    immediately_established_family, requested_capabilities, required_read_operation_for_request,
     requests_independent_web_source, requests_supporting_web_source, resolve_turn_contract,
     preserve_bound_editor_selected_tools, selected_tools_for_request,
     targets_bound_editor_request,
 )
+
+
+def _completed_tool_turn(user_text, *tools):
+    return [
+        {"role": "user", "content": user_text},
+        {"role": "assistant", "content": "Done", "metadata": {"tool_events": [
+            {"tool": tool, "exit_code": 0, "error": False} for tool in tools
+        ]}},
+    ]
+
+
+@pytest.mark.parametrize(("prior", "followup"), [
+    ("Is there Rocket League for Switch 2?", "I searched rocket and cannot find it"),
+    ("Find the current price of the Framework laptop", "framework is not showing for me"),
+    ("Look up the Kyoto railway museum opening hours", "I cannot find the kyoto museum result"),
+    ("Check whether Aurora 7 is available on PlayStation", "where is aurora 7 listed"),
+])
+def test_subject_continuity_keeps_public_web_followups_out_of_shell(prior, followup):
+    history = _completed_tool_turn(prior, "web_search", "web_fetch")
+
+    assert immediately_established_family(followup, history) == "search_browser"
+    assert requested_capabilities(followup, history) == frozenset({"search_browser"})
+
+
+def test_subject_continuity_uses_typed_private_domain_without_crossing_to_shell():
+    history = _completed_tool_turn("Find my Project Juniper note", "manage_notes")
+
+    assert requested_capabilities(
+        "juniper is not showing in the results", history,
+    ) == frozenset({"notes"})
+
+
+def test_explicit_domain_switch_overrides_subject_continuity():
+    history = _completed_tool_turn("Find the current Orion browser release", "web_search")
+
+    assert requested_capabilities(
+        "search my documents for Orion", history,
+    ) == frozenset({"documents"})
+
+
+def test_mixed_domain_turn_is_not_inherited_as_one_domain():
+    history = _completed_tool_turn(
+        "Find sources for Atlas and save them to my notes", "web_search", "manage_notes",
+    )
+
+    assert immediately_established_family("atlas is missing", history) is None
 
 
 @pytest.mark.parametrize('prompt', [

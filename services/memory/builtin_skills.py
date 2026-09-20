@@ -5,11 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable
 
+from src.constants import BUILTIN_SKILLS_DIR
+
 from .skill_format import Skill
 from .skills import SkillsManager
 
 
-_BUILTIN_ROOT = Path(__file__).resolve().parents[2] / "resources" / "skills"
+_BUILTIN_ROOT = Path(BUILTIN_SKILLS_DIR)
 _SYNC_FIELDS = (
     "name",
     "description",
@@ -40,7 +42,7 @@ def install_builtin_skills(manager: SkillsManager, owners: Iterable[str]) -> int
     Installation is safe before first-user setup because no owner identity is
     assigned and unauthenticated requests still cannot access skill routes.
     """
-    existing = {row.get("name") for row in manager.load_all()}
+    existing = {row.get("name"): row for row in manager.load_all()}
     installed = 0
     paths = sorted(_BUILTIN_ROOT.rglob("SKILL.md")) if _BUILTIN_ROOT.is_dir() else []
     for path in paths:
@@ -52,9 +54,8 @@ def install_builtin_skills(manager: SkillsManager, owners: Iterable[str]) -> int
         # available immediately and never enter the user's audit queue.
         skill.status = "published"
         skill.confidence = 1.0
-        existing_rows = [row for row in manager.load_all() if row.get("name") == skill.name]
-        if existing_rows:
-            row = existing_rows[0]
+        row = existing.get(skill.name)
+        if row:
             # Built-ins are immutable tracked assets. Synchronize updated
             # versions/procedures on startup while leaving usage counters in
             # their sidecar untouched. Older startup code could also stamp the
@@ -64,11 +65,11 @@ def install_builtin_skills(manager: SkillsManager, owners: Iterable[str]) -> int
                 skill.source = "builtin"
                 desired = skill.to_dict()
                 if any(row.get(field) != desired.get(field) for field in _SYNC_FIELDS):
-                    manager._write_skill(skill)
+                    manager.sync_builtin_skill(skill)
             continue
         skill.owner = ""
         skill.source = "builtin"
-        manager._write_skill(skill)
-        existing.add(skill.name)
+        manager.sync_builtin_skill(skill)
+        existing[skill.name] = skill.to_dict()
         installed += 1
     return installed

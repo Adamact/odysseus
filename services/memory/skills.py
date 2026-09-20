@@ -226,6 +226,10 @@ class SkillsManager:
         sk.path = path
         return path
 
+    def sync_builtin_skill(self, skill: Skill) -> str:
+        """Persist a trusted built-in skill during startup synchronization."""
+        return self._write_skill(skill)
+
     def backfill_owner(self, primary_owner: str, valid_owners: Optional[set[str]] = None) -> int:
         """Assign legacy/unclaimed skill files to the primary owner.
 

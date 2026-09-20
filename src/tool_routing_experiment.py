@@ -76,7 +76,13 @@ def select_experiment_inventory(inventory, routed, history, mode, *, user_text='
         and routed.required_read_operation is None
         and any(canonical_tool(name) == 'edit_image' for name in routed.required)
     )
-    if not explicit_image_edit:
+    if not explicit_image_edit and not (
+        mode == MODEL_CHOICE_MODE and families
+        and routed.required_read_operation is None
+    ):
+        # A concrete current-turn route owns the inventory. Reintroducing
+        # previously used families here lets an explicit domain switch retain
+        # stale authority and lets a resolved follow-up drift into shell.
         families.update(recently_executed_families(
             history, user_turns=6, maximum=3,
             include_failed_attempts=mode == MODEL_CHOICE_MODE,

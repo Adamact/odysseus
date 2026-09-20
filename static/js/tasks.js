@@ -800,10 +800,12 @@ function _renderTaskChips() {
     b.className = 'memory-cat-chip task-filter-chip' + (kind === 'status' ? ' task-status-filter-chip' : '') + (active ? ' active' : '');
     b.textContent = label;
     b.addEventListener('click', () => {
-      if (kind === 'status') _taskStatusFilter = _taskStatusFilter === value ? null : value;
-      else {
+      if (kind === 'status') {
+        _taskStatusFilter = _taskStatusFilter === value ? null : value;
+        _taskFilter = null;
+      } else {
         _taskFilter = value;
-        if (value === null) _taskStatusFilter = null;
+        _taskStatusFilter = null;
       }
       _renderList();
     });

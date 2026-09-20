@@ -186,7 +186,7 @@ export function handleUIControl(uiData) {
           if (fn) fn();
         }).catch(function(){});
       } else if (panel === 'calendar') {
-        import('./calendar.js?v=20260914emailsource9').then(function(mod) {
+        import('./calendar.js?v=20260914emailsource11').then(function(mod) {
           var viewFn = mod.openCalendarView || (mod.default && mod.default.openCalendarView);
           var fn = mod.openCalendar || (mod.default && mod.default.openCalendar);
           if (viewFn && (uiData.view || uiData.target_date)) viewFn(uiData.view || 'month', uiData.target_date || '');
@@ -208,7 +208,7 @@ export function handleUIControl(uiData) {
           if (fn) fn(uiData.view ? { tab: uiData.view } : undefined);
         }).catch(function(){});
       } else if (panel === 'notes') {
-        import('./notes.js?v=20260910drawmerge1').then(function(mod) {
+        import('./notes.js?v=20260911notesselectioncancel1').then(function(mod) {
           var fn = mod.openPanel || mod.openNotes || (mod.default && (mod.default.openPanel || mod.default.openNotes));
           if (fn) fn();
         }).catch(function(){});
@@ -229,7 +229,7 @@ export function handleUIControl(uiData) {
         var ids = { memories: 'tool-memory-btn', skills: 'tool-skills-btn', settings: 'open-settings-btn' };
         var btn = document.getElementById(ids[panel]);
         if (panel === 'settings') {
-          import('./settings.js?v=20260909defaultmodelfix1').then(function(mod) {
+          import('./settings.js?v=20260912writingstyle3').then(function(mod) {
             var fn = mod.open || (mod.default && mod.default.open);
             if (fn) fn();
             else if (btn) btn.click();

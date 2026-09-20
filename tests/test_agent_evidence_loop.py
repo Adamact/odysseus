@@ -15,6 +15,45 @@ def _events(chunks):
     return parsed
 
 
+def test_deepseek_flash_visual_continuation_flattens_only_tool_visual_history():
+    messages = [
+        {"role": "system", "content": "system contract"},
+        {"role": "user", "content": "original task"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"id": "c1", "type": "function", "function": {
+                "name": "inspect_media", "arguments": "{}",
+            }}],
+        },
+        {"role": "tool", "tool_call_id": "c1", "content": "preview follows"},
+        {
+            "role": "user",
+            "metadata": {"source": "tool visual evidence", "trusted": False},
+            "content": [
+                {"type": "text", "text": "Visual evidence returned by tool execution."},
+                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AAA"}},
+            ],
+        },
+    ]
+
+    flattened = agent_loop._deepseek_flash_visual_continuation(messages, "original task")
+
+    assert [message["role"] for message in flattened] == ["system", "user"]
+    assert "original task" in flattened[-1]["content"][0]["text"]
+    assert flattened[-1]["content"][1]["image_url"]["url"].endswith("AAA")
+    assert agent_loop._deepseek_flash_visual_continuation(
+        messages[:-1], "original task"
+    ) is None
+
+
+def test_deepseek_flash_vision_compatibility_is_exact_model_only():
+    assert agent_loop._is_deepseek_flash_vision_model("deepseek-flash")
+    assert agent_loop._is_deepseek_flash_vision_model("provider/deepseek-flash")
+    assert not agent_loop._is_deepseek_flash_vision_model("deepseek-v4-pro")
+    assert not agent_loop._is_deepseek_flash_vision_model("deepseek-flash-preview")
+
+
 def _patch_loop(monkeypatch, responses, captured_kwargs=None):
     monkeypatch.setattr(agent_loop, "get_setting", lambda key, default=None: default)
     monkeypatch.setattr(agent_loop, "get_mcp_manager", lambda: None)
@@ -796,3 +835,13 @@ def test_run_the_script_is_not_inferred_when_multiple_scripts_are_named():
     )
 
     assert agent_loop._requested_verification_command(request) == ""
+
+
+def test_inspect_saved_file_requests_artifact_readback_verification():
+    request = (
+        "Create /workspace/output/results.csv, inspect the saved file, "
+        "then summarize completion."
+    )
+
+    assert agent_loop._requested_post_edit_verification(request)
+    assert agent_loop._requested_artifact_readback(request)

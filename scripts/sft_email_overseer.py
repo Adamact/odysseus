@@ -205,7 +205,8 @@ def retarget_row(row: dict[str, Any], target_owner: str, uid_offset: int) -> dic
     try:
         new_uid = str(uid_offset + int(source_uid))
     except ValueError:
-        new_uid = f"{uid_offset}{re.sub(r'\\W+', '', source_uid)[:8]}"
+        source_uid_suffix = re.sub(r"\W+", "", source_uid)[:8]
+        new_uid = f"{uid_offset}{source_uid_suffix}"
 
     cloned["owner"] = target_owner
     cloned["uid"] = new_uid

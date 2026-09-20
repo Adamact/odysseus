@@ -55,6 +55,9 @@ NATIVE_ROUND_LIMIT = 64
 # and interaction are separate observable actions.
 INTERACTIVE_TOOL_CALL_LIMIT = 18
 INTERACTIVE_BROWSER_TOOL_CALL_LIMIT = 30
+# "Unlimited" as a comparable int: every call site tests `calls < limit`, so a
+# sentinel avoids threading an Optional through the whole preview loop.
+UNLIMITED_TOOL_CALL_LIMIT = 1_000_000
 INTERACTIVE_ROUND_LIMIT = 8
 # Multi-record research tasks routinely need several search/fetch/inspection
 # pairs before an artifact can be grounded. Preserve twelve calls for writing,
@@ -1468,13 +1471,39 @@ def standalone_social_turn(text):
 
 
 def interactive_execution_limit(max_rounds):
-    """Bound interactive turns independently of long-running native jobs."""
+    """Honor the WebUI agent-step setting for the compact preview loop.
+
+    A configured finite budget is the user's explicit instruction and is
+    honored up to the same 200 ceiling the settings endpoint enforces.
+    INTERACTIVE_ROUND_LIMIT remains the fallback when no budget is resolvable
+    (adaptive ``None`` mode or a malformed value), so a turn still terminates.
+    """
     if max_rounds is None:
         return INTERACTIVE_ROUND_LIMIT
     try:
-        return max(1, min(int(max_rounds), INTERACTIVE_ROUND_LIMIT))
+        return max(1, min(int(max_rounds), 200))
     except (TypeError, ValueError):
         return INTERACTIVE_ROUND_LIMIT
+
+
+def interactive_tool_call_limit(max_tool_calls, *, browser_offered=False):
+    """Honor the configured agent tool-call budget; 0 means unlimited.
+
+    Matches the main agent loop, which treats ``max_tool_calls <= 0`` as
+    unbounded. The INTERACTIVE_* constants remain the fallback for a
+    malformed value.
+    """
+    default = (
+        INTERACTIVE_BROWSER_TOOL_CALL_LIMIT if browser_offered
+        else INTERACTIVE_TOOL_CALL_LIMIT
+    )
+    try:
+        budget = int(max_tool_calls)
+    except (TypeError, ValueError):
+        return default
+    if budget <= 0:
+        return UNLIMITED_TOOL_CALL_LIMIT
+    return budget
 
 
 def runtime_required_artifacts(user_text, client_runtime_context):
@@ -4314,6 +4343,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                          history_session=None, external_untrusted_context_seen=False,
                          active_document=None, active_email=None, workspace=None,
                          client_runtime_context=None, max_tokens=768, max_rounds=8,
+                         max_tool_calls=0,
                          external_tool_schemas=None, temperature=0.0,
                          **ignored):
     from src.generation_sampling import validate_temperature
@@ -4577,10 +4607,12 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
             'Open the document you want reviewed, then ask for inline suggestions again.'
         )
     round_limit = interactive_execution_limit(max_rounds)
-    tool_call_limit = (
-        INTERACTIVE_BROWSER_TOOL_CALL_LIMIT
-        if any(canonical(schema['function']['name']) == 'private_browser' for schema in offered)
-        else INTERACTIVE_TOOL_CALL_LIMIT
+    tool_call_limit = interactive_tool_call_limit(
+        max_tool_calls,
+        browser_offered=any(
+            canonical(schema['function']['name']) == 'private_browser'
+            for schema in offered
+        ),
     )
     if native_workspace_enabled:
         try:
@@ -4929,6 +4961,11 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     if content and not prior_summary_answer:
                         yield event({'delta': content})
                 proposed = [pending[i] for i in sorted(pending)]
+                # A lead-in emitted before a tool call is live progress, not
+                # part of the terminal answer. Replace that draft when the
+                # eventual synthesis begins instead of concatenating both.
+                if proposed and streamed_round_text:
+                    replace_streamed_draft_on_finish = True
                 unexecutable_dsml_completion = False
                 if not proposed and 'DSML' in content:
                     offered_by_canonical = {

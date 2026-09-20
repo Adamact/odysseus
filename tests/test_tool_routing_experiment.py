@@ -21,6 +21,46 @@ def test_disabled_ocr_is_not_reintroduced_by_explicit_request_or_warm_history():
     assert 'extract_text' not in offered.executable
 
 
+def test_web_subject_followup_does_not_offer_shell_or_private_stores():
+    from src.tool_routing_experiment import MODEL_CHOICE_MODE
+    from src.turn_contract import requested_capabilities
+
+    policy = ToolPolicy()
+    history = [
+        {'role': 'user', 'content': 'Is there Rocket League for Switch 2?'},
+        {'role': 'assistant', 'content': 'It uses the Switch listing.', 'metadata': {
+            'tool_events': [
+                {'tool': 'web_search', 'exit_code': 0, 'error': False},
+                {'tool': 'web_fetch', 'exit_code': 0, 'error': False},
+            ],
+        }},
+    ]
+    capabilities = requested_capabilities(
+        'I searched rocket and cannot find it', history,
+    )
+    inventory = resolve_full_inventory_contract(
+        schemas=FUNCTION_TOOL_SCHEMAS, policy=policy,
+    )
+    routed = resolve_turn_contract(
+        capabilities=capabilities, schemas=FUNCTION_TOOL_SCHEMAS, policy=policy,
+    )
+    result = select_experiment_inventory(
+        inventory, routed, history, MODEL_CHOICE_MODE,
+        user_text='I searched rocket and cannot find it',
+    )
+
+    assert capabilities == {'search_browser'}
+    assert result.offered
+    assert {schema.rsplit('__', 1)[-1] for schema in result.offered} <= {
+        'web_search', 'web_fetch', 'private_browser', 'youtube_tool',
+        'search_hf_models', 'pdf_extract',
+    }
+    assert not result.offered.intersection({
+        'bash', 'python', 'read_file', 'manage_notes', 'manage_documents',
+        'search_emails', 'search_chats',
+    })
+
+
 def test_model_choice_rollout_is_account_model_and_header_scoped():
     from src.tool_routing_experiment import MODEL_CHOICE_MODE, MODEL_CHOICE_MODEL
     assert experiment_mode(None, 'pewds', MODEL_CHOICE_MODEL) == MODEL_CHOICE_MODE

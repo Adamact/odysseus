@@ -7672,7 +7672,7 @@ If a calendar create/update request lacks a required date, time, or target event
     "send_to_session": "- ```send_to_session``` — Send a message to another session. Line 1 = session_id, rest = message. Use for orchestrating work across sessions.",
     "search_chats": "- ```search_chats``` — Search past session transcripts for direct conversation evidence. Use when user asks 'did we discuss X?', 'find the conversation about Y', or when prior chat context is more appropriate than persistent memory.",
     "pipeline": "- ```pipeline``` — Run a multi-step AI pipeline. Args (JSON) with ordered steps, each specifying a model and prompt. Use for complex workflows.",
-    "ui_control": "- ```ui_control``` — Control the UI: toggle tools on/off, OPEN PANELS, open email reply drafts, switch models, change themes. Commands: `toggle <name> on/off` (names: bash/shell, web/search, research, incognito, document_editor/documents), `open_panel <name>` (panels: documents, gallery, calendar/schedule, email, sessions, notes, memories/brain, skills, settings, theme, cookbook), `open_panel calendar month|week|year|agenda [YYYY-MM or YYYY-MM-DD]` (open calendar directly to a view/range), `open_email_reply <uid> <folder> <reply|reply-all|ai-reply> <body text>` (opens an email compose document pre-filled with body, DOES NOT send; use this for normal “write/draft a reply saying X” requests), `set_mode agent/chat`, `switch_model <name>`, `set_theme <preset>`, `create_theme <name> <bg> <fg> <panel> <border> <accent>` (optional key=val for advanced colors AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false). \"open calendar\" / \"open schedule\" / \"open documents\" / \"open library\" / \"show gallery\" / \"open inbox\" / \"open notes\" / \"open theme\" / \"open cookbook\" all map to `open_panel <name>`. Built-in theme presets: dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute. For any other vibe/name, use create_theme.",
+    "ui_control": "- ```ui_control``` — Control the UI: toggle tools on/off, OPEN PANELS, open email reply drafts, switch models, change themes. Commands: `toggle <name> on/off` (names: bash/shell, web/search, research, incognito, document_editor/documents), `open_panel <name>` (panels: documents, gallery, calendar/schedule, email, sessions, notes, memories/brain, skills, settings, theme, cookbook), `open_panel calendar month|week|year|agenda [YYYY-MM or YYYY-MM-DD]` (open calendar directly to a view/range), `open_email_reply <uid> <folder> <reply|reply-all|ai-reply> <body text>` (opens an email compose document pre-filled with body, DOES NOT send; use this for normal “write/draft a reply saying X” requests), `set_mode agent/chat`, `switch_model <name>`, `set_theme <preset>`, `create_theme <name> <bg> <fg> <panel> <border> <accent>` (optional key=val for advanced colors AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false). \"open calendar\" / \"open schedule\" / \"open documents\" / \"open library\" / \"show gallery\" / \"open inbox\" / \"open notes\" / \"open theme\" / \"open cookbook\" all map to `open_panel <name>`. Built-in theme presets: dark, light, midnight, cyberpunk, retrowave, forest, ocean, ume, terminal, organs, gpt, claude, cute, eclipse, porcelain, arcade, blueprint, monolith, yoyo. For any other vibe/name, use create_theme.",
     "ask_user": "- ```ask_user``` — Ask the user a question when the task is genuinely ambiguous and the answer changes what you do next (pick an approach, confirm an assumption, choose a target). Args (JSON): {\"question\": \"...\", \"options\": [{\"label\": \"...\", \"description\": \"...\"?}, ...], \"multi\": false?}. 2-6 options. The user gets clickable buttons; calling this ENDS your turn and their choice comes back as your next message. For open-ended missing data such as an exact calendar date, include an \"Exact date\" option and ask the user to type the date; do not invent arbitrary choices. Prefer sensible defaults — only ask when you truly can't proceed well without their input.",
     "update_plan": "- ```update_plan``` — While executing an approved plan, write the plan back: tick steps done or revise them. Args (JSON): {\"plan\": \"- [x] done step\\n- [ ] next step\"}. Always pass the COMPLETE checklist, not a diff. Call it after finishing each step (mark it `- [x]`) and whenever the user asks to change the plan. The user's docked plan window updates live. Does nothing if there's no active plan.",
     "list_served_models": "- ```list_served_models``` — Show what the Cookbook (LLM-serving subsystem) is currently running. NO args. Use this for ANY 'what's running' / 'what's serving' / 'show my cookbook' / 'is anything up' query. DO NOT shell out (`ps aux`, `docker ps`, etc.) — this tool is the source of truth. Failed serve tasks include recent logs plus diagnosis/retry suggestions; use those suggestions to call `serve_model` again with an adjusted command when appropriate.",
@@ -13695,6 +13695,76 @@ def _is_odysseus_qwen_native(model: str) -> bool:
     return bool(re.search(r"\bqwen3(?:\.?(?:6|8))-27b-(?:mlx|fp8)(?:\b|[-_/])", value))
 
 
+def _is_deepseek_flash_vision_model(model: str) -> bool:
+    """Recognize the provider's exact vision-capable Flash variant."""
+    value = str(model or "").strip().lower().rstrip("/")
+    return value.rsplit("/", 1)[-1] == "deepseek-flash"
+
+
+def _deepseek_flash_visual_continuation(
+    request_messages: Sequence[Mapping[str, Any]],
+    direct_user_text: str,
+) -> Optional[list[dict]]:
+    """Flatten one post-tool visual turn for DeepSeek Flash.
+
+    The hosted Flash vision path can reason over pixels and emit native tool
+    calls from a fresh multimodal request.  It currently returns an empty,
+    length-terminated response when the image follows assistant/tool-call
+    history.  Collapse only requests carrying explicit tool visual evidence;
+    ordinary text and later tool rounds retain their full history.
+    """
+    newest_visual: Optional[Mapping[str, Any]] = None
+    for message in request_messages or ():
+        metadata = message.get("metadata") or {}
+        content = message.get("content")
+        if (
+            message.get("role") == "user"
+            and isinstance(metadata, Mapping)
+            and metadata.get("source") == "tool visual evidence"
+            and isinstance(content, list)
+            and any(
+                isinstance(block, Mapping) and block.get("type") == "image_url"
+                for block in content
+            )
+        ):
+            newest_visual = message
+    if newest_visual is None:
+        return None
+
+    systems = [
+        dict(message)
+        for message in request_messages or ()
+        if message.get("role") == "system"
+    ]
+    visual_content = newest_visual.get("content") or []
+    images = [
+        dict(block)
+        for block in visual_content
+        if isinstance(block, Mapping) and block.get("type") == "image_url"
+    ]
+    if not images:
+        return None
+    task = str(direct_user_text or "").strip()
+    evidence_text = "\n".join(
+        str(block.get("text") or "").strip()
+        for block in visual_content
+        if isinstance(block, Mapping)
+        and block.get("type") == "text"
+        and str(block.get("text") or "").strip()
+    )
+    instruction = (
+        (f"{task}\n\n" if task else "")
+        + (f"{evidence_text}\n\n" if evidence_text else "")
+        + "The requested visual evidence is attached below. Analyze these pixels "
+        "directly and continue the task using downstream tools. Do not request "
+        "another inspection of this same view."
+    )
+    return systems + [{
+        "role": "user",
+        "content": [{"type": "text", "text": instruction}, *images],
+    }]
+
+
 def _ody_qwen_temperature_cap(temperature):
     """Force-cap odysseus-qwen3 sampling; the finetune destabilizes above 0.2.
 
@@ -15663,9 +15733,30 @@ def _requested_post_edit_verification(text: str) -> bool:
         return False
     if _requested_verification_command(value):
         return True
+    if re.search(
+        r"\b(?:inspect|review|check|verify|read(?:\s+it)?\s+back)\b"
+        r".{0,100}\b(?:saved|written|created|output|file|artifact)\b",
+        value,
+        re.IGNORECASE | re.DOTALL,
+    ):
+        return True
     return bool(re.search(
-        r"\b(?:then|after(?:wards)?|and)\b.{0,100}\b(?:run|execute|test|verify|check|build|compile|lint)\b"
-        r"|\b(?:run|execute|test|verify|check|build|compile|lint)\b.{0,100}\b(?:after|once|when)\b",
+        r"\b(?:then|after(?:wards)?|and)\b.{0,100}\b(?:run|execute|test|verify|check|inspect|review|read(?:\s+it)?\s+back|build|compile|lint)\b"
+        r"|\b(?:run|execute|test|verify|check|inspect|review|read(?:\s+it)?\s+back|build|compile|lint)\b.{0,100}\b(?:after|once|when)\b",
+        value,
+        re.IGNORECASE | re.DOTALL,
+    ))
+
+
+def _requested_artifact_readback(text: str) -> bool:
+    """Whether verification specifically asks to inspect the saved artifact."""
+
+    value = str(text or "")
+    return bool(re.search(
+        r"\b(?:inspect|review|check|verify|read(?:\s+it)?\s+back)\b"
+        r".{0,100}\b(?:saved|written|created|output|file|artifact)\b"
+        r"|\b(?:saved|written|created|output|file|artifact)\b"
+        r".{0,100}\b(?:inspect|review|check|verify|read(?:\s+it)?\s+back)\b",
         value,
         re.IGNORECASE | re.DOTALL,
     ))
@@ -15701,6 +15792,32 @@ def _first_explicit_workspace_file(text: str) -> str:
     if not match:
         return ""
     return _clean_file_edit_value(str(match.group("path") or "").strip().rstrip("."))
+
+
+def _read_file_block_path(content) -> str:
+    """Path argument of a read_file tool block, JSON args or bare text."""
+    text = str(content or "").strip()
+    try:
+        args = json.loads(text)
+        if isinstance(args, dict):
+            return str(args.get("path") or "").strip()
+    except (TypeError, ValueError, json.JSONDecodeError):
+        pass
+    return text.splitlines()[0].strip() if text else ""
+
+
+def _read_file_targets_artifact(content, target) -> bool:
+    """True when a read_file block reads the artifact awaiting verification.
+
+    Reading the *input* named earlier in the same prompt must not satisfy a
+    request to verify the written output.
+    """
+    if not target:
+        return False
+    path = _read_file_block_path(content)
+    if not path:
+        return False
+    return path == str(target) or Path(path).name == Path(str(target)).name
 
 
 def _explicit_workspace_files(text: str) -> list[str]:
@@ -20297,6 +20414,7 @@ async def stream_agent_loop(
             external_tool_schemas=external_tool_schemas,
             max_tokens=max_tokens,
             max_rounds=max_rounds,
+            max_tool_calls=max_tool_calls,
             temperature=temperature,
         ):
             yield chunk
@@ -22847,6 +22965,16 @@ async def stream_agent_loop(
             ]
             + _declared_native_artifacts
         ))
+        # A forced read-back must target a declared *output*.
+        # _workspace_artifacts is in prompt order, so index 0 is the input for
+        # the ordinary "read /workspace/in/x, write /workspace/out/y, then
+        # check the saved file" shape. Declared required_artifacts are
+        # authoritative outputs; otherwise prefer the last named path, which is
+        # the deliverable in that phrasing, over the first.
+        _artifact_readback_target = (
+            _declared_native_artifacts[0] if _declared_native_artifacts
+            else (_workspace_artifacts[-1] if _workspace_artifacts else None)
+        )
         _artifact_creation_requested = bool(
             (workspace or _native_artifact_runtime)
             and _workspace_artifacts
@@ -23156,6 +23284,16 @@ async def stream_agent_loop(
                     "[agent-context] final trimmed request lost direct user turn; restoring it before provider call: %r",
                     _last_user[:160],
                 )
+                _trimmed_visual_evidence = [
+                    message
+                    for message in trimmed_messages
+                    if (
+                        isinstance(message, dict)
+                        and message.get("role") == "user"
+                        and (message.get("metadata") or {}).get("source")
+                        == "tool visual evidence"
+                    )
+                ]
                 trimmed_messages = [
                     message for message in trimmed_messages
                     if not (
@@ -23164,7 +23302,14 @@ async def stream_agent_loop(
                         and (message.get("metadata") or {}).get("trusted") is False
                         and (message.get("metadata") or {}).get("source")
                     )
-                ] + [{"role": "user", "content": _last_user}]
+                ] + [
+                    {"role": "user", "content": _last_user},
+                    # Keep the newest tool pixels after the restored task
+                    # text. Provider sanitization merges these consecutive
+                    # user turns into one final multimodal turn; hosted
+                    # vision APIs may ignore images stranded in an older turn.
+                    *_trimmed_visual_evidence,
+                ]
             after_trim_tokens = estimate_tokens(trimmed_messages)
             if after_trim_tokens < before_trim_tokens:
                 logger.info(
@@ -24019,6 +24164,7 @@ async def stream_agent_loop(
     _single_execution_bound = _request_forbids_execution_retry(_last_user)
     _execution_tool_attempts: dict[str, int] = {}
     _post_edit_verification_required = _requested_post_edit_verification(_last_user)
+    _artifact_readback_requested = _requested_artifact_readback(_last_user)
     _post_edit_verification_command = _requested_verification_command(_last_user)
     if _post_edit_verification_required and not _post_edit_verification_command and _tui_test_request:
         _post_edit_verification_command = _tui_local_fallback_shell_command(
@@ -25265,7 +25411,19 @@ async def stream_agent_loop(
                     candidate_model,
                     state["messages"],
                 )
-                state["request_messages"] = request_messages
+            deepseek_visual_messages = None
+            if _is_deepseek_flash_vision_model(candidate_model):
+                deepseek_visual_messages = _deepseek_flash_visual_continuation(
+                    request_messages,
+                    _last_user,
+                )
+                if deepseek_visual_messages is not None:
+                    request_messages = deepseek_visual_messages
+                    logger.info(
+                        "[agent] flattened DeepSeek Flash post-tool visual "
+                        "continuation and suppressed redundant inspect_media"
+                    )
+            state["request_messages"] = request_messages
             _last_route_request_messages = request_messages
             state["context_length"] = _route_context_lengths.get(
                 (candidate_url, candidate_model),
@@ -25274,6 +25432,12 @@ async def stream_agent_loop(
             _last_route_context_length = state["context_length"]
             run_security.observe_messages(request_messages)
             candidate_tools = _tool_schemas_for_route(state)
+            if deepseek_visual_messages is not None:
+                candidate_tools = [
+                    schema
+                    for schema in candidate_tools or ()
+                    if schema.get("function", {}).get("name") != "inspect_media"
+                ]
             state["tools"] = candidate_tools
             from src.generation_budget import fit_output_token_budget
 
@@ -27170,7 +27334,31 @@ async def stream_agent_loop(
             native_tool_calls = []
             used_native = False
             logger.info("[agent] normalized inspection follow-up to one edit_file call")
-        if (
+        elif (
+            _artifact_readback_requested
+            and _post_effectful_mutation_done
+            and not _post_edit_verification_completed
+            and not _post_edit_verification_force_attempted
+            and _artifact_readback_target
+        ):
+            # The user explicitly asked to inspect the saved artifact. Once a
+            # write succeeds, normalize one bounded read-back rather than
+            # letting a weak router reopen source-media inspection forever.
+            # Chained onto the preceding branches: an already-normalized
+            # authorized edit must not be overwritten by this read.
+            tool_blocks = [ToolBlock(
+                "read_file",
+                json.dumps({"path": _artifact_readback_target}),
+            )]
+            converted_calls = []
+            native_tool_calls = []
+            used_native = False
+            _post_edit_verification_force_attempted = True
+            logger.info(
+                "[agent] normalized post-edit artifact verification to read_file: %s",
+                _artifact_readback_target,
+            )
+        elif (
             _post_edit_verification_nudge_sent
             and (_post_effectful_mutation_done or _inspection_edit_completed or _file_creation_completed)
             and not _post_edit_verification_completed
@@ -29453,9 +29641,13 @@ async def stream_agent_loop(
                     "role": "system",
                     "content": (
                         "The requested file edit succeeded, but the user also asked "
-                        "for verification. Do that now with one concrete tool call "
-                        "using the requested command (host_shell), then summarize. "
-                        "Do not stop after the edit."
+                        "for verification. "
+                        + (
+                            "Read the saved output artifact now with read_file, then summarize. "
+                            if _artifact_readback_requested
+                            else "Do that now with one concrete tool call using the requested command (host_shell), then summarize. "
+                        )
+                        + "Do not stop after the edit."
                     ),
                 })
                 yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
@@ -34531,7 +34723,7 @@ async def stream_agent_loop(
                 ]
                 _workspace_read_requires_mutation = True
             if (
-                block.tool_type in {"host_shell", "bash", "python"}
+                block.tool_type in {"host_shell", "bash", "python", "read_file"}
                 and tool_result_is_successful(result)
                 and (
                     _post_edit_verification_nudge_sent
@@ -34539,6 +34731,20 @@ async def stream_agent_loop(
                 )
                 and (
                     not _post_edit_verification_required
+                    or (
+                        block.tool_type == "read_file"
+                        and _artifact_readback_requested
+                        and _post_effectful_mutation_done
+                        # Only the artifact under verification counts. When no
+                        # target could be resolved, fall back to the previous
+                        # any-read behaviour so the turn cannot deadlock.
+                        and (
+                            not _artifact_readback_target
+                            or _read_file_targets_artifact(
+                                block.content, _artifact_readback_target
+                            )
+                        )
+                    )
                     or (
                         _tui_test_request
                         and command_is_test(block.content)
@@ -35033,9 +35239,13 @@ async def stream_agent_loop(
                 "role": "system",
                 "content": (
                     "The requested file edit succeeded, but the user also asked "
-                    "for verification. Do that now with one concrete tool call "
-                    "using the requested command (host_shell), then summarize. "
-                    "Do not stop after the edit."
+                    "for verification. "
+                    + (
+                        "Read the saved output artifact now with read_file, then summarize. "
+                        if _artifact_readback_requested
+                        else "Do that now with one concrete tool call using the requested command (host_shell), then summarize. "
+                    )
+                    + "Do not stop after the edit."
                 ),
             })
             yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'

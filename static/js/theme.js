@@ -31,6 +31,7 @@ export const THEMES = {
   arcade:     { bg:'#15131d', fg:'#f4e85c', panel:'#0b1720', border:'#305f68', red:'#ff4f91' },
   blueprint:  { bg:'#10263b', fg:'#e8f1f5', panel:'#091a29', border:'#48758d', red:'#e6b84a' },
   monolith:   { bg:'#202020', fg:'#d8d8d2', panel:'#121212', border:'#50504b', red:'#b6e05c' },
+  yoyo:       { bg:'#211f23', fg:'#dfdbd7', panel:'#141415', border:'#3e5146', red:'#e09d6c' },
 };
 
 const DEFAULT_THEME = 'dark';
@@ -67,6 +68,7 @@ const THEME_DEFAULT_PATTERN = {
   arcade:     'synapse',
   blueprint:  'dots',
   monolith:   'perlin-flow',
+  yoyo:       'ascii-fireflies',
 };
 
 // Default effect colors for specific themes (overrides --fg)
@@ -80,6 +82,7 @@ const THEME_DEFAULT_EFFECT_COLOR = {
   arcade:     '#ff4f91',
   blueprint:  '#e6b84a',
   monolith:   '#b6e05c',
+  yoyo:       '#b8e6c1',
 };
 
 // Default effect intensity (0..1) per theme. Any theme not listed defaults to 1.
@@ -87,6 +90,7 @@ const THEME_DEFAULT_INTENSITY = {
   midnight:   0.5,
   cyberpunk:  0.55,
   terminal:   0.8,
+  yoyo:       0.8,
   organs:     0.75,
 };
 
@@ -694,7 +698,9 @@ export function initThemeUI() {
   // Render custom theme swatches into separate card
   const userGrid = document.getElementById('themeUserGrid');
   const userCard = document.getElementById('themeUserCard');
-  const customEntries = Object.entries(customThemes);
+  // Hide legacy custom copies after a theme graduates into the preset list.
+  const customEntries = Object.entries(customThemes)
+    .filter(([name]) => !THEMES[name]);
   if (customEntries.length > 0 && userGrid && userCard) {
     userCard.style.display = '';
     userGrid.innerHTML = customEntries.map(([name, c]) => `

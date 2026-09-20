@@ -4078,6 +4078,82 @@ def recently_executed_families(history: Iterable, *, user_turns: int = 6,
     return tuple(found)
 
 
+_CONTINUITY_STOP_WORDS = frozenset({
+    "a", "about", "an", "and", "are", "at", "be", "but", "can", "could",
+    "did", "do", "does", "for", "from", "get", "have", "how", "i", "in",
+    "is", "it", "look", "me", "my", "not", "of", "on", "or", "please",
+    "search", "searched", "searching", "see", "show", "that", "the", "them",
+    "there", "these", "this", "those", "to", "u", "was", "what", "when",
+    "where", "which", "why", "with", "you", "your", "whats", "what's",
+    "cant", "can't", "cannot", "dont", "don't", "doesnt", "doesn't",
+})
+
+
+def _subject_tokens(value: object) -> frozenset[str]:
+    """Return content-bearing tokens for conversation-subject continuity."""
+    return frozenset(
+        token for token in re.findall(r"[\w'-]+", str(value or "").casefold())
+        if len(token) > 2 and token not in _CONTINUITY_STOP_WORDS
+    )
+
+
+def _immediate_prior_user_subject_tokens(history: Iterable) -> frozenset[str]:
+    rows = tuple(history or ())
+    seen_assistant = False
+    for row in reversed(rows):
+        role = row.get("role") if isinstance(row, dict) else getattr(row, "role", "")
+        if role == "assistant" and not seen_assistant:
+            seen_assistant = True
+            continue
+        if seen_assistant and role == "user":
+            content = row.get("content", "") if isinstance(row, dict) else getattr(row, "content", "")
+            return _subject_tokens(content)
+    return frozenset()
+
+
+def immediately_established_family(message: str, history: Iterable) -> str | None:
+    """Resolve an elliptical follow-up against the immediately proven domain.
+
+    Tool events provide the typed domain; subject-token overlap only determines
+    whether the new sentence continues that turn. This deliberately does not
+    infer authority from older turns or from model prose.
+    """
+    rows = tuple(history or ())
+    assistant_index = None
+    families: set[str] = set()
+    for index in range(len(rows) - 1, -1, -1):
+        row = rows[index]
+        role = row.get("role") if isinstance(row, dict) else getattr(row, "role", "")
+        if role != "assistant":
+            continue
+        assistant_index = index
+        metadata = row.get("metadata") if isinstance(row, dict) else getattr(row, "metadata", None)
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except (TypeError, json.JSONDecodeError):
+                metadata = {}
+        for event in (metadata or {}).get("tool_events") or ():
+            if event.get("error") is True or event.get("exit_code") not in (None, 0):
+                continue
+            families.update(_families_for_tool(canonical_tool(event.get("tool", ""))))
+        break
+    if assistant_index is None or len(families) != 1:
+        return None
+
+    prior_user_text = ""
+    for row in reversed(rows[:assistant_index]):
+        role = row.get("role") if isinstance(row, dict) else getattr(row, "role", "")
+        if role == "user":
+            prior_user_text = row.get("content", "") if isinstance(row, dict) else getattr(row, "content", "")
+            break
+    if not prior_user_text:
+        return None
+    if _subject_tokens(message) & _subject_tokens(prior_user_text):
+        return next(iter(families))
+    return None
+
+
 def recently_read_gallery(history: Iterable, *, user_turns: int = 6) -> bool:
     """Whether a recent successful app_api call established gallery context."""
     turns = 0
@@ -4140,6 +4216,58 @@ def recently_read_gallery(history: Iterable, *, user_turns: int = 4) -> bool:
     return False
 
 
+# Personal-data product nouns. A broad-briefing phrase ("what's new",
+# "give me an update", "news") must not out-rank these: the user is asking
+# about their own store, not the open Web. Scoped to a first-person
+# possessive so open-web subjects that merely borrow a product noun
+# ("the latest events in Kyiv") keep their Web route.
+_PERSONAL_STORE_NOUNS = (
+    r"(?:e?mails?|inbox|mailbox|calendar|calender|events?|appointments?|"
+    r"meetings?|agenda|notes?|checklists?|tasks?|todos?|documents?|docs?|"
+    r"memor(?:y|ies)|contacts?|skills?|sessions?|chats?|conversations?)"
+)
+_PERSONAL_STORE_SUBJECT = re.compile(
+    rf"\b(?:my|our)\b(?:\s+\w+){{0,2}}\s+{_PERSONAL_STORE_NOUNS}\b|"
+    rf"\b(?:inbox|mailbox)\b",
+    re.I,
+)
+
+
+_PERSONAL_STORE_FAMILY = (
+    (("email", "emails", "mail", "mails", "inbox", "mailbox"), "email"),
+    (("calendar", "calender", "event", "events", "appointment", "appointments",
+      "meeting", "meetings", "agenda"), "calendar"),
+    (("note", "notes", "checklist", "checklists"), "notes"),
+    (("task", "tasks", "todo", "todos"), "tasks"),
+    (("document", "documents", "doc", "docs"), "documents"),
+    (("memory", "memories"), "memory"),
+    (("contact", "contacts"), "contacts"),
+    (("skill", "skills"), "skills"),
+    (("session", "sessions", "chat", "chats", "conversation", "conversations"),
+     "sessions"),
+)
+
+
+def names_personal_store(message: str) -> bool:
+    """True when the request names the user's own data store."""
+    return bool(_PERSONAL_STORE_SUBJECT.search(str(message or "")))
+
+
+def personal_store_families(message: str) -> frozenset[str]:
+    """Families for the user's own stores named in a broad-briefing request.
+
+    A briefing phrase must resolve to the named store rather than falling
+    through to an empty inventory, which would offer no tools at all.
+    """
+    families: set[str] = set()
+    for match in _PERSONAL_STORE_SUBJECT.finditer(str(message or "")):
+        matched = match.group(0).lower()
+        for nouns, family in _PERSONAL_STORE_FAMILY:
+            if any(re.search(rf"\b{noun}\b", matched) for noun in nouns):
+                families.add(family)
+    return frozenset(families)
+
+
 def broad_web_briefing_request(message: str) -> bool:
     """Recognize requests that need broad, current, multi-source Web evidence."""
     text = _normalize_request_lead(message)
@@ -4180,6 +4308,18 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
     if lead := _CONVERSATIONAL_ACTION_LEAD.fullmatch(text):
         text = lead["request"].strip()
     history = tuple(history)
+    repeated_subject = _subject_tokens(text) & _immediate_prior_user_subject_tokens(history)
+    scope_text = " ".join(
+        token for token in re.findall(r"[\w'-]+", text)
+        if token.casefold() not in repeated_subject
+    )
+    newly_named_families = {
+        family for family, pattern in _FAMILY_WORDS.items()
+        if re.search(pattern, scope_text, re.I)
+    }
+    established_family = immediately_established_family(text, history)
+    if established_family and not newly_named_families:
+        return frozenset({established_family})
     concrete_urls = re.findall(r"\bhttps?://[^\s<>\"']+", raw_text, re.I)
     workspace_media = re.search(
         r"(?:file://)?/workspace/[^\s`\"']+\."
@@ -4250,6 +4390,9 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
         broad_web_briefing_request(text)
         and not re.search(r"\b(?:research|investigate|deep[ -]?dive)\b", text, re.I)
     ):
+        _personal = personal_store_families(text)
+        if _personal:
+            return _personal
         return frozenset({"search_browser"})
     if re.search(r"\b(?:web_search|web_fetch)\b", raw_text, re.I):
         # Explicit native-tool requests are stronger than incidental domain
@@ -4267,7 +4410,10 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
     if (
         re.search(r"\b(?:latest|recent|current|today(?:'s)?)\b", text, re.I)
         and re.search(r"\b(?:info(?:rmation)?|news|nees|updates?)\b", text, re.I)
+        and not names_personal_store(text)
     ):
+        # A named personal store out-ranks the broad-briefing route; the
+        # guard above lets those fall through to the family grammar.
         # Broad current-information requests still require live Web evidence.
         # Keep the common ``nees`` typo because a missed route leaves the model
         # with no way to answer and encourages it to ask unnecessary questions.
@@ -5792,7 +5938,7 @@ def resolve_turn_contract(*, capabilities: Iterable[str], schemas: Iterable[dict
     if (
         message is not None
         and selected_tools is not None
-        and set(selected_tools) & {"web_search", "web_fetch"}
+        and selected & {"web_search", "web_fetch"}
     ):
         # Browser is not core. It is a bounded recovery capability for a web
         # turn when static search/fetch cannot read the named site.

@@ -286,6 +286,10 @@ export function initSidebarLayout(Storage, opts) {
 
   function checkSidebarAutoCollapse() {
     if (_userToggledSidebar) return;
+    // Mobile uses a fixed overlay drawer.  Keyboard and orientation changes
+    // emit resize events there, but should not run the desktop width-based
+    // auto-collapse logic against an intentionally opened drawer.
+    if (window.innerWidth < 768) return;
     const sidebar = document.getElementById('sidebar');
     if (!sidebar) return;
     const isHidden = sidebar.classList.contains('hidden');
@@ -320,7 +324,7 @@ export function initSidebarLayout(Storage, opts) {
     const isMobileViewport = window.innerWidth < 768;
     if (_wasMobileViewport && !isMobileViewport) _restoreDesktopSidebarSide();
     _wasMobileViewport = isMobileViewport;
-    _userToggledSidebar = false; // allow auto-collapse on actual resize
+    if (!isMobileViewport) _userToggledSidebar = false; // allow auto-collapse on desktop resize
     requestAnimationFrame(checkSidebarAutoCollapse);
   });
   // Re-check when the document split is opened or closed. Do not react to

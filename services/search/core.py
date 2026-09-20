@@ -226,6 +226,21 @@ def _meaningful_query_terms(query: str) -> list[str]:
     ]
 
 
+# Leading function/auxiliary words carry no entity signal. They are kept out
+# of _SEARCH_QUERY_FILLER (which gates overall query meaningfulness) and
+# applied only to the document-cue entity test below, where taking the *first*
+# surviving token as the entity otherwise picks "how"/"i"/"best" and rejects
+# every genuinely relevant result.
+_QUERY_FUNCTION_WORDS = frozenset({
+    "how", "to", "i", "we", "you", "your", "my", "our", "me", "us",
+    "a", "an", "is", "are", "was", "were", "do", "does", "did", "can",
+    "could", "should", "would", "will", "get", "getting", "got",
+    "there", "here", "need", "needed", "want", "looking", "show", "give",
+    "help", "best", "good", "top", "recommended", "some", "it", "its",
+    "of", "in", "on", "at", "by", "or", "and", "be", "have", "has",
+})
+
+
 def _result_has_query_overlap(query: str, result: dict) -> bool:
     terms = _meaningful_query_terms(query)
     if not terms:
@@ -247,7 +262,7 @@ def _result_has_query_overlap(query: str, result: dict) -> bool:
         "documentation", "docs", "pdf", "handbook",
     }
     if query_tokens & document_cues:
-        entity_fillers = _SEARCH_QUERY_FILLER | document_cues | {
+        entity_fillers = _SEARCH_QUERY_FILLER | document_cues | _QUERY_FUNCTION_WORDS | {
             "english", "operator", "owner", "owners", "user", "installation",
         }
         ordered_query_tokens = re.findall(r"[a-z0-9]+", str(query or "").lower())
@@ -258,7 +273,13 @@ def _result_has_query_overlap(query: str, result: dict) -> bool:
         # Product/manual lookups are especially vulnerable to homonyms. A
         # result matching only the generic product word and "manual" is not
         # evidence for the named brand/entity in the request.
-        if entity_terms and entity_terms[0] not in result_tokens:
+        #
+        # Test *any* entity term rather than specifically the first. Position
+        # does not identify the entity: "how to configure nginx docs" leads
+        # with a task verb, "best guide for sourdough" with a qualifier. A
+        # result naming none of the entity terms is still rejected, which is
+        # what keeps a Ford manual out of an IKEA BILLY lookup.
+        if entity_terms and not (set(entity_terms) & result_tokens):
             return False
         model_numbers = {token for token in ordered_query_tokens if token.isdigit()}
         # Temporal qualifiers are not product identifiers. In particular,
@@ -296,12 +317,13 @@ def _result_has_query_overlap(query: str, result: dict) -> bool:
 def _filter_low_relevance_results(query: str, results: list[dict]) -> list[dict]:
     if not results:
         return []
-    relevant = [result for result in results
-                if _result_matches_site_scope(query, result)
-                and _result_has_query_overlap(query, result)]
-    # Only reject a provider when it returned a fully off-topic page set. Mixed
-    # result pages are common; ranking can handle those.
-    return relevant if relevant else []
+    scoped = [result for result in results if _result_matches_site_scope(query, result)]
+    relevant = [result for result in scoped if _result_has_query_overlap(query, result)]
+    # Relevance matching is intentionally conservative and cannot understand
+    # every inflection or language. Keep explicit site constraints strict, but
+    # let ranking handle a provider page when the heuristic rejects every
+    # otherwise in-scope result.
+    return relevant or scoped
 
 
 def _result_matches_site_scope(query: str, result: dict) -> bool:

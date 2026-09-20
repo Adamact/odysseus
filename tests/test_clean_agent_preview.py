@@ -382,11 +382,34 @@ def test_native_execution_limits_allow_multi_artifact_work_without_unbounded_rou
 
 
 def test_compact_preview_honors_configured_interactive_round_limit():
-    assert interactive_execution_limit(100) == 8
-    assert interactive_execution_limit(1000) == 8
+    # A configured budget is the user's explicit instruction, honored up to
+    # the same 200 ceiling the settings endpoint enforces.
+    assert interactive_execution_limit(100) == 100
+    assert interactive_execution_limit(1000) == 200
     assert interactive_execution_limit(0) == 1
+    # No resolvable budget falls back to the bounded default.
     assert interactive_execution_limit(None) == 8
     assert interactive_execution_limit("invalid") == 8
+
+
+def test_compact_preview_honors_configured_tool_call_budget():
+    from src.clean_agent_preview import (
+        INTERACTIVE_BROWSER_TOOL_CALL_LIMIT,
+        INTERACTIVE_TOOL_CALL_LIMIT,
+        UNLIMITED_TOOL_CALL_LIMIT,
+        interactive_tool_call_limit,
+    )
+    # 0 means unlimited, matching the main agent loop's max_tool_calls <= 0.
+    assert interactive_tool_call_limit(0) == UNLIMITED_TOOL_CALL_LIMIT
+    assert interactive_tool_call_limit(0, browser_offered=True) == UNLIMITED_TOOL_CALL_LIMIT
+    # An explicit finite budget is honored in both directions.
+    assert interactive_tool_call_limit(5) == 5
+    assert interactive_tool_call_limit(250) == 250
+    # A malformed value keeps the bounded default.
+    assert interactive_tool_call_limit("invalid") == INTERACTIVE_TOOL_CALL_LIMIT
+    assert interactive_tool_call_limit(None, browser_offered=True) == (
+        INTERACTIVE_BROWSER_TOOL_CALL_LIMIT
+    )
 
 
 @pytest.mark.parametrize('text,expected', [
@@ -5256,7 +5279,9 @@ async def test_model_choice_budget_preserves_evidence_for_final_answer_without_e
     import src.clean_agent_preview as module
     # Exercise the boundary deterministically without coupling this recovery
     # test to the larger production allowance for interactive turns.
-    monkeypatch.setattr(module, 'INTERACTIVE_TOOL_CALL_LIMIT', 6)
+    # The budget is the configured agent_max_tool_calls setting; the module
+    # constant is only the fallback when no budget is resolvable.
+    _tool_budget = 6
     def call(i):
         return {'index': i, 'id': f'call-{i}', 'function': {
             'name': 'web_fetch', 'arguments': json.dumps({'url': f'https://example.org/{i}'})}}
@@ -5291,7 +5316,8 @@ async def test_model_choice_budget_preserves_evidence_for_final_answer_without_e
         routing_experiment='recent_model_choice')
     raw = [chunk async for chunk in stream_preview(
         endpoint_url='http://test', model='test', messages=[{'role':'user','content':'Read these public pages.'}],
-        headers={}, turn_contract=contract, session_id='test', owner='test', disabled_tools=set(), tool_policy=ToolPolicy())]
+        headers={}, turn_contract=contract, session_id='test', owner='test', disabled_tools=set(),
+        tool_policy=ToolPolicy(), max_tool_calls=_tool_budget)]
     assert len(executions) == 6
     assert len(requests) == 3
     assert 'tools' not in requests[-1]
@@ -5898,9 +5924,9 @@ async def test_context_overflow_retries_model_request_without_replaying_tool(mon
     import src.clean_agent_preview as module
     requests, executions = [], []
     overflow_request = 2 if recovery_kind == 'none' else 3
+    _tool_budget = 0
     if recovery_kind == 'budget':
-        monkeypatch.setattr(module, 'INTERACTIVE_TOOL_CALL_LIMIT', 1)
-        monkeypatch.setattr(module, 'INTERACTIVE_BROWSER_TOOL_CALL_LIMIT', 1)
+        _tool_budget = 1
     async def handle(request):
         payload = json.loads(request.content)
         requests.append(payload)
@@ -5936,7 +5962,7 @@ async def test_context_overflow_retries_model_request_without_replaying_tool(mon
     raw = [chunk async for chunk in stream_preview(
         endpoint_url='http://test', model='test', headers={}, turn_contract=contract,
         messages=[{'role': 'user', 'content': prompt}], session_id='test', owner='test',
-        disabled_tools=set(), tool_policy=ToolPolicy())]
+        disabled_tools=set(), tool_policy=ToolPolicy(), max_tool_calls=_tool_budget)]
     assert any('The page was read.' in chunk for chunk in raw)
     assert len(executions) == 1
     assert len(requests) == overflow_request + 1
@@ -7075,3 +7101,80 @@ async def test_parallel_tool_results_precede_visual_evidence(monkeypatch):
     ]
     assert "Final completion round" in messages[-1]["content"]
     assert messages[-2]["content"][1]["type"] == "image_url"
+@pytest.mark.asyncio
+async def test_tool_round_leadin_is_replaced_by_terminal_synthesis(monkeypatch):
+    from dataclasses import replace
+    import src.clean_agent_preview as module
+
+    packets = iter([
+        {'choices': [{'delta': {
+            'content': "I'll browse IKEA and look at their chairs.",
+            'tool_calls': [{'index': 0, 'id': 'browse-1', 'function': {
+                'name': 'private_browser',
+                'arguments': json.dumps({
+                    'action': 'open',
+                    'url': 'https://www.ikea.com/us/en/cat/armchairs-16239/',
+                }),
+            }}],
+        }}]},
+        {'choices': [{'delta': {
+            'reasoning_content': 'I have enough. Now compose the final answer.',
+            'content': 'The most epic option is the DYVLINGE swivel chair.',
+        }}]},
+    ])
+
+    class Response:
+        def __init__(self, payload): self.payload = payload
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def raise_for_status(self): pass
+        async def aiter_lines(self):
+            yield 'data: ' + json.dumps(self.payload)
+            yield 'data: [DONE]'
+
+    class Client:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def stream(self, *args, **kwargs): return Response(next(packets))
+
+    async def execute(block, **kwargs):
+        return 'private_browser', {'output': 'IKEA chair evidence', 'exit_code': 0}
+
+    monkeypatch.setattr(module.httpx, 'AsyncClient', Client)
+    monkeypatch.setattr(module, 'execute_tool_block', execute)
+    schema = next(
+        item for item in FUNCTION_TOOL_SCHEMAS
+        if item['function']['name'] == 'private_browser'
+    )
+    contract = replace(
+        resolve_full_inventory_contract(schemas=[schema], policy=ToolPolicy()),
+        routing_experiment='recent_model_choice',
+    )
+    raw = [chunk async for chunk in stream_preview(
+        endpoint_url='http://test', model='deepseek-test', headers={},
+        turn_contract=contract,
+        messages=[{'role': 'user', 'content': 'Go to ikea.com and find the most epic chair.'}],
+        session_id='test', owner='test', disabled_tools=set(),
+        tool_policy=ToolPolicy(), max_rounds=3,
+    )]
+
+    events = [json.loads(chunk[6:]) for chunk in raw if '[DONE]' not in chunk]
+    leadin = next(event for event in events if event.get('delta', '').startswith("I'll browse"))
+    assert 'replacement_scope' not in leadin
+    synthesis = next(
+        event for event in events
+        if event.get('delta', '').startswith('The most epic option')
+    )
+    assert synthesis['render_owner'] == 'streamed'
+    assert synthesis['replacement_scope'] == 'turn'
+    metrics = next(event['data'] for event in events if event.get('type') == 'metrics')
+    assistant_rounds = [
+        item.get('content')
+        for item in metrics['clean_v3_turn']
+        if item.get('role') == 'assistant' and item.get('content')
+    ]
+    assert assistant_rounds == [
+        "I'll browse IKEA and look at their chairs.",
+        'The most epic option is the DYVLINGE swivel chair.',
+    ]

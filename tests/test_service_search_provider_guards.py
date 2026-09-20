@@ -752,3 +752,21 @@ def test_service_ddg_html_fallback_sends_safesearch(monkeypatch):
     assert seen["params"]["kp"] == "-2"
     assert seen["timeout"] <= 5
     assert results[0]["url"].startswith("https://notduckduckgo.com/")
+def test_relevance_filter_falls_back_when_heuristic_rejects_every_result():
+    rows = [{
+        "title": "Bicycle buying guide",
+        "snippet": "Road bikes and city bikes",
+        "url": "https://example.test/bicycle-guide",
+    }]
+
+    assert core._filter_low_relevance_results("bicycles", rows) == rows
+
+
+def test_relevance_filter_does_not_bypass_explicit_site_scope():
+    rows = [{
+        "title": "Bicycle buying guide",
+        "snippet": "Road bikes and city bikes",
+        "url": "https://example.test/bicycle-guide",
+    }]
+
+    assert core._filter_low_relevance_results("site:official.test bicycles", rows) == []

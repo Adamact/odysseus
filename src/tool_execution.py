@@ -737,7 +737,7 @@ _SENSITIVE_BASENAMES: set[str] = {
 
 _SENSITIVE_FILE_PATTERNS: tuple[str, ...] = (
     "authorized_keys", "id_rsa", "id_ed25519", "id_ecdsa",
-    "known_hosts",
+    "known_hosts", "auth.json", "app.db", "settings.json",
 )
 
 # Case-folded views used for matching. On a case-insensitive filesystem
