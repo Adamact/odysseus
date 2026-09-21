@@ -157,6 +157,7 @@ class SessionManager:
             temperature_override=getattr(db_session, "temperature_override", None),
             max_tokens_override=getattr(db_session, "max_tokens_override", None),
             cwd=getattr(db_session, "cwd", None) or None,
+            endpoint_id=getattr(db_session, "endpoint_id", None) or None,
         )
         session.message_count = getattr(db_session, "message_count", 0) or 0
         return session
@@ -222,6 +223,7 @@ class SessionManager:
             temperature_override=getattr(db_session, "temperature_override", None),
             max_tokens_override=getattr(db_session, "max_tokens_override", None),
             cwd=getattr(db_session, "cwd", None) or None,
+            endpoint_id=getattr(db_session, "endpoint_id", None) or None,
         )
 
         # The rows just loaded are the whole transcript, so they — not the
@@ -493,6 +495,7 @@ class SessionManager:
                     headers = {}
             session.name = db_session.name
             session.endpoint_url = db_session.endpoint_url or ""
+            session.endpoint_id = getattr(db_session, "endpoint_id", None) or None
             session.model = db_session.model or ""
             session.headers = headers or {}
             session.rag = db_session.rag
@@ -563,9 +566,12 @@ class SessionManager:
         owner: str = None,
         cwd: str = None,
         headers: Optional[Dict[str, str]] = None,
+        endpoint_id: Optional[str] = None,
     ) -> Session:
         """Create a new session and save to database."""
-        session_headers = dict(headers or {})
+        from src.chatgpt_subscription import is_chatgpt_subscription_base
+        session_headers = {} if is_chatgpt_subscription_base(endpoint_url) else dict(headers or {})
+        endpoint_id = (endpoint_id or "").strip() or None
         db = SessionLocal()
         try:
             db_session = DbSession(
@@ -577,6 +583,7 @@ class SessionManager:
                 headers=session_headers,
                 owner=owner,
                 cwd=cwd or None,
+                endpoint_id=endpoint_id,
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc)
             )
@@ -592,6 +599,7 @@ class SessionManager:
                 headers=session_headers,
                 owner=owner,
                 cwd=cwd or None,
+                endpoint_id=endpoint_id,
             )
 
             self.sessions[session_id] = session

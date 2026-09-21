@@ -49548,6 +49548,79 @@ body.theme-frosted .modal {
   line-height: 1.4;
   color: color-mix(in srgb, var(--fg) 45%, transparent);
 }
+/* ChatGPT Subscription per-account usage card (Settings → Added Models) */
+.adm-chatgpt-usage-host {
+  margin: 4px 0 6px 22px;
+}
+.adm-chatgpt-usage {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 11px;
+}
+.adm-chatgpt-usage-plan { display: flex; gap: 6px; align-items: center; }
+.adm-chatgpt-usage-limit { display: flex; flex-direction: column; gap: 6px; }
+.adm-chatgpt-usage-limit-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+}
+.adm-chatgpt-usage-model {
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--mono, ui-monospace, monospace);
+  opacity: 0.8;
+}
+.adm-chatgpt-usage-row { display: flex; flex-direction: column; gap: 3px; }
+.adm-chatgpt-usage-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.adm-chatgpt-usage-name {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+}
+.adm-chatgpt-usage-remaining { font-weight: 600; }
+.adm-chatgpt-usage-bar {
+  position: relative;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.adm-chatgpt-usage-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+.adm-chatgpt-usage-warn .adm-chatgpt-usage-fill { background: #d99a2b; }
+.adm-chatgpt-usage-critical .adm-chatgpt-usage-fill { background: #d9534f; }
+.adm-chatgpt-usage-unknown .adm-chatgpt-usage-fill { background: color-mix(in srgb, var(--fg) 25%, transparent); }
+.adm-chatgpt-usage-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+}
+.adm-chatgpt-usage-status {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+}
+.adm-chatgpt-usage-blocked { color: #d9534f; }
+.adm-chatgpt-usage-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+.adm-chatgpt-reconnect-status { font-size: 11px; }
 /* Cookbook serve panel: Launch + ^ split button pair */
 .hwfit-serve-launch-group {
   display: inline-flex;

@@ -695,6 +695,11 @@ def _delete_orphaned_provider_auth(db, auth_id: Optional[str], exclude_ep_id: Op
     if auth_row is None:
         return False
     db.delete(auth_row)
+    try:
+        from src.chatgpt_subscription import USAGE_CACHE
+        USAGE_CACHE.invalidate(auth_id)
+    except Exception:
+        pass
     return True
 
 
@@ -738,7 +743,7 @@ def _resolve_probe_key(ep) -> Optional[str]:
         _base, key = resolve_endpoint_runtime(ep, owner=getattr(ep, "owner", None))
         return key
     except Exception as exc:
-        logger.warning("Probe key resolution failed for %s: %s", getattr(ep, "id", "?"), exc)
+        logger.warning("Probe key resolution failed for %s: %s", getattr(ep, "id", "?"), type(exc).__name__)
         return None
 
 
@@ -1410,6 +1415,35 @@ def _picker_models_for_endpoint(ep, base_url: str, kind: str):
     ), pinned
 
 
+def _chatgpt_endpoint_visible(ep: Any, request: Request) -> bool:
+    from src.chatgpt_subscription import is_chatgpt_subscription_base
+    if not is_chatgpt_subscription_base(getattr(ep, "base_url", "") or ""):
+        return True
+    try:
+        user = effective_user(request)
+    except AttributeError:
+        user = getattr(getattr(request, "state", None), "current_user", None)
+    return (getattr(ep, "owner", None) or None) == (user or None)
+
+
+def _provider_account_metadata(ep: Any) -> Dict[str, Any]:
+    """Non-secret account metadata for session-backed provider endpoints."""
+    auth_id = getattr(ep, "provider_auth_id", None)
+    if not auth_id:
+        return {"provider_auth_id": None, "provider": None, "account_label": None}
+    base = getattr(ep, "base_url", "") or ""
+    provider = None
+    account_label = None
+    try:
+        from src.chatgpt_subscription import account_label_from_name, is_chatgpt_subscription_base
+        if is_chatgpt_subscription_base(base):
+            provider = "chatgpt-subscription"
+            account_label = account_label_from_name(getattr(ep, "name", None)) or None
+    except Exception:
+        provider = None
+    return {"provider_auth_id": auth_id, "provider": provider, "account_label": account_label}
+
+
 def _api_key_fingerprint(api_key: Optional[str]) -> str:
     """Stable, non-secret label for distinguishing same-URL credentials."""
     key = (api_key or "").strip()
@@ -1444,8 +1478,10 @@ def setup_model_routes(model_discovery):
     _REFRESH_FAILURE_BASE = 300.0
     _REFRESH_FAILURE_MAX = 3600.0
 
-    def _refresh_key(base: str, api_key: Optional[str]) -> str:
-        return f"{base.rstrip('/')}\x00{api_key or ''}"
+    def _refresh_key(base: str, api_key: Optional[str], provider_auth_id: Optional[str] = None) -> str:
+        # Session-backed endpoints carry no static key; include their auth id
+        # so two accounts on one provider URL never share refresh state.
+        return f"{base.rstrip('/')}\x00{api_key or ''}\x00{provider_auth_id or ''}"
 
     def _ts(value: Any) -> float:
         try:
@@ -1466,7 +1502,7 @@ def setup_model_routes(model_discovery):
         category = _classify_endpoint(base, kind)
         mode = _endpoint_refresh_mode(ep, kind)
         cached = _cached_model_ids(ep)
-        key = _refresh_key(base, getattr(ep, "api_key", None))
+        key = _refresh_key(base, getattr(ep, "api_key", None), getattr(ep, "provider_auth_id", None))
         state = _refresh_state.get(key, {})
 
         info = {
@@ -1528,9 +1564,10 @@ def setup_model_routes(model_discovery):
                         ok, info = _should_refresh_endpoint(ep, now, force=force)
                         if not ok:
                             continue
+                        credential = _resolve_probe_key(ep)
                         groups.setdefault(info["key"], {
                             "base": info["base"],
-                            "api_key": info["api_key"],
+                            "api_key": credential,
                             "timeout": info["timeout"],
                             "endpoint_ids": [],
                         })["endpoint_ids"].append(info["id"])
@@ -1606,6 +1643,9 @@ def setup_model_routes(model_discovery):
             db.close()
 
         for ep in endpoints:
+            from src.chatgpt_subscription import is_chatgpt_subscription_base
+            if is_chatgpt_subscription_base(ep.base_url or "") and (ep.owner or None) != (owner or None):
+                continue
             base = _normalize_base(ep.base_url)
             provider = _safe_detect_provider(base)
             ep_model_type = getattr(ep, "model_type", None) or "llm"
@@ -1858,8 +1898,8 @@ def setup_model_routes(model_discovery):
                 # Cache endpoint lookups
                 if ep_id and ep_id not in endpoints_cache:
                     ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
-                    if ep:
-                        endpoints_cache[ep_id] = {"base_url": ep.base_url, "api_key": ep.api_key}
+                    if ep and _chatgpt_endpoint_visible(ep, request):
+                        endpoints_cache[ep_id] = {"base_url": ep.base_url, "api_key": _resolve_probe_key(ep)}
                 ep_data = endpoints_cache.get(ep_id)
                 if not ep_data:
                     # Try to find by base_url from the model's endpoint field
@@ -1894,11 +1934,13 @@ def setup_model_routes(model_discovery):
             # Detach from session
             ep_data = []
             for ep in endpoints:
+                if not _chatgpt_endpoint_visible(ep, request):
+                    continue
                 ep_data.append({
                     "id": ep.id,
                     "name": ep.name,
                     "base_url": ep.base_url,
-                    "api_key": ep.api_key,
+                    "api_key": _resolve_probe_key(ep),
                 })
         finally:
             db.close()
@@ -1983,6 +2025,8 @@ def setup_model_routes(model_discovery):
             results = []
             upgraded_legacy_pins = False
             for r in rows:
+                if not _chatgpt_endpoint_visible(r, request):
+                    continue
                 all_models = _cached_model_ids(r)
                 hidden = _hidden_model_ids(r)
                 pinned = _normalize_model_ids(getattr(r, "pinned_models", None))
@@ -2022,6 +2066,7 @@ def setup_model_routes(model_discovery):
                     "model_refresh_mode": _endpoint_refresh_mode(r, kind),
                     "model_refresh_interval": getattr(r, "model_refresh_interval", None),
                     "model_refresh_timeout": getattr(r, "model_refresh_timeout", None),
+                    **_provider_account_metadata(r),
                 })
             if upgraded_legacy_pins:
                 db.commit()
@@ -2096,6 +2141,8 @@ def setup_model_routes(model_discovery):
             existing = None
             _empty_key_existing = None
             for _candidate in _same_url_rows:
+                if getattr(_candidate, "provider_auth_id", None):
+                    continue  # OAuth account mutations require its explicit identity.
                 _candidate_key = (getattr(_candidate, "api_key", None) or "").strip()
                 if _candidate_key == _incoming_api_key:
                     existing = _candidate
@@ -2192,6 +2239,9 @@ def setup_model_routes(model_discovery):
         try:
             _st_raw = (supports_tools or "").strip().lower()
             _st = True if _st_raw in ("true", "1", "yes") else (False if _st_raw in ("false", "0", "no") else None)
+            from src.chatgpt_subscription import is_chatgpt_subscription_base
+            if is_chatgpt_subscription_base(base_url):
+                _st = False
             _pinned = _normalize_model_ids(pinned_models)
             # Stamp owner so the picker only shows this endpoint to the admin
             # who added it. Pass `shared=true` to mark it null-owner (visible
@@ -2305,9 +2355,9 @@ def setup_model_routes(model_discovery):
         db = SessionLocal()
         try:
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
-            if not ep:
+            if not ep or not _chatgpt_endpoint_visible(ep, request):
                 raise HTTPException(404, "Endpoint not found")
-            ep_data = {"id": ep.id, "name": ep.name, "base_url": ep.base_url, "api_key": ep.api_key}
+            ep_data = {"id": ep.id, "name": ep.name, "base_url": ep.base_url, "api_key": _resolve_probe_key(ep)}
         finally:
             db.close()
 
@@ -2361,7 +2411,7 @@ def setup_model_routes(model_discovery):
         db = SessionLocal()
         try:
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
-            if not ep:
+            if not ep or not _chatgpt_endpoint_visible(ep, request):
                 raise HTTPException(404, "Endpoint not found")
             hidden = _hidden_model_ids(ep)
             all_models = _cached_model_ids(ep)
@@ -2372,7 +2422,7 @@ def setup_model_routes(model_discovery):
                 category = _classify_endpoint(base, kind)
                 timeout = _manual_refresh_timeout(ep, category, refresh_timeout)
                 try:
-                    probed = _probe_endpoint(base, ep.api_key, timeout=timeout)
+                    probed = _probe_endpoint(base, _resolve_probe_key(ep), timeout=timeout)
                 except Exception as exc:
                     logger.warning("Manual model refresh failed for endpoint %s at %s: %s", ep_id, base, exc)
                     probed = []
@@ -2416,7 +2466,7 @@ def setup_model_routes(model_discovery):
         db = SessionLocal()
         try:
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
-            if not ep:
+            if not ep or not _chatgpt_endpoint_visible(ep, request):
                 raise HTTPException(404, "Endpoint not found")
             body = await request.json()
             if not isinstance(body, dict):
@@ -2573,7 +2623,7 @@ def setup_model_routes(model_discovery):
         db = SessionLocal()
         try:
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
-            if not ep:
+            if not ep or not _chatgpt_endpoint_visible(ep, request):
                 raise HTTPException(404, "Endpoint not found")
             if body:
                 if "supports_tools" in body:
@@ -2627,6 +2677,9 @@ def setup_model_routes(model_discovery):
                         ep.base_url = _new_base
             else:
                 ep.is_enabled = not ep.is_enabled
+            from src.chatgpt_subscription import is_chatgpt_subscription_base
+            if is_chatgpt_subscription_base(ep.base_url or ""):
+                ep.supports_tools = False
             db.commit()
             _invalidate_models_cache()
             _local_probe_cache["data"] = None
@@ -2684,7 +2737,7 @@ def setup_model_routes(model_discovery):
         }
         return sess in variants or sess.startswith(base + "/")
 
-    def _clear_sessions_for_endpoint(db, base_url: str) -> int:
+    def _clear_sessions_for_endpoint(db, base_url: str, endpoint_id: str, owner) -> int:
         """Drop stored auth for sessions using an endpoint being deleted.
 
         Keep the session's endpoint URL and model intact. If the admin is
@@ -2694,15 +2747,17 @@ def setup_model_routes(model_discovery):
         matching enabled endpoint exists.
         """
         cleared = 0
-        rows = db.query(DbSession).filter(DbSession.endpoint_url.isnot(None)).all()
+        rows = db.query(DbSession).filter(DbSession.endpoint_url.isnot(None), DbSession.owner == owner).all()
         for row in rows:
+            if getattr(row, "endpoint_id", None) not in (None, endpoint_id):
+                continue
             if _session_uses_endpoint_url(row.endpoint_url or "", base_url):
                 row.headers = {}
                 row.updated_at = datetime.utcnow()
                 cleared += 1
         return cleared
 
-    def _clear_loaded_sessions_for_endpoint(base_url: str) -> int:
+    def _clear_loaded_sessions_for_endpoint(base_url: str, endpoint_id: str, owner) -> int:
         try:
             from src.ai_interaction import get_session_manager
             manager = get_session_manager()
@@ -2713,6 +2768,8 @@ def setup_model_routes(model_discovery):
         cleared = 0
         try:
             for sess in list(getattr(manager, "sessions", {}).values()):
+                if getattr(sess, "owner", None) != owner or getattr(sess, "endpoint_id", None) not in (None, endpoint_id):
+                    continue
                 if _session_uses_endpoint_url(getattr(sess, "endpoint_url", "") or "", base_url):
                     sess.headers = {}
                     cleared += 1
@@ -2732,13 +2789,13 @@ def setup_model_routes(model_discovery):
         db = SessionLocal()
         try:
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
-            if not ep:
+            if not ep or not _chatgpt_endpoint_visible(ep, request):
                 raise HTTPException(404, "Endpoint not found")
             # Clean up any settings that reference this endpoint
             cleared = _clear_settings_for_endpoint(ep_id)
             cleared_user_preferences = _clear_user_prefs_for_endpoint(ep_id)
-            cleared_sessions = _clear_sessions_for_endpoint(db, ep.base_url)
-            cleared_loaded_sessions = _clear_loaded_sessions_for_endpoint(ep.base_url)
+            cleared_sessions = _clear_sessions_for_endpoint(db, ep.base_url, ep.id, ep.owner)
+            cleared_loaded_sessions = _clear_loaded_sessions_for_endpoint(ep.base_url, ep.id, ep.owner)
             auth_id = getattr(ep, "provider_auth_id", None)
             db.delete(ep)
             cleared_provider_auth = _delete_orphaned_provider_auth(db, auth_id, exclude_ep_id=ep_id)

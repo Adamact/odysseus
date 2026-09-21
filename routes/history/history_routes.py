@@ -315,6 +315,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                     "history": history_dict,
                     "model": db_session.model,
                     "endpoint_url": db_session.endpoint_url,
+                    "endpoint_id": getattr(db_session, "endpoint_id", None),
                     "name": db_session.name,
                     "offset": page_offset,
                     "limit": page_limit,
@@ -378,6 +379,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             "history": history_dict,
             "model": session.model,
             "endpoint_url": session.endpoint_url,
+            "endpoint_id": getattr(session, "endpoint_id", None),
             "name": session.name,
         }
 
@@ -802,6 +804,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 model=source.model,
                 rag=False,
                 owner=getattr(source, 'owner', None),
+                endpoint_id=getattr(source, 'endpoint_id', None),
             )
 
             # Copy messages up to keep_count
@@ -820,8 +823,6 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             except Exception:
                 logger.debug("session_created event dispatch failed", exc_info=True)
 
-            from src.model_profiles import supports_user_thinking_toggle
-            thinking_supported = supports_user_thinking_toggle(session.model)
             return {
                 "status": "ok",
                 "id": new_id,
@@ -882,6 +883,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 "session_id": session_id,
                 "model": session.model,
                 "endpoint_url": session.endpoint_url,
+                "endpoint_id": getattr(session, "endpoint_id", None),
                 "used_tokens": used,
                 "context_length": ctx_len,
                 "context_percent": pct,

@@ -1701,9 +1701,21 @@ def _clear_orphaned_session_endpoint(sess, owner: str | None = None) -> bool:
             from src.auth_helpers import owner_filter
             q = owner_filter(q, ModelEndpoint, owner)
         endpoints = q.all()
+        bound_id = getattr(sess, "endpoint_id", None)
         for ep in endpoints:
+            if bound_id and ep.id != bound_id:
+                continue
             if _session_url_matches_endpoint(sess.endpoint_url or "", ep.base_url or ""):
                 return False
+        if bound_id:
+            # Keep the identity so re-enabling/reconnecting A can recover A.
+            # Returning True stops chat; B must never replace a missing A.
+            sess.headers = {}
+            stored = db.query(DBSession).filter(DBSession.id == sess.id, DBSession.owner == owner).first()
+            if stored is not None:
+                stored.headers = {}
+                db.commit()
+            return True
         db_session = db.query(DBSession).filter(DBSession.id == sess.id).first()
         if db_session:
             db_session.endpoint_url = ""
@@ -1803,6 +1815,13 @@ def _first_image_attachment(chat_handler, att_ids: List[str], owner: str | None 
     return None
 
 
+def _ts_or_zero(value) -> float:
+    try:
+        return float(value.timestamp()) if value else 0.0
+    except Exception:
+        return 0.0
+
+
 def _recover_empty_session_model(sess, session_id: str, owner: str | None = None) -> bool:
     """Re-populate sess.model from the matching endpoint's cached models.
 
@@ -1835,10 +1854,19 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
                 from src.auth_helpers import owner_filter
                 q = owner_filter(q, ModelEndpoint, owner)
             endpoints = q.all()
-            for cand in endpoints:
-                if _session_url_matches_endpoint(sess.endpoint_url or "", cand.base_url or ""):
-                    ep = cand
-                    break
+            # Honour the session's exact endpoint binding first: two endpoints
+            # can share a provider URL (e.g. two ChatGPT Subscription accounts).
+            bound_id = getattr(sess, "endpoint_id", None) or None
+            if bound_id:
+                for cand in endpoints:
+                    if cand.id == bound_id and _session_url_matches_endpoint(sess.endpoint_url or "", cand.base_url or ""):
+                        ep = cand
+                        break
+            if ep is None and not bound_id:
+                for cand in sorted(endpoints, key=lambda row: (_ts_or_zero(getattr(row, "created_at", None)), str(row.id))):
+                    if _session_url_matches_endpoint(sess.endpoint_url or "", cand.base_url or ""):
+                        ep = cand
+                        break
         if not ep:
             return False
         if not is_chatgpt_subscription:
@@ -1938,6 +1966,7 @@ def _reconcile_selected_route_from_request(
 
     endpoint_url = ""
     headers = None
+    resolved_endpoint_id = None
     if selected_endpoint_id or selected_endpoint_url:
         try:
             from src.auth_helpers import owner_filter
@@ -1949,7 +1978,15 @@ def _reconcile_selected_route_from_request(
                     q = q.filter(ModelEndpoint.id == selected_endpoint_id)
                 if owner:
                     q = owner_filter(q, ModelEndpoint, owner)
-                candidates = q.all() if selected_endpoint_url and not selected_endpoint_id else [q.first()]
+                if selected_endpoint_url and not selected_endpoint_id:
+                    candidates = [row for row in q.all() if _session_url_matches_endpoint(selected_endpoint_url, row.base_url or "")]
+                    bound_id = getattr(sess, "endpoint_id", None)
+                    if bound_id:
+                        candidates = [row for row in candidates if row.id == bound_id]
+                    if len(candidates) != 1:
+                        return False
+                else:
+                    candidates = [q.first()]
                 ep = None
                 for cand in candidates:
                     if not cand:
@@ -1961,6 +1998,7 @@ def _reconcile_selected_route_from_request(
                     return False
                 endpoint_url = build_chat_url(normalize_base(ep.base_url or ""))
                 headers = build_headers(ep.api_key or "", ep.base_url or "") if ep.api_key else {}
+                resolved_endpoint_id = ep.id
             finally:
                 db.close()
         except Exception as e:
@@ -1975,18 +2013,29 @@ def _reconcile_selected_route_from_request(
         and endpoint_url == (getattr(sess, "endpoint_url", "") or "")
     )
     headers_changed = dict(getattr(sess, "headers", None) or {}) != dict(headers or {})
-    if not route_changed and not headers_changed:
+    binding_changed = bool(
+        resolved_endpoint_id
+        and resolved_endpoint_id != (getattr(sess, "endpoint_id", None) or None)
+    )
+    if not route_changed and not headers_changed and not binding_changed:
         return False
 
     sess.model = selected_model
     sess.endpoint_url = endpoint_url
     sess.headers = headers or {}
+    if resolved_endpoint_id:
+        sess.endpoint_id = resolved_endpoint_id
+    elif route_changed:
+        # The route moved without an explicit endpoint id: drop a stale binding
+        # rather than keep pointing at an endpoint the session no longer uses.
+        sess.endpoint_id = None
     db = SessionLocal()
     try:
         db_session = db.query(DBSession).filter(DBSession.id == session_id).first()
         if db_session:
             db_session.model = selected_model
             db_session.endpoint_url = endpoint_url
+            db_session.endpoint_id = getattr(sess, "endpoint_id", None) or None
             db_session.headers = sess.headers or {}
             db_session.updated_at = datetime.utcnow()
             db.commit()
@@ -2087,6 +2136,10 @@ def setup_chat_routes(
         if not supports_user_thinking_toggle(sess.model):
             thinking_mode = "off"
         owner = effective_user(request)
+        _reconcile_selected_route_from_request(request, sess, session, {
+            "selected_model": sess.model,
+            "selected_endpoint_id": chat_request.selected_endpoint_id,
+        }, owner=owner)
         if _clear_orphaned_session_endpoint(sess, owner=owner):
             raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
 
@@ -2101,6 +2154,8 @@ def setup_chat_routes(
             )
         if not (getattr(sess, "endpoint_url", "") or "").strip():
             raise HTTPException(400, "Selected model endpoint is not configured")
+
+        resolve_session_auth(sess, session, owner=owner)
 
         # Same allowed_models + daily-cap gate as chat_stream (mirror so the
         # non-streaming path can't be used to bypass).
@@ -2169,7 +2224,7 @@ def setup_chat_routes(
             sess.headers,
             owner=owner,
             policy=foreground_policy,
-            selected_endpoint_id=chat_request.selected_endpoint_id,
+            selected_endpoint_id=chat_request.selected_endpoint_id or getattr(sess, "endpoint_id", None),
         )
         candidate_request_factory = None
         selected_context_length = getattr(ctx, "context_length", 0)
@@ -3704,7 +3759,7 @@ def setup_chat_routes(
                 sess.headers,
                 owner=_user,
                 policy=_foreground_policy,
-                selected_endpoint_id=selected_endpoint_id,
+                selected_endpoint_id=selected_endpoint_id or getattr(sess, "endpoint_id", None),
             )
             _chat_request_factory = None
             _selected_context_length = getattr(ctx, "context_length", 0)

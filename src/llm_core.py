@@ -1496,6 +1496,33 @@ def _chatgpt_subscription_instructions(messages: List[Dict]) -> str:
     return "You are a helpful AI assistant."
 
 
+# Provider-native agentic surfaces that must never be sent on the ChatGPT
+# Subscription route. ChatGPT provides model inference only; Odysseus is the
+# only agent (planning, tool selection/execution, filesystem, shell, browser,
+# MCP). Odysseus' own text tool protocol travels inside ``instructions``/``input``.
+CHATGPT_FORBIDDEN_PAYLOAD_KEYS = frozenset({
+    "tools",
+    "tool_choice",
+    "parallel_tool_calls",
+    "web_search",
+    "web_search_preview",
+    "file_search",
+    "computer",
+    "computer_use",
+    "computer_use_preview",
+    "shell",
+    "local_shell",
+    "code_interpreter",
+    "image_generation",
+    "mcp",
+    "function",
+    "functions",
+    "include",
+    "previous_response_id",
+    "background",
+})
+
+
 def _build_chatgpt_responses_payload(
     model: str,
     messages: List[Dict],
@@ -1503,9 +1530,18 @@ def _build_chatgpt_responses_payload(
     max_tokens: int,
     *,
     stream: bool = False,
+    tools: Optional[List[Dict]] = None,
+    **_ignored,
 ) -> Dict:
+    """Build the ChatGPT/Codex Responses request: model inference only.
+
+    ``tools`` (and any other provider-native tool declaration) is accepted for
+    signature compatibility with the other transports and deliberately
+    discarded. See :data:`CHATGPT_FORBIDDEN_PAYLOAD_KEYS`.
+    """
     from src.chatgpt_subscription import build_responses_input
 
+    del tools, _ignored
     conversation = [msg for msg in (messages or []) if (msg.get("role") or "") != "system"]
     payload: Dict = {
         "model": model,
@@ -1519,7 +1555,27 @@ def _build_chatgpt_responses_payload(
     # ChatGPT Subscription Codex API does not support max_output_tokens —
     # passing it returns HTTP 400 "Unsupported parameter: max_output_tokens".
     # Do not include it in the payload.
-    return payload
+    return _strip_chatgpt_native_tool_surfaces(payload)
+
+
+CHATGPT_ALLOWED_PAYLOAD_KEYS = frozenset({
+    "model", "instructions", "input", "stream", "store", "temperature",
+})
+
+
+def _strip_chatgpt_native_tool_surfaces(payload: Dict) -> Dict:
+    """Only explicitly approved inference fields may cross this boundary."""
+    return {key: value for key, value in payload.items() if key in CHATGPT_ALLOWED_PAYLOAD_KEYS}
+
+
+def _chatgpt_safe_error(message: str, headers: Dict) -> str:
+    """Upstream diagnostics must never echo the request bearer to the UI."""
+    result = str(message)
+    for key, value in (headers or {}).items():
+        if key.lower() in {"authorization", "x-api-key"} and value:
+            secret = str(value).removeprefix("Bearer ")
+            result = result.replace(str(value), "[redacted]").replace(secret, "[redacted]")
+    return result
 
 
 def _format_chatgpt_subscription_error(status_code: int, text: str) -> str:
@@ -2977,8 +3033,8 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                 _clear_host_dead(target_url)
                 if r.status_code != 200:
                     raw = (await r.aread()).decode(errors="replace")
-                    friendly = _format_chatgpt_subscription_error(r.status_code, raw)
-                    yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
+                    friendly = _format_chatgpt_subscription_error(r.status_code, _chatgpt_safe_error(raw, h))
+                    yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly})}\n\n'
                     return
                 async for line in r.aiter_lines():
                     if not line:
@@ -3063,13 +3119,13 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                             }
                         text = err.get("message") if isinstance(err, dict) else str(err or "ChatGPT Subscription request failed")
                         status = _provider_stream_error_status(err, default=400)
-                        yield f'event: error\ndata: {json.dumps({"status": status, "text": text})}\n\n'
+                        yield f'event: error\ndata: {json.dumps({"status": status, "text": _chatgpt_safe_error(text, h)})}\n\n'
                         return
                 yield "data: [DONE]\n\n"
         except (httpx.ConnectError, httpx.ConnectTimeout) as e:
             _cooled = _mark_host_dead(target_url)
             _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
-            logger.warning(f"ChatGPT Subscription stream connect to {target_url} failed: {e}{_tail}")
+            logger.warning("ChatGPT Subscription stream connect failed: %s%s", type(e).__name__, _tail)
             yield f'event: error\ndata: {json.dumps({"error": f"Cannot reach {_host_key(target_url)}", "status": 503})}\n\n'
         except httpx.ReadTimeout:
             yield f'event: error\ndata: {json.dumps({"error": "Read timeout", "status": 504})}\n\n'
@@ -3082,8 +3138,8 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         except httpx.NetworkError:
             yield f'event: error\ndata: {json.dumps({"error": "Network error", "status": 502, "fallback_eligible": False})}\n\n'
         except Exception as e:
-            logger.error(f"ChatGPT Subscription stream error: {e}")
-            yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502, "fallback_eligible": False})}\n\n'
+            logger.error("ChatGPT Subscription stream error: %s", type(e).__name__)
+            yield f'event: error\ndata: {json.dumps({"error": "ChatGPT Subscription stream failed", "status": 502, "fallback_eligible": False})}\n\n'
         return
 
     # ── Native Ollama streaming ──
@@ -3099,7 +3155,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                 if r.status_code != 200:
                     raw = (await r.aread()).decode(errors="replace")
                     friendly = _format_upstream_error(r.status_code, raw, target_url)
-                    yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
+                    yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly})}\n\n'
                     return
                 async for line in r.aiter_lines():
                     if not line:
@@ -3198,7 +3254,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                 if r.status_code != 200:
                     raw = (await r.aread()).decode(errors="replace")
                     friendly = _format_upstream_error(r.status_code, raw, target_url)
-                    yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
+                    yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly})}\n\n'
                     return
                 async for line in r.aiter_lines():
                     # SSE allows "data:value" with no space after the colon
@@ -3382,7 +3438,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             if r.status_code != 200:
                 raw = (await r.aread()).decode(errors="replace")
                 friendly = _format_upstream_error(r.status_code, raw, target_url)
-                yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
+                yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly})}\n\n'
                 return
 
             first_token_budget = _first_token_timeout(target_url, timeout)

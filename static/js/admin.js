@@ -6,6 +6,12 @@ import settingsModule from './settings.js?v=20260912writingstyle3';
 import { providerLogo, providerLogoFromUrl } from './providers.js';
 import { sortModelObjects } from './modelSort.js';
 import { PROVIDER_DEVICE_FLOWS, formatDeviceFlowError, runProviderDeviceFlow } from './providerDeviceFlow.js';
+import {
+  accountTitle as chatgptAccountTitle,
+  buildUsageViewModel as buildChatgptUsageViewModel,
+  isChatgptSubscriptionEndpoint,
+  renderUsageCardHtml as renderChatgptUsageCardHtml,
+} from './chatgptSubscriptionUsage.js';
 import { getSettings, getTools, invalidateSettings, invalidateTools } from './appConfig.js';
 
 let initialized = false;
@@ -652,6 +658,7 @@ async function loadEndpoints() {
       const keyLabel = ep.has_key
         ? (ep.api_key_fingerprint ? ` (key ${esc(ep.api_key_fingerprint)})` : ' (key set)')
         : '';
+      const isChatgptAccount = isChatgptSubscriptionEndpoint(ep);
       return `
         <div class="admin-user-row${ep.is_enabled ? '' : ' admin-ep-disabled'}${justAddedClass}" data-adm-ep-id="${ep.id}">
           <div style="display:flex;align-items:center;justify-content:space-between;${hasModels ? 'cursor:pointer;' : ''}padding:4px 0;" data-adm-ep-header="${ep.id}">
@@ -661,7 +668,7 @@ async function loadEndpoints() {
                 <span class="adm-check-dot adm-endpoint-select-dot" aria-hidden="true"></span>
               </label>` : ''}
               <span class="adm-ep-row-logo" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex-shrink:0;opacity:0.9;">${providerLogoFromUrl(ep.base_url) || ''}</span>
-              <span class="admin-user-name">${esc(ep.name)}</span>
+              <span class="admin-user-name">${esc(isChatgptAccount ? chatgptAccountTitle(ep) : ep.name)}</span>
               ${ep.model_type === 'image' ? '<span class="admin-badge" style="background:color-mix(in srgb, var(--accent) 20%, transparent);color:var(--accent);">Image</span>' : ''}
               ${kindLabel ? `<span class="admin-badge">${esc(kindLabel)}</span>` : ''}
               ${statusBadge}
@@ -675,6 +682,7 @@ async function loadEndpoints() {
                 ${hasModels ? '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>' : ''}`}
             </div>
           </div>
+          ${isChatgptAccount ? `<div class="adm-chatgpt-usage-host" data-adm-chatgpt-usage-host="${esc(ep.provider_auth_id)}" data-chatgpt-endpoint-id="${esc(ep.id)}"><div class="adm-chatgpt-usage adm-chatgpt-usage-loading"><div class="adm-chatgpt-usage-status">Loading usage...</div></div></div>` : ''}
           <div class="admin-ep-detail">${esc(ep.base_url)}${category === 'local' ? `<button type="button" class="admin-ep-copy-btn" data-adm-copy-url="${esc(ep.base_url)}" title="Copy URL" aria-label="Copy URL" style="background:none;border:none;padding:0 2px;margin-left:6px;cursor:pointer;color:inherit;opacity:0.45;vertical-align:-2px;line-height:1;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>` : ''}${keyLabel}</div>
           ${hasModels ? `<div class="mcp-tools-panel hidden" data-adm-ep-models-panel="${ep.id}"></div>` : ''}
         </div>`;
@@ -715,6 +723,12 @@ async function loadEndpoints() {
       });
       return out;
     };
+    // One usage card per ChatGPT account: each fetch targets that card's own
+    // auth id, so account A's refresh can never repaint account B.
+    queryAll('[data-adm-chatgpt-usage-host]').forEach(host => {
+      host.addEventListener('click', (e) => e.stopPropagation());
+      _loadChatgptUsage(host, host.dataset.admChatgptUsageHost, host.dataset.chatgptEndpointId);
+    });
     queryAll('[data-adm-toggle-ep]').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -983,6 +997,133 @@ async function _saveEpModelState(epId, panel) {
   } catch (e) { /* silent */ }
 }
 
+// Render the shared "waiting for authorization" panel (code + manual link).
+// Built for both the Add Models flow and per-account Reconnect. Never opens a
+// tab automatically; the user clicks the Authorize link.
+function _renderDeviceAuthWaitPanel(status, providerKey, start, authUrl) {
+  if (!status) return;
+  status.className = '';
+  const authLabel = providerKey === 'copilot' ? 'Authorize on GitHub' : 'Authorize with OpenAI';
+  const waitLabel = providerKey === 'copilot' ? 'Waiting for GitHub authorization...' : 'Waiting for ChatGPT authorization...';
+  status.innerHTML =
+    '<div class="adm-copilot-panel">' +
+      '<div class="adm-copilot-wait"><span class="admin-spinner"></span>' +
+        '<span>' + esc(waitLabel) + '</span></div>' +
+      '<div class="adm-copilot-coderow">' +
+        '<span class="adm-copilot-code-label">Code</span>' +
+        '<code class="adm-copilot-code">' + esc(start.user_code) + '</code>' +
+        '<button type="button" class="admin-btn-sm adm-device-auth-copy">Copy</button>' +
+      '</div>' +
+      '<a class="admin-btn-add adm-copilot-auth" href="' + esc(authUrl || '') + '" target="_blank" rel="noopener">' + esc(authLabel) + ' ↗</a>' +
+    '</div>';
+  const copyBtn = status.querySelector('.adm-device-auth-copy');
+  if (copyBtn) copyBtn.addEventListener('click', async () => {
+    const code = start.user_code || '';
+    let ok = false;
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(code);
+        ok = true;
+      }
+    } catch (e) {}
+    if (!ok) {
+      // navigator.clipboard is unavailable in non-secure contexts (HTTP
+      // self-host over a LAN IP), so fall back to execCommand('copy').
+      const ta = document.createElement('textarea');
+      ta.value = code;
+      ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;font-size:16px;';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      try { ta.setSelectionRange(0, code.length); } catch (e) {}
+      try { ok = document.execCommand('copy'); } catch (e) {}
+      ta.remove();
+    }
+    copyBtn.textContent = ok ? 'Copied' : 'Failed';
+    setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+  });
+}
+
+// ── ChatGPT Subscription per-account usage + reconnect ─────────────────────
+// Each ChatGPT account (ProviderAuthSession) is addressed by its stable
+// auth id; the endpoint id pins which row the action came from. Usage is
+// read-only telemetry: a failed read never disables the endpoint.
+const _chatgptReconnectInflight = new Set();
+
+async function _loadChatgptUsage(container, authId, epId, { refresh = false } = {}) {
+  if (!container || !authId) return;
+  const url = '/api/chatgpt-subscription/accounts/' + encodeURIComponent(authId) + '/usage' + (refresh ? '?refresh=1' : '');
+  let payload = null;
+  try {
+    const res = await fetch(url, { credentials: 'same-origin' });
+    if (res.ok) {
+      try { payload = await res.json(); } catch (_) { payload = null; }
+    } else {
+      let reason = 'upstream';
+      if (res.status === 404) reason = 'upstream';
+      payload = { available: false, reason, account: { auth_id: authId } };
+    }
+  } catch (_) {
+    payload = { available: false, reason: 'network', account: { auth_id: authId } };
+  }
+  if (!payload || typeof payload !== 'object') payload = { available: false, reason: 'malformed', account: { auth_id: authId } };
+  const vm = buildChatgptUsageViewModel(payload);
+  vm.authId = authId;
+  container.innerHTML = renderChatgptUsageCardHtml(vm, { esc, endpointId: epId });
+  const refreshBtn = container.querySelector('[data-adm-chatgpt-usage-refresh]');
+  if (refreshBtn) refreshBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    refreshBtn.disabled = true;
+    refreshBtn.textContent = 'Refreshing...';
+    await _loadChatgptUsage(container, refreshBtn.dataset.admChatgptUsageRefresh, refreshBtn.dataset.chatgptEndpointId, { refresh: true });
+  });
+  const reconnectBtn = container.querySelector('[data-adm-chatgpt-reconnect]');
+  if (reconnectBtn) reconnectBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    await _reconnectChatgptAccount(container, reconnectBtn.dataset.admChatgptReconnect, reconnectBtn.dataset.chatgptEndpointId);
+  });
+}
+
+async function _reconnectChatgptAccount(container, authId, epId) {
+  if (!container || !authId) return;
+  if (_chatgptReconnectInflight.has(authId)) return;
+  _chatgptReconnectInflight.add(authId);
+  const status = document.createElement('div');
+  status.className = 'adm-chatgpt-reconnect-status';
+  const actions = container.querySelector('.adm-chatgpt-usage-actions');
+  if (actions) actions.replaceWith(status); else container.appendChild(status);
+  status.textContent = 'Starting ChatGPT sign-in...';
+  try {
+    // Reconnect targets exactly this auth session + endpoint. The backend
+    // re-checks ownership on start and on every poll.
+    const formData = new FormData();
+    formData.append('reconnect_auth_id', authId);
+    if (epId) formData.append('reconnect_endpoint_id', epId);
+    const result = await runProviderDeviceFlow('chatgpt-subscription', {
+      openWindow: () => {},
+      formData,
+      onStart: ({ start, authUrl }) => _renderDeviceAuthWaitPanel(status, 'chatgpt-subscription', start, authUrl),
+    });
+    if (result.status === 'authorized') {
+      status.className = 'admin-success';
+      status.textContent = 'Reconnected.';
+      await loadEndpoints();
+      return;
+    }
+    status.className = 'admin-error';
+    status.textContent = result.status === 'expired'
+      ? 'Authorization expired.'
+      : 'Authorization failed (' + (result.error || 'denied') + ').';
+  } catch (e) {
+    status.className = 'admin-error';
+    status.textContent = formatDeviceFlowError(e);
+  } finally {
+    _chatgptReconnectInflight.delete(authId);
+    // Re-render the card so Refresh/Reconnect buttons come back.
+    setTimeout(() => { _loadChatgptUsage(container, authId, epId); }, 1200);
+  }
+}
+
 function initEndpointForm() {
   const provider = el('adm-epProvider');
   const urlInput = el('adm-epUrl');
@@ -997,6 +1138,8 @@ function initEndpointForm() {
   const pickerCurrent = picker ? picker.querySelector('.adm-provider-current') : null;
   const DEVICE_AUTH_PROVIDER_VALUES = new Set(Object.keys(PROVIDER_DEVICE_FLOWS));
   let deviceAuthPolling = false;
+  // True while the URL box is repurposed as the ChatGPT account-label input.
+  let _chatgptLabelMode = false;
   function _selectedProviderOption() {
     return provider && provider.selectedOptions ? provider.selectedOptions[0] : null;
   }
@@ -1018,11 +1161,22 @@ function initEndpointForm() {
     const status = el('adm-deviceAuthStatus');
     const msg = _endpointMsg('api');
     if (deviceAuthConfig) {
-      urlInput.value = '';
-      urlInput.placeholder = deviceAuthProvider === 'copilot'
-        ? 'GitHub Copilot uses GitHub account sign-in'
-        : 'ChatGPT Subscription uses OpenAI account sign-in';
-      urlInput.readOnly = true;
+      if (deviceAuthProvider === 'chatgpt-subscription') {
+        // The URL box doubles as the optional account label so several
+        // ChatGPT subscriptions stay distinguishable ("ChatGPT · codex00").
+        if (!_chatgptLabelMode) urlInput.value = '';
+        urlInput.placeholder = 'Account label, e.g. codex00 (optional)';
+        urlInput.readOnly = false;
+        urlInput.maxLength = 40;
+        urlInput.setAttribute('aria-label', 'ChatGPT account label (optional)');
+        _chatgptLabelMode = true;
+      } else {
+        _chatgptLabelMode = false;
+        urlInput.value = '';
+        urlInput.placeholder = 'GitHub Copilot uses GitHub account sign-in';
+        urlInput.readOnly = true;
+        urlInput.removeAttribute('maxlength');
+      }
       if (apiKey) {
         apiKey.value = '';
         apiKey.placeholder = 'No API key needed';
@@ -1045,8 +1199,12 @@ function initEndpointForm() {
         msg.className = '';
       }
     } else {
+      if (_chatgptLabelMode) urlInput.value = '';
+      _chatgptLabelMode = false;
       urlInput.placeholder = 'Base URL or pick provider';
       urlInput.readOnly = false;
+      urlInput.removeAttribute('maxlength');
+      urlInput.setAttribute('aria-label', 'Model endpoint URL');
       if (apiKey) {
         apiKey.placeholder = 'API key';
         apiKey.disabled = false;
@@ -1130,6 +1288,8 @@ function initEndpointForm() {
     _setApiFormForProvider();
   });
   urlInput.addEventListener('input', () => {
+    // Typing an account label must not flip the picker back to "Custom URL".
+    if (_isDeviceAuthSelected()) return;
     if (provider.value && urlInput.value.trim() !== provider.value) {
       provider.value = '';
       if (kindSel) kindSel.value = 'api';
@@ -1372,58 +1532,30 @@ function initEndpointForm() {
     status.textContent = `Starting ${config.label} sign-in...`;
 
     try {
+      // New ChatGPT connections carry the optional account label. Only the
+      // label travels: the backend creates fresh auth/endpoint rows and never
+      // reuses another account's credentials.
+      const formData = new FormData();
+      if (providerKey === 'chatgpt-subscription' && _chatgptLabelMode) {
+        const label = (urlInput.value || '').trim();
+        if (label) formData.append('label', label);
+      }
       const result = await runProviderDeviceFlow(providerKey, {
         openWindow: () => {},
+        formData,
         onStart: ({ start, authUrl }) => {
           if (triggerEl) triggerEl.textContent = 'Waiting...';
-          status.className = '';
-          const authLabel = providerKey === 'copilot' ? 'Authorize on GitHub' : 'Authorize with OpenAI';
-          const waitLabel = providerKey === 'copilot' ? 'Waiting for GitHub authorization...' : 'Waiting for ChatGPT authorization...';
-          status.innerHTML =
-            '<div class="adm-copilot-panel">' +
-              '<div class="adm-copilot-wait"><span class="admin-spinner"></span>' +
-                '<span>' + esc(waitLabel) + '</span></div>' +
-              '<div class="adm-copilot-coderow">' +
-                '<span class="adm-copilot-code-label">Code</span>' +
-                '<code class="adm-copilot-code">' + esc(start.user_code) + '</code>' +
-                '<button type="button" class="admin-btn-sm adm-device-auth-copy">Copy</button>' +
-              '</div>' +
-              '<a class="admin-btn-add adm-copilot-auth" href="' + encodeURI(authUrl || '') + '" target="_blank" rel="noopener">' + esc(authLabel) + ' ↗</a>' +
-            '</div>';
-          const copyBtn = status.querySelector('.adm-device-auth-copy');
-          if (copyBtn) copyBtn.addEventListener('click', async () => {
-            const code = start.user_code || '';
-            let ok = false;
-            try {
-              if (navigator.clipboard && window.isSecureContext) {
-                await navigator.clipboard.writeText(code);
-                ok = true;
-              }
-            } catch (e) {}
-            if (!ok) {
-              // navigator.clipboard is unavailable in non-secure contexts (HTTP
-              // self-host over a LAN IP), so fall back to execCommand('copy').
-              const ta = document.createElement('textarea');
-              ta.value = code;
-              ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;font-size:16px;';
-              document.body.appendChild(ta);
-              ta.focus();
-              ta.select();
-              try { ta.setSelectionRange(0, code.length); } catch (e) {}
-              try { ok = document.execCommand('copy'); } catch (e) {}
-              ta.remove();
-            }
-            copyBtn.textContent = ok ? 'Copied' : 'Failed';
-            setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
-          });
+          _renderDeviceAuthWaitPanel(status, providerKey, start, authUrl);
         },
       });
       if (result.status === 'authorized') {
         const endpoint = result.endpoint || {};
         const n = ((endpoint && endpoint.models) || []).length;
         status.className = 'admin-success';
-        status.textContent = 'Connected - ' + n + ' ' + config.label + ' model' + (n !== 1 ? 's' : '') + ' available.';
+        const connectedName = endpoint && endpoint.name ? endpoint.name : config.label;
+        status.textContent = 'Connected ' + connectedName + ' - ' + n + ' model' + (n !== 1 ? 's' : '') + ' available.';
         if (endpoint && endpoint.id) _recentlyAddedEpId = String(endpoint.id);
+        if (_chatgptLabelMode) urlInput.value = '';
         await loadEndpoints();
         await _selectAddedModelInChat(endpoint || {});
         reset();

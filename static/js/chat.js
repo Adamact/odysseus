@@ -19,7 +19,7 @@ import searchModule from './search.js';
 import documentModule from './document.js?v=20260916docctx2';
 import * as emailInbox from './emailInbox.js?v=20260914aireply4';
 import codeRunnerModule from './codeRunner.js?v=20260831richtexttools91';
-import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js?v=20260902tuiharness1';
+import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js?v=20260921chatgptusage1';
 import createResearchSynapse from './researchSynapse.js?v=20260910roundlabels2';
 import { createStreamRenderer } from './streamingRenderer.js';
 import { createTurnRendering, startsContinuationRound } from './turnRendering.js?v=20260910round1stable1';

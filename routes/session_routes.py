@@ -455,13 +455,17 @@ def setup_session_routes(
                           else (s.created_at.isoformat() if s.created_at else None))
                 )
                 matches = endpoint_routes.get((s.endpoint_url or '').rstrip('/'), [])
-                selected_endpoint = matches[0] if len(matches) == 1 else None
+                bound_id = getattr(s, "endpoint_id", None)
+                selected_endpoint = (
+                    next((ep for ep in matches if ep.id == bound_id), None)
+                    if bound_id else (matches[0] if len(matches) == 1 else None)
+                )
                 sessions.append({
                     "id": s.id,
                     "name": s.name,
                     "model": _public_model(s.name, s.model),
                     "endpoint_url": s.endpoint_url,
-                    "endpoint_id": selected_endpoint.id if selected_endpoint else None,
+                    "endpoint_id": bound_id or (selected_endpoint.id if selected_endpoint else None),
                     "endpoint_name": selected_endpoint.name if selected_endpoint else None,
                     "rag": s.rag,
                     "archived": s.archived,
@@ -590,6 +594,7 @@ def setup_session_routes(
             rag=str(rag).lower() == "true" if rag else False,
             owner=user,
             cwd=cwd or None,
+            endpoint_id=endpoint_id.strip() if endpoint_id else None,
         )
         # Set auth headers for custom API-key endpoints
         resolved_key = request_api_key
@@ -597,7 +602,8 @@ def setup_session_routes(
         if not resolved_key and endpoint_api_key:
             resolved_key = endpoint_api_key
             resolved_base = endpoint_base_url
-        if resolved_key:
+        from src.chatgpt_subscription import is_chatgpt_subscription_base
+        if resolved_key and not is_chatgpt_subscription_base(endpoint_url):
             from src.endpoint_resolver import build_headers
             session.headers = build_headers(resolved_key, resolved_base)
             _persist_session_headers(sid, session.headers)
@@ -685,8 +691,14 @@ def setup_session_routes(
                     endpoint_url = build_chat_url(normalize_base(endpoint_base_url))
                 finally:
                     _db.close()
+            previous_url = session.endpoint_url
             session.model = model
             session.endpoint_url = endpoint_url
+            # A registered endpoint id pins the exact route; a raw URL switch
+            # (admin only) clears any previous binding.
+            session.endpoint_id = (endpoint_id or "").strip() or (
+                getattr(session, "endpoint_id", None) if endpoint_url == previous_url else None
+            )
             # Update auth headers from the endpoint's stored API key
             if endpoint_api_key:
                 from src.endpoint_resolver import build_headers
@@ -700,6 +712,7 @@ def setup_session_routes(
                 if db_session:
                     db_session.model = model
                     db_session.endpoint_url = endpoint_url
+                    db_session.endpoint_id = session.endpoint_id
                     db_session.headers = session.headers or {}
                     db_session.updated_at = utcnow_naive()
                     db.commit()

@@ -203,6 +203,12 @@ class Session(TimestampMixin, Base):
     # Organization
     folder = Column(String, nullable=True, default=None)
     cwd = Column(String, nullable=True, default=None)
+    # Registered ModelEndpoint this session is bound to. endpoint_url alone
+    # cannot distinguish two endpoints that share a provider URL but use
+    # different credentials (e.g. two ChatGPT Subscription accounts), so the
+    # exact endpoint id is remembered here. NULL = legacy session; the first
+    # deterministic, owner-scoped resolution persists a binding.
+    endpoint_id = Column(String, nullable=True, index=True)
     
     # Headers stored as JSON
     headers = Column(JSON, default=dict)
@@ -1472,6 +1478,19 @@ def _migrate_add_session_cwd_column():
         except Exception:
             pass
 
+def _migrate_add_session_endpoint_id_column():
+    """Add the nullable binding and index without rewriting existing sessions."""
+    with engine.begin() as connection:
+        schema = inspect(connection)
+        if not schema.has_table("sessions"):
+            return
+        columns = {column["name"] for column in schema.get_columns("sessions")}
+        if "endpoint_id" not in columns:
+            connection.execute(text("ALTER TABLE sessions ADD COLUMN endpoint_id VARCHAR"))
+        index = next(index for index in Session.__table__.indexes if index.name == "ix_sessions_endpoint_id")
+        index.create(bind=connection, checkfirst=True)
+
+
 def _migrate_add_token_columns():
     """Add cumulative token tracking columns to sessions table."""
     import sqlite3
@@ -2378,6 +2397,7 @@ def init_db():
     _migrate_add_session_generation_settings_columns()
     _migrate_add_folder_column()
     _migrate_add_session_cwd_column()
+    _migrate_add_session_endpoint_id_column()
     _migrate_add_token_columns()
     _migrate_add_total_cost_usd()
     _migrate_add_mode_column()

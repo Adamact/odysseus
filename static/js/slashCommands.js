@@ -5035,16 +5035,22 @@ function _clearSetupCommandInput() {
   }
 }
 
-async function _setupProviderDeviceFlow(providerKey) {
+async function _setupProviderDeviceFlow(providerKey, options = {}) {
   _clearSetupGuideMessages();
   const config = PROVIDER_DEVICE_FLOWS[providerKey];
   if (!config) {
     await _setupReply('Provider not recognised.');
     return;
   }
-  await _setupReply(`Starting ${config.label} sign-in...`);
+  // `/setup chatgpt-subscription codex00` labels the new account so several
+  // ChatGPT subscriptions stay distinguishable. The label is cosmetic only.
+  const accountLabel = providerKey === 'chatgpt-subscription' ? String(options.label || '').trim().slice(0, 40) : '';
+  const formData = new FormData();
+  if (accountLabel) formData.append('label', accountLabel);
+  await _setupReply(`Starting ${config.label} sign-in${accountLabel ? ` for "${accountLabel}"` : ''}...`);
   try {
     const result = await runProviderDeviceFlow(providerKey, {
+      formData,
       onStart: async ({ start, authUrl }) => {
         const place = providerKey === 'copilot' ? 'GitHub' : 'OpenAI';
         const action = providerKey === 'copilot' ? 'approve the request' : 'enter the code';
@@ -5067,7 +5073,8 @@ async function _setupProviderDeviceFlow(providerKey) {
     });
     if (result.status === 'authorized') {
       const n = ((result.endpoint && result.endpoint.models) || []).length;
-      await _setupReply(`Connected - ${n} ${config.label} model${n !== 1 ? 's' : ''} available.`);
+      const connectedName = (result.endpoint && result.endpoint.name) || config.label;
+      await _setupReply(`Connected ${connectedName} - ${n} model${n !== 1 ? 's' : ''} available.`);
       if (modelsModule) modelsModule.refreshModels(true);
       return;
     }
@@ -5091,7 +5098,7 @@ async function _cmdSetup(args, ctx) {
   const topicArgs = args.slice(1);
   const deviceAuthProvider = _setupDeviceAuthProviderFromInput(topic);
   if (deviceAuthProvider) {
-    await _setupProviderDeviceFlow(deviceAuthProvider);
+    await _setupProviderDeviceFlow(deviceAuthProvider, { label: topicArgs.join(' ') });
     return true;
   }
   const provider = _setupProviderFromInput(topic);
