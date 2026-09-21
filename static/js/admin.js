@@ -599,6 +599,44 @@ function _ensureEndpointBulkControls() {
   _updateEndpointBulkControls();
 }
 
+function shouldDisplayEndpointBaseUrl(ep) {
+  if (!ep || !ep.base_url) return false;
+  if (isChatgptSubscriptionEndpoint(ep)) return false;
+  if (isFeatherlessEndpoint(ep)) return false;
+  return true;
+}
+
+function isFeatherlessEndpoint(ep) {
+  if (!ep) return false;
+  if (ep.provider === 'featherless') return true;
+  const url = String(ep.base_url || '').toLowerCase();
+  try {
+    const host = new URL(url).hostname;
+    return host === 'api.featherless.ai' || host.endsWith('.featherless.ai');
+  } catch (_) {
+    return url.includes('api.featherless.ai');
+  }
+}
+
+function endpointDetailHtml(ep, category) {
+  const showUrl = shouldDisplayEndpointBaseUrl(ep);
+  const copyBtn = (showUrl && category === 'local')
+    ? `<button type="button" class="admin-ep-copy-btn" data-adm-copy-url="${esc(ep.base_url)}" title="Copy URL" aria-label="Copy URL" style="background:none;border:none;padding:0 2px;margin-left:6px;cursor:pointer;color:inherit;opacity:0.45;vertical-align:-2px;line-height:1;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>`
+    : '';
+  const keyLabel = ep.has_key
+    ? (ep.api_key_fingerprint ? ` (key ${esc(ep.api_key_fingerprint)})` : ' (key set)')
+    : '';
+  const parts = [];
+  if (showUrl) {
+    parts.push(esc(ep.base_url) + copyBtn);
+    if (keyLabel) parts.push(keyLabel);
+  } else if (keyLabel) {
+    parts.push(keyLabel.trim());
+  }
+  if (!parts.length) return '';
+  return `<div class="admin-ep-detail">${parts.join('')}</div>`;
+}
+
 // ChatGPT per-endpoint usage panel expanded state persistence.
 // Preserves only endpoint/auth identifiers, never tokens, secrets, or labels.
 const CHATGPT_USAGE_EXPANDED_KEY = 'odysseus-chatgpt-usage-expanded';
@@ -690,20 +728,24 @@ async function loadEndpoints() {
       // `ep.models` is the *visible* set — when every model is hidden it's
       // empty, but we still need to render the expand panel so the user can
       // un-hide them. Gate on the total instead.
-      const hasModels = ep.online && totalCount > 0;
+      const isChatgptAccount = isChatgptSubscriptionEndpoint(ep);
+      const isFeatherless = isFeatherlessEndpoint(ep);
+      const hasModels = ep.online && (totalCount > 0 || isFeatherless);
+      const countText = (isChatgptAccount || isFeatherless)
+        ? `${visibleCount} models enabled`
+        : `${visibleCount}/${totalCount} models enabled`;
       const statusBadge = ep.status === 'empty'
         ? '<span class="admin-badge">no models</span>'
         : ep.online
-          ? `<span class="admin-badge">${visibleCount}/${totalCount} models enabled</span>`
+          ? `<span class="admin-badge">${countText}</span>`
           : '<span class="admin-badge admin-badge-off">offline</span>';
       const justAddedClass = (_recentlyAddedEpId && String(ep.id) === _recentlyAddedEpId) ? ' adm-ep-just-added' : '';
       const category = ep.category || (_isLocalEndpoint(ep.base_url) ? 'local' : 'api');
       const kindLabel = ep.endpoint_kind && ep.endpoint_kind !== 'auto' ? ep.endpoint_kind.toUpperCase() : '';
-      const keyLabel = ep.has_key
-        ? (ep.api_key_fingerprint ? ` (key ${esc(ep.api_key_fingerprint)})` : ' (key set)')
-        : '';
-      const isChatgptAccount = isChatgptSubscriptionEndpoint(ep);
       const isUsageExpanded = isChatgptAccount && _isChatgptUsageExpanded(ep.id, ep.provider_auth_id);
+      const epTitle = isChatgptAccount
+        ? chatgptAccountTitle(ep)
+        : (isFeatherless && (!ep.name || ep.name === 'api.featherless.ai') ? 'Featherless.ai' : ep.name);
       return `
         <div class="admin-user-row${ep.is_enabled ? '' : ' admin-ep-disabled'}${justAddedClass}" data-adm-ep-id="${ep.id}">
           <div style="display:flex;align-items:center;justify-content:space-between;${hasModels ? 'cursor:pointer;' : ''}padding:4px 0;" data-adm-ep-header="${ep.id}">
@@ -713,7 +755,7 @@ async function loadEndpoints() {
                 <span class="adm-check-dot adm-endpoint-select-dot" aria-hidden="true"></span>
               </label>` : ''}
               <span class="adm-ep-row-logo" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex-shrink:0;opacity:0.9;">${providerLogoFromUrl(ep.base_url) || ''}</span>
-              <span class="admin-user-name">${esc(isChatgptAccount ? chatgptAccountTitle(ep) : ep.name)}</span>
+              <span class="admin-user-name">${esc(epTitle)}</span>
               ${ep.model_type === 'image' ? '<span class="admin-badge" style="background:color-mix(in srgb, var(--accent) 20%, transparent);color:var(--accent);">Image</span>' : ''}
               ${kindLabel ? `<span class="admin-badge">${esc(kindLabel)}</span>` : ''}
               ${statusBadge}
@@ -735,7 +777,7 @@ async function loadEndpoints() {
             <button type="button" class="admin-btn-sm" data-adm-chatgpt-reconnect="${esc(ep.provider_auth_id)}" data-chatgpt-endpoint-id="${esc(ep.id)}">Reconnect</button>
           </div>
           <div id="adm-chatgpt-usage-${esc(ep.id)}" class="adm-chatgpt-usage-host${isUsageExpanded ? '' : ' hidden'}" data-adm-chatgpt-usage-host="${esc(ep.provider_auth_id)}" data-chatgpt-endpoint-id="${esc(ep.id)}"${isUsageExpanded ? '' : ' style="display:none;"'}><div class="adm-chatgpt-usage adm-chatgpt-usage-loading"><div class="adm-chatgpt-usage-status">Loading usage...</div></div></div>` : ''}
-          <div class="admin-ep-detail">${esc(ep.base_url)}${category === 'local' ? `<button type="button" class="admin-ep-copy-btn" data-adm-copy-url="${esc(ep.base_url)}" title="Copy URL" aria-label="Copy URL" style="background:none;border:none;padding:0 2px;margin-left:6px;cursor:pointer;color:inherit;opacity:0.45;vertical-align:-2px;line-height:1;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>` : ''}${keyLabel}</div>
+          ${endpointDetailHtml(ep, category)}
           ${hasModels ? `<div class="mcp-tools-panel hidden" data-adm-ep-models-panel="${ep.id}"></div>` : ''}
         </div>`;
     });
@@ -994,19 +1036,21 @@ async function loadEndpoints() {
               const mode = ['none', 'compact', 'full'].includes(String(m.tool_mode || '').toLowerCase())
                 ? String(m.tool_mode).toLowerCase()
                 : '';
-              return `<div title="${esc(m.id)}" data-ep-model-row data-search="${esc((m.display + ' ' + m.id).toLowerCase())}" class="adm-model-row" style="display:flex;align-items:center;gap:8px;">
-                <label style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;">
+              return `<div title="${esc(m.id)}" data-ep-model-row data-search="${esc((m.display + ' ' + m.id).toLowerCase())}" class="adm-model-row">
+                <label class="adm-model-label">
                   <input type="checkbox" class="adm-cb-hidden" data-ep-model-id="${esc(m.id)}" ${(usesPinnedPicker ? m.is_pinned : !m.is_hidden) ? 'checked' : ''}>
                   <span class="adm-check-dot" aria-hidden="true"></span>
-                  <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(m.display)}</span>
+                  <span class="adm-model-name">${esc(m.display)}</span>
                 </label>
-                <span title="Select the tool schema profile for this model" style="font-size:10px;opacity:0.45;flex-shrink:0;">Tools</span>
-                <select class="adm-model-tool-mode" data-ep-model-id="${esc(m.id)}" data-original-tool-mode="${esc(m.tool_mode || '')}" data-tool-mode-touched="0" title="Auto uses Odysseus compact for Odysseus/Ajax names and Regular tools for every other model" style="height:24px;font-size:11px;max-width:170px;flex-shrink:0;">
-                  <option value="" ${mode === '' ? 'selected' : ''}>Auto</option>
-                  <option value="full" ${mode === 'full' ? 'selected' : ''}>Regular tools</option>
-                  <option value="compact" ${mode === 'compact' ? 'selected' : ''}>Odysseus compact</option>
-                  <option value="none" ${mode === 'none' ? 'selected' : ''}>Tools off</option>
-                </select>
+                <div class="adm-model-tools-col">
+                  <span class="adm-model-tools-label" title="Select the tool schema profile for this model">Tools</span>
+                  <select class="adm-model-tool-mode admin-tools-select" data-ep-model-id="${esc(m.id)}" data-original-tool-mode="${esc(m.tool_mode || '')}" data-tool-mode-touched="0" title="Auto uses Odysseus compact for Odysseus/Ajax names and Regular tools for every other model">
+                    <option value="" ${mode === '' ? 'selected' : ''}>Auto</option>
+                    <option value="full" ${mode === 'full' ? 'selected' : ''}>Regular tools</option>
+                    <option value="compact" ${mode === 'compact' ? 'selected' : ''}>Odysseus compact</option>
+                    <option value="none" ${mode === 'none' ? 'selected' : ''}>Tools off</option>
+                  </select>
+                </div>
               </div>`;
             }
             ).join('') + '</div>';
@@ -3764,6 +3808,8 @@ export function close() {
   stopLogsPolling();
   settingsModule.close();
 }
+
+export { shouldDisplayEndpointBaseUrl, isFeatherlessEndpoint, endpointDetailHtml };
 
 const adminModule = { open, close, _initData, get _initialized() { return initialized; } };
 export default adminModule;
