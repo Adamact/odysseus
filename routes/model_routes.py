@@ -9,6 +9,7 @@ import ipaddress
 import socket
 import time as _time
 import logging
+import threading
 import httpx
 from datetime import datetime
 from typing import List, Dict, Any, Optional
@@ -17,6 +18,9 @@ from fastapi import APIRouter, HTTPException, Form, Query, Body, Request, Respon
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 from core.database import SessionLocal, ModelEndpoint, Session as DbSession
+
+_featherless_search_cache: Dict[tuple, tuple[float, Dict[str, Any]]] = {}
+_featherless_search_cache_lock = threading.Lock()
 try:
     from core.log_safety import redact_url as _redact_url_for_log
 except ModuleNotFoundError:
@@ -854,6 +858,8 @@ def _effective_endpoint_kind(ep: Any, base_url: str) -> str:
     kind = _endpoint_kind(ep)
     if kind != "auto":
         return kind
+    if _host_match(base_url, "featherless.ai"):
+        return "api"
     if getattr(ep, "api_key", None) and not _is_ollama_base(base_url):
         try:
             path = (urlparse(base_url).path or "").rstrip("/")
@@ -1015,6 +1021,8 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         if api_key:
             return fetch_available_models(api_key, timeout=timeout)
         return []
+    if provider == "featherless" or _host_match(base, "featherless.ai"):
+        return []
     if _is_google_api_base(base):
         try:
             models = _probe_google_models(base, api_key, timeout=timeout)
@@ -1164,6 +1172,31 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
         return {"reachable": False, "status_code": r.status_code, "error": f"HTTP {r.status_code}"}
 
     last_error: Optional[str] = None
+
+    if _host_match(base, "featherless.ai") or _safe_detect_provider(base) == "featherless":
+        plan_base = base if base.endswith("/v1") else f"{base}/v1"
+        plan_url = f"{plan_base}/plan"
+        try:
+            r = httpx.get(plan_url, headers=headers, timeout=timeout, verify=llm_verify())
+            result = _result_from_response(r)
+            if result["reachable"]:
+                return result
+            if r.status_code in (401, 403):
+                return {"reachable": False, "status_code": r.status_code, "error": "Featherless API key invalid or unauthorized"}
+        except Exception as e:
+            last_error = str(e)[:120]
+
+        try:
+            models_url = f"{plan_base}/models?available_on_current_plan=true&status=active&conversational=true&page=1&per_page=1"
+            r = httpx.get(models_url, headers=headers, timeout=timeout, verify=llm_verify())
+            result = _result_from_response(r)
+            if result["reachable"]:
+                return result
+            if r.status_code in (401, 403):
+                return {"reachable": False, "status_code": r.status_code, "error": "Featherless API key invalid or unauthorized"}
+            return result
+        except Exception as e:
+            return {"reachable": False, "status_code": None, "error": str(e)[:120]}
 
     try:
         if looks_like_ollama:
@@ -1516,6 +1549,8 @@ def setup_model_routes(model_discovery):
             "timeout": _endpoint_refresh_timeout(ep, category),
         }
         if not base:
+            return False, info
+        if _host_match(base, "featherless.ai") or _safe_detect_provider(base) == "featherless":
             return False, info
         if state.get("inflight"):
             return False, info
@@ -2046,9 +2081,10 @@ def setup_model_routes(model_discovery):
                 if _picker_requires_pinning(base, kind) and pinned and not _has_explicit_pinned_models(r):
                     r.pinned_models = json.dumps(pinned)
                     upgraded_legacy_pins = True
-                model_inventory_count = len(_merge_model_ids(all_models, pinned))
+                is_featherless = _host_match(base, "featherless.ai") or _safe_detect_provider(base) == "featherless"
+                model_inventory_count = len(pinned) if is_featherless else len(_merge_model_ids(all_models, pinned))
                 picker_requires_pinning = _picker_requires_pinning(base, kind)
-                status = "online" if (all_models or visible or pinned) else ("empty" if r.is_enabled else "offline")
+                status = "online" if (all_models or visible or pinned or (is_featherless and r.is_enabled)) else ("empty" if r.is_enabled else "offline")
                 results.append({
                     "id": r.id,
                     "name": r.name,
@@ -2114,11 +2150,19 @@ def setup_model_routes(model_discovery):
         # keep those container-local when the frontend marks them as such.
         base_url = _rewrite_loopback_for_docker(base_url, container_local=_truthy(container_local))
 
+        is_featherless = _host_match(base_url, "featherless.ai") or _safe_detect_provider(base_url) == "featherless"
         # Auto-generate name from URL if not provided
         if not name.strip():
-            name = base_url.replace("http://", "").replace("https://", "").split("/")[0]
+            if is_featherless:
+                name = "Featherless.ai"
+            else:
+                name = base_url.replace("http://", "").replace("https://", "").split("/")[0]
 
         requested_kind = _normalize_endpoint_kind(endpoint_kind)
+        if is_featherless and requested_kind == "auto":
+            requested_kind = "api"
+        if is_featherless and not pinned_models.strip():
+            pinned_models = "[]"
         refresh_mode = _normalize_endpoint_refresh_mode(model_refresh_mode, requested_kind, base_url)
         refresh_interval = _parse_positive_int(model_refresh_interval, minimum=30, maximum=86400)
         refresh_timeout = _parse_positive_int(model_refresh_timeout, minimum=1, maximum=60)
@@ -2212,6 +2256,8 @@ def setup_model_routes(model_discovery):
                 existing_models = _cached_model_ids(existing)
                 _existing_pinned = _normalize_model_ids(getattr(existing, "pinned_models", None))
                 existing_kind = _effective_endpoint_kind(existing, existing.base_url)
+                is_existing_featherless = _host_match(existing.base_url, "featherless.ai") or _safe_detect_provider(existing.base_url) == "featherless"
+                existing_status = "online" if (existing.is_enabled and is_existing_featherless) else ("online" if (existing_models or _existing_pinned) else ("empty" if existing.is_enabled else "offline"))
                 return {
                     "id": existing.id,
                     "name": existing.name,
@@ -2224,8 +2270,8 @@ def setup_model_routes(model_discovery):
                         existing.pinned_models,
                     ),
                     "pinned_models": _existing_pinned,
-                    "online": True,
-                    "status": "online",
+                    "online": existing_status != "offline",
+                    "status": existing_status,
                     "existing": True,
                     "endpoint_kind": existing_kind,
                     "category": _classify_endpoint(existing.base_url, existing_kind),
@@ -2237,7 +2283,7 @@ def setup_model_routes(model_discovery):
         ping = {"reachable": False, "error": None}
         if (should_probe or requested_kind in ("api", "proxy")) and not model_ids:
             ping = _ping_endpoint(base_url, api_key.strip() or None, timeout=min(explicit_timeout, 10.0))
-        if require_model_list and not model_ids:
+        if require_model_list and not model_ids and not is_featherless:
             raise HTTPException(400, _model_endpoint_error_message(base_url, ping))
 
         ep_id = str(uuid.uuid4())[:8]
@@ -2267,8 +2313,8 @@ def setup_model_routes(model_discovery):
                 model_refresh_mode=refresh_mode,
                 model_refresh_interval=refresh_interval,
                 model_refresh_timeout=refresh_timeout,
-                cached_models=json.dumps(model_ids) if model_ids else None,
-                pinned_models=json.dumps(_pinned) if _pinned else None,
+                cached_models=None if is_featherless else (json.dumps(model_ids) if model_ids else None),
+                pinned_models=json.dumps(_pinned) if (is_featherless or _pinned) else None,
                 supports_tools=_st,
                 owner=_owner_val,
             )
@@ -2308,6 +2354,8 @@ def setup_model_routes(model_discovery):
             db.close()
 
         # Return immediately — probing happens via the separate /probe SSE endpoint
+        is_online = bool(model_ids) or bool(_pinned) or bool(ping.get("reachable")) or (is_featherless and ping.get("reachable"))
+        is_status = "online" if (model_ids or _pinned or (is_featherless and ping.get("reachable"))) else ("loading" if ping.get("loading") else ("empty" if ping.get("reachable") else "offline"))
         return {
             "id": ep_id,
             "name": name.strip(),
@@ -2316,8 +2364,8 @@ def setup_model_routes(model_discovery):
             "api_key_fingerprint": _api_key_fingerprint(api_key),
             "models": _merge_model_ids(model_ids, _pinned),
             "pinned_models": _pinned,
-            "online": bool(model_ids) or bool(_pinned) or bool(ping.get("reachable")),
-            "status": "online" if (model_ids or _pinned) else ("loading" if ping.get("loading") else ("empty" if ping.get("reachable") else "offline")),
+            "online": is_online,
+            "status": is_status,
             "ping_error": ping.get("error") if ping else None,
             "endpoint_kind": requested_kind,
             "category": _classify_endpoint(base_url, requested_kind),
@@ -2339,14 +2387,19 @@ def setup_model_routes(model_discovery):
         base_url = resolve_url(base_url)
         base_url = _rewrite_loopback_for_docker(base_url)
         requested_kind = _normalize_endpoint_kind(endpoint_kind)
+        is_featherless = _host_match(base_url, "featherless.ai") or _safe_detect_provider(base_url) == "featherless"
+        if is_featherless and requested_kind == "auto":
+            requested_kind = "api"
         configured_timeout = _parse_positive_int(model_refresh_timeout, minimum=1, maximum=60)
         probe_timeout = _explicit_model_list_timeout(base_url, requested_kind, configured_timeout)
         models = _probe_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout)
         ping = {"reachable": True, "error": None} if models else _ping_endpoint(base_url, api_key.strip() or None, timeout=min(probe_timeout, 10.0))
+        is_online = bool(models) or bool(ping.get("reachable")) or (is_featherless and ping.get("reachable"))
+        is_status = "online" if (models or (is_featherless and ping.get("reachable"))) else ("loading" if ping.get("loading") else ("empty" if ping.get("reachable") else "offline"))
         return {
             "base_url": base_url,
-            "online": bool(models) or bool(ping.get("reachable")),
-            "status": "online" if models else ("loading" if ping.get("loading") else ("empty" if ping.get("reachable") else "offline")),
+            "online": is_online,
+            "status": is_status,
             "ping_error": ping.get("error") if ping else None,
             "models": models,
             "count": len(models),
@@ -2530,6 +2583,149 @@ def setup_model_routes(model_discovery):
             }
         finally:
             db.close()
+
+    @router.get("/model-endpoints/{ep_id}/catalog-search")
+    async def search_endpoint_catalog(
+        ep_id: str,
+        request: Request,
+        q: str = Query(..., min_length=2, max_length=100),
+        page: int = Query(1, ge=1),
+        per_page: int = Query(50, ge=1, le=100),
+    ):
+        """Search catalog for large-inventory providers like Featherless."""
+        require_admin(request)
+        q_clean = q.strip()
+        if len(q_clean) < 2:
+            raise HTTPException(400, "Search query must be at least 2 characters")
+
+        db = SessionLocal()
+        try:
+            ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
+            if not ep or not _chatgpt_endpoint_visible(ep, request):
+                raise HTTPException(404, "Endpoint not found")
+            base = _normalize_base(ep.base_url)
+            is_featherless = _host_match(base, "featherless.ai") or _safe_detect_provider(base) == "featherless"
+            if not is_featherless:
+                raise HTTPException(400, "Catalog search is only supported for Featherless endpoints")
+            api_key = _resolve_probe_key(ep) or (ep.api_key.strip() if getattr(ep, "api_key", None) else None)
+            if not api_key:
+                raise HTTPException(400, "Featherless endpoint has no API key configured")
+        finally:
+            db.close()
+
+        try:
+            page = max(int(page or 1), 1)
+        except Exception:
+            page = 1
+        try:
+            per_page = min(max(int(per_page or 50), 1), 100)
+        except Exception:
+            per_page = 50
+
+        # In-memory cache check
+        cache_key = (ep_id, q_clean.lower(), page, per_page)
+        now = _time.time()
+        with _featherless_search_cache_lock:
+            cached_entry = _featherless_search_cache.get(cache_key)
+            if cached_entry:
+                ts, cached_data = cached_entry
+                if now - ts < 45.0:
+                    return cached_data
+                else:
+                    _featherless_search_cache.pop(cache_key, None)
+
+        # Build upstream URL and params
+        models_url = f"{base}/models" if base.endswith("/v1") else f"{base.rstrip('/')}/v1/models"
+        params = {
+            "q": q_clean,
+            "available_on_current_plan": "true",
+            "status": "active",
+            "conversational": "true",
+            "page": page,
+            "per_page": per_page,
+        }
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json",
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0, verify=llm_verify()) as client:
+                r = await client.get(models_url, params=params, headers=headers)
+                if r.status_code in (401, 403):
+                    raise HTTPException(r.status_code, "Featherless API key invalid or unauthorized")
+                if r.status_code == 429:
+                    raise HTTPException(429, "Featherless rate limit exceeded; please try again shortly")
+                if r.status_code >= 500:
+                    raise HTTPException(502, f"Featherless upstream error: HTTP {r.status_code}")
+                if r.status_code >= 400:
+                    raise HTTPException(r.status_code, f"Featherless API error: HTTP {r.status_code}")
+                data = r.json()
+        except httpx.HTTPStatusError as exc:
+            code = exc.response.status_code if exc.response is not None else 502
+            if code in (401, 403):
+                raise HTTPException(code, "Featherless API key invalid or unauthorized")
+            if code == 429:
+                raise HTTPException(429, "Featherless rate limit exceeded; please try again shortly")
+            raise HTTPException(502 if code >= 500 else code, f"Featherless API error: HTTP {code}")
+        except httpx.TimeoutException:
+            raise HTTPException(504, "Featherless search request timed out")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.warning("Featherless catalog search failed: %s", exc)
+            raise HTTPException(502, f"Failed to connect to Featherless: {str(exc)[:120]}")
+
+        raw_items = data.get("data") if isinstance(data, dict) else (data if isinstance(data, list) else [])
+        normalized_items = []
+        for m in (raw_items or []):
+            if not isinstance(m, dict):
+                continue
+            m_id = m.get("id")
+            if not m_id or not isinstance(m_id, str):
+                continue
+            normalized_items.append({
+                "id": m_id,
+                "name": m.get("name") or m_id,
+                "context_length": m.get("context_length"),
+                "max_completion_tokens": m.get("max_completion_tokens"),
+                "is_gated": bool(m.get("is_gated", False)),
+                "available_on_current_plan": bool(m.get("available_on_current_plan", True)),
+            })
+
+        total_val = None
+        if isinstance(data, dict):
+            for k in ("total", "count", "total_count"):
+                v = data.get(k)
+                if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0:
+                    total_val = int(v)
+                    break
+
+        if total_val is not None:
+            has_more = (page * per_page) < total_val and len(normalized_items) > 0
+        else:
+            has_more = len(normalized_items) == per_page
+
+        result = {
+            "items": normalized_items,
+            "page": page,
+            "per_page": per_page,
+            "has_more": has_more,
+        }
+        if total_val is not None:
+            result["total"] = total_val
+
+        with _featherless_search_cache_lock:
+            if len(_featherless_search_cache) >= 200:
+                expired_keys = [k for k, (t, _) in _featherless_search_cache.items() if now - t >= 45.0]
+                for k in expired_keys:
+                    _featherless_search_cache.pop(k, None)
+                if len(_featherless_search_cache) >= 200:
+                    oldest_key = min(_featherless_search_cache.keys(), key=lambda k: _featherless_search_cache[k][0])
+                    _featherless_search_cache.pop(oldest_key, None)
+            _featherless_search_cache[cache_key] = (now, result)
+
+        return result
 
     @router.get("/default-chat")
     def get_default_chat(request: Request):
@@ -2844,4 +3040,6 @@ def setup_model_routes(model_discovery):
         _save_settings(settings)
         return {"ok": True, "disabled": body.disabled}
 
+    router._should_refresh_endpoint = _should_refresh_endpoint
+    router._search_endpoint_catalog = search_endpoint_catalog
     return router

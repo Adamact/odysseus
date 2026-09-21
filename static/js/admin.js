@@ -637,6 +637,298 @@ function endpointDetailHtml(ep, category) {
   return `<div class="admin-ep-detail">${parts.join('')}</div>`;
 }
 
+function renderFeatherlessPanel(panel, ep, row) {
+  const epId = ep.id;
+  const initialPinned = Array.isArray(ep.pinned_models)
+    ? ep.pinned_models
+    : (typeof ep.pinned_models === 'string' ? JSON.parse(ep.pinned_models || '[]') : []);
+  const enabledSet = new Set(initialPinned);
+  const toolModes = typeof ep.model_tool_modes === 'object' && ep.model_tool_modes !== null
+    ? { ...ep.model_tool_modes }
+    : {};
+  panel.dataset.pickerMode = 'pinned';
+
+  panel.innerHTML = `<div class="mcp-tools-header">
+    <span>Featherless Catalog</span>
+  </div>
+  <div class="featherless-panel" style="display:flex;flex-direction:column;gap:12px;padding:6px 0;">
+    <div class="featherless-search-bar" style="position:relative;display:flex;align-items:center;">
+      <input type="search" class="mcp-tools-search featherless-search-input" placeholder="Search Featherless models (min 2 chars)..." style="width:100%;box-sizing:border-box;" data-featherless-search="${esc(epId)}">
+      <span class="featherless-spinner-host" style="display:none;position:absolute;right:8px;font-size:10px;opacity:0.55;">Searching...</span>
+    </div>
+    <div class="featherless-enabled-section">
+      <div style="font-size:11px;font-weight:600;opacity:0.8;margin-bottom:4px;">
+        Enabled models (<span class="featherless-enabled-count">${enabledSet.size}</span>)
+      </div>
+      <div class="featherless-enabled-list mcp-tools-list" style="max-height:160px;overflow-y:auto;"></div>
+    </div>
+    <div class="featherless-results-section">
+      <div style="font-size:11px;font-weight:600;opacity:0.8;margin-bottom:4px;">
+        Search results
+      </div>
+      <div class="featherless-results-list mcp-tools-list" style="max-height:280px;overflow-y:auto;">
+        <span class="featherless-search-hint" style="opacity:0.5;font-size:11px;padding:4px 0;display:block;">Type at least 2 characters to search over 20,000+ models.</span>
+      </div>
+      <div class="featherless-pagination" style="display:none;margin-top:6px;text-align:center;">
+        <button type="button" class="admin-btn-sm featherless-load-more" style="width:100%;">Load more</button>
+      </div>
+    </div>
+  </div>`;
+
+  const searchInput = panel.querySelector('.featherless-search-input');
+  const spinnerHost = panel.querySelector('.featherless-spinner-host');
+  const enabledListEl = panel.querySelector('.featherless-enabled-list');
+  const enabledCountSpan = panel.querySelector('.featherless-enabled-count');
+  const resultsList = panel.querySelector('.featherless-results-list');
+  const paginationHost = panel.querySelector('.featherless-pagination');
+  const loadMoreBtn = panel.querySelector('.featherless-load-more');
+
+  const showSpinner = () => { if (spinnerHost) spinnerHost.style.display = 'inline-flex'; };
+  const hideSpinner = () => { if (spinnerHost) spinnerHost.style.display = 'none'; };
+
+  const formatTokens = (tokens) => {
+    if (!tokens || typeof tokens !== 'number') return '';
+    if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(tokens % 1000000 === 0 ? 0 : 1)}M`;
+    if (tokens >= 1000) return `${Math.round(tokens / 1024)}k`;
+    return String(tokens);
+  };
+
+  const updateHeaderCount = () => {
+    const countBadge = row ? row.querySelector(`[data-adm-ep-models-count="${epId}"]`) : null;
+    if (countBadge) {
+      countBadge.textContent = `${enabledSet.size} models enabled`;
+    }
+    if (enabledCountSpan) {
+      enabledCountSpan.textContent = String(enabledSet.size);
+    }
+    ep.pinned_models = Array.from(enabledSet);
+  };
+
+  const saveState = async () => {
+    try {
+      await fetch(`/api/model-endpoints/${epId}/models`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          pinned_models: Array.from(enabledSet),
+          model_tool_modes: toolModes,
+        }),
+      });
+      if (typeof _refreshAfterEndpointChange === 'function') {
+        _refreshAfterEndpointChange();
+      }
+    } catch (err) {
+      console.error('Failed to save Featherless model state', err);
+    }
+  };
+
+  const syncSearchCheckboxes = () => {
+    resultsList.querySelectorAll('input[data-featherless-search-id]').forEach(cb => {
+      const id = cb.dataset.featherlessSearchId;
+      cb.checked = enabledSet.has(id);
+    });
+  };
+
+  const renderEnabledList = () => {
+    if (!enabledListEl) return;
+    if (enabledSet.size === 0) {
+      enabledListEl.innerHTML = '<span style="opacity:0.5;font-size:11px;padding:4px 0;display:block;">No models enabled. Search below to add models.</span>';
+      return;
+    }
+    const sortedIds = Array.from(enabledSet).sort((a, b) => a.localeCompare(b));
+    enabledListEl.innerHTML = sortedIds.map(id => {
+      const displayName = id.split('/').pop() || id;
+      const mode = ['none', 'compact', 'full'].includes(String(toolModes[id] || '').toLowerCase())
+        ? String(toolModes[id]).toLowerCase()
+        : '';
+      return `<div title="${esc(id)}" data-ep-model-row data-model-id="${esc(id)}" class="adm-model-row">
+        <label class="adm-model-label">
+          <input type="checkbox" class="adm-cb-hidden" data-featherless-enabled-id="${esc(id)}" checked>
+          <span class="adm-check-dot" aria-hidden="true"></span>
+          <span class="adm-model-name">${esc(displayName)}</span>
+        </label>
+        <div class="adm-model-tools-col">
+          <span class="adm-model-tools-label" title="Select the tool schema profile for this model">Tools</span>
+          <select class="adm-model-tool-mode admin-tools-select" data-ep-model-id="${esc(id)}" data-original-tool-mode="${esc(toolModes[id] || '')}">
+            <option value="" ${mode === '' ? 'selected' : ''}>Auto</option>
+            <option value="full" ${mode === 'full' ? 'selected' : ''}>Regular tools</option>
+            <option value="compact" ${mode === 'compact' ? 'selected' : ''}>Odysseus compact</option>
+            <option value="none" ${mode === 'none' ? 'selected' : ''}>Tools off</option>
+          </select>
+        </div>
+      </div>`;
+    }).join('');
+
+    enabledListEl.querySelectorAll('input[data-featherless-enabled-id]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const id = cb.dataset.featherlessEnabledId;
+        if (!cb.checked) {
+          enabledSet.delete(id);
+          updateHeaderCount();
+          renderEnabledList();
+          syncSearchCheckboxes();
+          saveState();
+        }
+      });
+    });
+
+    enabledListEl.querySelectorAll('.adm-model-tool-mode').forEach(sel => {
+      sel.addEventListener('change', () => {
+        const id = sel.dataset.epModelId;
+        const val = String(sel.value || '').toLowerCase();
+        if (val) toolModes[id] = val;
+        else delete toolModes[id];
+        saveState();
+      });
+    });
+  };
+
+  renderEnabledList();
+
+  let currentQuery = '';
+  let currentPage = 1;
+  let searchAbortController = null;
+  let searchTimeout = null;
+  let isSearching = false;
+
+  const renderSearchResults = (items, append = false, hasMore = false) => {
+    if (!append) {
+      resultsList.innerHTML = '';
+    }
+    if (!items || items.length === 0) {
+      if (!append) {
+        resultsList.innerHTML = '<span style="opacity:0.5;font-size:11px;padding:4px 0;display:block;">No models found matching your search.</span>';
+      }
+      if (paginationHost) paginationHost.style.display = 'none';
+      return;
+    }
+
+    const itemsHtml = items.map(item => {
+      const isChecked = enabledSet.has(item.id);
+      const displayName = item.name || item.id;
+      const ctx = item.context_length ? `${formatTokens(item.context_length)} ctx` : '';
+      return `<div title="${esc(item.id)}" data-ep-model-row data-model-id="${esc(item.id)}" class="adm-model-row">
+        <label class="adm-model-label" style="width:100%;">
+          <input type="checkbox" class="adm-cb-hidden" data-featherless-search-id="${esc(item.id)}" ${isChecked ? 'checked' : ''}>
+          <span class="adm-check-dot" aria-hidden="true"></span>
+          <span class="adm-model-name" style="flex:1;">${esc(displayName)}</span>
+          ${ctx ? `<span class="admin-badge" style="margin-left:auto;font-size:9px;opacity:0.6;">${esc(ctx)}</span>` : ''}
+        </label>
+      </div>`;
+    }).join('');
+
+    if (append) {
+      resultsList.insertAdjacentHTML('beforeend', itemsHtml);
+    } else {
+      resultsList.innerHTML = itemsHtml;
+    }
+
+    resultsList.querySelectorAll('input[data-featherless-search-id]').forEach(cb => {
+      if (cb.dataset.listenerAttached) return;
+      cb.dataset.listenerAttached = '1';
+      cb.addEventListener('change', () => {
+        const id = cb.dataset.featherlessSearchId;
+        if (cb.checked) {
+          enabledSet.add(id);
+        } else {
+          enabledSet.delete(id);
+        }
+        updateHeaderCount();
+        renderEnabledList();
+        syncSearchCheckboxes();
+        saveState();
+      });
+    });
+
+    if (paginationHost) {
+      paginationHost.style.display = hasMore ? '' : 'none';
+    }
+  };
+
+  if (searchInput) {
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    });
+
+    searchInput.addEventListener('input', () => {
+      if (searchTimeout) clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(async () => {
+        const q = searchInput.value.trim();
+        if (q.length < 2) {
+          if (searchAbortController) searchAbortController.abort();
+          hideSpinner();
+          resultsList.innerHTML = '<span class="featherless-search-hint" style="opacity:0.5;font-size:11px;padding:4px 0;display:block;">Type at least 2 characters to search over 20,000+ models.</span>';
+          if (paginationHost) paginationHost.style.display = 'none';
+          return;
+        }
+
+        if (searchAbortController) {
+          searchAbortController.abort();
+        }
+        searchAbortController = new AbortController();
+        currentQuery = q;
+        currentPage = 1;
+        showSpinner();
+
+        try {
+          const res = await fetch(`/api/model-endpoints/${epId}/catalog-search?q=${encodeURIComponent(q)}&page=1&per_page=50`, {
+            credentials: 'same-origin',
+            signal: searchAbortController.signal,
+          });
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.detail || `HTTP ${res.status}`);
+          }
+          const data = await res.json();
+          renderSearchResults(data.items, false, data.has_more);
+        } catch (err) {
+          if (err.name === 'AbortError') return;
+          resultsList.innerHTML = `<span class="admin-error" style="font-size:11px;padding:4px 0;display:block;">Search failed: ${esc(err.message)}</span>`;
+          if (paginationHost) paginationHost.style.display = 'none';
+        } finally {
+          hideSpinner();
+        }
+      }, 250);
+    });
+  }
+
+  if (loadMoreBtn) {
+    loadMoreBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!currentQuery || isSearching) return;
+      isSearching = true;
+      loadMoreBtn.disabled = true;
+      loadMoreBtn.textContent = 'Loading...';
+      currentPage += 1;
+
+      try {
+        const res = await fetch(`/api/model-endpoints/${epId}/catalog-search?q=${encodeURIComponent(currentQuery)}&page=${currentPage}&per_page=50`, {
+          credentials: 'same-origin',
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        renderSearchResults(data.items, true, data.has_more);
+      } catch (err) {
+        if (typeof uiModule !== 'undefined' && uiModule?.showToast) {
+          uiModule.showToast(`Failed to load more models: ${err.message}`, 4000);
+        }
+      } finally {
+        isSearching = false;
+        loadMoreBtn.disabled = false;
+        loadMoreBtn.textContent = 'Load more';
+      }
+    });
+  }
+}
+
 // ChatGPT per-endpoint usage panel expanded state persistence.
 // Preserves only endpoint/auth identifiers, never tokens, secrets, or labels.
 const CHATGPT_USAGE_EXPANDED_KEY = 'odysseus-chatgpt-usage-expanded';
@@ -737,7 +1029,7 @@ async function loadEndpoints() {
       const statusBadge = ep.status === 'empty'
         ? '<span class="admin-badge">no models</span>'
         : ep.online
-          ? `<span class="admin-badge">${countText}</span>`
+          ? `<span class="admin-badge" data-adm-ep-models-count="${ep.id}">${countText}</span>`
           : '<span class="admin-badge admin-badge-off">offline</span>';
       const justAddedClass = (_recentlyAddedEpId && String(ep.id) === _recentlyAddedEpId) ? ' adm-ep-just-added' : '';
       const category = ep.category || (_isLocalEndpoint(ep.base_url) ? 'local' : 'api');
@@ -961,7 +1253,7 @@ async function loadEndpoints() {
         // Don't let interactions inside the expanded panel re-fire the
         // expand/collapse handler — the search box was getting closed
         // because clicking it bubbled up to here.
-        if (e.target.closest('.admin-btn-sm, .admin-btn-delete, .mcp-tools-list, .mcp-tools-header, .mcp-tools-search, input, select, label')) return;
+        if (e.target.closest('.admin-btn-sm, .admin-btn-delete, .mcp-tools-list, .mcp-tools-header, .mcp-tools-search, input, select, label, button, .featherless-panel, .featherless-search-bar, [data-ep-model-row]')) return;
         const epId = header.dataset.admEpHeader;
         const panel = row.querySelector(`[data-adm-ep-models-panel="${epId}"]`);
         if (!panel) return;
@@ -974,6 +1266,11 @@ async function loadEndpoints() {
         }
         if (!_modelsLoaded && isOpen) {
           _modelsLoaded = true;
+          const ep = data.find(x => String(x.id) === String(epId));
+          if (ep && isFeatherlessEndpoint(ep)) {
+            renderFeatherlessPanel(panel, ep, row);
+            return;
+          }
           // Our shared whirlpool spinner (consistent with the rest of the app).
           panel.innerHTML = '';
           let _modelsSpin = null;
@@ -1509,6 +1806,12 @@ function initEndpointForm() {
   }
 
   function _renderEndpointTestResult(msg, res, d) {
+    const isFeatherless = d && d.base_url && /featherless\.ai/i.test(d.base_url);
+    if (res.ok && isFeatherless && d.online) {
+      msg.textContent = 'Online — Featherless.ai catalog ready (search to enable models)';
+      msg.className = 'admin-success';
+      return;
+    }
     if (res.ok && d.status === 'empty') {
       msg.textContent = 'Online — no models found';
       msg.className = 'admin-success';
@@ -1630,9 +1933,13 @@ function initEndpointForm() {
         await loadEndpoints();
         await _selectAddedModelInChat(d);
         const goLink = ' <a href="#" data-go-added-models style="margin-left:6px;text-decoration:underline;color:inherit;font-weight:600;">Added Models →</a>';
+        const isFeatherless = d && d.base_url && /featherless\.ai/i.test(d.base_url);
         if (!d.online) {
           msg.innerHTML = 'Added (endpoint offline — will retry on next load)' + goLink;
           msg.className = 'admin-error';
+        } else if (isFeatherless) {
+          msg.innerHTML = 'Added Featherless.ai — search catalog to enable models' + goLink;
+          msg.className = 'admin-success';
         } else if (d.status === 'empty') {
           msg.innerHTML = 'Added — endpoint reachable, no models found' + goLink;
           msg.className = 'admin-success';
@@ -3809,7 +4116,7 @@ export function close() {
   settingsModule.close();
 }
 
-export { shouldDisplayEndpointBaseUrl, isFeatherlessEndpoint, endpointDetailHtml };
+export { shouldDisplayEndpointBaseUrl, isFeatherlessEndpoint, endpointDetailHtml, renderFeatherlessPanel };
 
 const adminModule = { open, close, _initData, get _initialized() { return initialized; } };
 export default adminModule;
