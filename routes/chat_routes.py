@@ -2135,6 +2135,14 @@ def setup_chat_routes(
         from src.model_profiles import supports_user_thinking_toggle
         if not supports_user_thinking_toggle(sess.model):
             thinking_mode = "off"
+        reasoning_effort = None
+        req_effort = getattr(chat_request, "reasoning_effort", None)
+        if req_effort:
+            reasoning_effort = str(req_effort).strip().lower()
+        elif session_mode.startswith("effort:"):
+            reasoning_effort = session_mode[7:].strip()
+        from src.chatgpt_subscription import validate_reasoning_effort
+        reasoning_effort = validate_reasoning_effort(sess.model, reasoning_effort)
         owner = effective_user(request)
         _reconcile_selected_route_from_request(request, sess, session, {
             "selected_model": sess.model,
@@ -2253,6 +2261,7 @@ def setup_chat_routes(
             prompt_type=preset_id,
             session_id=session,
             thinking_mode=thinking_mode,
+            reasoning_effort=reasoning_effort,
         )
         actual_index = _candidate_index(foreground_candidates, actual_candidate)
         apply_compaction_state(
@@ -2351,6 +2360,8 @@ def setup_chat_routes(
         compare_mode = str(form_data.get("compare_mode", "")).lower() == "true"
         thinking_mode = str(form_data.get("thinking_mode") or "").strip().lower()
         thinking_mode = thinking_mode if thinking_mode in {"on", "off"} else None
+        raw_effort = str(form_data.get("reasoning_effort") or (body or {}).get("reasoning_effort") or "").strip().lower()
+        reasoning_effort = raw_effort if raw_effort else None
         temperature_override = None
         raw_temperature = form_data.get("temperature")
         if raw_temperature not in (None, ""):
@@ -2620,6 +2631,10 @@ def setup_chat_routes(
             from src.model_profiles import supports_user_thinking_toggle
             if not supports_user_thinking_toggle(sess.model):
                 thinking_mode = "off"
+            if reasoning_effort is None and session_mode.startswith("effort:"):
+                reasoning_effort = session_mode[7:].strip()
+            from src.chatgpt_subscription import validate_reasoning_effort
+            reasoning_effort = validate_reasoning_effort(sess.model, reasoning_effort)
             if getattr(sess, "temperature_override", None) is not None:
                 temperature_override = float(sess.temperature_override)
             # A resumed session may omit workspace/cwd from the new request.
@@ -3925,6 +3940,7 @@ def setup_chat_routes(
                         candidate_request_factory=_chat_request_factory,
                         candidate_route_descriptors=_foreground_route_descriptors,
                         thinking_mode=thinking_mode,
+                        reasoning_effort=reasoning_effort,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
@@ -4368,6 +4384,7 @@ def setup_chat_routes(
                         exact_approval=exact_tool_approval,
                         client_runtime_context=client_runtime_context,
                         thinking_mode=thinking_mode,
+                        reasoning_effort=reasoning_effort,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:

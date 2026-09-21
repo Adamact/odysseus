@@ -1024,16 +1024,49 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             body = await request.json()
         except KeyError:
             raise HTTPException(404, "Session not found")
-        mode = str(body.get("thinking_mode") or "").lower()
-        if mode not in {"", "on", "off"}:
-            raise HTTPException(400, "Invalid thinking mode")
-        from src.model_profiles import supports_user_thinking_toggle
-        if not supports_user_thinking_toggle(session.model):
-            mode = "off"
-        temperature = body.get("temperature_override")
-        temperature = None if temperature in (None, "") else max(0.0, min(2.0, float(temperature)))
-        max_tokens = body.get("max_tokens_override")
-        max_tokens = None if max_tokens in (None, "", 0) else max(256, min(32768, int(max_tokens)))
+        mode = getattr(session, "thinking_mode", "off") or "off"
+        raw_effort = body.get("reasoning_effort")
+        if raw_effort is not None:
+            clean_effort = str(raw_effort).strip().lower()
+            if clean_effort in {"", "default"}:
+                mode = "off"
+            else:
+                from src.chatgpt_subscription import get_chatgpt_model_metadata
+                meta = get_chatgpt_model_metadata(session.model)
+                if meta and clean_effort in [lvl.lower() for lvl in meta.get("supported_reasoning_levels", [])]:
+                    mode = f"effort:{clean_effort}"
+                else:
+                    mode = "off"
+        elif "thinking_mode" in body:
+            raw_mode = str(body.get("thinking_mode") or "").strip().lower()
+            if raw_mode.startswith("effort:"):
+                clean_effort = raw_mode[7:].strip()
+                from src.chatgpt_subscription import get_chatgpt_model_metadata
+                meta = get_chatgpt_model_metadata(session.model)
+                if meta and clean_effort in [lvl.lower() for lvl in meta.get("supported_reasoning_levels", [])]:
+                    mode = f"effort:{clean_effort}"
+                else:
+                    mode = "off"
+            elif raw_mode in {"", "on", "off"}:
+                mode = raw_mode
+                from src.model_profiles import supports_user_thinking_toggle
+                if not supports_user_thinking_toggle(session.model):
+                    mode = "off"
+            else:
+                raise HTTPException(400, "Invalid thinking mode")
+
+        if "temperature_override" in body:
+            temperature = body.get("temperature_override")
+            temperature = None if temperature in (None, "") else max(0.0, min(2.0, float(temperature)))
+        else:
+            temperature = getattr(session, "temperature_override", None)
+
+        if "max_tokens_override" in body:
+            max_tokens = body.get("max_tokens_override")
+            max_tokens = None if max_tokens in (None, "", 0) else max(256, min(32768, int(max_tokens)))
+        else:
+            max_tokens = getattr(session, "max_tokens_override", None)
+
         db = SessionLocal()
         try:
             row = db.query(DbSession).filter(DbSession.id == session_id).first()
@@ -1042,7 +1075,14 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             row.thinking_mode, row.temperature_override, row.max_tokens_override = mode, temperature, max_tokens
             db.commit()
             session.thinking_mode, session.temperature_override, session.max_tokens_override = mode, temperature, max_tokens
-            return {"status": "success", "thinking_mode": mode, "temperature_override": temperature, "max_tokens_override": max_tokens}
+            resp_effort = mode[7:] if mode.startswith("effort:") else ("default" if mode in {"", "off"} else None)
+            return {
+                "status": "success",
+                "thinking_mode": mode,
+                "reasoning_effort": resp_effort,
+                "temperature_override": temperature,
+                "max_tokens_override": max_tokens,
+            }
         finally:
             db.close()
 

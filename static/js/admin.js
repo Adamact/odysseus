@@ -599,6 +599,50 @@ function _ensureEndpointBulkControls() {
   _updateEndpointBulkControls();
 }
 
+// ChatGPT per-endpoint usage panel expanded state persistence.
+// Preserves only endpoint/auth identifiers, never tokens, secrets, or labels.
+const CHATGPT_USAGE_EXPANDED_KEY = 'odysseus-chatgpt-usage-expanded';
+
+function _loadExpandedUsageEndpoints() {
+  try {
+    const raw = localStorage.getItem(CHATGPT_USAGE_EXPANDED_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return new Set(parsed.filter(x => typeof x === 'string' && x.length > 0));
+    }
+  } catch (_) {}
+  return new Set();
+}
+
+function _saveExpandedUsageEndpoints(set) {
+  try {
+    const arr = Array.from(set).filter(x => typeof x === 'string' && x.length > 0);
+    localStorage.setItem(CHATGPT_USAGE_EXPANDED_KEY, JSON.stringify(arr));
+  } catch (_) {}
+}
+
+function _isChatgptUsageExpanded(endpointId, authId) {
+  const set = _loadExpandedUsageEndpoints();
+  if (endpointId != null && set.has(String(endpointId))) return true;
+  if (authId != null && set.has(String(authId))) return true;
+  return false;
+}
+
+function _setChatgptUsageExpanded(endpointId, authId, expanded) {
+  const set = _loadExpandedUsageEndpoints();
+  const epKey = endpointId != null ? String(endpointId) : null;
+  const authKey = authId != null ? String(authId) : null;
+  if (expanded) {
+    if (epKey) set.add(epKey);
+    if (authKey) set.add(authKey);
+  } else {
+    if (epKey) set.delete(epKey);
+    if (authKey) set.delete(authKey);
+  }
+  _saveExpandedUsageEndpoints(set);
+}
+
 async function loadEndpoints() {
   const listLocal = el('adm-epList-local');
   const listApi = el('adm-epList-api');
@@ -659,6 +703,7 @@ async function loadEndpoints() {
         ? (ep.api_key_fingerprint ? ` (key ${esc(ep.api_key_fingerprint)})` : ' (key set)')
         : '';
       const isChatgptAccount = isChatgptSubscriptionEndpoint(ep);
+      const isUsageExpanded = isChatgptAccount && _isChatgptUsageExpanded(ep.id, ep.provider_auth_id);
       return `
         <div class="admin-user-row${ep.is_enabled ? '' : ' admin-ep-disabled'}${justAddedClass}" data-adm-ep-id="${ep.id}">
           <div style="display:flex;align-items:center;justify-content:space-between;${hasModels ? 'cursor:pointer;' : ''}padding:4px 0;" data-adm-ep-header="${ep.id}">
@@ -682,7 +727,14 @@ async function loadEndpoints() {
                 ${hasModels ? '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>' : ''}`}
             </div>
           </div>
-          ${isChatgptAccount ? `<div class="adm-chatgpt-usage-host" data-adm-chatgpt-usage-host="${esc(ep.provider_auth_id)}" data-chatgpt-endpoint-id="${esc(ep.id)}"><div class="adm-chatgpt-usage adm-chatgpt-usage-loading"><div class="adm-chatgpt-usage-status">Loading usage...</div></div></div>` : ''}
+          ${isChatgptAccount ? `
+          <div class="adm-chatgpt-controls">
+            <button type="button" class="admin-btn-sm adm-chatgpt-usage-toggle" data-adm-chatgpt-usage-toggle="${esc(ep.provider_auth_id)}" data-chatgpt-endpoint-id="${esc(ep.id)}" aria-expanded="${isUsageExpanded ? 'true' : 'false'}" aria-controls="adm-chatgpt-usage-${esc(ep.id)}">
+              Usage <span class="adm-chatgpt-usage-chevron" aria-hidden="true">${isUsageExpanded ? '▴' : '▾'}</span>
+            </button>
+            <button type="button" class="admin-btn-sm" data-adm-chatgpt-reconnect="${esc(ep.provider_auth_id)}" data-chatgpt-endpoint-id="${esc(ep.id)}">Reconnect</button>
+          </div>
+          <div id="adm-chatgpt-usage-${esc(ep.id)}" class="adm-chatgpt-usage-host${isUsageExpanded ? '' : ' hidden'}" data-adm-chatgpt-usage-host="${esc(ep.provider_auth_id)}" data-chatgpt-endpoint-id="${esc(ep.id)}"${isUsageExpanded ? '' : ' style="display:none;"'}><div class="adm-chatgpt-usage adm-chatgpt-usage-loading"><div class="adm-chatgpt-usage-status">Loading usage...</div></div></div>` : ''}
           <div class="admin-ep-detail">${esc(ep.base_url)}${category === 'local' ? `<button type="button" class="admin-ep-copy-btn" data-adm-copy-url="${esc(ep.base_url)}" title="Copy URL" aria-label="Copy URL" style="background:none;border:none;padding:0 2px;margin-left:6px;cursor:pointer;color:inherit;opacity:0.45;vertical-align:-2px;line-height:1;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>` : ''}${keyLabel}</div>
           ${hasModels ? `<div class="mcp-tools-panel hidden" data-adm-ep-models-panel="${ep.id}"></div>` : ''}
         </div>`;
@@ -727,7 +779,61 @@ async function loadEndpoints() {
     // auth id, so account A's refresh can never repaint account B.
     queryAll('[data-adm-chatgpt-usage-host]').forEach(host => {
       host.addEventListener('click', (e) => e.stopPropagation());
-      _loadChatgptUsage(host, host.dataset.admChatgptUsageHost, host.dataset.chatgptEndpointId);
+      const epId = host.dataset.chatgptEndpointId;
+      const authId = host.dataset.admChatgptUsageHost;
+      if (_isChatgptUsageExpanded(epId, authId)) {
+        _loadChatgptUsage(host, host.dataset.admChatgptUsageHost, host.dataset.chatgptEndpointId);
+      }
+    });
+    queryAll('[data-adm-chatgpt-usage-toggle]').forEach(toggleBtn => {
+      toggleBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const epId = toggleBtn.dataset.chatgptEndpointId;
+        const authId = toggleBtn.dataset.admChatgptUsageToggle;
+        const row = toggleBtn.closest('.admin-user-row');
+        const host = row ? row.querySelector('[data-adm-chatgpt-usage-host]') : null;
+        if (!host) return;
+        const isHidden = host.classList.contains('hidden') || host.style.display === 'none';
+        if (isHidden) {
+          host.classList.remove('hidden');
+          host.style.display = '';
+          toggleBtn.setAttribute('aria-expanded', 'true');
+          const chevron = toggleBtn.querySelector('.adm-chatgpt-usage-chevron');
+          if (chevron) chevron.textContent = '▴';
+          _setChatgptUsageExpanded(epId, authId, true);
+          if (!host.dataset.usageLoaded) {
+            _loadChatgptUsage(host, authId, epId);
+          }
+        } else {
+          host.classList.add('hidden');
+          host.style.display = 'none';
+          toggleBtn.setAttribute('aria-expanded', 'false');
+          const chevron = toggleBtn.querySelector('.adm-chatgpt-usage-chevron');
+          if (chevron) chevron.textContent = '▾';
+          _setChatgptUsageExpanded(epId, authId, false);
+        }
+      });
+    });
+    queryAll('.adm-chatgpt-controls [data-adm-chatgpt-reconnect]').forEach(reconnectBtn => {
+      reconnectBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const epId = reconnectBtn.dataset.chatgptEndpointId;
+        const authId = reconnectBtn.dataset.admChatgptReconnect;
+        const row = reconnectBtn.closest('.admin-user-row');
+        const host = row ? row.querySelector('[data-adm-chatgpt-usage-host]') : null;
+        if (host) {
+          host.classList.remove('hidden');
+          host.style.display = '';
+          const toggleBtn = row ? row.querySelector('[data-adm-chatgpt-usage-toggle]') : null;
+          if (toggleBtn) {
+            toggleBtn.setAttribute('aria-expanded', 'true');
+            const chevron = toggleBtn.querySelector('.adm-chatgpt-usage-chevron');
+            if (chevron) chevron.textContent = '▴';
+          }
+          _setChatgptUsageExpanded(epId, authId, true);
+          await _reconnectChatgptAccount(host, authId, epId);
+        }
+      });
     });
     queryAll('[data-adm-toggle-ep]').forEach(btn => {
       btn.addEventListener('click', async (e) => {
@@ -1069,7 +1175,9 @@ async function _loadChatgptUsage(container, authId, epId, { refresh = false } = 
   if (!payload || typeof payload !== 'object') payload = { available: false, reason: 'malformed', account: { auth_id: authId } };
   const vm = buildChatgptUsageViewModel(payload);
   vm.authId = authId;
-  container.innerHTML = renderChatgptUsageCardHtml(vm, { esc, endpointId: epId });
+  if (!container.dataset) container.dataset = {};
+  container.dataset.usageLoaded = '1';
+  container.innerHTML = renderChatgptUsageCardHtml(vm, { esc, endpointId: epId, includeReconnect: false });
   const refreshBtn = container.querySelector('[data-adm-chatgpt-usage-refresh]');
   if (refreshBtn) refreshBtn.addEventListener('click', async (e) => {
     e.stopPropagation();

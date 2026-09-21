@@ -265,3 +265,310 @@ def test_refresh_and_reconnect_handlers_target_only_the_clicked_account():
     ]
     assert out["operations"] == [{"reconnect_auth_id": "a", "reconnect_endpoint_id": "ep-a"}]
     assert out["bUnchanged"] is True
+
+
+def test_admin_renders_chatgpt_usage_collapsible_and_styled():
+    admin_source = (_REPO / "static" / "js" / "admin.js").read_text(encoding="utf-8")
+    style_source = (_REPO / "static" / "style.css").read_text(encoding="utf-8")
+    load_block = admin_source[admin_source.index("async function loadEndpoints()"):admin_source.index("function initEndpointForm()")]
+    assert "adm-chatgpt-controls" in load_block
+    assert "adm-chatgpt-usage-toggle" in load_block
+    assert 'aria-expanded="${isUsageExpanded ? \'true\' : \'false\'}"' in load_block
+    assert 'aria-controls="adm-chatgpt-usage-${esc(ep.id)}"' in load_block
+    assert "adm-chatgpt-usage-chevron" in load_block
+    assert 'class="adm-chatgpt-usage-host${isUsageExpanded ? \'\' : \' hidden\'}"' in load_block
+    assert 'data-adm-chatgpt-usage-host="${esc(ep.provider_auth_id)}" data-chatgpt-endpoint-id="${esc(ep.id)}"' in load_block
+    assert 'data-adm-chatgpt-reconnect="${esc(ep.provider_auth_id)}" data-chatgpt-endpoint-id="${esc(ep.id)}"' in load_block
+    assert ".adm-chatgpt-controls" in style_source
+    assert ".adm-chatgpt-usage-chevron" in style_source
+
+
+def test_chatgpt_usage_collapsible_behavior():
+    out = _run_node(f"""
+      import fs from 'node:fs';
+      import {{ buildUsageViewModel, renderUsageCardHtml }} from '{_MODULE.as_posix()}';
+      const source = fs.readFileSync('{(_MODULE.parent / 'admin.js').as_posix()}', 'utf8');
+
+      // Extract localStorage helpers
+      const helperStart = source.indexOf('const CHATGPT_USAGE_EXPANDED_KEY');
+      const helperEnd = source.indexOf('async function loadEndpoints()');
+      const helpersCode = source.slice(helperStart, helperEnd);
+
+      // Extract _loadChatgptUsage and _reconnectChatgptAccount
+      const handlerStart = source.indexOf('const _chatgptReconnectInflight');
+      const handlerEnd = source.indexOf('function initEndpointForm()', handlerStart);
+      const handlersCode = source.slice(handlerStart, handlerEnd);
+
+      // Simulated localStorage
+      const storage = {{}};
+      const localStorage = {{
+        getItem: k => storage[k] || null,
+        setItem: (k, v) => {{ storage[k] = String(v); }},
+        removeItem: k => {{ delete storage[k]; }},
+      }};
+
+      const helpers = new Function('localStorage', helpersCode + '; return {{ _loadExpandedUsageEndpoints, _saveExpandedUsageEndpoints, _isChatgptUsageExpanded, _setChatgptUsageExpanded }};')(localStorage);
+
+      // Verify localStorage persistence format: IDs only, no tokens/secrets
+      assertDefaultCollapsed: {{
+        if (helpers._isChatgptUsageExpanded('ep-a', 'auth-a') !== false) throw new Error('should be collapsed by default');
+      }}
+      helpers._setChatgptUsageExpanded('ep-a', 'auth-a', true);
+      const stored = JSON.parse(storage['odysseus-chatgpt-usage-expanded']);
+      if (!stored.includes('ep-a') || !stored.includes('auth-a')) throw new Error('storage should have ep and auth ids');
+      if (storage['odysseus-chatgpt-usage-expanded'].includes('Bearer') || storage['odysseus-chatgpt-usage-expanded'].includes('secret')) throw new Error('storage has credentials');
+      if (helpers._isChatgptUsageExpanded('ep-a', 'auth-a') !== true) throw new Error('should be expanded');
+      if (helpers._isChatgptUsageExpanded('ep-b', 'auth-b') !== false) throw new Error('b should remain collapsed');
+      helpers._setChatgptUsageExpanded('ep-a', 'auth-a', false);
+      if (helpers._isChatgptUsageExpanded('ep-a', 'auth-a') !== false) throw new Error('should be collapsed after removal');
+
+      // Now verify toggle and lazy loading interactions
+      const urls = [], operations = [];
+      const makeEl = (tag = 'div') => ({{
+        tagName: tag,
+        classList: new Set(),
+        style: {{}},
+        dataset: {{}},
+        attributes: {{}},
+        setAttribute(k, v) {{ this.attributes[k] = String(v); }},
+        getAttribute(k) {{ return this.attributes[k]; }},
+        addEventListener(_, fn) {{ this.click = fn; }},
+        querySelector() {{ return null; }},
+      }});
+
+      function createAccountRow(id) {{
+        const row = makeEl('div');
+        row.classList.add('admin-user-row');
+
+        const chevron = makeEl('span');
+        chevron.textContent = '▾';
+
+        const toggleBtn = makeEl('button');
+        toggleBtn.dataset = {{ admChatgptUsageToggle: id, chatgptEndpointId: 'ep-' + id }};
+        toggleBtn.setAttribute('aria-expanded', 'false');
+        toggleBtn.querySelector = sel => sel.includes('chevron') ? chevron : null;
+        toggleBtn.closest = sel => sel.includes('admin-user-row') ? row : null;
+
+        const reconnectBtn = makeEl('button');
+        reconnectBtn.dataset = {{ admChatgptReconnect: id, chatgptEndpointId: 'ep-' + id }};
+        reconnectBtn.closest = sel => sel.includes('admin-user-row') ? row : null;
+
+        const host = makeEl('div');
+        host.classList.add('adm-chatgpt-usage-host', 'hidden');
+        host.style.display = 'none';
+        host.dataset = {{ admChatgptUsageHost: id, chatgptEndpointId: 'ep-' + id }};
+
+        row.querySelector = sel => {{
+          if (sel.includes('adm-chatgpt-usage-host')) return host;
+          if (sel.includes('adm-chatgpt-usage-toggle')) return toggleBtn;
+          if (sel.includes('adm-chatgpt-reconnect')) return reconnectBtn;
+          return null;
+        }};
+
+        return {{ row, toggleBtn, reconnectBtn, host, chevron }};
+      }}
+
+      const handlers = new Function('fetch', 'buildChatgptUsageViewModel', 'renderChatgptUsageCardHtml',
+        'esc', 'runProviderDeviceFlow', 'document', 'loadEndpoints', 'setTimeout',
+        handlersCode + '; return {{ load: _loadChatgptUsage, reconnect: _reconnectChatgptAccount }};'
+      )(
+        async url => {{ urls.push(url); return {{ ok: true, json: async () => ({{available: true, usage: {{limits: []}}}}) }}; }},
+        buildUsageViewModel, renderUsageCardHtml, x => String(x),
+        async (provider, options) => {{ operations.push(Object.fromEntries(options.formData)); return {{ status: 'authorized' }}; }},
+        {{ createElement: () => ({{ replaceWith() {{}} }}) }}, async () => {{}}, () => {{}}
+      );
+
+      const a = createAccountRow('auth-a');
+      const b = createAccountRow('auth-b');
+
+      // Wire toggle listener like in admin.js
+      function wireToggle(rowObj) {{
+        rowObj.toggleBtn.addEventListener('click', async () => {{
+          const epId = rowObj.toggleBtn.dataset.chatgptEndpointId;
+          const authId = rowObj.toggleBtn.dataset.admChatgptUsageToggle;
+          const host = rowObj.host;
+          const isHidden = host.classList.has('hidden') || host.style.display === 'none';
+          if (isHidden) {{
+            host.classList.delete('hidden');
+            host.style.display = '';
+            rowObj.toggleBtn.setAttribute('aria-expanded', 'true');
+            rowObj.chevron.textContent = '▴';
+            helpers._setChatgptUsageExpanded(epId, authId, true);
+            if (!host.dataset.usageLoaded) {{
+              await handlers.load(host, authId, epId);
+            }}
+          }} else {{
+            host.classList.add('hidden');
+            host.style.display = 'none';
+            rowObj.toggleBtn.setAttribute('aria-expanded', 'false');
+            rowObj.chevron.textContent = '▾';
+            helpers._setChatgptUsageExpanded(epId, authId, false);
+          }}
+        }});
+      }}
+      wireToggle(a);
+      wireToggle(b);
+
+      // Step 1: Initial state - 0 fetches before expand
+      const initialFetches = urls.length;
+
+      // Step 2: Expand A -> fetches A only, updates aria-expanded and chevron
+      await a.toggleBtn.click();
+      const aExpandedFetches = urls.slice();
+      const bStateAfterAExpand = {{
+        hidden: b.host.style.display === 'none',
+        ariaExpanded: b.toggleBtn.getAttribute('aria-expanded'),
+        chevron: b.chevron.textContent,
+      }};
+
+      // Step 3: Collapse A -> 0 extra fetches, updates aria-expanded and chevron
+      await a.toggleBtn.click();
+      const aCollapsedFetches = urls.slice();
+
+      // Step 4: Re-open A -> 0 extra fetches (cached DOM reused)
+      await a.toggleBtn.click();
+      const aReopenedFetches = urls.slice();
+
+      // Step 5: Refresh A -> forces fetch with ?refresh=1
+      await handlers.load(a.host, 'auth-a', 'ep-auth-a', {{ refresh: true }});
+      const refreshFetches = urls.slice();
+
+      console.log(JSON.stringify({{
+        initialFetches,
+        aExpandedFetches,
+        bStateAfterAExpand,
+        aCollapsedFetches,
+        aReopenedFetches,
+        refreshFetches,
+        aFinalAriaExpanded: a.toggleBtn.getAttribute('aria-expanded'),
+        aFinalChevron: a.chevron.textContent,
+      }}));
+    """)
+
+    assert out["initialFetches"] == 0
+    assert out["aExpandedFetches"] == ["/api/chatgpt-subscription/accounts/auth-a/usage"]
+    assert out["bStateAfterAExpand"] == {"hidden": True, "ariaExpanded": "false", "chevron": "▾"}
+    assert len(out["aCollapsedFetches"]) == 1  # No extra fetch on collapse
+    assert len(out["aReopenedFetches"]) == 1   # No extra fetch on reopen (cached DOM reused)
+    assert out["refreshFetches"] == [
+        "/api/chatgpt-subscription/accounts/auth-a/usage",
+        "/api/chatgpt-subscription/accounts/auth-a/usage?refresh=1",
+    ]
+    assert out["aFinalAriaExpanded"] == "true"
+    assert out["aFinalChevron"] == "▴"
+
+
+def test_chatgpt_usage_collapsible_reconnect_and_failure():
+    out = _run_node(f"""
+      import fs from 'node:fs';
+      import {{ buildUsageViewModel, renderUsageCardHtml }} from '{_MODULE.as_posix()}';
+      const source = fs.readFileSync('{(_MODULE.parent / 'admin.js').as_posix()}', 'utf8');
+
+      const handlerStart = source.indexOf('const _chatgptReconnectInflight');
+      const handlerEnd = source.indexOf('function initEndpointForm()', handlerStart);
+      const handlersCode = source.slice(handlerStart, handlerEnd);
+
+      const urls = [], operations = [];
+      const makeEl = (tag = 'div') => ({{
+        tagName: tag,
+        classList: new Set(),
+        style: {{}},
+        dataset: {{}},
+        attributes: {{}},
+        appendChild() {{}},
+        setAttribute(k, v) {{ this.attributes[k] = String(v); }},
+        getAttribute(k) {{ return this.attributes[k]; }},
+        addEventListener(_, fn) {{ this.click = fn; }},
+        querySelector() {{ return null; }},
+      }});
+
+      function createAccountRow(id) {{
+        const row = makeEl('div');
+        const chevron = makeEl('span');
+        chevron.textContent = '▾';
+
+        const toggleBtn = makeEl('button');
+        toggleBtn.dataset = {{ admChatgptUsageToggle: id, chatgptEndpointId: 'ep-' + id }};
+        toggleBtn.setAttribute('aria-expanded', 'false');
+        toggleBtn.querySelector = sel => sel.includes('chevron') ? chevron : null;
+        toggleBtn.closest = sel => sel.includes('admin-user-row') ? row : null;
+
+        const reconnectBtn = makeEl('button');
+        reconnectBtn.dataset = {{ admChatgptReconnect: id, chatgptEndpointId: 'ep-' + id }};
+        reconnectBtn.closest = sel => sel.includes('admin-user-row') ? row : null;
+
+        const host = makeEl('div');
+        host.classList.add('adm-chatgpt-usage-host', 'hidden');
+        host.style.display = 'none';
+        host.dataset = {{ admChatgptUsageHost: id, chatgptEndpointId: 'ep-' + id }};
+
+        row.querySelector = sel => {{
+          if (sel.includes('adm-chatgpt-usage-host')) return host;
+          if (sel.includes('adm-chatgpt-usage-toggle')) return toggleBtn;
+          if (sel.includes('adm-chatgpt-reconnect')) return reconnectBtn;
+          return null;
+        }};
+
+        return {{ row, toggleBtn, reconnectBtn, host, chevron }};
+      }}
+
+      let shouldFail = false;
+      const handlers = new Function('fetch', 'buildChatgptUsageViewModel', 'renderChatgptUsageCardHtml',
+        'esc', 'runProviderDeviceFlow', 'document', 'loadEndpoints', 'setTimeout',
+        handlersCode + '; return {{ load: _loadChatgptUsage, reconnect: _reconnectChatgptAccount }};'
+      )(
+        async url => {{
+          urls.push(url);
+          if (shouldFail) throw new Error('network down');
+          return {{ ok: true, json: async () => ({{ available: true, usage: {{ limits: [] }} }}) }};
+        }},
+        buildUsageViewModel, renderUsageCardHtml, x => String(x),
+        async (provider, options) => {{ operations.push(Object.fromEntries(options.formData)); return {{ status: 'authorized' }}; }},
+        {{ createElement: () => ({{ replaceWith() {{}} }}) }}, async () => {{}}, () => {{}}
+      );
+
+      const b = createAccountRow('auth-b');
+
+      // Wire reconnect listener like in admin.js
+      b.reconnectBtn.addEventListener('click', async () => {{
+        const epId = b.reconnectBtn.dataset.chatgptEndpointId;
+        const authId = b.reconnectBtn.dataset.admChatgptReconnect;
+        const host = b.host;
+        host.classList.delete('hidden');
+        host.style.display = '';
+        b.toggleBtn.setAttribute('aria-expanded', 'true');
+        b.chevron.textContent = '▴';
+        await handlers.reconnect(host, authId, epId);
+      }});
+
+      // Reconnect when collapsed -> unhides host, updates aria-expanded, runs reconnect for B
+      await b.reconnectBtn.click();
+      const bReconnectState = {{
+        hostHidden: b.host.style.display === 'none',
+        ariaExpanded: b.toggleBtn.getAttribute('aria-expanded'),
+        chevron: b.chevron.textContent,
+        operations: operations.slice(),
+      }};
+
+      // Failure state test
+      shouldFail = true;
+      const failHost = makeEl('div');
+      failHost.dataset = {{ admChatgptUsageHost: 'auth-f', chatgptEndpointId: 'ep-f' }};
+      await handlers.load(failHost, 'auth-f', 'ep-f');
+      const failHtml = failHost.innerHTML;
+
+      console.log(JSON.stringify({{
+        bReconnectState,
+        failHasUnavailable: failHtml.includes('adm-chatgpt-usage-unavailable'),
+        failHasRefresh: failHtml.includes('data-adm-chatgpt-usage-refresh'),
+        failNoDuplicateReconnect: !failHtml.includes('data-adm-chatgpt-reconnect'),
+      }}));
+    """)
+
+    assert out["bReconnectState"]["hostHidden"] is False
+    assert out["bReconnectState"]["ariaExpanded"] == "true"
+    assert out["bReconnectState"]["chevron"] == "▴"
+    assert out["bReconnectState"]["operations"] == [{"reconnect_auth_id": "auth-b", "reconnect_endpoint_id": "ep-auth-b"}]
+    assert out["failHasUnavailable"] is True
+    assert out["failHasRefresh"] is True
+    assert out["failNoDuplicateReconnect"] is True

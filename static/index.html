@@ -1195,6 +1195,14 @@
           </button>
         </div>
         <div class="chat-input-right">
+          <!-- Reasoning effort dropdown for models supporting reasoning levels -->
+          <div class="reasoning-effort-wrap" id="reasoning-effort-wrap" style="display:none;">
+            <button type="button" class="reasoning-effort-btn" id="reasoning-effort-btn" title="Reasoning effort" aria-haspopup="listbox" aria-expanded="false">
+              <span class="reasoning-effort-prefix">Effort: </span><span class="reasoning-effort-current" id="reasoning-effort-current">Default</span>
+              <svg class="reasoning-effort-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div class="reasoning-effort-menu hidden" id="reasoning-effort-menu" role="listbox"></div>
+          </div>
           <!-- Agent / Chat mode toggle -->
           <div class="mode-toggle">
             <button type="button" class="mode-toggle-btn active" id="mode-agent-btn" aria-pressed="true">Agent</button>

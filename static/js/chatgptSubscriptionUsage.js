@@ -192,10 +192,11 @@ export function renderUsageCardHtml(viewModel, options = {}) {
   const vm = viewModel || {};
   const authId = esc(vm.authId || '');
   const endpointId = esc(options.endpointId || '');
+  const includeReconnect = options.includeReconnect !== false;
   const buttons =
     `<div class="adm-chatgpt-usage-actions">` +
       `<button type="button" class="admin-btn-sm" data-adm-chatgpt-usage-refresh="${authId}" data-chatgpt-endpoint-id="${endpointId}">Refresh usage</button>` +
-      `<button type="button" class="admin-btn-sm" data-adm-chatgpt-reconnect="${authId}" data-chatgpt-endpoint-id="${endpointId}">Reconnect</button>` +
+      (includeReconnect ? `<button type="button" class="admin-btn-sm" data-adm-chatgpt-reconnect="${authId}" data-chatgpt-endpoint-id="${endpointId}">Reconnect</button>` : '') +
     `</div>`;
   if (!vm.available) {
     return (

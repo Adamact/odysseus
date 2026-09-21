@@ -705,6 +705,12 @@ def setup_session_routes(
                 session.headers = build_headers(endpoint_api_key, endpoint_base_url)
             else:
                 session.headers = {}
+            if getattr(session, "thinking_mode", "").startswith("effort:"):
+                current_effort = session.thinking_mode[7:]
+                from src.chatgpt_subscription import get_chatgpt_model_metadata
+                meta = get_chatgpt_model_metadata(model)
+                if not meta or current_effort not in [lvl.lower() for lvl in meta.get("supported_reasoning_levels", [])]:
+                    session.thinking_mode = "off"
             # Persist to DB
             db = SessionLocal()
             try:
@@ -714,6 +720,7 @@ def setup_session_routes(
                     db_session.endpoint_url = endpoint_url
                     db_session.endpoint_id = session.endpoint_id
                     db_session.headers = session.headers or {}
+                    db_session.thinking_mode = getattr(session, "thinking_mode", "off") or "off"
                     db_session.updated_at = utcnow_naive()
                     db.commit()
             finally:

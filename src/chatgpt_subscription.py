@@ -147,6 +147,99 @@ def labels_conflict(a: str, b: str) -> bool:
     return bool(a) and bool(b) and a.casefold() == b.casefold()
 
 
+KNOWN_CODEX_REASONING_LEVELS = [
+    "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "persistent"
+]
+
+STANDARD_CODEX_REASONING_LEVELS = [
+    "low", "medium", "high", "xhigh", "max", "ultra"
+]
+
+DEFAULT_CHATGPT_MODEL_CATALOG: dict[str, dict[str, Any]] = {
+    "gpt-6-astra": {
+        "default_reasoning_level": "low",
+        "supported_reasoning_levels": ["low", "medium", "high", "xhigh", "max", "ultra"],
+    },
+    "gpt-5.6-sol": {
+        "default_reasoning_level": "low",
+        "supported_reasoning_levels": ["low", "medium", "high", "xhigh", "max", "ultra"],
+    },
+    "gpt-5.6-terra": {
+        "default_reasoning_level": "medium",
+        "supported_reasoning_levels": ["low", "medium", "high", "xhigh", "max", "ultra"],
+    },
+    "gpt-5.6-luna": {
+        "default_reasoning_level": "medium",
+        "supported_reasoning_levels": ["low", "medium", "high", "xhigh", "max", "ultra"],
+    },
+    "gpt-5.5": {
+        "default_reasoning_level": "medium",
+        "supported_reasoning_levels": ["low", "medium", "high", "xhigh", "max", "ultra"],
+    },
+    "gpt-5.4": {
+        "default_reasoning_level": "medium",
+        "supported_reasoning_levels": ["low", "medium", "high", "xhigh", "max", "ultra"],
+    },
+    "codex-auto-review": {
+        "default_reasoning_level": "medium",
+        "supported_reasoning_levels": ["low", "medium", "high", "xhigh", "max", "ultra"],
+    },
+}
+
+# Runtime cache of model metadata (updated dynamically whenever models are fetched)
+CHATGPT_MODEL_CATALOG_CACHE: dict[str, dict[str, Any]] = dict(DEFAULT_CHATGPT_MODEL_CATALOG)
+
+
+def _extract_reasoning_levels(item: dict) -> list[str]:
+    raw_levels = item.get("supported_reasoning_levels") or item.get("supportedReasoningEfforts")
+    if not isinstance(raw_levels, list):
+        return []
+    levels: list[str] = []
+    for entry in raw_levels:
+        if isinstance(entry, dict):
+            effort = entry.get("effort") or entry.get("level") or entry.get("name")
+            if effort and isinstance(effort, str):
+                levels.append(effort.strip().lower())
+        elif isinstance(entry, str) and entry.strip():
+            levels.append(entry.strip().lower())
+    return levels
+
+
+def get_chatgpt_model_metadata(slug: str) -> Optional[dict[str, Any]]:
+    slug = (slug or "").strip()
+    if not slug:
+        return None
+    if slug in CHATGPT_MODEL_CATALOG_CACHE:
+        return dict(CHATGPT_MODEL_CATALOG_CACHE[slug])
+    for k, v in CHATGPT_MODEL_CATALOG_CACHE.items():
+        if k.casefold() == slug.casefold():
+            return dict(v)
+    slug_lower = slug.lower()
+    if any(pat in slug_lower for pat in ("gpt-6", "gpt-5.6", "gpt-5.5", "gpt-5.4", "codex")):
+        return {
+            "default_reasoning_level": "medium",
+            "supported_reasoning_levels": list(STANDARD_CODEX_REASONING_LEVELS),
+        }
+    return None
+
+
+def validate_reasoning_effort(model: str, effort: Optional[str]) -> Optional[str]:
+    """Validate reasoning effort against model's advertised levels.
+    Returns None if default/empty/unsupported (fail-safe to omitting override)."""
+    if not effort:
+        return None
+    effort_clean = str(effort).strip().lower()
+    if effort_clean in {"", "default"}:
+        return None
+    meta = get_chatgpt_model_metadata(model)
+    if not meta:
+        return None
+    supported = [lvl.lower() for lvl in meta.get("supported_reasoning_levels", [])]
+    if effort_clean in supported:
+        return effort_clean
+    return None
+
+
 def fetch_available_models(access_token: str, timeout: float = 10.0) -> list[str]:
     if not access_token:
         return []
@@ -169,12 +262,20 @@ def fetch_available_models(access_token: str, timeout: float = 10.0) -> list[str
         slug = item.get("slug")
         if not isinstance(slug, str) or not slug.strip():
             continue
+        slug_clean = slug.strip()
         visibility = item.get("visibility", "")
         if isinstance(visibility, str) and visibility.strip().lower() in {"hide", "hidden"}:
             continue
+        levels = _extract_reasoning_levels(item)
+        default_lvl = item.get("default_reasoning_level") or item.get("defaultReasoningEffort")
+        if levels:
+            CHATGPT_MODEL_CATALOG_CACHE[slug_clean] = {
+                "default_reasoning_level": str(default_lvl).strip().lower() if default_lvl else (levels[0] if levels else "medium"),
+                "supported_reasoning_levels": levels,
+            }
         priority = item.get("priority")
         rank = int(priority) if isinstance(priority, (int, float)) else 10_000
-        sortable.append((rank, slug.strip()))
+        sortable.append((rank, slug_clean))
     sortable.sort(key=lambda item: (item[0], item[1]))
     ordered: list[str] = []
     seen: set[str] = set()

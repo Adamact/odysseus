@@ -254,7 +254,8 @@ def _cache_header_identity(headers) -> str:
 
 def _get_cache_key(url: str, model: str, messages: List[Dict],
                    temperature: float, max_tokens: int, headers=None,
-                   thinking_mode: Optional[str] = None) -> str:
+                   thinking_mode: Optional[str] = None,
+                   reasoning_effort: Optional[str] = None) -> str:
     """Generate a cache key partitioned by endpoint and credential identity."""
     hashable_messages = []
     for msg in messages:
@@ -268,6 +269,7 @@ def _get_cache_key(url: str, model: str, messages: List[Dict],
         'temp': temperature,
         'max_tokens': max_tokens,
         'thinking_mode': _normalize_thinking_mode(thinking_mode),
+        'reasoning_effort': str(reasoning_effort or "").strip().lower(),
         # Never put credentials in a cache key or loggable cache payload.  The
         # digest only prevents responses from one configured account/route
         # being returned under another route with the same URL and model.
@@ -1531,6 +1533,7 @@ def _build_chatgpt_responses_payload(
     *,
     stream: bool = False,
     tools: Optional[List[Dict]] = None,
+    reasoning_effort: Optional[str] = None,
     **_ignored,
 ) -> Dict:
     """Build the ChatGPT/Codex Responses request: model inference only.
@@ -1555,11 +1558,13 @@ def _build_chatgpt_responses_payload(
     # ChatGPT Subscription Codex API does not support max_output_tokens —
     # passing it returns HTTP 400 "Unsupported parameter: max_output_tokens".
     # Do not include it in the payload.
+    if reasoning_effort and str(reasoning_effort).strip().lower() not in {"", "default"}:
+        payload["reasoning"] = {"effort": str(reasoning_effort).strip().lower()}
     return _strip_chatgpt_native_tool_surfaces(payload)
 
 
 CHATGPT_ALLOWED_PAYLOAD_KEYS = frozenset({
-    "model", "instructions", "input", "stream", "store", "temperature",
+    "model", "instructions", "input", "stream", "store", "temperature", "reasoning",
 })
 
 
@@ -2575,6 +2580,7 @@ async def llm_call_async(
     availability_only_transport: bool = False,
     return_model_metadata: bool = False,
     thinking_mode: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
 ) -> str | tuple[str, str]:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     provider = _detect_provider(url)
@@ -2613,7 +2619,7 @@ async def llm_call_async(
 
     cache_key = _get_cache_key(
         url, model, messages_copy, temperature, max_tokens, headers=headers,
-        thinking_mode=thinking_mode,
+        thinking_mode=thinking_mode, reasoning_effort=reasoning_effort,
     )
     cached_response = _get_cached_response(cache_key)
     if cached_response:
@@ -2637,6 +2643,8 @@ async def llm_call_async(
             headers=headers,
             timeout=timeout,
             workload=workload,
+            thinking_mode=thinking_mode,
+            reasoning_effort=reasoning_effort,
         ):
             event_is_error = False
             for line in str(chunk).splitlines():
@@ -2891,7 +2899,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                      timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
                      tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
                      tool_choice_none: bool = False, workload: str = "foreground",
-                     thinking_mode: Optional[str] = None):
+                     thinking_mode: Optional[str] = None, reasoning_effort: Optional[str] = None):
     target_url = _stream_target_url(url)
     async with _local_model_slot(target_url, model, workload):
         async for chunk in _stream_llm_inner(
@@ -2907,6 +2915,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             session_id=session_id,
             tool_choice_none=tool_choice_none,
             thinking_mode=thinking_mode,
+            reasoning_effort=reasoning_effort,
         ):
             yield chunk
 
@@ -2916,6 +2925,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                             timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
                             tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
                             tool_choice_none: bool = False, thinking_mode: Optional[str] = None,
+                            reasoning_effort: Optional[str] = None,
                             _retry_silent_local: bool = True):
     """Stream LLM responses with improved error handling.
 
@@ -2958,7 +2968,10 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
     elif provider == "chatgpt-subscription":
         target_url = _normalize_chatgpt_subscription_url(url)
         h = _provider_headers(provider, headers)
-        payload = _build_chatgpt_responses_payload(model, messages_copy, temperature, max_tokens, stream=True)
+        payload = _build_chatgpt_responses_payload(
+            model, messages_copy, temperature, max_tokens, stream=True,
+            reasoning_effort=reasoning_effort,
+        )
     else:
         target_url = _normalize_openai_chat_url(url)
         payload = {

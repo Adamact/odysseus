@@ -202,6 +202,7 @@ function _initModelPickerDropdown() {
   const listEl = document.getElementById('model-picker-list');
   const searchRow = menu ? menu.querySelector('.model-picker-search-row') : null;
   const refreshBtn = document.getElementById('model-picker-refresh-btn');
+  _initReasoningEffort();
   if (!wrap || !btn || !menu || !search || !listEl) return;
   if (wrap.dataset.modelPickerBound === '1') return;
   wrap.dataset.modelPickerBound = '1';
@@ -294,8 +295,10 @@ function _initModelPickerDropdown() {
         // A registered route is a user choice, including local routes using
         // identical weights with different harness profiles. Never collapse
         // distinct endpoints just because their model IDs match.
-        const seenKey = _pickerModelKey({ endpointId: item.endpoint_id,
-          url: item.url, epName: item.endpoint_name, mid });
+        const isApiEndpoint = item.category && item.category !== 'local';
+        const seenKey = isApiEndpoint
+          ? `${item.endpoint_id || item.url || item.endpoint_name || 'api'}::${mid}`
+          : _pickerModelKey({ endpointId: item.endpoint_id, url: item.url, epName: item.endpoint_name, mid }); // const seenKey = _pickerModelKey(
         if (seen.has(seenKey)) return;
         seen.add(seenKey);
         result.push({
@@ -306,6 +309,7 @@ function _initModelPickerDropdown() {
           endpointId: item.endpoint_id,
           epName: item.endpoint_name || '',
           category: item.category || '',
+          modelsMetadata: item.models_metadata || {},
           providerText: [
             item.endpoint_name || '',
             item.category || '',
@@ -402,18 +406,28 @@ function _initModelPickerDropdown() {
     'bytedance-seed': 'bytedance', '~anthropic': 'anthropic',
     '~google': 'google', '~moonshotai': 'moonshotai', '~openai': 'openai',
   };
-  function _providerDisplayName(slug) {
-    return _PROVIDER_NAMES[slug] || slug.charAt(0).toUpperCase() + slug.slice(1).replace(/-/g, ' ');
-  }
+  const _endpointGroupNames = new Map();
   function _providerGroupKey(m) {
-    if (m && m.category && m.category !== 'local' && m.epName) {
+    if (!m) return 'other';
+    // Grouping must be keyed on endpoint_id, falling back to url or epName
+    const gid = m.endpointId || m.url || (m.category && m.category !== 'local' && m.epName ? m.epName : '');
+    if (gid) {
+      const gname = m.epName || (m.endpointId ? m.endpointId : (m.url || 'Other Models'));
+      _endpointGroupNames.set(gid, gname);
+      return `~endpoint:${gid}`;
+    }
+    if (m.category && m.category !== 'local' && m.epName) {
+      _endpointGroupNames.set(m.epName, m.epName);
       return `~endpoint:${m.epName}`;
     }
     return _providerSlug((m && m.mid) || '');
   }
-  function _providerGroupName(key) {
-    if (String(key || '').startsWith('~endpoint:')) return String(key).slice('~endpoint:'.length);
-    return _providerDisplayName(key);
+  function _providerGroupName(provider) {
+    if (String(provider || '').startsWith('~endpoint:')) {
+      const raw = String(provider).slice('~endpoint:'.length);
+      return _endpointGroupNames.get(raw) || raw;
+    }
+    return _providerDisplayName(provider);
   }
   function _providerSlug(mid) {
     const slash = mid.indexOf('/');
@@ -464,7 +478,7 @@ function _initModelPickerDropdown() {
       empty.textContent = text;
       listEl.appendChild(empty);
     }
-    function _addRow(m) {
+    function _addRow(m, { inGroup = false } = {}) {
       const row = document.createElement('div');
       row.className = 'model-switch-item';
       if (m.stale) {
@@ -494,7 +508,8 @@ function _initModelPickerDropdown() {
       const epSpan = document.createElement('span');
       epSpan.className = 'model-switch-ep';
       // Don't show endpoint name if it matches the model name (local self-hosted)
-      const _epDisplay = m.epName && !m.display.toLowerCase().includes(m.epName.toLowerCase().split('/').pop()) ? m.epName : '';
+      // or if it's already rendered under its endpoint group header
+      const _epDisplay = (!inGroup && m.epName && !m.display.toLowerCase().includes(m.epName.toLowerCase().split('/').pop())) ? m.epName : '';
       epSpan.textContent = _epDisplay;
       row.appendChild(epSpan);
 
@@ -537,32 +552,83 @@ function _initModelPickerDropdown() {
       listEl.appendChild(row);
     }
 
-    // ── Search mode: flat, filtered results across the whole catalog ──
+    function _renderGroup(provider, models, { isSearch = false } = {}) {
+      if (!models || !models.length) return;
+      const isCollapsed = !isSearch && _collapsedProviders.has(provider);
+      const header = document.createElement('div');
+      header.className = 'mp-provider-header';
+      header.innerHTML =
+        `<svg class="mp-provider-chevron${isCollapsed ? ' collapsed' : ''}" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'mp-provider-name';
+      nameSpan.textContent = _providerGroupName(provider);
+      header.appendChild(nameSpan);
+      const countSpan = document.createElement('span');
+      countSpan.className = 'mp-provider-count';
+      countSpan.textContent = `${models.length} model${models.length === 1 ? '' : 's'}`;
+      header.appendChild(countSpan);
+
+      header.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (_collapsedProviders.has(provider)) {
+          _collapsedProviders.delete(provider);
+          _justExpandedProvider = provider;
+        } else {
+          _collapsedProviders.add(provider);
+          _justExpandedProvider = null;
+        }
+        _saveList('odysseus-model-collapsed', [..._collapsedProviders]);
+        const st = listEl.scrollTop;
+        _populate(search ? search.value : '');
+        listEl.scrollTop = st;
+      });
+      listEl.appendChild(header);
+
+      if (!isCollapsed) {
+        const group = document.createElement('div');
+        group.className = 'mp-provider-group' + (_justExpandedProvider === provider ? ' mp-just-expanded' : '');
+        models.forEach(m => {
+          _addRow(m, { inGroup: true });
+          // Move the just-appended row into the group container
+          group.appendChild(listEl.lastElementChild);
+        });
+        listEl.appendChild(group);
+        if (_justExpandedProvider === provider) _justExpandedProvider = null;
+      }
+    }
+
+    // ── Search mode: grouped, filtered results across the whole catalog ──
     if (q) {
       const matches = all.filter(m => {
-        const provName = _providerDisplayName(_providerSlug(m.mid)).toLowerCase();
-        return [m.mid, m.display, m.epName, m.providerText, provName]
+        const groupKey = _providerGroupKey(m);
+        const groupName = _providerGroupName(groupKey).toLowerCase();
+        return [m.mid, m.display, m.epName, m.providerText, groupName]
           .filter(Boolean).join(' ').toLowerCase().includes(q);
       });
-      if (matches.length === 0) _addEmpty('No matching models');
-      else matches.forEach(_addRow);
+      if (matches.length === 0) {
+        _addEmpty('No matching models');
+      } else {
+        const groups = new Map();
+        matches.forEach(m => {
+          const key = _providerGroupKey(m);
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key).push(m);
+        });
+        const sorted = [...groups.keys()].sort((a, b) =>
+          _providerGroupName(a).localeCompare(_providerGroupName(b)));
+        sorted.forEach(provider => {
+          _renderGroup(provider, groups.get(provider), { isSearch: true });
+        });
+      }
       return;
     }
 
     // ── Browse mode: Favorites (manual) + Recent (auto), with dedupe. ──
-    // Rules:
-    //   1. Never list the same model twice in the dropdown. Favorites
-    //      win over Recent (if you favorited it, that's where it
-    //      belongs — Recent shouldn't show it again as duplicate).
-    //   2. Small catalogs (≤ BROWSE_ALL_LIMIT total) skip the Recent
-    //      section entirely — when there's only ~10 models, the whole
-    //      list fits below as "All models" and a separate Recent
-    //      section just duplicates rows.
     const shown = new Set();
     const favModels = favs.map(id => byKey.get(id) || byId.get(id)).filter(Boolean);
     if (favModels.length) {
       _addSection('Favorites');
-      favModels.forEach(m => { shown.add(_pickerModelKey(m)); _addRow(m); });
+      favModels.forEach(m => { shown.add(_pickerModelKey(m)); _addRow(m, { inGroup: false }); });
     }
     // Recent: only render when the catalog is big enough that surfacing
     // a recency shortlist is actually useful, AND only models that
@@ -575,66 +641,24 @@ function _initModelPickerDropdown() {
         .slice(0, RECENT_MAX);
       if (recentModels.length) {
         _addSection('Recent');
-        recentModels.forEach(m => { shown.add(_pickerModelKey(m)); _addRow(m); });
+        recentModels.forEach(m => { shown.add(_pickerModelKey(m)); _addRow(m, { inGroup: false }); });
       }
     }
 
-    // Small catalogs: still list everything so users aren't forced to search.
-    if (all.length <= BROWSE_ALL_LIMIT) {
-      const rest = all.filter(m => !shown.has(_pickerModelKey(m)));
-      if (rest.length) {
-        if (shown.size) _addSection('All models');
-        rest.forEach(_addRow);
-      }
-    } else {
-      // Large catalog: show provider groups with collapsible sections.
-      const rest = all.filter(m => !shown.has(_pickerModelKey(m)));
-      const groups = new Map();
-      rest.forEach(m => {
-        const slug = _providerGroupKey(m);
-        if (!groups.has(slug)) groups.set(slug, []);
-        groups.get(slug).push(m);
-      });
-      const sorted = [...groups.keys()].sort((a, b) =>
-        _providerGroupName(a).localeCompare(_providerGroupName(b)));
+    // Provider / endpoint groups with collapsible sections.
+    const rest = all.filter(m => !shown.has(_pickerModelKey(m)));
+    const groups = new Map();
+    rest.forEach(m => {
+      const key = _providerGroupKey(m);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(m);
+    });
+    const sorted = [...groups.keys()].sort((a, b) =>
+      _providerGroupName(a).localeCompare(_providerGroupName(b)));
 
-      sorted.forEach(provider => {
-        const models = groups.get(provider);
-        const isCollapsed = _collapsedProviders.has(provider);
-        const header = document.createElement('div');
-        header.className = 'mp-provider-header';
-        header.innerHTML =
-          `<svg class="mp-provider-chevron${isCollapsed ? ' collapsed' : ''}" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`
-          + `<span class="mp-provider-name">${_providerGroupName(provider)}</span>`
-          + `<span class="mp-provider-count">${models.length}</span>`;
-        header.addEventListener('click', (e) => {
-          e.stopPropagation();
-          if (_collapsedProviders.has(provider)) {
-            _collapsedProviders.delete(provider);
-            _justExpandedProvider = provider;
-          } else {
-            _collapsedProviders.add(provider);
-            _justExpandedProvider = null;
-          }
-          _saveList('odysseus-model-collapsed', [..._collapsedProviders]);
-          const st = listEl.scrollTop;
-          _populate('');
-          listEl.scrollTop = st;
-        });
-        listEl.appendChild(header);
-        if (!isCollapsed) {
-          const group = document.createElement('div');
-          group.className = 'mp-provider-group' + (_justExpandedProvider === provider ? ' mp-just-expanded' : '');
-          models.forEach(m => {
-            _addRow(m);
-            // Move the just-appended row into the group container
-            group.appendChild(listEl.lastElementChild);
-          });
-          listEl.appendChild(group);
-          if (_justExpandedProvider === provider) _justExpandedProvider = null;
-        }
-      });
-    }
+    sorted.forEach(provider => {
+      _renderGroup(provider, groups.get(provider), { isSearch: false });
+    });
   }
 
 async function _pick(m) {
@@ -963,5 +987,176 @@ export function updateModelPicker() {
     label.appendChild(document.createTextNode(displayName));
   } else {
     label.textContent = displayName;
+  }
+  _updateReasoningEffortUI(modelId, s, latestPending, selectedEndpoint);
+}
+
+// ── Reasoning effort control for models supporting reasoning levels ──
+let _reasoningEffortBound = false;
+let _pendingReasoningEffort = null;
+
+export function getSelectedReasoningEffort() {
+  if (!_deps) return _pendingReasoningEffort;
+  const currentSessionId = _deps.getCurrentSessionId ? _deps.getCurrentSessionId() : null;
+  if (!currentSessionId) return _pendingReasoningEffort;
+  const sessions = _deps.getSessions ? _deps.getSessions() : [];
+  const s = sessions.find(x => x.id === currentSessionId);
+  const mode = s?.thinking_mode || '';
+  if (mode.startsWith('effort:')) {
+    return mode.slice('effort:'.length).trim().toLowerCase();
+  }
+  return null;
+}
+try { window.__odysseusGetReasoningEffort = getSelectedReasoningEffort; } catch (_) {}
+
+function _initReasoningEffort() {
+  if (_reasoningEffortBound) return;
+  const wrap = document.getElementById('reasoning-effort-wrap');
+  const btn = document.getElementById('reasoning-effort-btn');
+  const menu = document.getElementById('reasoning-effort-menu');
+  if (!wrap || !btn || !menu) return;
+  _reasoningEffortBound = true;
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isHidden = menu.classList.contains('hidden');
+    if (isHidden) {
+      menu.classList.remove('hidden');
+      btn.setAttribute('aria-expanded', 'true');
+    } else {
+      menu.classList.add('hidden');
+      btn.setAttribute('aria-expanded', 'false');
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!wrap.contains(e.target) && !menu.classList.contains('hidden')) {
+      menu.classList.add('hidden');
+      btn.setAttribute('aria-expanded', 'false');
+    }
+  });
+}
+
+function _findModelMetadata(modelId, selectedEndpoint) {
+  if (selectedEndpoint?.models_metadata?.[modelId]) {
+    return selectedEndpoint.models_metadata[modelId];
+  }
+  const routeItems = window.modelsModule?.getCachedItems?.() || [];
+  for (const ep of routeItems) {
+    if (ep.models_metadata && ep.models_metadata[modelId]) {
+      return ep.models_metadata[modelId];
+    }
+  }
+  return null;
+}
+
+async function _updateReasoningEffortUI(modelId, s, latestPending, selectedEndpoint) {
+  _initReasoningEffort();
+  const wrap = document.getElementById('reasoning-effort-wrap');
+  const btn = document.getElementById('reasoning-effort-btn');
+  const currentSpan = document.getElementById('reasoning-effort-current');
+  const menu = document.getElementById('reasoning-effort-menu');
+  if (!wrap || !btn || !currentSpan || !menu) return;
+
+  if (!modelId) {
+    wrap.style.display = 'none';
+    return;
+  }
+
+  const metadata = _findModelMetadata(modelId, selectedEndpoint);
+  const levels = metadata?.supported_reasoning_levels;
+  if (!Array.isArray(levels) || levels.length === 0) {
+    wrap.style.display = 'none';
+    return;
+  }
+
+  wrap.style.display = 'inline-flex';
+
+  const supportedEffortNames = levels.map(l => (typeof l === 'string' ? l : l.effort).toLowerCase());
+  let activeLevel = 'default';
+  const sessionMode = s?.thinking_mode || '';
+
+  if (s && s.id) {
+    if (sessionMode.startsWith('effort:')) {
+      const parsed = sessionMode.slice('effort:'.length).trim().toLowerCase();
+      if (supportedEffortNames.includes(parsed)) {
+        activeLevel = parsed;
+      } else {
+        activeLevel = 'default';
+        s.thinking_mode = 'off';
+        try {
+          fetch(`${API_BASE}/api/session/${encodeURIComponent(s.id)}/generation-settings`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ thinking_mode: 'off', reasoning_effort: null }),
+          }).catch(() => {});
+        } catch (_) {}
+      }
+    }
+  } else if (_pendingReasoningEffort) {
+    if (supportedEffortNames.includes(_pendingReasoningEffort)) {
+      activeLevel = _pendingReasoningEffort;
+    } else {
+      activeLevel = 'default';
+      _pendingReasoningEffort = null;
+    }
+  }
+
+  currentSpan.textContent = activeLevel === 'default' ? 'Default' : (activeLevel.charAt(0).toUpperCase() + activeLevel.slice(1));
+  btn.title = 'Reasoning effort';
+
+  menu.innerHTML = '';
+  const options = [{ effort: 'default', label: 'Default', desc: `Model default (${metadata.default_reasoning_level || 'standard'})` }];
+  for (const l of levels) {
+    const eff = (typeof l === 'string' ? l : l.effort).toLowerCase();
+    const desc = (typeof l === 'object' && l.description) ? l.description : '';
+    options.push({ effort: eff, label: eff.charAt(0).toUpperCase() + eff.slice(1), desc });
+  }
+
+  for (const opt of options) {
+    const optBtn = document.createElement('button');
+    optBtn.type = 'button';
+    optBtn.className = 'reasoning-effort-option' + (opt.effort === activeLevel ? ' active' : '');
+    optBtn.setAttribute('role', 'option');
+    optBtn.setAttribute('aria-selected', opt.effort === activeLevel ? 'true' : 'false');
+    if (opt.desc) optBtn.title = opt.desc;
+
+    const lbl = document.createElement('span');
+    lbl.textContent = opt.label;
+    optBtn.appendChild(lbl);
+
+    if (opt.effort === activeLevel) {
+      const check = document.createElement('span');
+      check.textContent = '✓';
+      check.style.fontSize = '11px';
+      optBtn.appendChild(check);
+    }
+
+    optBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      menu.classList.add('hidden');
+      btn.setAttribute('aria-expanded', 'false');
+      const newEffort = opt.effort;
+      const thinkingModeVal = newEffort === 'default' ? 'off' : `effort:${newEffort}`;
+      const effortVal = newEffort === 'default' ? null : newEffort;
+
+      if (s && s.id) {
+        s.thinking_mode = thinkingModeVal;
+        try {
+          await fetch(`${API_BASE}/api/session/${encodeURIComponent(s.id)}/generation-settings`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ thinking_mode: thinkingModeVal, reasoning_effort: effortVal }),
+          });
+        } catch (_) {}
+      } else {
+        _pendingReasoningEffort = effortVal;
+      }
+      _updateReasoningEffortUI(modelId, s, latestPending, selectedEndpoint);
+    });
+
+    menu.appendChild(optBtn);
   }
 }

@@ -1663,7 +1663,12 @@ def setup_model_routes(model_discovery):
                 for m in pinned:
                     if m not in curated:
                         curated.append(m)
-                extra = [m for m in extra if m not in pinned]
+                models_metadata = {}
+                from src.chatgpt_subscription import get_chatgpt_model_metadata
+                for mid in list(curated) + list(extra):
+                    meta = get_chatgpt_model_metadata(mid)
+                    if meta:
+                        models_metadata[mid] = meta
                 items.append({
                     "host": "custom",
                     "port": 0,
@@ -1677,6 +1682,7 @@ def setup_model_routes(model_discovery):
                     "category": category,
                     "endpoint_kind": kind,
                     "model_type": ep_model_type,
+                    "models_metadata": models_metadata,
                 })
             else:
                 # Endpoint unreachable but still show it greyed out

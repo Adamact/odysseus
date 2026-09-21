@@ -70,6 +70,27 @@ def test_strip_helper_removes_any_native_tool_key_added_later():
     assert set(stripped) == {"model", "input"}
 
 
+def test_responses_payload_includes_reasoning_effort_without_tools():
+    payload = llm_core._build_chatgpt_responses_payload(
+        "gpt-6-astra", _MESSAGES, 0.7, 4096, stream=True, reasoning_effort="high", tools=_TOOLS
+    )
+    assert set(payload) <= (_ALLOWED_KEYS | {"reasoning"})
+    assert payload["reasoning"] == {"effort": "high"}
+    assert "tools" not in payload
+    assert "tool_choice" not in payload
+    for key in llm_core.CHATGPT_FORBIDDEN_PAYLOAD_KEYS:
+        assert key not in payload
+
+
+def test_responses_payload_default_or_none_omits_reasoning():
+    for effort in [None, "", "default", "Default"]:
+        payload = llm_core._build_chatgpt_responses_payload(
+            "gpt-6-astra", _MESSAGES, 0.7, 4096, stream=True, reasoning_effort=effort
+        )
+        assert set(payload) <= _ALLOWED_KEYS
+        assert "reasoning" not in payload
+
+
 class _Resp:
     def __init__(self, lines):
         self._lines = lines

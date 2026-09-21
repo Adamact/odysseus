@@ -2575,6 +2575,12 @@ import { invalidateSettings } from './appConfig.js';
       if (presetsModule.getSelectedPreset()) {
         fd.append('preset_id', presetsModule.getSelectedPreset());
       }
+      try {
+        const effort = window.__odysseusGetReasoningEffort ? window.__odysseusGetReasoningEffort() : null;
+        if (effort) {
+          fd.append('reasoning_effort', effort);
+        }
+      } catch (_) {}
 
 
       // Superseded during preflight (uploads, document saves): a newer send
