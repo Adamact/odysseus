@@ -20,8 +20,8 @@ def test_hover_thumbnail_uses_rendered_layer_output():
 def test_inline_layer_rows_share_the_common_thumbnail_renderer():
     panel = (ROOT / "static/js/editor/layer-panel.js").read_text()
 
-    assert "const previewCanvas = renderLayer?.(layer) || layer.canvas;" in panel
-    assert "const thumb = createInlineThumbnail(previewCanvas, `${layer.name} preview`);" in panel
+    assert "const thumb = createInlineThumbnail(() => renderLayer?.(layer) || layer.canvas, `${layer.name} preview`);" in panel
+    assert "thumb._refreshPreview = draw;" in panel
     assert "thumbCtx.fillStyle = ((x / tile + y / tile) & 1)" not in panel
 
 

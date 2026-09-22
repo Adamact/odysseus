@@ -119,6 +119,7 @@ def test_rasterize_text_layer_clears_retained_metadata_only_for_text():
 def test_text_tool_is_retained_across_editor_subsystems():
     editor = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
     toolbar = (ROOT / "static/js/editor/build/toolbar.js").read_text(encoding="utf-8")
+    shortcuts = (ROOT / "static/js/editor/tool-shortcuts.js").read_text(encoding="utf-8")
     controls = (ROOT / "static/js/editor/build/controls.js").read_text(encoding="utf-8")
     codec = (ROOT / "static/js/editor/document-codec.js").read_text(encoding="utf-8")
     geometry = (ROOT / "static/js/editor/document-geometry.js").read_text(encoding="utf-8")
@@ -127,7 +128,8 @@ def test_text_tool_is_retained_across_editor_subsystems():
     merge = (ROOT / "static/js/editor/wire-merge-buttons.js").read_text(encoding="utf-8")
 
     assert "{ id: 'text', label: 'Text'" in toolbar
-    assert "key: 'T'" in toolbar
+    assert "t.key = TOOL_SHORTCUTS[t.id]" in toolbar
+    assert "text: 'T'" in shortcuts
     assert 'id="ge-text-section"' in controls
     assert "if (state.tool === 'text') return _placeText(e);" in editor
     assert "kind: l.kind || 'raster'" in editor

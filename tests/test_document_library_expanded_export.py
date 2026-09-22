@@ -18,7 +18,7 @@ def test_expanded_document_card_has_export_beside_clone():
 
 
 def test_expanded_export_reuses_download_function_without_proxy_click():
-    assert "const exportDocumentFile = async () =>" in DOC_LIBRARY_JS
+    assert "const exportDocumentFile = async (format = 'original') =>" in DOC_LIBRARY_JS
     assert "await exportDocumentFile();" in DOC_LIBRARY_JS
     assert "exportItem.click();" not in DOC_LIBRARY_JS
     assert "exportItem.type = 'button';" in DOC_LIBRARY_JS

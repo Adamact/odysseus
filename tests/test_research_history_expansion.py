@@ -1,6 +1,7 @@
 """Regression coverage for full-height Deep Research history expansion."""
 
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -11,7 +12,11 @@ def test_history_list_participates_in_shared_library_expansion_layout():
     css = (ROOT / "static/style.css").read_text(encoding="utf-8")
 
     assert 'id="research-past-list" class="doclib-grid memory-list research-jobs-list"' in panel
-    assert "width:min(560px, 90vw);max-height:78vh" in panel
+    card = css[css.index("#research-pane .research-history-card {"):]
+    card = card[:card.index("}")]
+    assert "flex: 1 1 0;" in card
+    assert "min-height: 0;" in card
+    assert "overflow: hidden;" in card
     assert 'class="memory-tab-panel research-tab-panel"' in panel
     assert 'class="admin-card research-new-job"' in panel
     assert 'id="research-history-filters" class="skills-summary-strip"' in panel
@@ -21,7 +26,11 @@ def test_history_list_participates_in_shared_library_expansion_layout():
     assert "pane.classList.toggle('research-results-view', tab !== 'research')" in panel
     assert "display: flex; flex-direction: column; gap: 10px;" in css
     assert ".research-tabs {\n  flex: 0 0 auto;\n  margin: -4px -4px 0;" in css
-    assert "font-size:11px; letter-spacing:0;" in css
+    title = css[css.index("#research-pane .research-history-title-row h2 {"):]
+    title = title[:title.index("}")]
+    assert "letter-spacing: 0;" in title
+    desc = css[css.index("#research-pane .research-history-desc {"):]
+    assert "font-size: 11px;" in desc[:desc.index("}")]
     assert "font: inherit; font-size: 12px; cursor: pointer; text-align: left;" in css
     assert "#research-pane .research-history-search-wrap .memory-search-input" in css
     assert "height: 30px;" in css
@@ -65,8 +74,8 @@ def test_research_panel_uses_one_versioned_module_instance():
     renderer = (ROOT / "static/js/chatRenderer.js").read_text(encoding="utf-8")
     index = (ROOT / "static/index.html").read_text(encoding="utf-8")
 
-    version = "20260902researchhistoryalign34"
-    assert f"research/panel.js?v={version}" in app
-    assert renderer.count(f"research/panel.js?v={version}") == 2
-    assert f"style.css?v={version}" in index
-    assert f"app.js?v={version}" in index
+    panel_version = re.search(r"research/panel\.js\?v=([^'\"]+)", app)
+    asset_version = re.search(r"/static/app\.js\?v=([^'\"]+)", index)
+    style_version = re.search(r"/static/style\.css\?v=([^'\"]+)", index)
+    assert panel_version and renderer.count(f"research/panel.js?v={panel_version.group(1)}") == 2
+    assert asset_version and style_version and asset_version.group(1) == style_version.group(1)

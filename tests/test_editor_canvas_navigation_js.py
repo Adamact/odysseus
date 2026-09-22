@@ -91,13 +91,15 @@ def test_apply_pan_updates_state_canvas_overlay_and_cursor_classes():
 
 def test_hand_navigation_is_wired_to_toolbar_keyboard_and_offline_graph():
     toolbar = (ROOT / "static/js/editor/build/toolbar.js").read_text(encoding="utf-8")
+    shortcuts = (ROOT / "static/js/editor/tool-shortcuts.js").read_text(encoding="utf-8")
     keyboard = (ROOT / "static/js/editor/keyboard-shortcuts.js").read_text(encoding="utf-8")
     events = (ROOT / "static/js/editor/canvas-events.js").read_text(encoding="utf-8")
     editor = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
     service_worker = (ROOT / "static/sw.js").read_text(encoding="utf-8")
 
     assert "{ id: 'hand', label: 'Hand'" in toolbar
-    assert "key: 'H'" in toolbar
+    assert "t.key = TOOL_SHORTCUTS[t.id]" in toolbar
+    assert "hand: 'H'" in shortcuts
     assert "e.code === 'Space'" in keyboard
     assert "setTemporaryPan?.(true)" in keyboard
     assert "isDirectPanIntent(state.tool, state.spacePanActive" in events

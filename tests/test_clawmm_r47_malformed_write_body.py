@@ -87,7 +87,7 @@ async def test_malformed_text_artifact_write_uses_one_bounded_raw_body_handoff(m
     events = [json.loads(chunk[6:]) for chunk in raw if '[DONE]' not in chunk]
     assert len(requests) == 2
     assert 'tools' not in requests[1]
-    assert requests[1]['max_tokens'] == 4096
+    assert requests[1]['max_tokens'] == 8192
     assert len(executed) == 1
     assert executed[0].tool_type == 'write_file'
     assert executed[0].content == (

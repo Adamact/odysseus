@@ -172,4 +172,4 @@ class TestThinkSuppression:
             "qwen35-9b-tool-router-v4-firstaction-noschema-adapter",
         )
         assert "think" not in payload
-        assert payload["max_tokens"] == 1024
+        assert payload["max_tokens"] == llm_core.LLMConfig.DEFAULT_MAX_TOKENS
