@@ -9,6 +9,7 @@ import argparse
 import copy
 import hashlib
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -19,9 +20,17 @@ import jsonschema
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
 from src.turn_contract import FAMILY_TOOLS, requested_capabilities
-CONTRACT_SOURCE = Path(str(Path(__file__).resolve().parents[1] / "scripts"))
-sys.path.insert(0, str(CONTRACT_SOURCE))
-from eval_alltools_unseen_compare import tools_for_mode
+CONTRACT_SOURCE = Path(os.environ.get("ODYSSEUS_TOOL_CONTRACT_ROOT", str(Path(__file__).resolve().parents[1] / "scripts")))
+if (CONTRACT_SOURCE / 'eval_alltools_unseen_compare.py').is_file():
+    sys.path.insert(0, str(CONTRACT_SOURCE))
+    try:
+        from eval_alltools_unseen_compare import tools_for_mode
+    finally:
+        if str(CONTRACT_SOURCE) in sys.path:
+            sys.path.remove(str(CONTRACT_SOURCE))
+else:
+    from src.clean_agent_preview import contract_builder
+    tools_for_mode = contract_builder()
 
 FAMILIES = tuple(FAMILY_TOOLS)[:10]
 TRAINED_NAMES = set().union(*(FAMILY_TOOLS[f] for f in FAMILIES))

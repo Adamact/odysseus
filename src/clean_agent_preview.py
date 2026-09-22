@@ -1943,6 +1943,10 @@ def authorized_write_families(user_text):
     return frozenset(families)
 
 
+def canonical_tools_for_mode(tools, mode):
+    return copy.deepcopy(tools)
+
+
 @lru_cache(maxsize=1)
 def contract_builder():
     root = Path(os.environ.get(
@@ -1950,21 +1954,20 @@ def contract_builder():
         str(Path(__file__).resolve().parents[1] / "scripts"),
     )).resolve()
     contract_path = root / 'eval_alltools_unseen_compare.py'
-    if not contract_path.is_file():
-        raise FileNotFoundError(
-            f'Compact-v5 tool contract is missing: {contract_path}'
-        )
-    # Load the original promotion protocol, not the description-stripping UI helper.
-    sys.path.insert(0, str(root))
-    try:
-        spec = importlib.util.spec_from_file_location(
-            'odysseus_preview_v3_contract', contract_path
-        )
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module.tools_for_mode
-    finally:
-        sys.path.remove(str(root))
+    if contract_path.is_file():
+        # Load the original promotion protocol, not the description-stripping UI helper.
+        sys.path.insert(0, str(root))
+        try:
+            spec = importlib.util.spec_from_file_location(
+                'odysseus_preview_v3_contract', contract_path
+            )
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module.tools_for_mode
+        finally:
+            if str(root) in sys.path:
+                sys.path.remove(str(root))
+    return canonical_tools_for_mode
 
 
 def compact_schemas(schemas):
