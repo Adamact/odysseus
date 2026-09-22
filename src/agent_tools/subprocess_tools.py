@@ -231,6 +231,7 @@ def _wrap_workspace_namespace(
     cwd: str,
     *,
     chdir: str = "/workspace",
+    interpreter_prefix: str | None = None,
 ) -> str | None:
     """Run a shell command with the active workspace mounted at /workspace.
 
@@ -254,8 +255,27 @@ def _wrap_workspace_namespace(
         "--dir", "/tmp", "--tmpfs", "/tmp",
         "--dev-bind", "/dev", "/dev", "--proc", "/proc",
         "--dir", "/workspace", "--bind", cwd, "/workspace",
-        "--chdir", chdir, "/bin/bash", "-lc", content,
     ]
+    # setup-python installs interpreters under /opt, and local CI virtualenvs
+    # can live under /tmp. Those paths are hidden by the private root/tmpfs.
+    # Expose only the active interpreter environment, read-only, so Python
+    # tools keep their installed packages without exposing the host /tmp.
+    if interpreter_prefix:
+        prefix = os.path.abspath(interpreter_prefix)
+        mounted_roots = ("/usr", "/home", "/mnt")
+        if os.path.isdir(prefix) and not any(
+            prefix == root or prefix.startswith(root + os.sep)
+            for root in mounted_roots
+        ):
+            parents = []
+            parent = os.path.dirname(prefix)
+            while parent not in ("/", "/tmp", "/etc", "/workspace", *mounted_roots):
+                parents.append(parent)
+                parent = os.path.dirname(parent)
+            for directory in reversed(parents):
+                args.extend(("--dir", directory))
+            args.extend(("--ro-bind", prefix, prefix))
+    args.extend(("--chdir", chdir, "/bin/bash", "-lc", content))
     return shlex.join(args)
 
 
@@ -940,6 +960,7 @@ class PythonTool:
                 python_command,
                 agent_cwd(),
                 chdir="/workspace",
+                interpreter_prefix=sys.prefix,
             )
             if needs_virtual_namespace
             else None
