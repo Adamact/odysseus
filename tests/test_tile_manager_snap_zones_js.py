@@ -20,11 +20,12 @@ def _run_tile_case():
           innerWidth: 1200,
           innerHeight: 800,
           addEventListener() {{}},
+          getComputedStyle() {{ return {{ display: 'block' }}; }},
         }};
         let sidebarVisible = false;
         const sidebar = {{
           classList: {{ contains(name) {{ return name === 'hidden' ? !sidebarVisible : false; }} }},
-          getBoundingClientRect() {{ return {{ right: 240 }}; }},
+          getBoundingClientRect() {{ return {{ left: 0, right: 240, width: 240, top: 0, bottom: 800 }}; }},
         }};
         globalThis.document = {{
           readyState: 'loading',

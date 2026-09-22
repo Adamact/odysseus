@@ -114,6 +114,7 @@ async def test_docx_preview_runs_off_loop_and_checks_owner(monkeypatch, conversi
 
 
 def test_imported_office_document_is_owned_at_first_commit(monkeypatch, tmp_path):
+    import importlib
     from sqlalchemy import create_engine, event
     from sqlalchemy.orm import sessionmaker
     import src.database as database
@@ -122,7 +123,8 @@ def test_imported_office_document_is_owned_at_first_commit(monkeypatch, tmp_path
     database.Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine)
     monkeypatch.setattr(database, "SessionLocal", factory)
-    monkeypatch.setattr("src.agent_tools.document_tools.set_active_document", lambda doc_id: None)
+    document_tools = importlib.import_module("src.agent_tools.document_tools")
+    monkeypatch.setattr(document_tools, "set_active_document", lambda doc_id: None)
     owners_at_commit = []
     def inspect_new_rows(session):
         owners_at_commit.extend(row.owner for row in session.new if isinstance(row, database.Document))

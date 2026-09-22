@@ -302,39 +302,39 @@ def results(tmp_path_factory):
     source = _SESSIONS.read_text(encoding="utf-8")
     versioned_rewrites = (
         (
-            r"import Storage from './storage\.js(?:\?[^']+)?';",
+            r"import Storage from './storage\.js(?:[?#][^']*)?';",
             "import Storage from './storage.mjs';",
         ),
         (
-            r"import uiModule, \{ autoResize, styledPrompt \} from './ui\.js(?:\?[^']+)?';",
+            r"import uiModule, \{ autoResize, styledPrompt \} from './ui\.js(?:[?#][^']*)?';",
             "import uiModule, { autoResize, styledPrompt } from './ui.mjs';",
         ),
         (
-            r"import chatRenderer from './chatRenderer\.js(?:\?[^']+)?';",
+            r"import chatRenderer from './chatRenderer\.js(?:[?#][^']*)?';",
             "import chatRenderer from './chatRenderer.mjs';",
         ),
         (
-            r"import \{ providerLogo \} from './providers\.js(?:\?[^']+)?';",
+            r"import \{ providerLogo \} from './providers\.js(?:[?#][^']*)?';",
             "import { providerLogo } from './providers.mjs';",
         ),
         (
-            r"import \{ initModelPicker, updateModelPicker \} from './modelPicker\.js(?:\?[^']+)?';",
+            r"import \{ initModelPicker, updateModelPicker \} from './modelPicker\.js(?:[?#][^']*)?';",
             "import { initModelPicker, updateModelPicker } from './modelPicker.mjs';",
         ),
         (
-            r"import themeModule from './theme\.js(?:\?[^']+)?';",
+            r"import themeModule from './theme\.js(?:[?#][^']*)?';",
             "import themeModule from './theme.mjs';",
         ),
         (
-            r"import spinnerModule from './spinner\.js(?:\?[^']+)?';",
+            r"import spinnerModule from './spinner\.js(?:[?#][^']*)?';",
             "import spinnerModule from './spinner.mjs';",
         ),
         (
-            r"import \{ actionMenuRank, orderActionMenuItems, SELECT_MENU_ICON \} from './actionMenuOrder\.js(?:\?[^']+)?';",
+            r"import \{ actionMenuRank, orderActionMenuItems, SELECT_MENU_ICON \} from './actionMenuOrder\.js(?:[?#][^']*)?';",
             "import { actionMenuRank, orderActionMenuItems, SELECT_MENU_ICON } from './actionMenuOrder.mjs';",
         ),
         (
-            r"import \{ registerEscapeLayer, bindMenuDismiss \} from './escMenuStack\.js(?:\?[^']+)?';",
+            r"import \{ registerEscapeLayer, bindMenuDismiss \} from './escMenuStack\.js(?:[?#][^']*)?';",
             "import { registerEscapeLayer, bindMenuDismiss } from './escMenuStack.mjs';",
         ),
     )

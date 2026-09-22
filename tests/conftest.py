@@ -112,8 +112,7 @@ def _serve_test_static():
         sock.close()
 
     if is_bound:
-        yield
-        return
+        raise RuntimeError("port 7011 is already in use; browser tests require this worktree's static server")
 
     root_dir = Path(__file__).resolve().parent.parent
 
@@ -134,12 +133,11 @@ def _serve_test_static():
     class _Server(socketserver.TCPServer):
         allow_reuse_address = True
 
+    server = _Server(("127.0.0.1", 7011), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
     try:
-        server = _Server(("127.0.0.1", 7011), _Handler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
         yield
+    finally:
         server.shutdown()
         server.server_close()
-    except Exception:
-        yield
