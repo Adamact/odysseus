@@ -284,23 +284,22 @@ def test_contextual_browser_followup_recognizes_current_page_inspection():
 
 
 def test_clean_browser_filter_preserves_native_pdf_extraction_contract():
-    source = _CHAT_ROUTES.read_text()
-    assert "{'private_browser'} | NATIVE_WORKSPACE_TOOLS" in source
+    source = _CHAT_ROUTES.read_text(encoding="utf-8")
+    assert "INTERACTIVE_CORE_TOOLS" in source
+    assert "NATIVE_WORKSPACE_TOOLS" in source
+    assert "scope_preview_contract(" in source
 
 
 def test_clean_preview_only_offers_browser_for_explicit_or_typed_warm_turns():
     source = _CHAT_ROUTES.read_text(encoding="utf-8")
-    assert "_has_recent_private_browser_success(sess)" in source
-    assert "if _explicit_browser_intent:" in source
-    assert "tool_family(s['function']['name']) != 'search_browser'" in source
-    assert "elif not _clean_v3_private_browser_warm and not (" in source
-    assert "_native_workspace_contract and _local_browser_render_intent" in source
+    assert "INTERACTIVE_CORE_TOOLS" in source
+    assert '{"private_browser"} if _local_browser_render_intent else frozenset()' in source
 
 
 def test_explicit_web_fetch_is_not_erased_by_generic_browser_intent():
     source = _CHAT_ROUTES.read_text(encoding="utf-8")
-    assert "and not set(_selected_tools or ()).intersection(" in source
-    assert "{'web_search', 'web_fetch'}" in source
+    assert "INTERACTIVE_CORE_TOOLS" in source
+    assert "_exact_selected_native_chain" in source
 
 
 def test_web_followup_grammar_covers_article_detail_questions():

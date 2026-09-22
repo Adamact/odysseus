@@ -52,7 +52,8 @@ def test_native_workspace_allows_scoped_write_and_python_only_when_enabled():
     python = {"code": "1 + 1"}
 
     assert not preview_call_allowed("write_file", write, "write the output")
-    assert not preview_call_allowed(
+    assert not preview_call_allowed("python", python, "analyze the file")
+    assert preview_call_allowed(
         "python", python, "analyze the file", allow_execute_code=True
     )
     assert preview_call_allowed(

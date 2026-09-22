@@ -2504,6 +2504,7 @@ def test_late_agent_fallback_records_each_round_and_stays_pinned(monkeypatch):
             headers=primary[2],
             max_rounds=4,
             relevant_tools={"bash"},
+            workspace="/workspace",
             fallbacks=[backup],
             fallback_statuses=FOREGROUND_AVAILABILITY_STATUSES,
             fallback_on_empty=False,
@@ -2611,6 +2612,7 @@ def test_agent_terminal_later_round_error_stops_after_completed_tool(
             [{"role": "user", "content": "Run one tool."}],
             max_rounds=3,
             relevant_tools={"bash"},
+            workspace="/workspace",
             fallback_statuses=FOREGROUND_AVAILABILITY_STATUSES,
             fallback_on_empty=False,
             _is_teacher_run=True,
@@ -3033,6 +3035,7 @@ def test_agent_metrics_attribute_usage_to_each_answering_route(monkeypatch):
         headers=primary[2],
         max_rounds=3,
         relevant_tools={"bash"},
+        workspace="/workspace",
         fallbacks=[backup],
         route_descriptors=[
             {"endpoint_id": "paid", "endpoint_label": "Paid", "endpoint_cost_tracked": True},
@@ -3216,6 +3219,7 @@ def test_force_answer_recovery_persists_and_bills_pinned_fallback_route(
         headers=primary[2],
         max_rounds=6,
         relevant_tools={"bash"},
+        workspace="/workspace",
         fallbacks=[backup],
         route_descriptors=[
             {
@@ -3307,6 +3311,7 @@ def test_agent_terminal_retains_completed_paid_fallback_usage(monkeypatch):
         headers=primary[2],
         max_rounds=3,
         relevant_tools={"bash"},
+        workspace="/workspace",
         fallbacks=[backup],
         route_descriptors=[
             {"endpoint_id": "local", "endpoint_label": "Local", "endpoint_cost_tracked": False},
@@ -3506,6 +3511,7 @@ def test_agent_fallback_request_uses_candidate_context_budget(
             headers=primary[2],
             max_rounds=2,
             relevant_tools={"bash"},
+            workspace="/workspace",
             fallbacks=[backup],
             fallback_statuses=FOREGROUND_AVAILABILITY_STATUSES,
             fallback_on_empty=False,

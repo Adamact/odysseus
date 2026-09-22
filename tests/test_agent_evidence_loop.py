@@ -617,7 +617,6 @@ def test_finish_nudge_does_not_accept_unfinished_correction_promise(monkeypatch)
         monkeypatch,
         [
             '```write_file\n/workspace/output.html\n<body>draft</body>\n```',
-            '<tool_call><invoke name="private_browser"><parameter name="action">open</parameter><parameter name="url">file:///workspace/output.html</parameter></invoke></tool_call>',
             "The preview revealed a defect. I should complete output.html by adding labels.",
             '```write_file\n/workspace/output.html\n<body>corrected</body>\n```',
             "Done. Corrected and checked output.html.",
@@ -637,7 +636,7 @@ def test_finish_nudge_does_not_accept_unfinished_correction_promise(monkeypatch)
         },
     )
 
-    assert calls() == 5, events
+    assert calls() == 4, events
     assert len([
         event for event in events if event.get("type") == "artifact_finish_nudge"
     ]) == 1

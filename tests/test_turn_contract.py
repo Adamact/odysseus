@@ -1672,7 +1672,7 @@ def test_missing_supplemental_inventory_is_explicit(family):
 
 @pytest.mark.parametrize("policy", [ToolPolicy(), ToolPolicy(block_all_tool_calls=True)])
 def test_empty_selection_means_no_tools(policy):
-    contract = resolve(policy=policy)
+    contract = resolve(policy=policy, selected_tools=())
     assert contract.offered == contract.required == contract.unavailable == frozenset()
     assert contract.schemas() == []
     assert not contract.permits("manage_calendar")

@@ -223,10 +223,11 @@ async def test_native_transcription_turn_does_not_offer_shell_fallbacks(
     contract = observed[0]
     assert contract is not None
     assert contract.capabilities == {"transcription"}
-    assert contract.offered == {"transcribe_media"}
+    assert contract.offered == {"transcribe_media", "ask_user"}
     assert "bash" not in contract.offered
     assert "python" not in contract.offered
     assert "inspect_media" not in contract.offered
+    assert contract.permits("transcribe_media")
 
 
 @pytest.mark.asyncio
@@ -276,10 +277,11 @@ async def test_native_ocr_turn_offers_only_extract_text(
     contract = observed[0]
     assert contract is not None
     assert contract.capabilities == {"ocr"}
-    assert contract.offered == {"extract_text"}
+    assert contract.offered == {"extract_text", "ask_user"}
     assert "inspect_media" not in contract.offered
     assert "bash" not in contract.offered
     assert "python" not in contract.offered
+    assert contract.permits("extract_text")
 
 
 @pytest.mark.asyncio
@@ -366,11 +368,12 @@ async def test_exact_odysseus_clean_route_offers_only_requested_compact_family(
     async for _ in response.body_iterator:
         pass
 
+    from src.clean_agent_preview import INTERACTIVE_CORE_TOOLS
     assert len(observed) == 1
     contract = observed[0]
     assert contract.selection_mode == "clean_compact_v3_preview"
     assert contract.capabilities == {"tasks"}
-    assert contract.offered == {"manage_tasks"}
+    assert contract.offered == {"manage_tasks"} | set(INTERACTIVE_CORE_TOOLS)
     assert contract.required == {"manage_tasks"}
 
 

@@ -3502,8 +3502,13 @@ def setup_chat_routes(
                     # OCR operation. Exact operations therefore stay exact;
                     # ordinary native turns retain warm and workspace tools.
                     extra_tools=(
-                        INTERACTIVE_CORE_TOOLS
-                        if _exact_selected_native_chain
+                        frozenset()
+                        if _exact_selected_native_chain or (
+                            _active_turn_capabilities in (
+                                frozenset({"transcription"}), frozenset({"ocr"}),
+                            )
+                            and not _selected_tools
+                        )
                         else INTERACTIVE_CORE_TOOLS | _warm_tools | (
                             NATIVE_WORKSPACE_TOOLS | (
                                 {"private_browser"} if _local_browser_render_intent else frozenset()

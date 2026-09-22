@@ -6330,7 +6330,7 @@ async def test_native_stream_terminates_after_calling_a_permanently_suppressed_t
         {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": f"inspect-{index}", "function": {
             "name": "inspect_media", "arguments": arguments,
         }}]}}]}
-        for index in range(1, 5)
+        for index in range(1, 4)
     ] + [{"choices": [{"delta": {"content": "Final answer from existing evidence."}}]}])
 
     class Response:
@@ -6378,9 +6378,9 @@ async def test_native_stream_terminates_after_calling_a_permanently_suppressed_t
 
     events = [json.loads(chunk[6:]) for chunk in raw if "[DONE]" not in chunk]
     assert len(executions) == 1
-    assert len(requests) == 5
-    assert 'tools' not in requests[4]
-    assert 'best concise final answer' in requests[4]['messages'][-1]['content'].lower()
+    assert len(requests) == 4
+    assert 'tools' not in requests[3]
+    assert 'best concise final answer' in requests[3]['messages'][-1]['content'].lower()
     final = [event for event in events if event.get("type") == "final_response"]
     assert final == []
     metrics = next(event['data'] for event in events if event.get('type') == 'metrics')
