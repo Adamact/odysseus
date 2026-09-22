@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -83,7 +84,9 @@ def test_large_tool_scroll_fix_is_served_under_a_fresh_chat_module_key():
     """The fixed ui module is imported by chat.js, so stale chat.js is stale UI."""
     app = (ROOT / "static/app.js").read_text(encoding="utf-8")
     index = (ROOT / "static/index.html").read_text(encoding="utf-8")
-    key = "chat.js?v=20260916largetoolscroll2"
+    match = re.search(r"chat\.js\?v=([A-Za-z0-9_-]+)", app)
+    assert match is not None, "chat.js must be imported with a cache-busting key"
+    key = f"chat.js?v={match.group(1)}"
 
     assert key in app
     assert index.count(key) == 2

@@ -53,7 +53,7 @@ def _run_markdown_case(markdown: str, render_expr: str = "mod.mdToHtml(input)", 
 
         let source = fs.readFileSync('./static/js/markdown.js', 'utf8');
         source = source.replace(
-          /import uiModule from ['"]\.\/ui\.js['"];/,
+          /import uiModule from ['"]\.\/ui\.js(?:\?[^'"]*)?['"];?/,
           ''
         );
         source = source.replace(
