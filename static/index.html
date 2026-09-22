@@ -246,8 +246,8 @@
        real request is discarded and the font fetched a second time. -->
   <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-Regular.woff2">
   <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-SemiBold.woff2">
-  <link rel="stylesheet" href="/static/style.css?v=20260914taskbutton1">
-  <link rel="modulepreload" href="/static/app.js?v=20260916autoscroll1">
+  <link rel="stylesheet" href="/static/style.css?v=20260921chatgptusage2">
+  <link rel="modulepreload" href="/static/app.js?v=20260921chatgptusage2">
 <link rel="modulepreload" href="/static/js/chat.js?v=20260917toolttft1">
   <link rel="modulepreload" href="/static/js/ui.js?v=20260916largetoolscroll1">
   <link rel="modulepreload" href="/static/js/sessions.js">
@@ -1195,6 +1195,14 @@
           </button>
         </div>
         <div class="chat-input-right">
+          <!-- Reasoning effort dropdown for models supporting reasoning levels -->
+          <div class="reasoning-effort-wrap" id="reasoning-effort-wrap" style="display:none;">
+            <button type="button" class="reasoning-effort-btn" id="reasoning-effort-btn" title="Reasoning effort" aria-haspopup="listbox" aria-expanded="false">
+              <span class="reasoning-effort-prefix">Effort: </span><span class="reasoning-effort-current" id="reasoning-effort-current">Default</span>
+              <svg class="reasoning-effort-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div class="reasoning-effort-menu hidden" id="reasoning-effort-menu" role="listbox"></div>
+          </div>
           <!-- Agent / Chat mode toggle -->
           <div class="mode-toggle">
             <button type="button" class="mode-toggle-btn active" id="mode-agent-btn" aria-pressed="true">Agent</button>
@@ -2306,6 +2314,7 @@
                   <option value="https://api.openai.com/v1" data-logo="openai">OpenAI</option>
                   <option value="copilot" data-logo="github" data-auth-flow="copilot">GitHub Copilot</option>
                   <option value="chatgpt-subscription" data-logo="openai" data-auth-flow="chatgpt-subscription">ChatGPT Subscription</option>
+                  <option value="https://api.featherless.ai/v1" data-logo="featherless">Featherless.ai</option>
                   <option value="https://openrouter.ai/api/v1" data-logo="openrouter">OpenRouter</option>
                   <option value="https://ollama.com/api" data-logo="ollama">Ollama Cloud</option>
                   <option value="https://api.groq.com/openai/v1" data-logo="groq">Groq</option>
@@ -2623,7 +2632,7 @@
 <script type="module" src="/static/js/censor.js"></script>
 <script type="module" src="/static/js/settings.js?v=20260912writingstyle3"></script>
 <script type="module" src="/static/js/assistant.js?v=20260912firefoxjscleanup1"></script>
-<script type="module" src="/static/app.js?v=20260916autoscroll1"></script>  <!-- app.js must be LAST -->
+<script type="module" src="/static/app.js?v=20260921chatgptusage2"></script>  <!-- app.js must be LAST -->
   <script type="module" src="/static/js/init.js?v=20260829chatstyle12"></script>
 <script type="module" src="/static/js/a11y.js"></script>
 <script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js?v=20260916autoscroll1').catch(()=>{});}</script>

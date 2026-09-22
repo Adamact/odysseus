@@ -2788,6 +2788,86 @@ body.bg-pattern-ascii-fireflies {
       align-items: center;
       flex-shrink: 0;
     }
+    /* Reasoning effort pill / dropdown in composer */
+    .reasoning-effort-wrap {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+    }
+    .reasoning-effort-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      height: 28px;
+      padding: 0 8px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: color-mix(in srgb, var(--fg) 4%, transparent);
+      color: var(--fg);
+      font-size: 11.5px;
+      font-weight: 500;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .reasoning-effort-btn:hover {
+      background: color-mix(in srgb, var(--fg) 8%, transparent);
+      border-color: color-mix(in srgb, var(--fg) 20%, transparent);
+    }
+    .reasoning-effort-chevron {
+      opacity: 0.5;
+      transition: transform 0.15s;
+      flex-shrink: 0;
+    }
+    .reasoning-effort-btn[aria-expanded="true"] .reasoning-effort-chevron {
+      transform: rotate(180deg);
+    }
+    .reasoning-effort-menu {
+      position: absolute;
+      bottom: calc(100% + 6px);
+      right: 0;
+      min-width: 140px;
+      background: var(--bg-surface, var(--bg));
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+      padding: 4px;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .reasoning-effort-menu.hidden {
+      display: none !important;
+    }
+    .reasoning-effort-option {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 10px;
+      border-radius: 5px;
+      font-size: 12px;
+      color: var(--fg);
+      cursor: pointer;
+      background: transparent;
+      border: none;
+      text-align: left;
+      width: 100%;
+      transition: background 0.12s;
+    }
+    .reasoning-effort-option:hover {
+      background: color-mix(in srgb, var(--fg) 8%, transparent);
+    }
+    .reasoning-effort-option.active {
+      color: var(--accent);
+      font-weight: 600;
+    }
+    @container chatbar (max-width: 480px) {
+      .reasoning-effort-prefix { display: none; }
+    }
+    @media (max-width: 480px) {
+      .reasoning-effort-prefix { display: none; }
+    }
     .input-icon-btn {
       background: none;
       border: none;
@@ -17873,6 +17953,69 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   transform: translate(-50%, -50%) rotate(-45deg) scale(0);
   transform-origin: center;
   transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.adm-model-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 2px 4px;
+  box-sizing: border-box;
+  width: 100%;
+}
+.adm-model-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  cursor: pointer;
+}
+.adm-model-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.adm-model-tools-col {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+.adm-model-tools-label {
+  font-size: 10px;
+  opacity: 0.45;
+  flex-shrink: 0;
+  user-select: none;
+}
+.adm-model-tool-mode,
+.admin-tools-select {
+  height: 24px;
+  min-height: 24px;
+  line-height: 22px;
+  font-size: 11px;
+  padding: 0 18px 0 6px;
+  width: 124px;
+  max-width: 130px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background-color: var(--select-bg);
+  color: var(--select-fg);
+  box-sizing: border-box;
+  vertical-align: middle;
+}
+@media (max-width: 480px) {
+  .adm-model-tool-mode,
+  .admin-tools-select {
+    width: 105px;
+    max-width: 110px;
+    font-size: 10px;
+    padding: 0 14px 0 4px;
+  }
 }
 .adm-model-row:hover .adm-check-dot {
   border-color: var(--accent, var(--red));
@@ -49548,6 +49691,92 @@ body.theme-frosted .modal {
   line-height: 1.4;
   color: color-mix(in srgb, var(--fg) 45%, transparent);
 }
+/* ChatGPT Subscription per-account usage card (Settings → Added Models) */
+.adm-chatgpt-controls {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  align-items: center;
+  margin: 4px 0 2px auto;
+}
+.adm-chatgpt-usage-chevron {
+  font-size: 10px;
+  line-height: 1;
+  display: inline-block;
+  margin-left: 2px;
+}
+.adm-chatgpt-usage-host {
+  margin: 4px 0 6px 0;
+}
+.adm-chatgpt-usage {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 11px;
+}
+.adm-chatgpt-usage-plan { display: flex; gap: 6px; align-items: center; }
+.adm-chatgpt-usage-limit { display: flex; flex-direction: column; gap: 6px; }
+.adm-chatgpt-usage-limit-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+}
+.adm-chatgpt-usage-model {
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--mono, ui-monospace, monospace);
+  opacity: 0.8;
+}
+.adm-chatgpt-usage-row { display: flex; flex-direction: column; gap: 3px; }
+.adm-chatgpt-usage-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.adm-chatgpt-usage-name {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+}
+.adm-chatgpt-usage-remaining { font-weight: 600; }
+.adm-chatgpt-usage-bar {
+  position: relative;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.adm-chatgpt-usage-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+.adm-chatgpt-usage-warn .adm-chatgpt-usage-fill { background: #d99a2b; }
+.adm-chatgpt-usage-critical .adm-chatgpt-usage-fill { background: #d9534f; }
+.adm-chatgpt-usage-unknown .adm-chatgpt-usage-fill { background: color-mix(in srgb, var(--fg) 25%, transparent); }
+.adm-chatgpt-usage-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+}
+.adm-chatgpt-usage-status {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+}
+.adm-chatgpt-usage-blocked { color: #d9534f; }
+.adm-chatgpt-usage-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+.adm-chatgpt-reconnect-status { font-size: 11px; }
 /* Cookbook serve panel: Launch + ^ split button pair */
 .hwfit-serve-launch-group {
   display: inline-flex;

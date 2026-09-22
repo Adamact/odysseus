@@ -20364,6 +20364,7 @@ async def stream_agent_loop(
     force_textual_tool_transport: bool = False,
     thinking_mode: Optional[str] = None,
     suppress_skills: bool = False,
+    reasoning_effort: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
 
@@ -21475,6 +21476,8 @@ async def stream_agent_loop(
                 timeout=int(get_setting("agent_stream_timeout_seconds", 300) or 300),
                 session_id=session_id,
                 workload=workload,
+                thinking_mode=thinking_mode,
+                reasoning_effort=reasoning_effort,
                 fallback_statuses=fallback_statuses,
                 fallback_on_empty=fallback_on_empty,
                 candidate_request_factory=_direct_candidate_request,
@@ -25480,6 +25483,7 @@ async def stream_agent_loop(
                         else _requested_temperature
                     ),
                     "thinking_mode": state.get("thinking_mode"),
+                    "reasoning_effort": reasoning_effort,
                 },
             }
 
@@ -26172,6 +26176,8 @@ async def stream_agent_loop(
             timeout=agent_stream_timeout,
             session_id=session_id,
             workload=workload,
+            thinking_mode=thinking_mode,
+            reasoning_effort=reasoning_effort,
             fallback_statuses=fallback_statuses,
             fallback_on_empty=fallback_on_empty,
             candidate_request_factory=_candidate_request,

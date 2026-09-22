@@ -254,7 +254,8 @@ def _cache_header_identity(headers) -> str:
 
 def _get_cache_key(url: str, model: str, messages: List[Dict],
                    temperature: float, max_tokens: int, headers=None,
-                   thinking_mode: Optional[str] = None) -> str:
+                   thinking_mode: Optional[str] = None,
+                   reasoning_effort: Optional[str] = None) -> str:
     """Generate a cache key partitioned by endpoint and credential identity."""
     hashable_messages = []
     for msg in messages:
@@ -268,6 +269,7 @@ def _get_cache_key(url: str, model: str, messages: List[Dict],
         'temp': temperature,
         'max_tokens': max_tokens,
         'thinking_mode': _normalize_thinking_mode(thinking_mode),
+        'reasoning_effort': str(reasoning_effort or "").strip().lower(),
         # Never put credentials in a cache key or loggable cache payload.  The
         # digest only prevents responses from one configured account/route
         # being returned under another route with the same URL and model.
@@ -1097,6 +1099,8 @@ def _detect_provider(url: str) -> str:
     from src.copilot import is_copilot_base
     if is_copilot_base(url):
         return "copilot"
+    if _host_match(url, "featherless.ai"):
+        return "featherless"
     if _host_match(url, "cerebras.ai"):
         return "cerebras"
     if _host_match(url, "mistral.ai"):
@@ -1328,6 +1332,7 @@ def _provider_label(url: str) -> str:
     if is_chatgpt_subscription_base(url): return "ChatGPT Subscription"
     from src.copilot import is_copilot_base
     if is_copilot_base(url): return "GitHub Copilot"
+    if _host_match(url, "featherless.ai"): return "Featherless.ai"
     if _host_match(url, "cerebras.ai"):
         return "cerebras"
     if _host_match(url, "mistral.ai"): return "Mistral"
@@ -1496,6 +1501,33 @@ def _chatgpt_subscription_instructions(messages: List[Dict]) -> str:
     return "You are a helpful AI assistant."
 
 
+# Provider-native agentic surfaces that must never be sent on the ChatGPT
+# Subscription route. ChatGPT provides model inference only; Odysseus is the
+# only agent (planning, tool selection/execution, filesystem, shell, browser,
+# MCP). Odysseus' own text tool protocol travels inside ``instructions``/``input``.
+CHATGPT_FORBIDDEN_PAYLOAD_KEYS = frozenset({
+    "tools",
+    "tool_choice",
+    "parallel_tool_calls",
+    "web_search",
+    "web_search_preview",
+    "file_search",
+    "computer",
+    "computer_use",
+    "computer_use_preview",
+    "shell",
+    "local_shell",
+    "code_interpreter",
+    "image_generation",
+    "mcp",
+    "function",
+    "functions",
+    "include",
+    "previous_response_id",
+    "background",
+})
+
+
 def _build_chatgpt_responses_payload(
     model: str,
     messages: List[Dict],
@@ -1503,9 +1535,19 @@ def _build_chatgpt_responses_payload(
     max_tokens: int,
     *,
     stream: bool = False,
+    tools: Optional[List[Dict]] = None,
+    reasoning_effort: Optional[str] = None,
+    **_ignored,
 ) -> Dict:
+    """Build the ChatGPT/Codex Responses request: model inference only.
+
+    ``tools`` (and any other provider-native tool declaration) is accepted for
+    signature compatibility with the other transports and deliberately
+    discarded. See :data:`CHATGPT_FORBIDDEN_PAYLOAD_KEYS`.
+    """
     from src.chatgpt_subscription import build_responses_input
 
+    del tools, _ignored
     conversation = [msg for msg in (messages or []) if (msg.get("role") or "") != "system"]
     payload: Dict = {
         "model": model,
@@ -1519,7 +1561,29 @@ def _build_chatgpt_responses_payload(
     # ChatGPT Subscription Codex API does not support max_output_tokens —
     # passing it returns HTTP 400 "Unsupported parameter: max_output_tokens".
     # Do not include it in the payload.
-    return payload
+    if reasoning_effort and str(reasoning_effort).strip().lower() not in {"", "default"}:
+        payload["reasoning"] = {"effort": str(reasoning_effort).strip().lower()}
+    return _strip_chatgpt_native_tool_surfaces(payload)
+
+
+CHATGPT_ALLOWED_PAYLOAD_KEYS = frozenset({
+    "model", "instructions", "input", "stream", "store", "temperature", "reasoning",
+})
+
+
+def _strip_chatgpt_native_tool_surfaces(payload: Dict) -> Dict:
+    """Only explicitly approved inference fields may cross this boundary."""
+    return {key: value for key, value in payload.items() if key in CHATGPT_ALLOWED_PAYLOAD_KEYS}
+
+
+def _chatgpt_safe_error(message: str, headers: Dict) -> str:
+    """Upstream diagnostics must never echo the request bearer to the UI."""
+    result = str(message)
+    for key, value in (headers or {}).items():
+        if key.lower() in {"authorization", "x-api-key"} and value:
+            secret = str(value).removeprefix("Bearer ")
+            result = result.replace(str(value), "[redacted]").replace(secret, "[redacted]")
+    return result
 
 
 def _format_chatgpt_subscription_error(status_code: int, text: str) -> str:
@@ -2519,6 +2583,7 @@ async def llm_call_async(
     availability_only_transport: bool = False,
     return_model_metadata: bool = False,
     thinking_mode: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
 ) -> str | tuple[str, str]:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     provider = _detect_provider(url)
@@ -2557,7 +2622,7 @@ async def llm_call_async(
 
     cache_key = _get_cache_key(
         url, model, messages_copy, temperature, max_tokens, headers=headers,
-        thinking_mode=thinking_mode,
+        thinking_mode=thinking_mode, reasoning_effort=reasoning_effort,
     )
     cached_response = _get_cached_response(cache_key)
     if cached_response:
@@ -2581,6 +2646,8 @@ async def llm_call_async(
             headers=headers,
             timeout=timeout,
             workload=workload,
+            thinking_mode=thinking_mode,
+            reasoning_effort=reasoning_effort,
         ):
             event_is_error = False
             for line in str(chunk).splitlines():
@@ -2835,7 +2902,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                      timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
                      tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
                      tool_choice_none: bool = False, workload: str = "foreground",
-                     thinking_mode: Optional[str] = None):
+                     thinking_mode: Optional[str] = None, reasoning_effort: Optional[str] = None):
     target_url = _stream_target_url(url)
     async with _local_model_slot(target_url, model, workload):
         async for chunk in _stream_llm_inner(
@@ -2851,6 +2918,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             session_id=session_id,
             tool_choice_none=tool_choice_none,
             thinking_mode=thinking_mode,
+            reasoning_effort=reasoning_effort,
         ):
             yield chunk
 
@@ -2860,6 +2928,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                             timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
                             tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
                             tool_choice_none: bool = False, thinking_mode: Optional[str] = None,
+                            reasoning_effort: Optional[str] = None,
                             _retry_silent_local: bool = True):
     """Stream LLM responses with improved error handling.
 
@@ -2902,7 +2971,10 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
     elif provider == "chatgpt-subscription":
         target_url = _normalize_chatgpt_subscription_url(url)
         h = _provider_headers(provider, headers)
-        payload = _build_chatgpt_responses_payload(model, messages_copy, temperature, max_tokens, stream=True)
+        payload = _build_chatgpt_responses_payload(
+            model, messages_copy, temperature, max_tokens, stream=True,
+            reasoning_effort=reasoning_effort,
+        )
     else:
         target_url = _normalize_openai_chat_url(url)
         payload = {
@@ -2977,8 +3049,8 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                 _clear_host_dead(target_url)
                 if r.status_code != 200:
                     raw = (await r.aread()).decode(errors="replace")
-                    friendly = _format_chatgpt_subscription_error(r.status_code, raw)
-                    yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
+                    friendly = _format_chatgpt_subscription_error(r.status_code, _chatgpt_safe_error(raw, h))
+                    yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly})}\n\n'
                     return
                 async for line in r.aiter_lines():
                     if not line:
@@ -3063,13 +3135,13 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                             }
                         text = err.get("message") if isinstance(err, dict) else str(err or "ChatGPT Subscription request failed")
                         status = _provider_stream_error_status(err, default=400)
-                        yield f'event: error\ndata: {json.dumps({"status": status, "text": text})}\n\n'
+                        yield f'event: error\ndata: {json.dumps({"status": status, "text": _chatgpt_safe_error(text, h)})}\n\n'
                         return
                 yield "data: [DONE]\n\n"
         except (httpx.ConnectError, httpx.ConnectTimeout) as e:
             _cooled = _mark_host_dead(target_url)
             _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
-            logger.warning(f"ChatGPT Subscription stream connect to {target_url} failed: {e}{_tail}")
+            logger.warning("ChatGPT Subscription stream connect failed: %s%s", type(e).__name__, _tail)
             yield f'event: error\ndata: {json.dumps({"error": f"Cannot reach {_host_key(target_url)}", "status": 503})}\n\n'
         except httpx.ReadTimeout:
             yield f'event: error\ndata: {json.dumps({"error": "Read timeout", "status": 504})}\n\n'
@@ -3082,8 +3154,8 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         except httpx.NetworkError:
             yield f'event: error\ndata: {json.dumps({"error": "Network error", "status": 502, "fallback_eligible": False})}\n\n'
         except Exception as e:
-            logger.error(f"ChatGPT Subscription stream error: {e}")
-            yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502, "fallback_eligible": False})}\n\n'
+            logger.error("ChatGPT Subscription stream error: %s", type(e).__name__)
+            yield f'event: error\ndata: {json.dumps({"error": "ChatGPT Subscription stream failed", "status": 502, "fallback_eligible": False})}\n\n'
         return
 
     # ── Native Ollama streaming ──
@@ -3099,7 +3171,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                 if r.status_code != 200:
                     raw = (await r.aread()).decode(errors="replace")
                     friendly = _format_upstream_error(r.status_code, raw, target_url)
-                    yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
+                    yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly})}\n\n'
                     return
                 async for line in r.aiter_lines():
                     if not line:
@@ -3198,7 +3270,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                 if r.status_code != 200:
                     raw = (await r.aread()).decode(errors="replace")
                     friendly = _format_upstream_error(r.status_code, raw, target_url)
-                    yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
+                    yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly})}\n\n'
                     return
                 async for line in r.aiter_lines():
                     # SSE allows "data:value" with no space after the colon
@@ -3382,7 +3454,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             if r.status_code != 200:
                 raw = (await r.aread()).decode(errors="replace")
                 friendly = _format_upstream_error(r.status_code, raw, target_url)
-                yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
+                yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly})}\n\n'
                 return
 
             first_token_budget = _first_token_timeout(target_url, timeout)

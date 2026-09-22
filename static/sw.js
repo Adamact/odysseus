@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v649-large-tool-synthesis-scroll';
+const CACHE_NAME = 'odysseus-v651-chatgpt-usage-collapse';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -39,8 +39,8 @@ const KATEX_FONTS = [
 // exact URL the browser requests, query string included.
 const PRECACHE = [
   '/',
-  '/static/style.css?v=20260914pdfstrip1',
-  '/static/app.js?v=20260916autoscroll1',
+  '/static/style.css?v=20260921chatgptusage2',
+  '/static/app.js?v=20260921chatgptusage2',
   '/static/js/storage.js',
   '/static/js/appConfig.js',
   '/static/js/ui.js?v=20260916largetoolscroll1',
@@ -75,9 +75,10 @@ const PRECACHE = [
   '/static/js/theme.js?v=20260911organsrain1',
   '/static/js/censor.js',
   '/static/js/settings.js?v=20260912writingstyle3',
-  '/static/js/admin.js?v=20260914toolschemaprofiles1',
+  '/static/js/admin.js?v=20260921chatgptusage2',
+  '/static/js/chatgptSubscriptionUsage.js',
   '/static/js/init.js?v=20260829chatstyle12',
-  '/static/js/slashCommands.js?v=20260902tuiharness1',
+  '/static/js/slashCommands.js?v=20260921chatgptusage1',
   '/static/js/research/jobs.js?v=20260910researcherrorpersist1',
   '/static/js/emailInbox.js?v=20260914aireply4',
   '/static/js/emailLibrary/utils.js',

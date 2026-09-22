@@ -13,6 +13,7 @@ class ChatRequest(BaseModel):
     time_filter: Optional[str] = Field(default=None, description="Time filter for search")
     preset_id: Optional[str] = Field(default=None, description="Preset identifier")
     selected_endpoint_id: Optional[str] = Field(default=None, description="Selected model endpoint ID")
+    reasoning_effort: Optional[str] = Field(default=None, description="Reasoning effort override")
     
     @field_validator('message')
     @classmethod

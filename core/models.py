@@ -115,6 +115,10 @@ class Session:
     temperature_override: Optional[float] = None
     max_tokens_override: Optional[int] = None
     cwd: Optional[str] = None
+    # Registered ModelEndpoint id this session is bound to (None = legacy /
+    # URL-matched). Lets two endpoints that share a provider URL but not
+    # credentials stay distinguishable.
+    endpoint_id: Optional[str] = None
 
     def __post_init__(self):
         if self.headers is None:
