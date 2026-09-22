@@ -7521,6 +7521,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
           <button type="button" class="md-toolbar-rich-only" data-md="subscript" title="Subscript" style="display:none"><span class="rich-script-icon">x<sub>2</sub></span></button>
           <span class="md-toolbar-sep md-toolbar-edit-only"></span>
           <button type="button" class="md-dd-toggle md-toolbar-edit-only" data-dd="heading" title="Heading (Ctrl+Alt+1-6)"><b>H</b><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+          <button type="button" class="md-dd-toggle md-toolbar-rich-only" data-dd="font" title="Font family" aria-label="Font family" style="display:none"><span>Aa</span><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
           <span id="md-toolbar-sep-after-heading" class="md-toolbar-sep md-toolbar-manual-sep md-toolbar-edit-only" aria-hidden="true"></span>
           <button type="button" class="md-dd-toggle md-toolbar-edit-only" data-dd="list" title="Bulleted list"><svg class="rich-list-bullet-icon" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="4" cy="6" r="1.5"/><circle cx="4" cy="12" r="1.5"/><circle cx="4" cy="18" r="1.5"/><path d="M9 5h12v2H9zM9 11h12v2H9zM9 17h12v2H9z"/></svg><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
           <span class="md-toolbar-sep md-toolbar-edit-only"></span>
@@ -7717,6 +7718,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
           }
           _renderDocumentStats();
           statsPopover.hidden = false;
+          statsPopover.style.zIndex = String(topPortalZ());
           // The editor pane clips overflow, so a footer-anchored absolute
           // popover can disappear underneath the document. Float it against
           // the viewport and place it above the stats button.
@@ -10693,6 +10695,13 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         ['h5', 'Heading 5', 'H5'],
         ['h6', 'Heading 6', 'H6'],
       ],
+      font: [
+        ['fontname:Arial', 'Arial', 'Aa'],
+        ['fontname:Georgia', 'Georgia', 'Gg'],
+        ['fontname:Times New Roman', 'Times New Roman', 'Tt'],
+        ['fontname:Verdana', 'Verdana', 'Vv'],
+        ['fontname:Courier New', 'Courier New', 'Cc'],
+      ],
       code: [['code', 'Inline code', '`'], ['codeblock', 'Code block', '```']],
       list: [
         ['ul', 'Bullet list', '•'],
@@ -11112,6 +11121,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         '#md-toolbar-sep-after-ai-reply',
         '#doc-ai-writing-btn',
         '[data-dd="heading"]',
+        '[data-dd="font"]',
         '#md-toolbar-sep-after-heading',
         '[data-dd="textsize"]',
       ],
