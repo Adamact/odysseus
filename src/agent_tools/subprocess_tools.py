@@ -262,10 +262,36 @@ def _wrap_workspace_namespace(
     # tools keep their installed packages without exposing the host /tmp.
     if interpreter_prefix:
         prefix = os.path.abspath(interpreter_prefix)
+        resolved_prefix = os.path.realpath(prefix)
         mounted_roots = ("/usr", "/home", "/mnt")
-        if os.path.isdir(prefix) and not any(
+        reserved_roots = {
+            "/", "/tmp", "/var", "/opt", "/etc", "/workspace",
+            "/root", "/run", "/proc", "/dev", "/sys", *mounted_roots,
+        }
+        already_visible = any(
             prefix == root or prefix.startswith(root + os.sep)
             for root in mounted_roots
+        )
+        # A prefix is trusted only when it names a specific interpreter tree.
+        # In particular, never overlay the private root, tmpfs, or workspace
+        # with a broad host directory. Reject symlinked prefixes too: bwrap
+        # would otherwise bind the resolved source at a different destination.
+        has_environment_layout = (
+            os.path.isfile(os.path.join(prefix, "pyvenv.cfg"))
+            or (
+                os.path.isfile(os.path.join(prefix, "bin", "python"))
+                and os.path.isdir(os.path.join(
+                    prefix, "lib", f"python{sys.version_info.major}.{sys.version_info.minor}",
+                ))
+            )
+        )
+        if (
+            not already_visible
+            and prefix == resolved_prefix
+            and prefix not in reserved_roots
+            and len(prefix.split(os.sep)) >= 3
+            and os.path.isdir(prefix)
+            and has_environment_layout
         ):
             parents = []
             parent = os.path.dirname(prefix)

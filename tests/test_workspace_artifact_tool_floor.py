@@ -2194,6 +2194,9 @@ def test_python_loaded_code_sees_virtual_workspace_alias(monkeypatch, tmp_path):
     """Absolute /workspace paths must work inside generated Python scripts."""
     import asyncio
     import shutil
+    import sys
+    import venv
+    from types import SimpleNamespace
 
     if not shutil.which("bwrap"):
         return
@@ -2203,10 +2206,21 @@ def test_python_loaded_code_sees_virtual_workspace_alias(monkeypatch, tmp_path):
     from src.agent_tools import subprocess_tools
     from src import tool_execution
     workspace = tmp_path
+    environment = tmp_path / "confined-venv"
+    venv.EnvBuilder(with_pip=False).create(environment)
+    monkeypatch.setattr(subprocess_tools, "sys", SimpleNamespace(
+        prefix=str(environment),
+        executable=str(environment / "bin" / "python"),
+        version_info=sys.version_info,
+    ))
     script = workspace / ".python-workspace-alias-test.py"
     output = workspace / ".python-workspace-alias-test.txt"
+    outside = workspace / "host-sibling.txt"
+    outside.write_text("must stay hidden from private /tmp")
     script.write_text(
-        "from pathlib import Path; Path('/workspace/.python-workspace-alias-test.txt').write_text('ok')"
+        "from pathlib import Path; "
+        "assert not list(Path('/tmp').rglob('host-sibling.txt')); "
+        "Path('/workspace/.python-workspace-alias-test.txt').write_text('ok')"
     )
     monkeypatch.setattr(tool_execution, "agent_cwd", lambda: str(workspace))
     result = asyncio.run(subprocess_tools.PythonTool().execute(
@@ -2215,6 +2229,51 @@ def test_python_loaded_code_sees_virtual_workspace_alias(monkeypatch, tmp_path):
     ))
     assert result["exit_code"] == 0, result
     assert output.read_text() == "ok"
+
+
+def test_workspace_namespace_mounts_only_a_nested_python_environment(monkeypatch, tmp_path):
+    import shlex
+
+    from src.agent_tools import subprocess_tools
+
+    monkeypatch.setattr(subprocess_tools.shutil, "which", lambda name: "/usr/bin/bwrap")
+    environment = tmp_path / "nested" / "venv"
+    environment.mkdir(parents=True)
+    (environment / "pyvenv.cfg").write_text("home = /usr/bin\n")
+    command = subprocess_tools._wrap_workspace_namespace(
+        "echo ok", str(tmp_path), interpreter_prefix=str(environment),
+    )
+    args = shlex.split(command)
+    assert ["--ro-bind", str(environment), str(environment)] in [
+        args[index:index + 3] for index in range(len(args) - 2)
+    ]
+    assert ["--tmpfs", "/tmp"] in [
+        args[index:index + 2] for index in range(len(args) - 1)
+    ]
+
+
+def test_workspace_namespace_rejects_broad_or_symlinked_python_prefixes(monkeypatch, tmp_path):
+    import shlex
+
+    from src.agent_tools import subprocess_tools
+
+    monkeypatch.setattr(subprocess_tools.shutil, "which", lambda name: "/usr/bin/bwrap")
+    linked_root = tmp_path / "linked-root"
+    linked_root.symlink_to("/", target_is_directory=True)
+    for unsafe_prefix in ("/", "/tmp", "/var", "/home", str(linked_root)):
+        command = subprocess_tools._wrap_workspace_namespace(
+            "echo ok", str(tmp_path), interpreter_prefix=unsafe_prefix,
+        )
+        args = shlex.split(command)
+        assert ["--ro-bind", unsafe_prefix, unsafe_prefix] not in [
+            args[index:index + 3] for index in range(len(args) - 2)
+        ]
+        assert ["--tmpfs", "/tmp"] in [
+            args[index:index + 2] for index in range(len(args) - 1)
+        ]
+        assert ["--bind", str(tmp_path), "/workspace"] in [
+            args[index:index + 3] for index in range(len(args) - 2)
+        ]
 
 
 def test_workspace_namespace_preserves_the_64_bit_dynamic_loader(monkeypatch):
