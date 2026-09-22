@@ -107,7 +107,7 @@ def test_odysseus_notes_mode_clamps_without_overriding_caller_denials(monkeypatc
     assert {"manage_notes", "manage_calendar", "manage_tasks"} <= route["disabled_tools"]
 
 
-def test_odysseus_general_mode_uses_compact_core(monkeypatch):
+def test_odysseus_router_uses_compact_core(monkeypatch):
     prompt_calls, _ = _install_route_probe(monkeypatch)
 
     _run_probe(
@@ -117,6 +117,23 @@ def test_odysseus_general_mode_uses_compact_core(monkeypatch):
 
     route = prompt_calls[0]
     assert route["relevant_tools"] == GENERAL_COMPACT_TOOLS
+
+
+def test_odysseus_general_no_tool_mode_has_no_executable_surface(monkeypatch):
+    from src.tool_policy import known_tool_names
+
+    # The current merged profile takes the compact-router branch. Exercise
+    # the legacy general mode itself so its execution denial stays covered.
+    monkeypatch.setattr(agent_loop, "_is_qwen38_tool_router", lambda model: False)
+    prompt_calls, stream_calls = _install_route_probe(monkeypatch)
+
+    _run_probe(
+        [{"role": "user", "content": "Explain the CAP theorem with a concrete distributed database example."}],
+        relevant_tools={"bash", "manage_notes", "ask_user"},
+    )
+
+    assert stream_calls[0]["tools"] is None
+    assert known_tool_names() <= prompt_calls[0]["disabled_tools"]
 
 
 def test_odysseus_calendar_intent_uses_compact_calendar_route(monkeypatch):

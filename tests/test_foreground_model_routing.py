@@ -147,6 +147,7 @@ def _chat_stream_endpoint(
     capture_context=False,
     endpoint_url="https://selected.example/v1",
     session_model="selected-model",
+    session_history=(),
 ):
     def add_message(message):
         captured.setdefault("added_messages", []).append(message)
@@ -156,7 +157,7 @@ def _chat_stream_endpoint(
         model=session_model,
         headers={"Authorization": "Bearer selected"},
         name="test",
-        history=[],
+        history=list(session_history),
         add_message=add_message,
     )
     session_manager = SimpleNamespace(

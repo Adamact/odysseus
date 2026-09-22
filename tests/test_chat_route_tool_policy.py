@@ -9,6 +9,7 @@ Fix: (1) Read from JSON body as fallback.
 """
 
 import ast
+import json
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,7 @@ from src.tool_policy import (
     web_intent_may_enable_for_turn,
     web_search_enabled_for_turn,
 )
+from tests.test_foreground_model_routing import _RouteRequest, _chat_stream_endpoint
 
 _CHAT_ROUTES = Path(__file__).resolve().parent.parent / "routes" / "chat_routes.py"
 
@@ -283,23 +285,94 @@ def test_contextual_browser_followup_recognizes_current_page_inspection():
     assert not _is_contextual_browser_followup("Show my notes.", session)
 
 
-def test_clean_browser_filter_preserves_native_pdf_extraction_contract():
-    source = _CHAT_ROUTES.read_text(encoding="utf-8")
-    assert "INTERACTIVE_CORE_TOOLS" in source
-    assert "NATIVE_WORKSPACE_TOOLS" in source
-    assert "scope_preview_contract(" in source
+async def _clean_route_contract(monkeypatch, message, *, history=(), native=False):
+    from routes import chat_routes
+    from src import tool_security
+
+    with monkeypatch.context() as route_patch:
+        endpoint = _chat_stream_endpoint(
+            route_patch, "agent", {},
+            session_model="odysseus-qwen3.5-tools-pre-heretic",
+            session_history=history,
+        )
+        route_patch.setattr(
+            chat_routes, "coerce_message_and_session",
+            lambda *args, **kwargs: (message, "session-1"),
+        )
+        route_patch.setattr(
+            tool_security, "owner_is_admin_or_single_user", lambda owner: True,
+        )
+        observed = []
+
+        async def capture_agent(*args, **kwargs):
+            observed.append(kwargs["turn_contract"])
+            yield 'data: {"delta":"Contract constructed."}\n\n'
+            yield "data: [DONE]\n\n"
+
+        route_patch.setattr(chat_routes, "stream_agent_loop", capture_agent)
+        request = _RouteRequest("agent")
+        request._form.update({"message": message, "compare_mode": "false"})
+        if native:
+            request._form.update({
+                "cwd": "/tmp/native-workspace",
+                "workspace": "/tmp/native-workspace",
+                "client_runtime_context": json.dumps({
+                    "surface": "odysseus-native", "terminal_agent": True,
+                    "unattended_mode": True,
+                    "input_files": ["/workspace/paper.pdf"],
+                }),
+            })
+        response = await endpoint(request)
+        async for _ in response.body_iterator:
+            pass
+        assert len(observed) == 1
+        return observed[0]
 
 
-def test_clean_preview_only_offers_browser_for_explicit_or_typed_warm_turns():
-    source = _CHAT_ROUTES.read_text(encoding="utf-8")
-    assert "INTERACTIVE_CORE_TOOLS" in source
-    assert '{"private_browser"} if _local_browser_render_intent else frozenset()' in source
+@pytest.mark.asyncio
+async def test_clean_browser_filter_preserves_native_pdf_extraction_contract(monkeypatch):
+    contract = await _clean_route_contract(
+        monkeypatch,
+        "Extract Table 2 from /workspace/paper.pdf using pdf_extract.",
+        native=True,
+    )
+    assert contract.capabilities == {"shell_files"}
+    assert contract.permits("pdf_extract")
+    assert "private_browser" not in contract.offered
+    assert not {"manage_tasks", "search_emails", "send_email"} & contract.offered
 
 
-def test_explicit_web_fetch_is_not_erased_by_generic_browser_intent():
-    source = _CHAT_ROUTES.read_text(encoding="utf-8")
-    assert "INTERACTIVE_CORE_TOOLS" in source
-    assert "_exact_selected_native_chain" in source
+@pytest.mark.asyncio
+async def test_clean_preview_only_offers_browser_for_explicit_or_typed_warm_turns(monkeypatch):
+    message = "Summarize the status."
+    no_history = await _clean_route_contract(monkeypatch, message)
+    failed_history = [{"role": "assistant", "metadata": {"tool_events": [{
+        "tool": "private_browser", "exit_code": 1, "error": True,
+    }]}}]
+    failed = await _clean_route_contract(monkeypatch, message, history=failed_history)
+    successful_history = [{"role": "assistant", "metadata": {"tool_events": [{
+        "tool": "private_browser", "exit_code": 0, "error": False,
+    }]}}]
+    warm = await _clean_route_contract(monkeypatch, message, history=successful_history)
+    explicit = await _clean_route_contract(
+        monkeypatch, "Open https://example.com with the private browser",
+    )
+    assert "private_browser" not in no_history.offered
+    assert "private_browser" not in failed.offered
+    assert warm.permits("private_browser")
+    assert explicit.permits("private_browser")
+
+
+@pytest.mark.asyncio
+async def test_explicit_web_fetch_is_not_erased_by_generic_browser_intent(monkeypatch):
+    contract = await _clean_route_contract(
+        monkeypatch,
+        "Use web_fetch to read https://example.com/report in the private browser.",
+    )
+    assert contract.capabilities == {"search_browser"}
+    assert contract.required == {"web_fetch"}
+    assert contract.permits("web_fetch")
+    assert not {"manage_tasks", "search_emails", "send_email"} & contract.offered
 
 
 def test_web_followup_grammar_covers_article_detail_questions():

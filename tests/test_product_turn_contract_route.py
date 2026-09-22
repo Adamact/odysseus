@@ -368,13 +368,13 @@ async def test_exact_odysseus_clean_route_offers_only_requested_compact_family(
     async for _ in response.body_iterator:
         pass
 
-    from src.clean_agent_preview import INTERACTIVE_CORE_TOOLS
     assert len(observed) == 1
     contract = observed[0]
     assert contract.selection_mode == "clean_compact_v3_preview"
     assert contract.capabilities == {"tasks"}
-    assert contract.offered == {"manage_tasks"} | set(INTERACTIVE_CORE_TOOLS)
+    assert contract.offered == {"manage_tasks", "ask_user"}
     assert contract.required == {"manage_tasks"}
+    assert contract.permits("manage_tasks")
 
 
 @pytest.mark.asyncio

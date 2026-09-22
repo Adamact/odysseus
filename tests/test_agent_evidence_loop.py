@@ -617,7 +617,7 @@ def test_finish_nudge_does_not_accept_unfinished_correction_promise(monkeypatch)
         monkeypatch,
         [
             '```write_file\n/workspace/output.html\n<body>draft</body>\n```',
-            "The preview revealed a defect. I should complete output.html by adding labels.",
+            "The draft has a defect. I should complete output.html by adding labels.",
             '```write_file\n/workspace/output.html\n<body>corrected</body>\n```',
             "Done. Corrected and checked output.html.",
         ],
