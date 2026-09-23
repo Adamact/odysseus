@@ -151,5 +151,13 @@ jobs:
         if: steps.docs-check.outputs.docs_only != 'true'
       - run: mkdir -p data  # sqlite DB lives at ./data/app.db
         if: steps.docs-check.outputs.docs_only != 'true'
-      - run: python -m pytest -q
+      - name: Install FFmpeg for media integration tests
+        if: steps.docs-check.outputs.docs_only != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          command -v ffmpeg
+          ffmpeg -version | head -n 1
+
+      - run: python -m pytest -q -rs
         if: steps.docs-check.outputs.docs_only != 'true'
