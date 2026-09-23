@@ -33,13 +33,37 @@ from src.upload_limits import EDITOR_DRAFT_MAX_BYTES
 # --------------------------------------------------------------------------
 
 
-def test_scholarly_endpoints_come_from_constants_not_literals():
-    """The call sites must reference the constants, not inline URLs."""
-    source = (search_core.__file__ and open(search_core.__file__).read()) or ""
-    assert "https://export.arxiv.org" not in source
-    assert "https://api.openalex.org" not in source
-    assert ARXIV_API_URL.startswith("https://export.arxiv.org")
-    assert OPENALEX_API_URL.startswith("https://api.openalex.org")
+def test_scholarly_endpoints_use_configured_constants(monkeypatch):
+    """Call sites must route through configured endpoints, not hardcoded URLs."""
+    requested_urls = []
+
+    def fake_scholarly_api_get(url: str, params: dict):
+        requested_urls.append(url)
+        if "arxiv" in url:
+            class FakeArxivResponse:
+                text = "<feed xmlns='http://www.w3.org/2005/Atom'></feed>"
+
+            return FakeArxivResponse()
+        elif "openalex" in url:
+            class FakeOpenAlexResponse:
+                def json(self):
+                    return {"results": []}
+
+            return FakeOpenAlexResponse()
+        return None
+
+    monkeypatch.setattr(search_core, "_scholarly_api_get", fake_scholarly_api_get)
+
+    custom_arxiv = "https://custom.arxiv.test/api/query"
+    custom_openalex = "https://custom.openalex.test/works"
+    monkeypatch.setattr(search_core, "ARXIV_API_URL", custom_arxiv)
+    monkeypatch.setattr(search_core, "OPENALEX_API_URL", custom_openalex)
+
+    search_core._arxiv_title_results("Attention Is All You Need")
+    search_core._openalex_title_results("Attention Is All You Need")
+
+    assert custom_arxiv in requested_urls
+    assert custom_openalex in requested_urls
 
 
 def test_user_agent_tracks_app_version():
@@ -62,6 +86,105 @@ def test_outbound_policy_rejection_skips_the_request(monkeypatch):
 
     assert search_core._scholarly_api_get(ARXIV_API_URL, {}) is None
     assert calls == []
+
+
+def test_redirect_to_prohibited_destination_is_blocked_and_never_requested(monkeypatch):
+    """An allowed initial URL must not be permitted to redirect into a prohibited destination."""
+    from src.url_safety import check_outbound_url as real_check
+
+    called_urls = []
+
+    def fake_get(url, **kwargs):
+        called_urls.append(url)
+        req = httpx.Request("GET", url)
+        return httpx.Response(
+            302,
+            headers={"Location": "http://127.0.0.1:8080/internal-admin"},
+            request=req,
+        )
+
+    def mock_check(url, **kwargs):
+        if url == OPENALEX_API_URL:
+            return (True, "")
+        return real_check(url, **kwargs)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr("src.url_safety.check_outbound_url", mock_check)
+
+    result = search_core._scholarly_api_get(OPENALEX_API_URL, {})
+
+    assert result is None
+    # Only the initial allowed URL was contacted; the prohibited redirect destination was never requested
+    assert called_urls == [OPENALEX_API_URL]
+
+
+def test_redirect_to_link_local_metadata_is_blocked_and_never_requested(monkeypatch):
+    """Redirects to cloud metadata or link-local addresses must be refused before connection."""
+    from src.url_safety import check_outbound_url as real_check
+
+    called_urls = []
+
+    def fake_get(url, **kwargs):
+        called_urls.append(url)
+        req = httpx.Request("GET", url)
+        return httpx.Response(
+            301,
+            headers={"Location": "http://169.254.169.254/latest/meta-data"},
+            request=req,
+        )
+
+    def mock_check(url, **kwargs):
+        if url == ARXIV_API_URL:
+            return (True, "")
+        return real_check(url, **kwargs)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr("src.url_safety.check_outbound_url", mock_check)
+
+    result = search_core._scholarly_api_get(ARXIV_API_URL, {})
+
+    assert result is None
+    assert called_urls == [ARXIV_API_URL]
+
+
+def test_allowed_redirect_is_followed_safely(monkeypatch):
+    """A safe redirect destination passing outbound checks is followed to completion."""
+    called_urls = []
+    canonical_url = "https://api.openalex.org/canonical-works"
+
+    def fake_get(url, **kwargs):
+        called_urls.append(url)
+        req = httpx.Request("GET", url)
+        if url == OPENALEX_API_URL:
+            return httpx.Response(301, headers={"Location": "/canonical-works"}, request=req)
+        return httpx.Response(200, json={"results": []}, request=req)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr("src.url_safety.check_outbound_url", lambda url, **kw: (True, ""))
+
+    result = search_core._scholarly_api_get(OPENALEX_API_URL, {})
+
+    assert result is not None
+    assert result.status_code == 200
+    assert called_urls == [OPENALEX_API_URL, canonical_url]
+
+
+def test_redirect_limit_is_bounded(monkeypatch):
+    """Redirects exceeding MAX_SCHOLARLY_REDIRECTS must fail safely without looping."""
+    called_urls = []
+
+    def fake_get(url, **kwargs):
+        called_urls.append(url)
+        req = httpx.Request("GET", url)
+        return httpx.Response(302, headers={"Location": f"{url}/next"}, request=req)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr("src.url_safety.check_outbound_url", lambda url, **kw: (True, ""))
+
+    result = search_core._scholarly_api_get("https://export.arxiv.org/api/query", {})
+
+    assert result is None
+    assert len(called_urls) == search_core.MAX_SCHOLARLY_REDIRECTS + 1
 
 
 def test_exhausted_budget_skips_the_request(monkeypatch):
@@ -170,6 +293,66 @@ def test_oversized_declared_body_is_refused_before_it_is_parsed():
     )
     assert response.status_code == 413
     assert "safety limit" in response.text
+
+
+def test_oversized_declared_body_guard_runs_before_body_consumption():
+    """An oversized Content-Length must reject the request without reading or consuming the body."""
+    body_consumed = False
+
+    def body_stream():
+        nonlocal body_consumed
+        body_consumed = True
+        yield b'{"layers": []}'
+
+    client = _draft_client()
+    response = client.post(
+        "/api/editor-drafts",
+        content=body_stream(),
+        headers={
+            "content-type": "application/json",
+            "content-length": str(EDITOR_DRAFT_MAX_BYTES + 1),
+        },
+    )
+    assert response.status_code == 413
+    assert "safety limit" in response.text
+    # Proves the body stream was never read or consumed before rejection
+    assert body_consumed is False
+
+
+def test_oversized_declared_body_guard_runs_before_body_consumption_on_put():
+    """Update route also rejects oversized Content-Length without consuming body."""
+    body_consumed = False
+
+    def body_stream():
+        nonlocal body_consumed
+        body_consumed = True
+        yield b'{"layers": []}'
+
+    client = _draft_client()
+    response = client.put(
+        "/api/editor-drafts/some-draft-id",
+        content=body_stream(),
+        headers={
+            "content-type": "application/json",
+            "content-length": str(EDITOR_DRAFT_MAX_BYTES + 1),
+        },
+    )
+    assert response.status_code == 413
+    assert body_consumed is False
+
+
+def test_oversized_declared_body_rejects_without_json_parsing():
+    """Even malformed or invalid JSON is rejected with 413 rather than 422 if Content-Length exceeds ceiling."""
+    client = _draft_client()
+    response = client.post(
+        "/api/editor-drafts",
+        content=b"this is completely invalid json {[[",
+        headers={
+            "content-type": "application/json",
+            "content-length": str(EDITOR_DRAFT_MAX_BYTES + 1),
+        },
+    )
+    assert response.status_code == 413
 
 
 def test_update_route_carries_the_same_guard():

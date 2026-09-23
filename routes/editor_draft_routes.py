@@ -19,9 +19,10 @@ Each draft carries:
 import json
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi.routing import APIRoute
 from pydantic import BaseModel
 
 from core.database import EditorDraft, SessionLocal
@@ -84,13 +85,13 @@ def _draft_too_large() -> HTTPException:
 
 
 def reject_oversized_draft_body(request: Request) -> None:
-    """Refuse an oversized draft on ``Content-Length``, before the body is read.
+    """Refuse an oversized draft on declared ``Content-Length``, before the body is read or parsed.
 
     ``_dump_payload`` still owns the authoritative byte count, but it only runs
-    after the request has been parsed and re-serialised — by then the payload
-    has already been materialised several times over. Declaring a body past the
-    ceiling is enough to reject it, so do that first and cheaply. A request that
-    lies about or omits the header still hits the exact check further down.
+    after the request has been parsed and re-serialised. Declaring a body past the
+    ceiling is enough to reject it early and cheaply. Requests with absent,
+    malformed, or chunked transfer encoding still hit the authoritative byte count
+    check further down.
     """
     raw_length = request.headers.get("content-length")
     if not raw_length:
@@ -103,6 +104,20 @@ def reject_oversized_draft_body(request: Request) -> None:
         raise _draft_too_large()
 
 
+class EditorDraftRoute(APIRoute):
+    """Route class that validates declared Content-Length before request body parsing."""
+
+    def get_route_handler(self) -> Callable:
+        original_route_handler = super().get_route_handler()
+
+        async def custom_route_handler(request: Request) -> Response:
+            if request.method in ("POST", "PUT", "PATCH"):
+                reject_oversized_draft_body(request)
+            return await original_route_handler(request)
+
+        return custom_route_handler
+
+
 def _dump_payload(payload: Dict[str, Any]) -> str:
     raw = json.dumps(payload or {}, separators=(",", ":"))
     if len(raw.encode("utf-8")) > EDITOR_DRAFT_MAX_BYTES:
@@ -111,7 +126,7 @@ def _dump_payload(payload: Dict[str, Any]) -> str:
 
 
 def setup_editor_draft_routes() -> APIRouter:
-    router = APIRouter(tags=["editor-drafts"])
+    router = APIRouter(tags=["editor-drafts"], route_class=EditorDraftRoute)
 
     @router.get("/api/editor-drafts")
     async def list_drafts(request: Request) -> Dict[str, List[Dict[str, Any]]]:
@@ -147,7 +162,6 @@ def setup_editor_draft_routes() -> APIRouter:
     async def create_draft(
         request: Request,
         body: DraftCreate,
-        _size_guard: None = Depends(reject_oversized_draft_body),
     ) -> Dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
@@ -180,7 +194,6 @@ def setup_editor_draft_routes() -> APIRouter:
         request: Request,
         draft_id: str,
         body: DraftUpdate,
-        _size_guard: None = Depends(reject_oversized_draft_body),
     ) -> Dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()

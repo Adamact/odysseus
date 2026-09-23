@@ -521,40 +521,66 @@ def _scholarly_budget():
         _scholarly_deadline.reset(token)
 
 
+MAX_SCHOLARLY_REDIRECTS = 3
+
+
 def _scholarly_api_get(url: str, params: dict) -> Optional[httpx.Response]:
     """GET a scholarly metadata API under the shared outbound policy.
 
-    Returns ``None`` when the URL fails the outbound check or the caller's
-    budget is already spent, so callers degrade to their next source instead
-    of raising. ``follow_redirects`` stays on because both APIs redirect to
-    canonical paths, which is exactly why the destination needs checking.
+    Returns ``None`` when any destination URL fails the outbound check or the
+    caller's budget is already spent, so callers degrade to their next source
+    instead of raising. Bounded manual redirects ensure every hop passes
+    through ``check_outbound_url`` before the destination is contacted.
     """
     from src.constants import SCHOLARLY_LOOKUP_TIMEOUT
     from src.url_safety import check_outbound_url
 
-    ok, reason = check_outbound_url(url, block_private=True)
-    if not ok:
-        logger.warning("Scholarly lookup blocked for %s: %s", url, reason)
-        return None
+    current_url = url
+    current_params: Optional[dict] = params
 
-    timeout = SCHOLARLY_LOOKUP_TIMEOUT
-    deadline = _scholarly_deadline.get()
-    if deadline is not None:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            logger.info("Scholarly lookup budget exhausted before %s", url)
+    for _ in range(MAX_SCHOLARLY_REDIRECTS + 1):
+        ok, reason = check_outbound_url(current_url, block_private=True)
+        if not ok:
+            logger.warning("Scholarly lookup blocked for %s: %s", current_url, reason)
             return None
-        timeout = min(timeout, remaining)
 
-    response = httpx.get(
-        url,
-        params=params,
-        headers={"User-Agent": _scholarly_user_agent()},
-        timeout=timeout,
-        follow_redirects=True,
-    )
-    response.raise_for_status()
-    return response
+        timeout = SCHOLARLY_LOOKUP_TIMEOUT
+        deadline = _scholarly_deadline.get()
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                logger.info("Scholarly lookup budget exhausted before %s", current_url)
+                return None
+            timeout = min(timeout, remaining)
+
+        response = httpx.get(
+            current_url,
+            params=current_params,
+            headers={"User-Agent": _scholarly_user_agent()},
+            timeout=timeout,
+            follow_redirects=False,
+        )
+
+        is_redirect = getattr(response, "is_redirect", False) or (
+            getattr(response, "status_code", None) in (301, 302, 303, 307, 308)
+        )
+        if is_redirect:
+            headers = getattr(response, "headers", {})
+            location = headers.get("location")
+            if not location:
+                logger.warning(
+                    "Scholarly redirect missing Location header from %s", current_url
+                )
+                return None
+            current_url = str(httpx.URL(str(response.url)).join(location))
+            current_params = None
+            continue
+
+        response.raise_for_status()
+        return response
+
+    logger.warning("Scholarly lookup exceeded max redirects from %s", url)
+    return None
 
 
 def _arxiv_title_results(title: str, count: int = 3) -> list[dict]:

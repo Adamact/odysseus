@@ -71,7 +71,7 @@ Operators who run the agent against untrusted web or email content with side-eff
 Two exemptions apply even when the gate is on, both deliberate:
 
 - Sources in `_CONTROL_PLANE_CONTEXT_SOURCES` (skills, runtime descriptors, the open editor document, the open email, uploaded files) are treated as control-plane metadata and still permit read-only tools.
-- A TUI run that advertises an authenticated host bridge and declares `unattended_mode` exempts the local execution set in `TUI_CLIENT_TOOL_NAMES`. Personal, network and deployment-local tools are never exempted.
+- A TUI run that advertises a host shell bridge and declares `unattended_mode` exempts the local execution set in `TUI_CLIENT_TOOL_NAMES`. Personal, network and deployment-local tools are never exempted.
 
 ## Security Headers
 

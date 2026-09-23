@@ -147,10 +147,8 @@ SEARXNG_INSTANCE = os.getenv("SEARXNG_INSTANCE", "http://localhost:8080")
 # could stall a user-facing search for the sum of all three.
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
 OPENALEX_API_URL = "https://api.openalex.org/works"
-SCHOLARLY_LOOKUP_TIMEOUT = float(os.getenv("ODYSSEUS_SCHOLARLY_LOOKUP_TIMEOUT", "12"))
-SCHOLARLY_LOOKUP_TOTAL_BUDGET = float(
-    os.getenv("ODYSSEUS_SCHOLARLY_LOOKUP_BUDGET", "20")
-)
+SCHOLARLY_LOOKUP_TIMEOUT = 12.0
+SCHOLARLY_LOOKUP_TOTAL_BUDGET = 20.0
 
 # Cleanup configuration
 CLEANUP_ENABLED = os.getenv("CLEANUP_ENABLED", "True").lower() == "true"
