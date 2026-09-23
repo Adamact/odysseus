@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v653-css-split-2';
+const CACHE_NAME = 'odysseus-v654-css-split-3';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -42,6 +42,7 @@ const PRECACHE = [
   '/static/style.css?v=20260921chatgptusage2',
   '/static/css/documents-gallery-editor.css?v=20260923csssplit1',
   '/static/css/email-calendar-notes-tasks.css?v=20260923csssplit2',
+  '/static/css/cookbook-research-memory-settings.css?v=20260923csssplit3',
   '/static/app.js?v=20260921chatgptusage2',
   '/static/js/storage.js',
   '/static/js/appConfig.js',

@@ -11,6 +11,7 @@
  *   1. static/style.css
  *   2. static/css/documents-gallery-editor.css
  *   3. static/css/email-calendar-notes-tasks.css
+ *   4. static/css/cookbook-research-memory-settings.css
  *
  * Rules were moved verbatim. A rule stays in style.css when its selector group
  * covers more than one panel, when the class is shared design language used by

@@ -907,12 +907,7 @@ body.bg-pattern-ascii-fireflies {
     #tool-gallery-btn.rail-minimized::after,
     #tool-compare-btn.rail-minimized::after,
     #tool-calendar-btn.rail-minimized::after { right: 12px; }
-    /* Cookbook already shows its own running/served-status dot
-       (#cookbook-notif-dot, toggled with .cookbook-notif-active on the
-       button). Don't stack the tabbed-down pulse on top of it — the two
-       dots overlap. Suppress the minimized dot while the status dot is up. */
-    .list-item.rail-minimized.cookbook-notif-active::after { display: none; }
-    @media (max-width: 768px) {
+            @media (max-width: 768px) {
       /* On mobile the list-items are taller (touch-sized), so the tabbed-down
          pulsing dot reads a hair low and right. Email uses its own dot and is
          already aligned — only the tool list-item dots need the nudge:
@@ -1595,11 +1590,7 @@ body.bg-pattern-ascii-fireflies {
       line-height: 1;
       transform: translateY(-0.5px);
     }
-    @keyframes research-done-pulse {
-      0%, 100% { transform: scale(1); opacity: 1; }
-      50% { transform: scale(1.5); opacity: 0.7; }
-    }
-    .session-fav {
+        .session-fav {
       flex-shrink: 0;
       cursor: pointer;
       color: var(--red);
@@ -3077,11 +3068,7 @@ body.bg-pattern-ascii-fireflies {
       color: var(--red);
       animation: research-pulse 2s ease-in-out infinite;
     }
-    @keyframes research-pulse {
-      0%, 100% { background: color-mix(in srgb, var(--red) 12%, transparent); }
-      50% { background: color-mix(in srgb, var(--red) 22%, transparent); }
-    }
-    .tool-indicator-x {
+        .tool-indicator-x {
       margin-left: 2px;
       opacity: 0.4;
       flex-shrink: 0;
@@ -6609,15 +6596,7 @@ body.bg-pattern-ascii-fireflies {
     .confirm-btn-primary:hover { filter:brightness(1.15); }
     .confirm-btn-danger { background:var(--color-danger); color:#fff; border-color:transparent; }
     .confirm-btn-danger:hover { background:var(--color-error); }
-    #cookbook-gguf-delete-overlay {
-      background:rgba(0,0,0,0.5);
-      backdrop-filter:blur(4px);
-      pointer-events:auto !important;
-      z-index:99999 !important;
-      position:fixed !important;
-      inset:0 !important;
-    }
-    .cookbook-gguf-delete-box {
+        .cookbook-gguf-delete-box {
       width:560px;
       max-width:92vw;
     }
@@ -6684,10 +6663,7 @@ body.bg-pattern-ascii-fireflies {
       font-size:0.74rem;
       opacity:0.58;
     }
-    .cookbook-gguf-delete-actions {
-      flex-wrap:wrap;
-    }
-    /* Styled prompt — text-input dialog (used in place of window.prompt) */
+        /* Styled prompt — text-input dialog (used in place of window.prompt) */
     #styled-prompt-overlay {
       background:rgba(0,0,0,0.5);
       backdrop-filter:blur(4px);
@@ -11003,11 +10979,6 @@ body.fullwidth-chat .chat-history {
   flex-shrink: 0;
 }
 
-/* ── Processing pulse animation (reused by session-star) ── */
-@keyframes research-pulse {
-  0%, 100% { opacity: 0.3; transform: scale(0.8); }
-  50% { opacity: 1; transform: scale(1.2); }
-}
 .ai-spinner {
   color: var(--red);
 }
@@ -12771,10 +12742,6 @@ details a:hover {
   isolation: isolate;
 }
 .memory-modal-content::before { content: none; }
-@keyframes memory-synapse-pulse {
-  0%, 100% { opacity: 0.35; transform: scale(1); }
-  50%      { opacity: 0.65; transform: scale(1.02); }
-}
 @media (prefers-reduced-motion: reduce) {
   .memory-modal-content::before { animation: none; opacity: 0.4; }
 }
@@ -12989,9 +12956,6 @@ textarea.memory-add-input {
   padding: 6px 10px;
   line-height: 1.4;
 }
-.memory-add-input::placeholder {
-  color: color-mix(in srgb, var(--fg) 40%, transparent);
-}
 
 .memory-add-input:focus {
   outline: none;
@@ -13105,10 +13069,6 @@ textarea.memory-add-input {
 .memory-toolbar-toggle:has(input:not(:checked)) {
   opacity: 0.7;
 }
-.memory-toolbar-toggle:has(input:not(:checked)) > span {
-  text-decoration: line-through;
-  text-decoration-color: color-mix(in srgb, var(--fg) 30%, transparent);
-}
 
 /* Bulk action bar */
 .memory-bulk-bar {
@@ -13172,13 +13132,11 @@ textarea.memory-add-input {
   flex-shrink: 0;
 }
 .memory-sort-icon-cur svg { width: 13px; height: 13px; }
-.memory-sort-label { white-space: nowrap; }
 .memory-sort-caret {
   flex-shrink: 0;
   opacity: 0.6;
   transition: transform 0.15s;
 }
-.memory-sort-btn[aria-expanded="true"] .memory-sort-caret { transform: rotate(180deg); }
 
 .memory-sort-menu {
   position: absolute;
@@ -13621,13 +13579,6 @@ textarea.memory-add-input {
   inherits: false;
   initial-value: -20%;
 }
-@keyframes memory-synapse-sweep {
-  /* Sweep traverses left → right in the first ~12% of the cycle (≈0.7s of
-     a 6.2s loop), then waits offscreen. */
-  0%   { --sweep: -20%; }
-  12%  { --sweep: 120%; }
-  13%, 100% { --sweep: 120%; }
-}
 @media (prefers-reduced-motion: reduce) {
   #memory-list .memory-item::after { animation: none; opacity: 0; }
 }
@@ -13664,9 +13615,6 @@ textarea.memory-add-input {
   min-width: 0;
 }
 
-.memory-item-edit-input:focus {
-  outline: none;
-}
 
 /* Edit row: text input + category select side by side */
 .memory-edit-row {
@@ -13688,9 +13636,6 @@ textarea.memory-add-input {
   flex-shrink: 0;
 }
 
-.memory-edit-cat-select:focus {
-  outline: none;
-}
 
 /* The Add-memory category select uses the same semantic control as inline
    editing, but needs the full-size add-row dimensions. */
@@ -13704,9 +13649,6 @@ textarea.memory-add-input {
   font-size: 12px;
 }
 
-.memory-add-row .memory-edit-cat-select:focus {
-  border-color: var(--red);
-}
 
 .memory-item-editing {
   border-color: color-mix(in srgb, var(--red) 40%, transparent);
@@ -14253,10 +14195,6 @@ textarea.memory-add-input {
   color: color-mix(in srgb, var(--fg) 55%, transparent);
 }
 
-.memory-item-source::before,
-.memory-item-time::before {
-  content: '\00b7  ';
-}
 
 /* Empty state */
 .memory-empty {
@@ -17717,19 +17655,6 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   position: relative;
   transition: background 0.2s, border-color 0.2s, transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-.adm-check-dot::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: 45%;
-  width: 5px;
-  height: 2.5px;
-  border-left: 1.5px solid #fff;
-  border-bottom: 1.5px solid #fff;
-  transform: translate(-50%, -50%) rotate(-45deg) scale(0);
-  transform-origin: center;
-  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
 .adm-model-row {
   display: flex;
   align-items: center;
@@ -17797,15 +17722,9 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   border-color: var(--accent, var(--red));
   transform: scale(1.15);
 }
-.adm-model-row:active .adm-check-dot {
-  transform: scale(0.9);
-}
 .adm-cb-hidden:checked + .adm-check-dot {
   background: var(--accent, var(--red));
   border-color: var(--accent, var(--red));
-}
-.adm-cb-hidden:checked + .adm-check-dot::after {
-  transform: translate(-50%, -50%) rotate(-45deg) scale(1);
 }
 /* Added Models bulk selection uses the shared dot, without a check glyph. */
 .adm-endpoint-select-dot {
@@ -17815,21 +17734,11 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   min-width: 11px;
   max-width: 11px;
 }
-.adm-cb-hidden:checked + .adm-endpoint-select-dot::after {
-  display: none;
-}
 /* Disabled endpoints — dim the row but keep the toggle/delete buttons
    at full opacity so the user can re-enable or remove without squinting. */
 .admin-user-row.admin-ep-disabled { opacity: 0.55; }
 
 
-/* Most recently added endpoint — brief accent glow so the user can
-   spot the new row immediately after Adding / Find. Fades out cleanly. */
-@keyframes adm-ep-just-added-glow {
-  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent, var(--red)) 55%, transparent); background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent); }
-  60%  { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent, var(--red)) 0%, transparent); background: color-mix(in srgb, var(--accent, var(--red)) 8%, transparent); }
-  100% { box-shadow: 0 0 0 0 transparent; background: transparent; }
-}
 .admin-user-row.adm-ep-just-added {
   border-radius: 8px;
   animation: adm-ep-just-added-glow 2.2s ease-out;
@@ -17870,7 +17779,6 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   background: color-mix(in srgb, var(--red) 8%, transparent);
 }
 .adm-section-toggle .adm-section-caret { opacity: 0.6; }
-.adm-section-toggle:focus-visible { outline: 1px solid var(--red); outline-offset: 1px; }
 /* When expanded, square off the bottom so the header reads as attached to
    the form it controls. */
 .adm-add-section:not(.collapsed) .adm-section-toggle {
@@ -17882,12 +17790,6 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   margin-left: auto;
   flex-shrink: 0;
   transition: transform 0.18s ease;
-}
-/* Collapsed: hide the form body and point the caret right. */
-.adm-add-section.collapsed .admin-model-form { display: none; }
-.adm-add-section.collapsed .adm-section-caret { transform: rotate(-90deg); }
-.adm-quickstart-section {
-  margin-top: 7px;
 }
 .adm-quickstart-toggle {
   display: flex;
@@ -17906,10 +17808,6 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   opacity: 1;
   border-color: var(--red);
 }
-.adm-quickstart-section:not(.collapsed) .adm-quickstart-toggle {
-  border-bottom-left-radius: 0;
-  border-bottom-right-radius: 0;
-}
 .adm-quickstart-body {
   display: flex;
   align-items: center;
@@ -17919,8 +17817,6 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   border-radius: 0 0 6px 6px;
   padding: 6px 8px;
 }
-.adm-quickstart-section.collapsed .adm-quickstart-body { display: none; }
-.adm-quickstart-section.collapsed .adm-section-caret { transform: rotate(-90deg); }
 
 /* Custom provider picker (logo + name) replacing the native <select> */
 .adm-provider-picker { position: relative; margin-bottom: 6px; }
@@ -17952,7 +17848,6 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
 }
 .adm-provider-btn:hover { border-color: color-mix(in srgb, var(--fg) 30%, var(--border)); }
 .adm-provider-current { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; }
-.adm-provider-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .adm-provider-logo {
   width: 14px; height: 14px;
   display: inline-flex; align-items: center; justify-content: center;
@@ -18147,9 +18042,6 @@ span[id$="-logo"] svg:not([width]) {
   animation: admin-spin 0.6s linear infinite;
   vertical-align: -2px;
   margin-right: 2px;
-}
-@keyframes admin-spin {
-  to { transform: rotate(360deg); }
 }
 
 /* Forms */
@@ -18381,7 +18273,6 @@ span[id$="-logo"] svg:not([width]) {
   margin: 0 6px;
   flex-shrink: 0;
 }
-.admin-rag-item .admin-btn-delete { font-size: 10px; padding: 2px 6px; }
 .admin-rag-status {
   font-size: 11px;
   color: color-mix(in srgb, var(--fg) 50%, transparent);
@@ -19281,14 +19172,6 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
   }
 }
 
-/* Cookbook's cached-model list: NO inner-scroll cap. Two nested scroll
-   surfaces (this + the outer .admin-card) trapped the wheel so an expanded
-   serve panel couldn't be reached on tall content. Let the outer
-   .admin-card (overflow-y:auto) be the single scroll surface. */
-.hwfit-cached-list {
-  max-height: none !important;
-  overflow-y: visible !important;
-}
 /* Serve panel specifically: the admin-card inline style is
    `overflow:hidden` (so the toolbar/header don't drift), and the list
    inside has overflow:visible. On short windows that combination
@@ -19581,12 +19464,6 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 .memory-toolbar {
   transition: opacity 0.12s ease, max-height 0.2s ease;
   max-height: 120px;
-}
-/* The Servers list reuses .memory-toolbar for layout but must grow with every
-   added server — the 120px cap above was clipping manually-added servers. */
-.memory-toolbar.cookbook-servers-toolbar {
-  max-height: none;
-  overflow: visible;
 }
 .doclib-card {
   background: color-mix(in srgb, var(--fg) 3%, transparent);
@@ -20715,25 +20592,6 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 }
 #hwfit-cache-select {
   top: -4px;
-}
-#hwfit-cached-list {
-  position: relative;
-  top: -6px;
-}
-#hwfit-server-select,
-#hwfit-search {
-  position: relative;
-  top: -2px !important;
-}
-#hwfit-search {
-  height: 30px;
-  min-height: 30px;
-  font-family: inherit;
-  font-size: 11px;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23e06c75' stroke-opacity='0.85' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='8'/><line x1='21' y1='21' x2='16.65' y2='16.65'/></svg>");
-  background-repeat: no-repeat;
-  background-position: 9px center;
-  padding-left: 28px;
 }
 /* Calendar previously framed its tags as a separate card. It now follows the
    same unframed placement as the other filter strips. */
@@ -22828,17 +22686,6 @@ body.gallery-selecting .gallery-dl-btn,
 #cookbook-modal .cookbook-section-body {
   min-height: 0;
 }
-.cookbook-body::-webkit-scrollbar {
-  width: 4px;
-}
-.cookbook-body::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--fg) 15%, transparent);
-  border-radius: 4px;
-}
-.cookbook-body::-webkit-scrollbar-track {
-  background: transparent;
-  padding: 4px 0;
-}
 .cookbook-group {
   display: flex;
   flex-direction: column;
@@ -22897,14 +22744,6 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .cookbook-field-input:focus { border-color: var(--red); }
 #hwfit-dl-server, #hwfit-usecase, #hwfit-server-select, #hwfit-cache-server, #serve-sort { height: 28px; width: 88px; }
-#hwfit-dl-server.cookbook-server-select-colored,
-#hwfit-server-select.cookbook-server-select-colored,
-#hwfit-cache-server.cookbook-server-select-colored,
-#hwfit-deps-server.cookbook-server-select-colored {
-  color: var(--cookbook-server-color, var(--fg));
-  border-color: color-mix(in srgb, var(--cookbook-server-color) 55%, var(--border));
-  background-color: color-mix(in srgb, var(--cookbook-server-color) 12%, var(--bg));
-}
 /* Serve tab — match Documents sizing, but leave room for the active "Cancel"
    label and center it vertically so the descenders don't clip. */
 #hwfit-cache-select {
@@ -22990,7 +22829,6 @@ body.gallery-selecting .gallery-dl-btn,
   justify-content: center;
 }
 .cookbook-output-kill:hover { color: var(--color-error, var(--warn)); border-color: var(--border); }
-.cookbook-output-wrap:hover .cookbook-output-kill { opacity: 0.7; }
 .cookbook-output-wrap .copy-code {
   position: absolute;
   top: 6px;
@@ -23159,7 +22997,6 @@ body.gallery-selecting .gallery-dl-btn,
   left: -2px;
   top: -1px;
 }
-.cookbook-tab-error-dot { --notif-glow: var(--color-error, #f44); }
 .rail-notify-error { color: var(--color-error, #f44) !important; }
 .cookbook-tab-error-dot {
   display: inline-block; width: 5px; height: 5px; border-radius: 50%;
@@ -23294,21 +23131,7 @@ body.gallery-selecting .gallery-dl-btn,
   background: color-mix(in srgb, var(--accent, var(--red)) 22%, transparent);
   border-color: color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
 }
-/* Brief highlight on the matched task card when jumping from the
-   running pill, so the user can spot it among a long list. */
-.cookbook-task-flash {
-  animation: cookbook-task-flash-anim 1.6s ease-out;
-}
-@keyframes cookbook-task-flash-anim {
-  0%   { box-shadow: 0 0 0 2px var(--accent, var(--red)); }
-  100% { box-shadow: 0 0 0 2px transparent; }
-}
 
-/* Cookbook header "downloading" status label sits 2px too far left
-   against the rest of the cookbook chrome — nudge it right. */
-#cookbook-bg-status {
-  left: 2px;
-}
 .cookbook-serve-dir-edit {
   font-size: 9px;
   color: var(--fg-muted);
@@ -23370,9 +23193,6 @@ body.gallery-selecting .gallery-dl-btn,
   text-decoration: line-through;
   cursor: not-allowed;
 }
-/* Keep both GPU action labels on one line — they wrapped to two rows on
-   mobile, which looked broken. */
-.cookbook-gpu-probe, .cookbook-gpu-clear { white-space: nowrap; }
 /* "Clear Server" lives in the actions row next to "Probe GPUs".
    Inherits .cookbook-btn sizing; this rule just adds the destructive
    red tint on hover so the "this kills processes" cue stays. */
@@ -23524,17 +23344,6 @@ body.gallery-selecting .gallery-dl-btn,
   opacity: 0.85;
   border-color: color-mix(in srgb, var(--accent, var(--red)) 30%, transparent);
 }
-#cookbook-hf-latest-list .cookbook-hf-link:hover {
-  opacity: 1;
-}
-#cookbook-hf-latest-list {
-  min-height: 0;
-  max-height: min(52vh, 480px);
-  overflow-y: auto;
-  overflow-x: hidden;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-}
 
 /* Running tab sections */
 .cookbook-saved-section,
@@ -23590,9 +23399,6 @@ body.gallery-selecting .gallery-dl-btn,
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--cookbook-server-accent, var(--cookbook-server-color)) 18%, transparent),
     0 0 8px color-mix(in srgb, var(--cookbook-server-accent, var(--cookbook-server-color)) 55%, transparent);
 }
-.cookbook-section-header .cookbook-section-title {
-  flex: 1;
-}
 .cookbook-section-header .cookbook-clear-btn {
   margin-left: 0;
   position: relative;
@@ -23634,7 +23440,6 @@ body.gallery-selecting .gallery-dl-btn,
   opacity: 0.6;
   transition: transform 0.15s ease, opacity 0.15s ease;
 }
-.cookbook-section-header:hover .cookbook-section-chevron { opacity: 1; }
 .cookbook-section-body {
   padding: 0;
 }
@@ -23823,7 +23628,6 @@ body.gallery-selecting .gallery-dl-btn,
   position: relative;
   display: inline-flex;
 }
-.cookbook-slot-wrap:hover .cookbook-slot-del { opacity: 1; }
 .cookbook-slot-del {
   position: absolute;
   top: -5px;
@@ -24016,43 +23820,12 @@ body.gallery-selecting .gallery-dl-btn,
   height: auto;
   min-height: 24px;
 }
-/* Keep dependency pills visually centered against the package description.
-   The row itself stays stable; only the controls move down slightly. */
-.cookbook-dep-row > .cookbook-dep-tag {
-  transform: translateY(2px);
-}
 /* The install state is the terminal control in a dependency row. Keep it on
    the far edge even when optional rebuild/category controls are present. */
 .cookbook-dep-row > .cookbook-dep-installed,
 .cookbook-dep-row > .cookbook-dep-na,
 .cookbook-dep-row > .cookbook-dep-install:not(.cookbook-dep-build-deps) {
   margin-left: auto;
-}
-/* Conditional line under the Download h2: only when the section is folded
-   (collapsed). When expanded, the body content provides separation; the
-   underline reads as clutter. */
-#cookbook-dl-tab-fold { border-bottom: none !important; padding-bottom: 0 !important; }
-#cookbook-dl-tab-fold.is-folded {
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent) !important;
-  padding-bottom: 6px !important;
-}
-/* Smooth open/close for the Direct Download body — replaces the
-   instant display:none toggle with a max-height + opacity slide so
-   auto-fold and auto-expand don't feel jarring. 1200px is a safe
-   upper bound for the body height; the slide only fires up to the
-   actual content height because content stops there. */
-#cookbook-dl-tab-fold-body {
-  overflow: hidden;
-  max-height: 1200px;
-  opacity: 1;
-  transition: max-height 0.28s ease, opacity 0.18s ease, margin 0.28s ease;
-}
-#cookbook-dl-tab-fold-body.is-folded {
-  max-height: 0;
-  opacity: 0;
-  margin-top: 0;
-  margin-bottom: 0;
-  pointer-events: none;
 }
 /* Center the "?" glyph inside the help chip. Without text-align it sits 0.5px
    left of true center because of the character's natural baseline offset. */
@@ -24076,7 +23849,6 @@ body.gallery-selecting .gallery-dl-btn,
   -webkit-appearance: none;
   -moz-appearance: none;
 }
-.cookbook-dep-installed-btn .cookbook-dep-installed-label { padding: 0 8px; }
 .cookbook-dep-installed-btn .cookbook-dep-caret {
   display: inline-flex;
   align-items: center;
@@ -24090,7 +23862,6 @@ body.gallery-selecting .gallery-dl-btn,
   opacity: 0.85;
   border-left: 1px solid color-mix(in srgb, var(--green, #50fa7b) 35%, transparent);
 }
-.cookbook-dep-installed-btn:hover { filter: brightness(1.15); }
 .hwfit-serve-row {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
@@ -24133,10 +23904,6 @@ body.gallery-selecting .gallery-dl-btn,
   gap: 8px;
   margin: 0 0 6px;
 }
-.hwfit-serve-topline .hwfit-serve-runtime-note {
-  flex: 1 1 auto;
-  min-width: 0;
-}
 .hwfit-serve-topline .hwfit-serve-runtime-text {
   display: block;
   overflow: hidden;
@@ -24150,33 +23917,6 @@ body.gallery-selecting .gallery-dl-btn,
   flex: 0 0 auto;
   position: relative;
   top: -6px;
-}
-/* Expanded serve panel — make sure it can be scrolled past when it
-   grows taller than the visible viewport. Caps panel height to viewport
-   minus chrome and gives it its own internal scroll, so the surrounding
-   cached-list scroll isn't the only escape route. */
-.hwfit-cached-item .hwfit-serve-panel {
-  max-height: calc(100vh - 180px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-@media (max-width: 768px) {
-  .hwfit-cached-item .hwfit-serve-panel {
-    max-height: calc(100svh - 120px);
-  }
-  .hwfit-serve-preset-row {
-    justify-content: flex-end;
-    margin: -2px 0 0;
-  }
-  .hwfit-serve-topline {
-    flex-wrap: wrap;
-  }
-  .hwfit-serve-topline .hwfit-serve-runtime-note {
-    flex-basis: 100%;
-  }
-  .hwfit-serve-topline .hwfit-serve-runtime-text {
-    white-space: normal;
-  }
 }
 .hwfit-serve-row label {
   font-size: 10px;
@@ -24296,11 +24036,6 @@ body.gallery-selecting .gallery-dl-btn,
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.hwfit-serve-row label select,
-.hwfit-serve-row label input {
-  display: block;
-  margin-top: 2px;
-}
 /* Ctx slider — ported from origin/main. Sits in the Scan/Download toolbar
    next to the quant dropdown. Drives _ctxValue() in cookbook-hwfit.js. */
 .hwfit-ctx-control {
@@ -24410,19 +24145,12 @@ body.gallery-selecting .gallery-dl-btn,
   box-sizing: border-box;
   width: 100%;
 }
-.hwfit-extra-env-label {
-  grid-column: 1 / -1;
-}
-.hwfit-serve-panel[data-backend-active="vllm"] .hwfit-extra-env-label {
-  grid-column: 2 / -1;
-}
 .hwfit-sf:focus {
   border-color: var(--accent, var(--red));
   outline: none;
 }
 .hwfit-sf[type="text"] { width: 100%; }
 .hwfit-sf.hwfit-sf-wide { width: 100%; }
-.hwfit-sf.hwfit-sf-full { grid-column: 1 / -1; }
 .hwfit-serve-checks {
   display: flex;
   flex-wrap: wrap;
@@ -24471,12 +24199,6 @@ body.gallery-selecting .gallery-dl-btn,
   padding-right: 4px !important;
   text-align: center;
 }
-.hwfit-spec-tokens-bare::-webkit-outer-spin-button,
-.hwfit-spec-tokens-bare::-webkit-inner-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-  display: none;
-}
 /* Themed step buttons replacing the native number-input spinner. */
 .hwfit-numstep {
   display: inline-flex;
@@ -24496,11 +24218,6 @@ body.gallery-selecting .gallery-dl-btn,
   background: transparent;
   -moz-appearance: textfield;
   appearance: textfield;
-  margin: 0;
-}
-.hwfit-numstep .hwfit-spec-tokens::-webkit-outer-spin-button,
-.hwfit-numstep .hwfit-spec-tokens::-webkit-inner-spin-button {
-  -webkit-appearance: none;
   margin: 0;
 }
 .hwfit-numstep-btn {
@@ -24525,15 +24242,8 @@ body.gallery-selecting .gallery-dl-btn,
 .hwfit-numstep-btn:active {
   background: color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);
 }
-.hwfit-numstep-btn:focus { outline: none; }
 .hwfit-numstep-btn[data-step="-1"] { border-right: 1px solid var(--border); }
 .hwfit-numstep-btn[data-step="1"]  { border-left:  1px solid var(--border); }
-.hwfit-spec-group:has(input[type="checkbox"]:not(:checked)) .hwfit-spec-method,
-.hwfit-spec-group:has(input[type="checkbox"]:not(:checked)) .hwfit-spec-tokens,
-.hwfit-spec-group:has(input[type="checkbox"]:not(:checked)) .hwfit-numstep {
-  opacity: 0.45;
-  pointer-events: none;
-}
 /* Custom toggle switch */
 .hwfit-sf-cb input[type="checkbox"] {
   -webkit-appearance: none;
@@ -24566,9 +24276,6 @@ body.gallery-selecting .gallery-dl-btn,
   transform: translateX(14px);
   background: #fff;
 }
-.hwfit-serve-extra {
-  margin-bottom: 6px;
-}
 .hwfit-serve-extra label {
   display: flex;
   flex-direction: column;
@@ -24579,9 +24286,6 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .hwfit-serve-extra .hwfit-sf {
   width: 100%;
-}
-.hwfit-serve-cmd-details {
-  margin: 4px 0 0;
 }
 .hwfit-serve-cmd-summary {
   display: flex;
@@ -24597,28 +24301,6 @@ body.gallery-selecting .gallery-dl-btn,
   color: var(--fg-muted);
   font-size: 10px;
   letter-spacing: 0.3px;
-}
-.hwfit-serve-cmd-summary::-webkit-details-marker {
-  display: none;
-}
-.hwfit-serve-cmd-summary::after {
-  content: '';
-  margin-left: auto;
-  width: 0;
-  height: 0;
-  border-left: 4px solid currentColor;
-  border-top: 3px solid transparent;
-  border-bottom: 3px solid transparent;
-  opacity: 0.6;
-  transform: rotate(0deg);
-  transition: transform 0.18s ease;
-}
-.hwfit-serve-cmd-details[open] > .hwfit-serve-cmd-summary::after {
-  transform: rotate(90deg);
-}
-.hwfit-serve-cmd-details[open] > .hwfit-serve-cmd-summary {
-  border-bottom-left-radius: 0;
-  border-bottom-right-radius: 0;
 }
 .hwfit-serve-cmd {
   margin: 0;
@@ -24741,16 +24423,6 @@ body.gallery-selecting .gallery-dl-btn,
     border-color: var(--border);
   }
 }
-/* Same z-index treatment as .cookbook-task-dropdown — cookbook modal's
-   auto-stack climbs past low values; popups append to body and need to
-   sit above the modal regardless. */
-:where(.hwfit-cached-dropdown,
-.cookbook-gpu-split-menu,
-.cookbook-launch-actions-menu,
-.cookbook-saved-menu,
-.cookbook-dep-menu) {
-  z-index: 10000;
-}
 
 /* Launch-command textarea wrapper — Copy pill floats at the top-right
    corner of the field (chat run-output pattern). */
@@ -24762,16 +24434,6 @@ body.gallery-selecting .gallery-dl-btn,
   font-size: 10px;
   color: var(--fg-muted);
   letter-spacing: 0.3px;
-}
-.hwfit-serve-cmd-wrap .hwfit-serve-cmd {
-  /* Just enough breathing room so a cursor at line-end doesn't actually
-     touch the Copy icon — text otherwise uses the full width of the box. */
-  padding-right: 32px;
-}
-.hwfit-serve-cmd-details[open] .hwfit-serve-cmd {
-  border-color: color-mix(in srgb, var(--accent, var(--red)) 48%, var(--border));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, var(--red)) 16%, transparent),
-              0 0 12px color-mix(in srgb, var(--accent, var(--red)) 13%, transparent);
 }
 .hwfit-serve-cmd-details[open] > .hwfit-serve-cmd-summary {
   color: var(--accent, var(--red));
@@ -24800,17 +24462,6 @@ body.gallery-selecting .gallery-dl-btn,
    are visually joined — left button square on its right edge, arrow square
    on its left edge — so they read as one widget. */
 .cookbook-gpu-split { display: inline-flex; flex-shrink: 0; }
-.cookbook-gpu-split .cookbook-gpu-split-main {
-  border-top-right-radius: 0 !important;
-  border-bottom-right-radius: 0 !important;
-}
-.cookbook-gpu-split .cookbook-gpu-split-arrow {
-  border-top-left-radius: 0 !important;
-  border-bottom-left-radius: 0 !important;
-  border-left-width: 0 !important;
-  padding: 0 6px !important;
-  min-width: 24px;
-}
 .cookbook-gpu-split .cookbook-gpu-split-arrow svg { display: block; }
 
 .cookbook-task-dropdown {
@@ -24956,10 +24607,6 @@ body.gallery-selecting .gallery-dl-btn,
   background: color-mix(in srgb, var(--fg) 10%, transparent);
   color: var(--fg-muted);
 }
-.cookbook-task[data-type="download"][data-status="running"] .cookbook-task-type[data-type="download"] {
-  background: color-mix(in srgb, var(--color-accent, #00aaff) 18%, transparent);
-  color: var(--color-accent, #00aaff);
-}
 /* Finished state — overrides the per-type colors so a completed download or
    serve task shows the same green FINISHED chip. */
 .cookbook-task-type.cookbook-task-type-done {
@@ -24988,10 +24635,6 @@ body.gallery-selecting .gallery-dl-btn,
   /* Gentle pulse on top of the cycling bars so a running task reads as clearly
      alive — especially when the card is collapsed and the log isn't visible. */
   animation: cookbook-wave-pulse 1.3s ease-in-out infinite;
-}
-@keyframes cookbook-wave-pulse {
-  0%, 100% { opacity: 0.45; }
-  50%      { opacity: 1; }
 }
 .cookbook-task-indicator {
   min-width: 24px;
@@ -25039,8 +24682,6 @@ body.gallery-selecting .gallery-dl-btn,
 .cookbook-task[data-status="done"] .cookbook-task-done-label {
   color: var(--green, #50fa7b);
 }
-.cookbook-task[data-status="done"] .cookbook-task-check-ico { display: inline; }
-.cookbook-task[data-status="done"] .cookbook-task-clear-ico { display: none; }
 @media (max-width: 820px) {
   .cookbook-task-check {
     top: 2px;
@@ -25181,9 +24822,6 @@ body.gallery-selecting .gallery-dl-btn,
 .cookbook-task-collapsed {
   display: none !important;
 }
-.cookbook-task-header {
-  cursor: pointer;
-}
 .cookbook-task[data-type="serve"] .cookbook-task-header {
   margin: 4px 4px 0;
   border-radius: 6px;
@@ -25207,15 +24845,10 @@ body.gallery-selecting .gallery-dl-btn,
   flex-wrap: wrap;
   gap: 6px;
 }
-.cookbook-env-row > .cookbook-field-label {
-  flex: 1 1 140px;
-  min-width: 120px;
-}
 .cookbook-env-row .cookbook-field-input {
   width: 100%;
   box-sizing: border-box;
 }
-.cookbook-extra-label { grid-column: 1 / -1; }
 
 /* Tabs — match library tabs */
 .cookbook-tabs {
@@ -25484,48 +25117,6 @@ body.gallery-selecting .gallery-dl-btn,
   cursor: pointer;
   transition: opacity 0.1s;
 }
-.cookbook-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--fg);
-  border: 2px solid var(--panel);
-  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
-  cursor: pointer;
-  transition: transform 0.1s, box-shadow 0.1s;
-}
-.cookbook-slider:hover::-webkit-slider-thumb {
-  transform: scale(1.15);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent, var(--red)) 20%, transparent);
-}
-.cookbook-slider:active::-webkit-slider-thumb {
-  transform: scale(1.25);
-  box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent, var(--red)) 25%, transparent);
-}
-.cookbook-slider::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--fg);
-  border: 2px solid var(--panel);
-  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
-  cursor: pointer;
-}
-.cookbook-slider::-moz-range-progress {
-  background: var(--accent, var(--red));
-  height: 6px;
-  border-radius: 4px;
-}
-.cookbook-slider::-webkit-slider-runnable-track {
-  height: 6px;
-  border-radius: 4px;
-}
-.cookbook-slider::-moz-range-track {
-  height: 6px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--fg) 12%, transparent);
-}
 .cookbook-slider-value {
   width: 64px !important;
   flex-shrink: 0;
@@ -25577,9 +25168,6 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .cookbook-checkbox:checked {
   background: var(--red);
-}
-.cookbook-checkbox:checked::after {
-  transform: translateX(14px);
 }
 
 /* GPU toggle grid */
@@ -25658,10 +25246,6 @@ body.gallery-selecting .gallery-dl-btn,
   color: var(--red);
 }
 
-/* Sliders span full row for alignment */
-.cookbook-field-slider {
-  grid-column: 1 / -1;
-}
 
 /* Kill button */
 .cookbook-kill-btn {
@@ -25774,9 +25358,6 @@ body.gallery-selecting .gallery-dl-btn,
 .cookbook-diag-dismiss:hover {
   background: transparent;
   color: var(--color-error);
-}
-.cookbook-diag-body {
-  margin-top: 7px;
 }
 .cookbook-diag-message {
   font-size: 12px;
@@ -25959,10 +25540,6 @@ body.gallery-selecting .gallery-dl-btn,
   border-color: var(--red);
 }
 
-/* Add Server collapsible */
-.cookbook-server-details {
-  margin: 4px 0 6px;
-}
 .cookbook-server-toggle {
   cursor: pointer;
   display: flex;
@@ -25976,7 +25553,6 @@ body.gallery-selecting .gallery-dl-btn,
   color: var(--fg-muted);
   transition: background 0.1s, color 0.1s;
 }
-.cookbook-server-toggle::-webkit-details-marker { display: none; }
 .cookbook-server-toggle:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 5%, transparent); }
 .cookbook-server-toggle svg {
   opacity: 0.5;
@@ -26058,7 +25634,6 @@ body.gallery-selecting .gallery-dl-btn,
   transition: background 0.2s, box-shadow 0.2s, transform 0.15s;
   cursor: pointer;
 }
-.cookbook-srv-status:hover { transform: scale(1.3); }
 .cookbook-srv-status.testing {
   background: var(--color-warning, #f0ad4e);
   animation: cookbook-srv-pulse 0.9s ease-in-out infinite;
@@ -26076,10 +25651,6 @@ body.gallery-selecting .gallery-dl-btn,
   box-shadow:
     0 0 0 2px color-mix(in srgb, var(--red, #e06c75) 25%, transparent),
     0 0 10px 2px color-mix(in srgb, var(--red, #e06c75) 55%, transparent);
-}
-@keyframes cookbook-srv-pulse {
-  0%, 100% { opacity: 0.45; }
-  50% { opacity: 1; }
 }
 @keyframes cookbook-srv-glow-ok {
   0%, 100% {
@@ -26130,44 +25701,7 @@ body.gallery-selecting .gallery-dl-btn,
   background: color-mix(in srgb, var(--fg) 3%, var(--bg));
   box-sizing: border-box;
 }
-.cookbook-server-entry::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  border-radius: inherit;
-  padding: 1px;
-  pointer-events: none;
-  background: linear-gradient(
-    to right,
-    transparent 0%,
-    transparent calc(var(--sweep, -20%) - 8%),
-    color-mix(in srgb, var(--cookbook-server-color, var(--red)) 85%, transparent) var(--sweep, -20%),
-    transparent calc(var(--sweep, -20%) + 8%),
-    transparent 100%
-  );
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-          mask-composite: exclude;
-  animation: memory-synapse-sweep 6.2s linear infinite;
-  animation-delay: 0.4s;
-}
-#cookbook-servers-list .cookbook-server-entry:nth-child(2n)::after { animation-duration: 7.4s; animation-delay: 1.6s; }
-#cookbook-servers-list .cookbook-server-entry:nth-child(3n)::after { animation-duration: 8.8s; animation-delay: 3.2s; }
-#cookbook-servers-list .cookbook-server-entry:nth-child(5n)::after { animation-duration: 9.3s; animation-delay: 4.7s; }
-#cookbook-servers-list .cookbook-server-entry:nth-child(7n)::after { animation-duration: 5.5s; animation-delay: 2.3s; }
-.cookbook-server-entry:hover::after { animation: none; opacity: 0; }
-@media (prefers-reduced-motion: reduce) {
-  .cookbook-server-entry::after { animation: none; opacity: 0; }
-}
 .cookbook-server-entry:last-child { margin-bottom: 0; }
-/* Keep the row inside the card on narrow screens — the fixed-width host/path
-   inputs would otherwise overflow the card's background to the right. */
-@media (max-width: 768px) {
-  .cookbook-server-row .cookbook-srv-host,
-  .cookbook-server-row .cookbook-srv-path { flex: 1 1 100% !important; width: auto !important; min-width: 0 !important; }
-}
-.cookbook-server-row .cookbook-srv-name { width: 60px; flex-shrink: 0; flex-grow: 0; }
 .cookbook-server-row .cookbook-srv-color-wrap {
   width: 28px;
   flex-shrink: 0;
@@ -26176,9 +25710,6 @@ body.gallery-selecting .gallery-dl-btn,
   align-items: center;
   position: relative;
   color: var(--cookbook-server-color, var(--fg-muted));
-}
-.cookbook-server-row select.cookbook-srv-color {
-  display: none !important;
 }
 .cookbook-server-row .cookbook-srv-color-dot {
   position: static;
@@ -26212,10 +25743,6 @@ body.gallery-selecting .gallery-dl-btn,
 .cookbook-server-row .cookbook-srv-color-btn:hover {
   background: color-mix(in srgb, var(--cookbook-server-color, var(--fg)) 14%, transparent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--cookbook-server-color, var(--fg)) 18%, transparent);
-}
-.cookbook-server-row .cookbook-srv-color-btn:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--cookbook-server-color, var(--accent, var(--red))) 70%, transparent);
-  outline-offset: 2px;
 }
 .cookbook-server-row .cookbook-srv-color-caret {
   position: absolute;
@@ -26280,11 +25807,6 @@ body.gallery-selecting .gallery-dl-btn,
   border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent);
   flex-shrink: 0;
 }
-.cookbook-server-row .cookbook-srv-host { flex: 1; min-width: 100px; }
-.cookbook-server-row .cookbook-srv-host[readonly] { opacity: 0.4; cursor: default; }
-.cookbook-server-row .cookbook-srv-port { width: 40px; flex-shrink: 0; flex-grow: 0; }
-.cookbook-server-row .cookbook-srv-env { width: 65px; flex-shrink: 0; flex-grow: 0; }
-.cookbook-server-row .cookbook-srv-path { flex: 1; min-width: 80px; }
 /* Normalize every control on a server row to the same 24-px height — with
    many servers the small per-control height drift was very visible. */
 .cookbook-server-row > * {
@@ -26304,7 +25826,6 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .cookbook-server-row .cookbook-srv-actions > .close-btn { width: 24px; padding: 0; line-height: 22px; }
 .cookbook-server-row .cookbook-dep-tag { display: inline-flex; align-items: center; height: 24px; padding: 0 6px; line-height: 1; }
-.cookbook-server-row .cookbook-srv-status { width: 8px; height: 8px; align-self: center; }
 .cookbook-server-rm {
   width: 22px;
   height: 22px;
@@ -26470,11 +25991,6 @@ body.gallery-selecting .gallery-dl-btn,
   max-width: 190px;
 }
 .hwfit-gpu-group:hover { border-color: var(--fg); }
-/* Brief highlight on the serve command box when a saved config is loaded, so
-   the click clearly registers (loading is otherwise silent). */
-.cookbook-cmd-flash {
-  animation: cookbookCmdFlash 0.6s ease;
-}
 @keyframes cookbookCmdFlash {
   0%   { box-shadow: 0 0 0 0 var(--accent, var(--red)); border-color: var(--accent, var(--red)); }
   30%  { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, var(--red)) 40%, transparent); border-color: var(--accent, var(--red)); }
@@ -26490,9 +26006,6 @@ body.gallery-selecting .gallery-dl-btn,
 .hwfit-container { display: flex; flex-direction: column; gap: 8px; }
 .hwfit-toolbar {
   display: flex; gap: 4px; align-items: center; flex-wrap: wrap;
-}
-.hwfit-toolbar:has(.hwfit-hw-manual-btn) {
-  gap: 8px;
 }
 .hwfit-toolbar .spinner-whirlpool canvas {
   position: relative;
@@ -26516,8 +26029,6 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .hwfit-toolbar select:focus,
 .hwfit-toolbar input:focus { outline: none; border-color: var(--red); }
-.hwfit-toolbar .hwfit-server-select { min-width: 70px; flex-shrink: 0; }
-.hwfit-toolbar .hwfit-usecase { min-width: 70px; flex-shrink: 0; }
 .hwfit-toolbar .hwfit-usecase-btn {
   min-width: 0;
   width: 108px;
@@ -26526,9 +26037,7 @@ body.gallery-selecting .gallery-dl-btn,
   top: -3px;
 }
 .hwfit-toolbar .hwfit-quant { min-width: 0; width: 78px; flex-shrink: 0; font-size: 10px; }
-.hwfit-toolbar .hwfit-engine { min-width: 0; width: 86px; flex-shrink: 0; font-size: 10px; }
 .hwfit-toolbar .hwfit-engine-btn { min-width: 0; width: 116px; flex-shrink: 0; font-size: 10px; }
-.hwfit-toolbar .hwfit-search { flex: 1; min-width: 80px; }
 .hwfit-advanced-panel {
   display: flex;
   align-items: center;
@@ -26567,19 +26076,11 @@ body.gallery-selecting .gallery-dl-btn,
   background: var(--panel, var(--bg));
   color: var(--fg);
 }
-.hwfit-advanced-panel .hwfit-engine-menu {
-  min-width: 132px;
-}
 .hwfit-advanced-btn.active {
   color: var(--accent, var(--red));
   border-color: color-mix(in srgb, var(--accent, var(--red)) 55%, var(--border));
   background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
 }
-/* Lower-opacity "Search models..." placeholder so it reads as a hint, not
-   a label — matches the muted form-field feel of the inline filters. */
-.hwfit-search::placeholder { opacity: 0.5; }
-.hwfit-search::-webkit-input-placeholder { opacity: 0.5; }
-.hwfit-search::-moz-placeholder { opacity: 0.5; }
 
 /* Dot inside the Fit column header — click to toggle the fit-only filter
    (off = show too-tight rows; on = hide them). */
@@ -26733,11 +26234,6 @@ body.gallery-selecting .gallery-dl-btn,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.hwfit-quant-wrap .hwfit-quant,
-.hwfit-engine-wrap .hwfit-engine {
-  /* Make room for the ? on the right edge, in addition to the native chevron. */
-  padding-right: 32px;
-}
 .hwfit-quant-wrap .hwfit-quant-help,
 .hwfit-engine-wrap .hwfit-engine-help {
   position: absolute;
@@ -26789,11 +26285,7 @@ body.gallery-selecting .gallery-dl-btn,
   font-weight: 600;
 }
 .hwfit-server-toggle { flex-shrink: 0; font-size: 10px !important; padding: 3px 8px !important; white-space: nowrap; }
-.hwfit-toolbar .hwfit-host { width: 110px; flex-shrink: 0; }
 .hwfit-env-row { gap: 6px; flex-wrap: wrap; }
-.hwfit-env-row .hwfit-envtype { width: auto; min-width: 70px; flex-shrink: 0; }
-.hwfit-env-row .hwfit-envpath { flex: 1; min-width: 100px; }
-.hwfit-env-row .hwfit-gpus { width: 90px; flex-shrink: 0; }
 .hwfit-hw {
   display: flex; flex-wrap: wrap; column-gap: 4px; row-gap: 7px; padding: 4px 0;
 }
@@ -26844,7 +26336,6 @@ body.gallery-selecting .gallery-dl-btn,
   display: inline-block;
   transform: translateY(-1px);
 }
-.hwfit-hw-chip-dismiss { cursor: pointer; }
 .hwfit-hw-chip-dismiss:hover { opacity: 1; }
 /* Two-part chip: text body toggles dim on click, × removes the chip.
    Visual minimal — just a slightly bigger × so it's easier to hit. */
@@ -26873,9 +26364,6 @@ body.gallery-selecting .gallery-dl-btn,
 .hwfit-hw-chip-x:hover {
   opacity: 0.75;
   color: color-mix(in srgb, var(--fg) 72%, transparent);
-}
-.hwfit-hw-chip-row[data-hw-chip="gpu"] .hwfit-hw-chip-x {
-  transform: translateY(-3px);
 }
 .hwfit-hw-chip-off {
   /* Ghosted: drop the pill background so it reads as "off" rather than
@@ -26957,12 +26445,6 @@ body.gallery-selecting .gallery-dl-btn,
   position: relative;
   top: -2px;
 }
-.hwfit-manual-panel .hwfit-hw-manual-save,
-.hwfit-manual-panel .hwfit-hw-manual-clear {
-  /* -3 (was -2) — 1px more up to optically align with the labeled
-     inputs to their left. */
-  transform: translateY(-3px);
-}
 .hwfit-manual-panel .hwfit-hw-manual-save {
   margin-left: auto;
 }
@@ -27007,9 +26489,6 @@ body.gallery-selecting .gallery-dl-btn,
   transition: background 0.1s;
 }
 .hwfit-row:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
-.cookbook-model-list-fade {
-  animation: cookbook-model-list-fade-in 180ms ease-out both;
-}
 /* Scan/Download model rows enter like the other library lists. Keep the
    column header static and only replay this when the list had no model rows,
    so ordinary filtering and sorting remain instant. */
@@ -27029,19 +26508,9 @@ body.gallery-selecting .gallery-dl-btn,
 .hwfit-list.cookbook-hwfit-models-just-loaded > .hwfit-row:nth-child(12) { animation-delay: 0.44s; }
 .hwfit-list.cookbook-hwfit-models-just-loaded > .hwfit-row:nth-child(13) { animation-delay: 0.48s; }
 .hwfit-list.cookbook-hwfit-models-just-loaded > .hwfit-row:nth-child(n+14) { animation-delay: 0.48s; }
-@keyframes cookbook-model-list-fade-in {
-  from { opacity: 0; transform: translateY(3px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .cookbook-model-list-fade,
-  .hwfit-list.cookbook-hwfit-models-just-loaded > .hwfit-row:not(.hwfit-header) { animation: none; }
-}
 /* Already-downloaded rows: dim slightly so attention falls on undownloaded
    options. The green dot stays bright as the "this is local" cue. */
 .hwfit-row:has(.hwfit-dl-dot) { opacity: 0.55; }
-.hwfit-row:has(.hwfit-dl-dot):hover { opacity: 0.9; }
-.hwfit-row:has(.hwfit-dl-dot) .hwfit-dl-dot { opacity: 1; }
 .hwfit-header {
   cursor: default; position: sticky; top: 0; z-index: 1;
   background: var(--panel); border-bottom: 1px solid var(--border);
@@ -27049,8 +26518,6 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .hwfit-header:hover { background: var(--panel); }
 .hwfit-header .hwfit-col { font-size: 9px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.3px; }
-.hwfit-header .hwfit-name { font-size: 9px; }
-.hwfit-sortable { cursor: pointer; user-select: none; }
 .hwfit-sortable:hover { color: var(--fg) !important; }
 .hwfit-sort-active { color: var(--red) !important; }
 .hwfit-col {
@@ -27062,13 +26529,7 @@ body.gallery-selecting .gallery-dl-btn,
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
   font-weight: 500; font-size: 11px; color: var(--fg);
 }
-.hwfit-c-params { width: 42px; }
-.hwfit-c-quant  { width: 52px; }
-.hwfit-c-vram   { width: 42px; }
-.hwfit-c-ctx    { width: 32px; }
-.hwfit-c-speed  { width: 44px; }
 .hwfit-c-score  { width: 40px; font-weight: 700; font-size: 11px; color: var(--fg); }
-.hwfit-c-mode   { width: 72px; }
 .hwfit-moe {
   display: inline-block; padding: 0 4px; border-radius: 4px; margin-left: 4px;
   background: color-mix(in srgb, var(--red) 15%, transparent);
@@ -27084,10 +26545,6 @@ body.gallery-selecting .gallery-dl-btn,
   padding: 10px 12px; margin: 2px 0 6px; font-size: 11px;
   display: flex; flex-direction: column; gap: 8px;
   animation: hwfit-panel-in 0.15s ease-out;
-}
-@keyframes hwfit-panel-in {
-  from { opacity: 0; transform: translateY(-4px); }
-  to { opacity: 1; transform: translateY(0); }
 }
 .hwfit-panel-header {
   display: flex; align-items: center; gap: 8px; min-width: 0;
@@ -27122,7 +26579,6 @@ body.gallery-selecting .gallery-dl-btn,
 .hwfit-adv-grid {
   display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 6px 0;
 }
-.hwfit-cb { cursor: pointer; }
 .hwfit-cb input[type="checkbox"] { margin: 0 2px 0 0; }
 .hwfit-panel-advanced, .hwfit-panel-settings {
   font-size: 10px;
@@ -27373,9 +26829,6 @@ body.gallery-selecting .gallery-dl-btn,
   padding: 16px 20px;
   min-width: 0;
 }
-.settings-appearance-panel {
-  flex-direction: column;
-}
 .settings-appearance-panel:not(.hidden) {
   display: flex;
 }
@@ -27546,23 +26999,6 @@ body:not(.welcome-ready) #welcome-screen {
   animation: modal-exit 0.18s ease-in both;
 }
 
-@keyframes cookbook-modal-enter {
-  0% {
-    opacity: 0;
-    transform: translateY(12px) scale(0.94);
-    filter: saturate(0.85);
-  }
-  65% {
-    opacity: 1;
-    transform: translateY(-2px) scale(1.012);
-    filter: saturate(1.05);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-    filter: none;
-  }
-}
 #cookbook-modal .modal-content.cookbook-modal-entering {
   animation: cookbook-modal-enter 0.28s cubic-bezier(0.22, 1.35, 0.36, 1) both;
 }
@@ -27572,10 +27008,6 @@ body:not(.welcome-ready) #welcome-screen {
   #cookbook-modal .modal-content.cookbook-modal-entering {
     animation: cookbook-modal-enter-mobile 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
   }
-}
-@keyframes cookbook-modal-enter-mobile {
-  0%   { opacity: 0; transform: translateY(100%); }
-  100% { opacity: 1; transform: translateY(0); }
 }
 #cookbook-modal .modal-content:not(.cookbook-modal-entering):not(.modal-closing) {
   animation: none;
@@ -28527,67 +27959,6 @@ input.settings-select::placeholder { color: color-mix(in srgb, var(--fg) 35%, tr
   width: 0;
   max-width: 100%;
 }
-/* Cookbook Serve Advanced fold — wraps the rarely-touched tuning rows
-   (KV/Attention/Swap/Env for vLLM, llama.cpp batch/cache/split, VRAM
-   monitor, speculative, extra args). Matches the existing .hwfit-panel-
-   advanced look: muted-gray label, no caps, no letter-spacing, no
-   warning-y opacity. Content flows into the parent's existing scroll
-   surface (no inner max-height) and inner rows reset their margin so
-   stacking gaps don't double when the fold opens. */
-/* Styled to match the Add Models page collapsible sections
-   (.adm-section-toggle) — same border/background/caret pattern, so the
-   two folds across the app read consistently. */
-details.hwfit-serve-advanced {
-  margin-top: 8px;
-  overflow: visible;
-}
-details.hwfit-serve-advanced > summary.hwfit-serve-advanced-summary {
-  cursor: pointer;
-  user-select: none;
-  list-style: none;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--fg);
-  opacity: 0.8;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 9px;
-  background: color-mix(in srgb, var(--fg) 4%, transparent);
-  transition: border-color 0.12s, background 0.12s, opacity 0.12s, border-radius 0s;
-}
-details.hwfit-serve-advanced > summary.hwfit-serve-advanced-summary::-webkit-details-marker {
-  display: none;
-}
-details.hwfit-serve-advanced > summary.hwfit-serve-advanced-summary:hover {
-  opacity: 1;
-  border-color: var(--red);
-  background: color-mix(in srgb, var(--red) 8%, transparent);
-}
-/* Caret on the right, rotates open/closed. SVG-style rectangles via
-   borders keep this glyph-free + crisp at small sizes. */
-details.hwfit-serve-advanced > summary.hwfit-serve-advanced-summary::after {
-  content: '';
-  margin-left: auto;
-  width: 0;
-  height: 0;
-  border-left: 4px solid currentColor;
-  border-top: 3px solid transparent;
-  border-bottom: 3px solid transparent;
-  opacity: 0.6;
-  transform: rotate(90deg);
-  transition: transform 0.18s ease;
-}
-details.hwfit-serve-advanced:not([open]) > summary.hwfit-serve-advanced-summary::after {
-  transform: rotate(0deg);
-}
-/* Body rows below the header — tight rhythm so the fold doesn't
-   feel airy. The cookbook modal's existing .cookbook-body is the
-   scroll surface; nothing inside the fold should add its own scroll. */
-details.hwfit-serve-advanced[open] > summary.hwfit-serve-advanced-summary {
-  margin-bottom: 6px;
-}
 details.hwfit-serve-advanced > .hwfit-serve-row,
 details.hwfit-serve-advanced > .hwfit-serve-checks,
 details.hwfit-serve-advanced > .hwfit-serve-cmd-wrap,
@@ -28642,44 +28013,8 @@ details.hwfit-serve-advanced > .hwfit-serve-row.hwfit-vram-monitor {
   grid-template-columns: max-content minmax(0, 1fr);
   white-space: nowrap;
 }
-details.hwfit-serve-advanced > .hwfit-serve-row.hwfit-vram-monitor .hwfit-vram-readout {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-details.hwfit-serve-advanced > .hwfit-serve-row label select,
-details.hwfit-serve-advanced > .hwfit-serve-row label input {
-  margin-top: 1px;
-}
-details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="vllm_attn_backend"]) {
-  position: relative;
-  left: -63px;
-}
-details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="vllm_block_size"]) {
-  position: relative;
-  left: -75px;
-}
 details.hwfit-serve-advanced .hwfit-sf[data-field="vllm_block_size"] {
   width: calc(100% - 6px);
-}
-details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="swap"]) {
-  position: relative;
-  left: -73px;
-}
-details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="vllm_kv_cache_dtype"]) {
-  position: relative;
-  left: 2px;
-}
-@media (max-width: 768px) {
-  details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="vllm_block_size"]) {
-    left: 1px;
-  }
-  details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="swap"]) {
-    left: -3px;
-  }
-  details.hwfit-serve-advanced > .hwfit-serve-checks .hwfit-sf-cb {
-    flex: 1 1 100%;
-  }
 }
 details.hwfit-serve-advanced .hwfit-sf[data-field="vllm_kv_cache_dtype"] {
   width: 60px;
@@ -28751,17 +28086,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   font-family: inherit;
   font-size: 12px;
   transition: border-color 0.15s;
-}
-/* Hide the native number-input spinner arrows (e.g. SMTP/IMAP Port) — they
-   render unstyled and ugly. Field still accepts only numbers. */
-.settings-input[type="number"]::-webkit-outer-spin-button,
-.settings-input[type="number"]::-webkit-inner-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-.settings-input[type="number"] {
-  -moz-appearance: textfield;
-  appearance: textfield;
 }
 .settings-input:focus {
   outline: none;
@@ -28978,19 +28302,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   opacity: 0;
   transition: opacity 0.1s;
 }
-.cookbook-output-wrap:hover .cookbook-output-copy {
-  opacity: 0.5;
-}
-.cookbook-output-wrap .cookbook-output-copy:hover {
-  opacity: 1;
-}
-#cookbook-dl-btn-search {
-  position: relative;
-  top: -4px;
-  padding-top: 0;
-  padding-bottom: 0;
-  height: 28px;
-}
 
 /* Cached model menu button */
 .hwfit-cached-menu-btn {
@@ -29074,10 +28385,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   pointer-events: none;
   opacity: 0.65;
   transform: translateY(4px);
-}
-#cookbook-dl-btn {
-  position: relative;
-  top: -4px;
 }
 
 /* Cookbook model directory tags */
@@ -29398,7 +28705,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   text-shadow: 0 0 7px color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
   mix-blend-mode: screen;
 }
-.research-synapse-compact .rs-stage { height: 288px; }
 .research-synapse-compact .rs-meta { padding: 5px 8px 6px; font-size: 10px; }
 .research-synapse-compact .rs-label-sub { font-size: 8px; }
 .research-synapse .rs-stage-head {
@@ -29431,40 +28737,16 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   background: color-mix(in srgb, var(--accent, var(--red)) 8%, var(--bg));
   color: var(--accent, var(--red));
 }
-@keyframes rs-live {
-  0%, 100% { opacity: 0.45; }
-  50% { opacity: 1; }
-}
 .research-synapse svg {
   display: block;
   width: 100%;
   height: 100%;
-}
-.research-synapse .rs-guide ellipse {
-  fill: none;
-  stroke: color-mix(in srgb, var(--fg) 7%, transparent);
-  stroke-width: 1;
-  stroke-dasharray: 2 7;
 }
 .research-synapse .rs-edge {
   stroke: color-mix(in srgb, var(--accent, var(--red)) 32%, var(--border));
   stroke-width: 1.35;
   fill: none;
   opacity: 0.72;
-}
-.research-synapse .rs-edge-tone-1 { stroke: color-mix(in srgb, var(--gold, #d4a72c) 45%, var(--border)); }
-.research-synapse .rs-edge-tone-2 { stroke: color-mix(in srgb, #5aa7c7 42%, var(--border)); }
-.research-synapse .rs-edge.rs-edge-firing {
-  stroke: var(--accent, var(--red));
-  stroke-width: 2;
-  opacity: 1;
-  filter: drop-shadow(0 0 4px var(--accent, var(--red)));
-  animation: rs-fire 1.1s ease-out;
-}
-@keyframes rs-fire {
-  0%   { stroke-dasharray: 4 200; stroke-dashoffset: 200; opacity: 0; }
-  20%  { opacity: 1; }
-  100% { stroke-dasharray: 200 4; stroke-dashoffset: -200; opacity: 0.55; }
 }
 .research-synapse .rs-node {
   fill: var(--bg);
@@ -29474,38 +28756,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   transform-box: fill-box;
   transform-origin: center;
 }
-.research-synapse .rs-node-root {
-  fill: var(--accent, var(--red));
-  stroke: var(--accent, var(--red));
-  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent, var(--red)) 65%, transparent));
-}
-.research-synapse .rs-root-halo {
-  fill: none;
-  stroke: color-mix(in srgb, var(--accent, var(--red)) 28%, transparent);
-  stroke-width: 1;
-}
-/* Sub & leaf nodes stay inside the accent palette so the whole graph
-   reads as one organism. Leaves are softer/lower-contrast dots that
-   float around their sub — not green-on-stem (which read as palm fronds). */
-.research-synapse .rs-node-sub {
-  fill: color-mix(in srgb, var(--accent, var(--red)) 10%, var(--bg));
-  stroke: color-mix(in srgb, var(--accent, var(--red)) 70%, var(--fg));
-}
-.research-synapse .rs-node-sub.rs-node-tone-1 {
-  fill: color-mix(in srgb, var(--gold, #d4a72c) 11%, var(--bg));
-  stroke: color-mix(in srgb, var(--gold, #d4a72c) 76%, var(--fg));
-}
-.research-synapse .rs-node-sub.rs-node-tone-2 {
-  fill: color-mix(in srgb, #5aa7c7 11%, var(--bg));
-  stroke: color-mix(in srgb, #5aa7c7 72%, var(--fg));
-}
-.research-synapse .rs-node-leaf {
-  stroke: color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
-  fill: color-mix(in srgb, var(--accent, var(--red)) 42%, var(--bg));
-}
-.research-synapse .rs-node-leaf.rs-node-tone-1 { fill: color-mix(in srgb, var(--gold, #d4a72c) 48%, var(--bg)); }
-.research-synapse .rs-node-leaf.rs-node-tone-2 { fill: color-mix(in srgb, #5aa7c7 48%, var(--bg)); }
-.research-synapse .rs-source-node { cursor: help; }
 .research-synapse .rs-source-index {
   fill: var(--fg);
   font: 650 4.5px/1 ui-monospace, "JetBrains Mono", monospace;
@@ -29513,18 +28763,8 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   opacity: 0.88;
 }
 .research-synapse .rs-node-expanded { animation: rs-hub-expand 0.75s ease-out; }
-@keyframes rs-hub-expand {
-  0% { filter: drop-shadow(0 0 0 transparent); }
-  35% { filter: drop-shadow(0 0 7px var(--accent, var(--red))); }
-  100% { filter: drop-shadow(0 0 0 transparent); }
-}
 .research-synapse .rs-node-new {
   animation: rs-pop 0.6s ease-out;
-}
-@keyframes rs-pop {
-  0%   { transform: scale(0); opacity: 0; }
-  60%  { transform: scale(1.25); opacity: 1; }
-  100% { opacity: 1; }
 }
 .research-synapse .rs-pulse {
   fill: var(--accent, var(--red));
@@ -29532,10 +28772,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   animation: rs-pulse 2.6s ease-out infinite;
   transform-box: fill-box;
   transform-origin: center;
-}
-@keyframes rs-pulse {
-  0%   { transform: scale(1); opacity: 0.65; }
-  100% { transform: scale(5); opacity: 0; }
 }
 .research-synapse .rs-label {
   fill: var(--fg);
@@ -29574,12 +28810,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   color: var(--fg);
   font-weight: 600;
 }
-.research-synapse .rs-meta .rs-sep { display: none; }
-.research-synapse.rs-complete .rs-pulse { animation: none; opacity: 0; }
-.research-synapse.rs-complete .rs-node-root {
-  fill: var(--color-success, #4caf50);
-  stroke: var(--color-success, #4caf50);
-}
 .research-synapse.rs-complete .rs-meta .rs-status { color: var(--color-success, #4caf50); }
 .research-synapse.rs-error .rs-meta .rs-status { color: var(--red); }
 .research-synapse.rs-phase-reading .rs-phase-chip,
@@ -29592,10 +28822,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   .research-synapse .rs-node-new,
   .research-synapse .rs-node-expanded,
   .research-synapse .rs-edge-firing { animation: none !important; }
-}
-@media (max-width: 480px) {
-  .research-synapse .rs-meta { grid-template-columns: 1fr auto auto; row-gap: 6px; }
-  .research-synapse .rs-meta .rs-status { display: none; }
 }
 
 /* ── Raw findings items (inside sources-style box) ── */
@@ -37319,7 +36545,6 @@ body.doc-find-active .doc-editor-highlight * {
      horizontally centered. Pin it center. */
   justify-content: center;
 }
-.hwfit-cached-menu-btn svg { fill: currentColor; }
 .hwfit-cached-menu-btn.cookbook-menu-active,
 .cookbook-saved-arrow.cookbook-menu-active {
   background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
@@ -38930,9 +38155,6 @@ body.doc-find-active .doc-editor-highlight * {
 .settings-email-preferences-card {
   display: contents;
 }
-.settings-email-preferences-card > h2 {
-  display: none;
-}
 .settings-email-preferences-card .email-settings-section {
   margin: 0 0 10px;
   padding: 14px 12px 12px;
@@ -38988,9 +38210,6 @@ body.doc-find-active .doc-editor-highlight * {
    preference cards below them. */
 [data-settings-panel="email"] > .admin-card {
   padding-top: 14px;
-}
-[data-settings-panel="email"] > .settings-email-preferences-card {
-  padding-top: 0;
 }
 .email-settings-page-host {
   display: flex;
@@ -42419,10 +41638,6 @@ body.notes-drag-mode .note-card {
   border-color: var(--accent);
   transform: scale(1.15);
 }
-.cookbook-task-menu-btn {
-  top: 0 !important;
-  transform: translateY(2px) scale(1.15) !important;
-}
 .note-checkbox.done .note-check-dot {
   background: var(--accent);
   border-color: var(--accent);
@@ -43298,16 +42513,6 @@ button.cal-add-btn.cal-add-btn-text {
   line-height: 1;
   margin-top: 0;
   transition: background 0.15s, border-color 0.15s;
-}
-/* Settings "+ Add server" matches the model-dir "+ Add" path button (22px). */
-#cookbook-server-add.cal-add-btn-text {
-  height: 28px;
-  min-width: 62px;
-  border-radius: 14px;
-  padding: 0 12px 0 8px;
-  position: relative;
-  top: 1px;
-  font-size: 12px;
 }
 button.cal-add-btn.cal-add-btn-text:hover {
   background: color-mix(in srgb, var(--fg) 14%, transparent);
@@ -45234,10 +44439,6 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
      a bounce, particularly next to the document split pane. */
   animation: research-pane-enter 0.18s ease-out both;
 }
-@keyframes research-pane-enter {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
 /* Synapse signal traveling around the outer edge of the pane. The pane keeps a
    flat background; only this thin border ring remains animated. */
 .research-pane::after {
@@ -45271,16 +44472,6 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
 .research-pane-header {
   display:flex; justify-content:space-between; align-items:center;
   margin-bottom:6px; cursor:grab; user-select:none;
-}
-.research-pane-header:active { cursor:grabbing; }
-.research-pane-header h4 {
-  margin: 0;
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--red);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
 }
 .research-pane-title-icon {
   display: inline-flex;
@@ -45328,8 +44519,6 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
 .research-tab-panel {
   flex: 1 1 auto;
 }
-.research-tab-panel.hidden,
-.research-tab-panel[hidden] { display: none; }
 .research-tab-heading {
   display: flex;
   align-items: center;
@@ -45338,46 +44527,12 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   min-height: 28px;
   margin: 0 0 6px;
 }
-.research-tab-heading h2 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1;
-}
 .research-tab-heading > .memory-count {
   font-size: 10px;
   opacity: 0.55;
   font-weight: normal;
 }
 .research-tab-heading #research-history-clear { margin-left: auto; }
-.research-tab-panel:not([data-research-panel="research"]) .research-jobs-list {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-}
-/* Hide the in-body "Research" subtitle on mobile to save vertical space —
-   the toolbar/header carries enough context already. */
-/* Match the .admin-card h2 styling used in Documents/Library so the
-   "Research" sub-title reads the same as those modals' titles. */
-.research-new-job h2 {
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 0;
-}
-.research-new-job > .research-new-job-desc {
-  margin: 6px 0 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-@media (max-width: 600px) {
-  /* Keep the "Research" title visible on mobile (matches the Cookbook tab
-     titles, which show on mobile). It used to be hidden here. */
-  .research-new-job h2 {
-    font-size: 14px;
-  }
-}
 /* Match the .admin-card surface used in Cookbook (Download / Serve sections):
    var(--panel) bg with var(--border) and rounded corners. */
 .research-new-job {
@@ -45418,29 +44573,9 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   position: relative;
   top: 1px;
 }
-.research-setting:has(#research-model) .research-setting-label {
-  position: relative;
-  top: 1px;
-}
-.research-setting:has(#research-rounds) select,
-.research-setting:has(#research-category) select {
-  position: relative;
-  top: -4px;
-}
-.research-setting:has(#research-rounds) .research-setting-label,
-.research-setting:has(#research-category) .research-setting-label {
-  position: relative;
-  top: 4px;
-}
 .research-setting-label {
   font-size:9px; text-transform:uppercase; letter-spacing:0.5px;
   color:var(--accent, var(--red)); opacity:1; margin-bottom:2px;
-}
-.research-setting select {
-  font-size: 11px; padding: 4px 6px;
-  background: var(--bg);
-  color: var(--fg);
-  border: 1px solid var(--border); border-radius: 4px;
 }
 .research-native-select {
   position: absolute !important;
@@ -45467,15 +44602,9 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   border-color: color-mix(in srgb, var(--accent, var(--red)) 62%, var(--border));
   background: color-mix(in srgb, var(--accent, var(--red)) 5%, var(--bg));
 }
-.research-picker-btn:focus-visible,
-.research-picker-option:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);
-  outline-offset: 1px;
-}
 .research-picker-current {
   min-width: 0; flex: 1; display: flex; align-items: center; gap: 6px;
 }
-.research-picker-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .research-picker-icon {
   width: 15px; height: 15px; flex: 0 0 15px;
   display: inline-flex; align-items: center; justify-content: center;
@@ -45486,7 +44615,6 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   width: 9px; height: 9px; flex-shrink: 0; opacity: 0.5;
   transition: transform 0.14s ease;
 }
-.research-picker.open .research-picker-btn > svg { transform: rotate(180deg); }
 .research-picker-menu {
   position: absolute; z-index: 120;
   top: calc(100% + 4px); left: 0;
@@ -45497,7 +44625,6 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   border: 1px solid var(--border); border-radius: 7px;
   box-shadow: 0 10px 28px rgba(0,0,0,0.32);
 }
-.research-picker-menu[hidden] { display: none; }
 .research-picker-option {
   width: 100%; min-height: 31px; padding: 6px 7px;
   display: flex; align-items: center; gap: 7px;
@@ -45514,12 +44641,7 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   color: var(--accent, var(--red));
   background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
 }
-.research-picker-option > span:nth-child(2):not(.research-picker-check),
-.research-picker-option > span:first-child:not(.research-picker-icon) {
-  overflow: hidden; text-overflow: ellipsis;
-}
 .research-picker-check { margin-left: auto; opacity: 0; color: var(--accent, var(--red)); }
-.research-picker-option.active .research-picker-check { opacity: 1; }
 .research-controls-row {
   display:flex; align-items:center; gap:8px; margin-top:10px;
 }
@@ -45630,7 +44752,6 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   animation: rrm-pop-in 0.12s ease-out both;
   transform-origin: top right;
 }
-.research-run-mode-popover.rrm-up { transform-origin: bottom right; }
 @keyframes rrm-pop-in {
   from { opacity: 0; transform: scale(0.96) translateY(-2px); }
   to   { opacity: 1; transform: scale(1) translateY(0); }
@@ -45650,9 +44771,6 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   cursor: pointer;
 }
 .research-run-mode-popover .research-run-mode-row svg { flex-shrink: 0; opacity: 0.8; }
-.research-run-mode-popover .research-run-mode-row:hover {
-  background: color-mix(in srgb, var(--accent-primary, var(--red)) 14%, transparent);
-}
 .research-run-mode-popover .rrm-title {
   font-weight: 600;
   font-size: 13px;
@@ -45698,11 +44816,6 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
 .chat-research-detail { margin-top: 5px; font-size: 12px; color: var(--fg-dim, #888); }
 .chat-research-open { display: inline-flex; align-items: center; min-height: 44px; padding: 0 8px; margin-top: 4px; color: var(--red); text-decoration: underline; }
 .chat-research-open:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; border-radius: 4px; }
-.research-job-card.done { cursor:pointer; }
-/* Past (library) research used to be dimmed to 0.65 which read as "greyed out".
-   They now look the same as the rest — folding them under "Past research"
-   handles the de-clutter instead. */
-.research-job-card.done.from-library { opacity:1; }
 .research-job-card.error,
 .research-job-card.cancelled { --cat-color: #f44336; }
 /* Per-category theming — picks up a category accent, badge, and soft tint */
@@ -45717,11 +44830,6 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
 /* Uncategorized (default-format) research = "standard", shown in the same
    green as its left border so the green reads as a labelled category. */
 .research-cat-badge.research-cat-standard { color: var(--cat-color); }
-.research-job-thumb-frame[role="button"] { cursor: pointer; }
-.research-job-thumb-frame[role="button"]:hover {
-  outline: 1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);
-  outline-offset: 1px;
-}
 .research-cat-badge {
   font-size: 9px;
   font-weight: 600;
@@ -45735,9 +44843,6 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   opacity: 0.9;
   flex-shrink: 0;
   margin-left: 0;
-}
-.research-job-report-body h1, .research-job-report-body h2, .research-job-report-body h3 {
-  color: var(--cat-color, var(--accent, var(--fg)));
 }
 
 /* Category hero banner */
@@ -45753,19 +44858,12 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   border-left: 4px solid var(--cat-color, var(--accent));
   position: relative; overflow: hidden;
 }
-.research-hero::after {
-  content: ''; position: absolute; right: -40px; top: -40px;
-  width: 160px; height: 160px; border-radius: 50%;
-  background: radial-gradient(circle, color-mix(in srgb, var(--cat-color, var(--accent)) 15%, transparent) 0%, transparent 60%);
-  pointer-events: none;
-}
 .research-hero-icon {
   flex-shrink: 0; width: 32px; height: 32px;
   color: var(--cat-color, var(--accent));
   display: flex; align-items: center; justify-content: center;
   filter: drop-shadow(0 2px 4px color-mix(in srgb, var(--cat-color, var(--accent)) 40%, transparent));
 }
-.research-hero-icon svg { width: 100%; height: 100%; }
 .research-hero-text { flex: 1; min-width: 0; }
 .research-hero-label {
   font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px;
@@ -45777,78 +44875,10 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   line-height: 1.3; color: var(--fg);
 }
 
-/* Product: callout-style bullets */
-.research-body-product ul { list-style: none; padding-left: 0; }
-.research-body-product ul li {
-  padding: 6px 10px 6px 28px; margin: 4px 0;
-  border-left: 2px solid color-mix(in srgb, #5b8abf 40%, transparent);
-  background: color-mix(in srgb, #5b8abf 4%, transparent);
-  border-radius: 0 4px 4px 0; position: relative;
-}
-.research-body-product ul li::before {
-  content: '▸'; position: absolute; left: 10px;
-  color: #5b8abf; font-weight: bold;
-}
 
-/* Comparison: styled table */
-.research-body-comparison table {
-  width: 100%; border-collapse: collapse; margin: 12px 0;
-  border: 1px solid color-mix(in srgb, #e5a33a 25%, transparent);
-  border-radius: 6px; overflow: hidden;
-}
-.research-body-comparison th {
-  background: color-mix(in srgb, #e5a33a 18%, transparent);
-  color: #e5a33a; font-weight: 700;
-  padding: 8px 12px; text-align: left;
-  border-bottom: 2px solid color-mix(in srgb, #e5a33a 40%, transparent);
-}
-.research-body-comparison td {
-  padding: 8px 12px;
-  border-bottom: 1px solid color-mix(in srgb, #e5a33a 12%, transparent);
-}
-.research-body-comparison tr:nth-child(even) td {
-  background: color-mix(in srgb, #e5a33a 3%, transparent);
-}
 
-/* How-to: big numbered steps */
-.research-body-howto ol { counter-reset: howto-step; list-style: none; padding-left: 0; }
-.research-body-howto ol > li {
-  counter-increment: howto-step; position: relative;
-  padding: 10px 12px 10px 52px; margin: 8px 0;
-  background: color-mix(in srgb, #82c882 5%, transparent);
-  border-radius: 8px; border-left: 2px solid #82c882;
-}
-.research-body-howto ol > li::before {
-  content: counter(howto-step);
-  position: absolute; left: 10px; top: 14px;
-  width: 30px; height: 30px; border-radius: 50%;
-  background: #82c882; color: white;
-  font-weight: 700; font-size: 13px;
-  display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 2px 6px color-mix(in srgb, #82c882 40%, transparent);
-}
 
-/* Landscape: section banners */
-.research-body-landscape h3 {
-  padding: 8px 14px;
-  background: linear-gradient(90deg, color-mix(in srgb, #a07ae0 15%, transparent), transparent);
-  border-left: 3px solid #a07ae0;
-  border-radius: 0 6px 6px 0;
-  margin: 14px 0 8px;
-}
 
-/* Fact-check: verdict emphasis */
-.research-body-factcheck blockquote {
-  border-left: 3px solid var(--red);
-  background: color-mix(in srgb, var(--red) 6%, transparent);
-  padding: 10px 14px; margin: 10px 0;
-  border-radius: 0 6px 6px 0;
-}
-.research-body-factcheck strong {
-  color: var(--red);
-  padding: 1px 6px; border-radius: 4px;
-  background: color-mix(in srgb, var(--red) 12%, transparent);
-}
 
 .research-job-header {
   display:flex; align-items:center; gap:7px; min-height:24px;
@@ -45874,18 +44904,12 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   opacity:0.4; cursor:pointer; padding:2px; display:flex;
   transition:opacity 0.15s;
 }
-.research-job-cancel:hover,
-.research-job-remove:hover,
-.research-job-report-link:hover { opacity:1; }
 /* Minimize toggle for the per-job synapse "tree" visual. */
 .research-synapse-toggle {
   background:transparent; border:none; color:var(--fg);
   opacity:0.4; cursor:pointer; padding:2px; display:flex;
   transition:opacity 0.15s;
 }
-.research-synapse-toggle:hover,
-.research-synapse-toggle.active { opacity:1; }
-.research-job-synapse-host.synapse-collapsed { display:none; }
 .research-job-model {
   font-size:9px; opacity:0.4; white-space:nowrap;
   max-width:120px; overflow:hidden; text-overflow:ellipsis;
@@ -45904,9 +44928,6 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
   background: var(--panel, var(--bg));
 }
-.research-job-summary .research-job-thumb-frame {
-  transform: translateY(-4px);
-}
 .research-job-summary {
   align-items: flex-start;
 }
@@ -45921,19 +44942,6 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   top: 12px;
   transform: none;
 }
-.research-job-summary .research-job-failnote {
-  margin: 2px 0 0;
-}
-.research-job-thumb-frame::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: radial-gradient(ellipse at center,
-    transparent 42%,
-    color-mix(in srgb, var(--accent, var(--red)) 28%, transparent) 100%);
-  opacity: 0.75;
-}
 .research-job-thumb {
   display: block;
   width: 100%;
@@ -45947,14 +44955,6 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
       color-mix(in srgb, var(--fg) 7%, transparent),
       color-mix(in srgb, var(--fg) 3%, transparent));
 }
-/* Push the first dim (dismiss/delete) button — and everything after it — to
-   the right edge of the actions row. `:first-of-type` would match the very
-   first <button> in the row regardless of class; this immediate-sibling
-   combinator targets only a dim button that follows a non-dim one. */
-.research-job-actions .research-job-action:not(.research-job-action-dim)
-  + .research-job-action-dim { margin-left: auto; }
-/* Edge case: all buttons in the row are dim — push first dim right. */
-.research-job-actions > .research-job-action-dim:first-child { margin-left: auto; }
 /* Match .doclib-toolbar-btn — same font, padding, hover */
 .research-job-action {
   display: inline-flex; align-items: center; gap: 4px;
@@ -45974,7 +44974,6 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   border-color: var(--fg);
 }
 .research-job-action-dim { opacity: 0.5; border-color: transparent; }
-.research-job-action-dim:hover { opacity: 1; }
 .research-job-action-copied {
   color: var(--color-success) !important;
   border-color: color-mix(in srgb, var(--color-success) 45%, var(--border)) !important;
@@ -45985,18 +44984,12 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   width: 30px; height: 30px; padding: 0;
   justify-content: center; color: var(--fg-muted);
 }
-.research-job-overflow.open .research-job-more {
-  color: var(--fg);
-  border-color: color-mix(in srgb, var(--cat-color) 45%, var(--border));
-  background: color-mix(in srgb, var(--cat-color) 8%, transparent);
-}
 .research-job-menu {
   position: absolute; z-index: 140;
   right: 0; top: calc(100% + 5px);
   min-width: 168px;
   cursor: default;
 }
-.research-job-menu[hidden] { display: none; }
 .research-job-menu > .dropdown-item-compact svg { width: 13px; height: 13px; flex-shrink: 0; opacity: 0.72; }
 .research-job-menu > [data-menu-action="copy"] { position: relative; top: -2px; }
 .research-job-menu > [data-menu-action="dismiss"] { position: relative; top: 2px; }
@@ -46014,11 +45007,6 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   padding:6px 14px; font-size:10px; opacity:0.4;
   text-transform:uppercase; letter-spacing:0.5px;
 }
-.research-section-divider::before,
-.research-section-divider::after {
-  content:''; flex:1; height:1px;
-  background:var(--border);
-}
 /* Foldable job sections (Active / Past research) */
 /* Collapsible section styled like the Cookbook download sub-blocks (.cookbook-card):
    clean var(--bg) card, 8px radius, a real 13px/600 title. Chevron on the LEFT,
@@ -46033,26 +45021,16 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   overflow: visible;
 }
 .research-section-body { display: flex; flex-direction: column; gap: 7px; padding: 9px; }
-.research-section.collapsed .research-section-body { display: none; }
 .research-section-header {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 9px 11px; cursor: pointer; user-select: none;
   transition: background 0.15s;
   border-radius: 7px 7px 0 0;
 }
-.research-section:not(.collapsed) > .research-section-header { border-bottom: 1px solid var(--border); }
 .research-section-header:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); }
-.research-section-header:has(.research-library-hint) { padding-bottom: 8px; }
 .research-section-title { font-size: 13px; font-weight: 650; letter-spacing: 0; }
 .research-section-chevron { flex-shrink: 0; opacity: 0.55; transition: transform 0.2s ease; }
-.research-section.collapsed .research-section-chevron { transform: rotate(-90deg); }
 .research-section-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; opacity: 0.9; }
-/* Active section dot: pulsing accent glow (work in progress). */
-.research-section-dot.pulsing { animation: research-dot-pulse 1.5s ease-in-out infinite; }
-@keyframes research-dot-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent, var(--red)) 55%, transparent); }
-  70%      { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent, var(--red)) 0%, transparent); }
-}
 /* The top "Research" heading is a plain card-style title — no bar/chevron/dot. */
 .research-main-header {
   cursor: default; background: none; border: none;
@@ -46181,7 +45159,6 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   text-decoration:none; white-space:nowrap;
   max-width:200px; overflow:hidden; text-overflow:ellipsis;
 }
-.research-source-link:hover { text-decoration:underline; }
 .research-source-badges {
   display:inline-flex;
   align-items:center;
@@ -46219,11 +45196,6 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   padding:6px 7px;
   margin:0 0 8px;
 }
-.research-navigation-trace-live {
-  margin:7px 0 0;
-  max-height:92px;
-  overflow:hidden;
-}
 .research-nav-title {
   font-weight:600;
   color:var(--text-primary, var(--text));
@@ -46243,36 +45215,13 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   color:var(--accent-primary, var(--red));
   font-weight:600;
 }
-.research-nav-target {
-  overflow:hidden;
-  text-overflow:ellipsis;
-  white-space:nowrap;
-}
-.research-nav-status {
-  opacity:0.85;
-}
-.research-action-row .research-nav-target {
-  opacity:0.9;
-}
-.research-action-skipped {
-  opacity:0.62;
-}
 .research-action-skipped .research-nav-tool {
   color:var(--text-muted);
-}
-.research-nav-meta {
-  grid-column:2 / -1;
-  opacity:0.68;
 }
 .research-source-more { font-size:10px; opacity:0.5; padding:2px 4px; }
 .research-job-report-body {
   font-size:12px; line-height:1.55; max-height:400px; overflow-y:auto;
 }
-.research-job-report-body h1,
-.research-job-report-body h2,
-.research-job-report-body h3 { font-size:13px; margin:12px 0 4px; }
-.research-job-report-body p { margin:4px 0; }
-.research-job-report-body pre { font-size:11px; }
 .research-job-loading { font-size:11px; opacity:0.5; padding:8px 0; }
 .research-library-section {
   border-top:1px solid var(--border); flex-shrink:0;
@@ -46281,10 +45230,6 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   width:100%; background:transparent; border:none; color:var(--fg);
   padding:8px 14px; font-size:11px; text-align:left;
   opacity:0.6; cursor:pointer; font-weight:500;
-}
-.research-library-toggle:hover { opacity:1; }
-.research-library-list {
-  max-height:300px; overflow-y:auto;
 }
 .research-library-item {
   display:flex; align-items:center; gap:6px; flex-wrap:wrap;
@@ -46307,7 +45252,6 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   opacity:0.3; cursor:pointer; padding:2px; display:flex;
   transition:opacity 0.15s;
 }
-.research-lib-open:hover { opacity:1; }
 .research-lib-delete:hover { opacity:1; color:#f44336; }
 .research-badge {
   background:var(--accent-primary, var(--red)); border-radius:50%;
@@ -46316,21 +45260,6 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   /* Breathe when research has finished — gentle scale + glow pulse to
      draw the eye to the unread result without being a hard blink. */
   animation: research-badge-breathe 2.4s ease-in-out infinite;
-}
-@keyframes research-badge-breathe {
-  0%, 100% {
-    transform: scale(1);
-    opacity: 0.85;
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-primary, var(--red)) 55%, transparent);
-  }
-  50% {
-    transform: scale(1.35);
-    opacity: 1;
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-primary, var(--red)) 0%, transparent);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .research-badge { animation: none; }
 }
 
 /* Sidebar Deep Research running indicator — text then dot, styled the same
@@ -46362,9 +45291,6 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   position: relative;
   top: -1px;
   left: -4px;
-}
-@media (prefers-reduced-motion: reduce) {
-  .research-sb-dot { animation: none; }
 }
 
 /* ── In-house color picker ── */
@@ -46819,18 +45745,11 @@ body.theme-frosted .modal {
   top: 3px;
 }
 
-/* Nudge the X icon in the "Clear all" button down 2px. */
-#research-clear-all svg { position: relative; top: 2px; }
 
 /* RESEARCH SCROLL FORCE — guarantee the jobs list scrolls inside the bounded
    pane (the pane is height-capped: 85vh desktop, 100dvh mobile). Each ancestor
    needs min-height:0 for a nested flex scroll to engage. */
 #research-pane { min-height: 0; }
-@media (min-width: 769px) {
-  #research-pane.research-results-view {
-    height: 78vh;
-  }
-}
 /* The BODY is the single scroller — the list flows into it and the whole body
    scrolls. (A nested list-scroller kept clipping instead of scrolling.) */
 #research-pane .research-pane-body {
@@ -46899,7 +45818,6 @@ body.theme-frosted .modal {
   position: relative; top: -2px;
 }
 .research-section-clear:hover { color: var(--red); border-color: var(--red); background: color-mix(in srgb, var(--red) 8%, transparent); }
-.research-section-clear svg { width: 11px; height: 11px; }
 
 /* Visual Report button tinted with the research type colour (--cat-color),
    falling back to the accent for "standard" (uncategorized) research. */
@@ -46907,15 +45825,9 @@ body.theme-frosted .modal {
   color: var(--cat-color, var(--accent, var(--red)));
   border-color: color-mix(in srgb, var(--cat-color, var(--accent, var(--red))) 45%, var(--border));
 }
-.research-job-action.research-job-action-report:hover {
-  color: var(--cat-color, var(--accent, var(--red)));
-  border-color: var(--cat-color, var(--accent, var(--red)));
-  background: color-mix(in srgb, var(--cat-color, var(--accent, var(--red))) 10%, transparent);
-}
 
 .research-start-btn svg,
 .research-add-plus { display: inline-block; }
-.research-start-btn svg { color: inherit; }
 
 /* Compare's selector uses the shared Start button markup, but its accent
    background needs a readable dark foreground and a lighter hover weight. */
@@ -46937,10 +45849,7 @@ body.theme-frosted .modal {
   background: none; border: none; padding: 0; cursor: pointer;
   font: inherit; color: var(--accent, var(--red)); text-decoration: underline;
 }
-.research-library-link:hover { opacity: 0.8; }
 
-/* Nudge the Delete button 4px left. */
-.research-job-action[data-action="delete"] { position: relative; right: 2px; }
 
 @media (max-width: 768px) {
   /* Mobile: the "Delete" label is too wide in Deep Research job rows; keep the
@@ -46971,26 +45880,9 @@ body.theme-frosted .modal {
   border-color: color-mix(in srgb, var(--research-accent) 28%, var(--border));
   border-left-color: var(--research-accent);
 }
-.research-job-card.research-standard:hover {
-  background: color-mix(in srgb, var(--research-accent) 7%, var(--bg));
-  border-color: color-mix(in srgb, var(--research-accent) 42%, var(--border));
-}
 .research-job-card.research-standard .research-cat-badge.research-cat-standard {
   color: var(--research-accent);
 }
-.research-job-card.research-standard .research-progress-fill {
-  background: var(--research-accent);
-}
-.research-job-card.research-standard-v0,
-.research-hero.research-hero-v0 { --research-accent: #db8576; }
-.research-job-card.research-standard-v1,
-.research-hero.research-hero-v1 { --research-accent: #d2a45f; }
-.research-job-card.research-standard-v2,
-.research-hero.research-hero-v2 { --research-accent: #72ad8d; }
-.research-job-card.research-standard-v3,
-.research-hero.research-hero-v3 { --research-accent: #72a5cf; }
-.research-job-card.research-standard-v4,
-.research-hero.research-hero-v4 { --research-accent: #aa86c7; }
 
 /* Failed research (0 sources) — red flag + actionable note. */
 .research-job-card.research-job-failed { border-color: color-mix(in srgb, #f44336 40%, var(--border)); }
@@ -47202,7 +46094,6 @@ body.theme-frosted .modal {
   color: var(--fg);
   user-select: all;
 }
-.adm-copilot-copy { margin-left: auto; }
 .adm-copilot-auth {
   text-align: center;
   text-decoration: none;
@@ -47227,9 +46118,6 @@ body.theme-frosted .modal {
   line-height: 1;
   display: inline-block;
   margin-left: 2px;
-}
-.adm-chatgpt-usage-host {
-  margin: 4px 0 6px 0;
 }
 .adm-chatgpt-usage {
   display: flex;
@@ -47306,11 +46194,6 @@ body.theme-frosted .modal {
   align-items: stretch;
   vertical-align: middle;
 }
-.hwfit-serve-launch-group .hwfit-serve-launch {
-  border-top-right-radius: 0 !important;
-  border-bottom-right-radius: 0 !important;
-  margin-right: 0 !important;
-}
 .hwfit-serve-launch-group .hwfit-serve-schedule-arrow {
   border-top-left-radius: 0 !important;
   border-bottom-left-radius: 0 !important;
@@ -47355,7 +46238,6 @@ body.theme-frosted .modal {
   flex-wrap: wrap;
 }
 .hwfit-schedule-title svg { opacity: 0.7; flex-shrink: 0; }
-.hwfit-schedule-title-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hwfit-schedule-title-spacer { flex: 1; min-width: 8px; }
 .hwfit-schedule-row {
   display: flex;
@@ -47370,10 +46252,6 @@ body.theme-frosted .modal {
   font-size: 11px;
   opacity: 0.75;
 }
-.hwfit-schedule-field input[type="time"] {
-  font: inherit;
-  min-width: 90px;
-}
 .hwfit-schedule-label {
   font-size: 11px;
   opacity: 0.75;
@@ -47382,11 +46260,6 @@ body.theme-frosted .modal {
   display: inline-flex;
   flex-wrap: wrap;
   gap: 5px;
-}
-/* Days field inline with From / Until — push it + the action buttons to
-   the right end of the row so the row reads: From | Until | …gap… | Days | Cancel | Save. */
-.hwfit-schedule-days-field {
-  margin-left: auto;
 }
 .hwfit-schedule-actions-inline {
   display: inline-flex;
@@ -47445,14 +46318,11 @@ body.theme-frosted .modal {
   cursor: pointer;
   user-select: none;
 }
-.hwfit-schedule-mirror-label { white-space: nowrap; }
-.hwfit-schedule-mirror-switch { transform: scale(0.85); transform-origin: left center; }
 .hwfit-sched-err {
   font-size: 12px;
   color: var(--red, #ff6b6b);
   display: none;
 }
-.hwfit-sched-err.is-visible { display: block; }
 @media (max-width: 600px) {
   .hwfit-schedule-row { gap: 8px; }
   .hwfit-sched-day-chip { width: 36px; height: 36px; font-size: 11px; }
@@ -47736,15 +46606,6 @@ body.theme-frosted .modal {
 .workspace-footer > #workspace-use > svg { top: 3px; color: inherit; }
 .workspace-note { margin: 0 0 8px; font-size: 11px; line-height: 1.4; }
 
-/* Real-time Diagnostics Log Terminal UI Styles */
-.settings-system-logs-svg {
-  vertical-align: -2px;
-  margin-right: 5px;
-  opacity: 0.6;
-}
-.settings-system-logs-toggle-sub {
-  margin-bottom: 12px;
-}
 .settings-system-logs-tabs {
   display: flex;
   align-items: center;
@@ -47762,10 +46623,6 @@ body.theme-frosted .modal {
   font-size: 11px;
   padding: 6px 8px 7px;
   opacity: 0.62;
-}
-.settings-system-logs-tab:hover,
-.settings-system-logs-tab.active {
-  opacity: 1;
 }
 .settings-system-logs-tab.active {
   border-bottom-color: var(--accent, var(--red));
@@ -47814,9 +46671,6 @@ body.theme-frosted .modal {
   align-items: center;
   gap: 4px;
   padding: 0 8px;
-}
-.settings-system-logs-refresh-svg {
-  pointer-events: none;
 }
 .settings-system-logs-autopoll-container {
   display: inline-flex;
@@ -48107,241 +46961,32 @@ body.theme-frosted .modal {
   .compare-grid > .compare-pane.compare-pane-mobile-active { animation: none; }
 }
 
-/* ── Settings navigation / finder ────────────────────────────── */
-.settings-sidebar-content {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 2px;
-  overflow-y: auto;
-  overflow-x: hidden;
-}
 
-.settings-nav-search-wrap {
-  position: relative;
-  margin: 0 0 8px;
-}
 
-.settings-nav-search {
-  box-sizing: border-box;
-  width: 100%;
-  min-width: 0;
-  height: 32px;
-  padding: 5px 9px 5px 29px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  outline: none;
-  background: var(--bg);
-  color: var(--fg);
-  font: inherit;
-  font-size: 11px;
-}
 
-.settings-nav-search:focus {
-  border-color: var(--accent, var(--red));
-}
 
-.settings-nav-search::placeholder {
-  color: var(--fg);
-  opacity: 0.45;
-}
 
-.settings-nav-search-icon {
-  position: absolute;
-  z-index: 2;
-  top: 9px;
-  left: 9px;
-  pointer-events: none;
-  opacity: 0.5;
-}
 
-.settings-nav-search-results {
-  position: absolute;
-  z-index: 30;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  min-width: 100%;
-  max-height: 300px;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--panel);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
-}
 
-.settings-search-result {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  width: 100%;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 9px;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--fg);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
 
-.settings-search-result:hover,
-.settings-search-result.active {
-  background: color-mix(in srgb, var(--fg) 8%, transparent);
-}
 
-.settings-search-result-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
-}
 
-.settings-search-result-group {
-  flex: 0 0 auto;
-  max-width: 92px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 9px;
-  opacity: 0.5;
-}
 
-.settings-search-empty {
-  padding: 8px;
-  color: var(--fg);
-  font-size: 10px;
-  text-align: center;
-  opacity: 0.55;
-}
 
-.settings-sidebar-resize-handle {
-  position: absolute;
-  z-index: 20;
-  top: 0;
-  right: -3px;
-  width: 6px;
-  height: 100%;
-  cursor: col-resize;
-  background: transparent;
-  touch-action: none;
-}
 
-.settings-sidebar-resize-handle:hover,
-.settings-sidebar-resizing .settings-sidebar-resize-handle {
-  background: var(--accent, var(--red));
-  opacity: 0.45;
-}
 
-.settings-sidebar-resizing {
-  transition: none;
-  user-select: none;
-}
 
-body.settings-sidebar-resize-active {
-  cursor: col-resize;
-  user-select: none;
-}
 
-.settings-sidebar-toggle {
-  position: absolute;
-  z-index: 25;
-  top: 9px;
-  right: -13px;
-  display: flex;
-  width: 24px;
-  height: 24px;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  background: var(--panel);
-  color: var(--fg);
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.12s ease, border-color 0.12s ease;
-}
 
-.settings-sidebar:hover .settings-sidebar-toggle,
-.settings-sidebar-toggle:focus-visible,
-.settings-sidebar.settings-sidebar-collapsed .settings-sidebar-toggle {
-  opacity: 1;
-}
 
-.settings-sidebar-toggle:hover,
-.settings-sidebar-toggle:focus-visible {
-  border-color: var(--accent, var(--red));
-  color: var(--accent, var(--red));
-}
 
-.settings-sidebar-toggle-expand {
-  display: none;
-}
 
-.settings-sidebar.settings-sidebar-collapsed {
-  width: 34px;
-  flex-basis: 34px;
-  padding: 0;
-}
 
-.settings-sidebar.settings-sidebar-collapsed .settings-sidebar-content {
-  display: none;
-}
 
-.settings-sidebar.settings-sidebar-collapsed .settings-sidebar-resize-handle {
-  display: none;
-}
 
-.settings-sidebar.settings-sidebar-collapsed .settings-sidebar-toggle {
-  top: 10px;
-  right: 5px;
-}
 
-.settings-sidebar.settings-sidebar-collapsed .settings-sidebar-toggle-collapse {
-  display: none;
-}
 
-.settings-sidebar.settings-sidebar-collapsed .settings-sidebar-toggle-expand {
-  display: block;
-}
 
-/* The existing narrow/snapped layout is a horizontal tab rail. Sidebar
-   resizing/collapse applies only to the vertical desktop layout. */
-@container settings-modal (max-width: 620px) {
-  .settings-sidebar {
-    width: auto;
-    flex: 0 0 auto;
-    transition: none;
-  }
-
-  .settings-sidebar-content {
-    flex-direction: row;
-    overflow-x: auto;
-    overflow-y: hidden;
-  }
-
-  .settings-nav-search-wrap,
-  .settings-sidebar-resize-handle,
-  .settings-sidebar-toggle {
-    display: none;
-  }
-
-  .settings-sidebar.settings-sidebar-collapsed {
-    width: auto;
-    flex-basis: auto;
-    padding: 6px;
-  }
-
-  .settings-sidebar.settings-sidebar-collapsed .settings-sidebar-content {
-    display: flex;
-  }
-}
 
 /* Mobile tool drawers: leave a visible strip of the workspace above tall
    sheets so they read as draggable drawers rather than full-screen routes.
@@ -48399,32 +47044,7 @@ body.settings-sidebar-resize-active {
   }
 }
 
-@media (max-width: 600px) {
-  .settings-sidebar {
-    width: auto;
-    flex: 0 0 auto;
-  }
 
-  .settings-sidebar-content {
-    flex-direction: row;
-    overflow-x: auto;
-    overflow-y: hidden;
-  }
-
-  .settings-nav-search-wrap,
-  .settings-sidebar-resize-handle,
-  .settings-sidebar-toggle {
-    display: none;
-  }
-}
-.cookbook-chat-target {
-  animation: cookbook-chat-target-pulse 1.8s ease-out;
-}
-
-@keyframes cookbook-chat-target-pulse {
-  0%, 35% { outline: 2px solid var(--accent, #d46a6a); outline-offset: 2px; }
-  100% { outline: 2px solid transparent; outline-offset: 5px; }
-}
 
 /* Shared bulk-selection trigger. Keep every Select/Cancel control on the same
    circle-dot and X language even when a feature rewrites the button label. */
@@ -48527,12 +47147,6 @@ body.settings-sidebar-resize-active {
   align-items: center;
   min-height: 24px;
 }
-#research-pane .research-history-clear-btn {
-  margin-left: auto;
-  height: 22px;
-  padding-top: 0;
-  padding-bottom: 0;
-}
 #research-pane .research-history-clear-btn svg {
   position: relative;
   top: 2px;
@@ -48563,13 +47177,6 @@ body.settings-sidebar-resize-active {
   opacity: 0.6;
   font-weight: normal;
 }
-#research-pane .research-history-desc {
-  flex: 0 0 auto;
-  position: relative;
-  top: -8px;
-  margin: 6px 0 0;
-  font-size: 11px;
-}
 #research-pane .research-history-toolbar {
   flex: 0 0 auto;
   max-height: none;
@@ -48591,15 +47198,6 @@ body.settings-sidebar-resize-active {
   flex: 0 0 auto;
   margin-right: 3px;
   vertical-align: -2px;
-}
-#research-pane .research-history-search-wrap {
-  position: relative;
-  top: 2px;
-  display: flex;
-  align-items: center;
-  width: 100%;
-  min-width: 0;
-  margin-top: 0;
 }
 #research-pane .research-history-search-wrap > svg {
   position: absolute;
