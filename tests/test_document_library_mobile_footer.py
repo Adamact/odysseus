@@ -10,24 +10,26 @@ SOURCE = (ROOT / "static/js/documentLibrary.js").read_text(encoding="utf-8")
 STYLE = (ROOT / "static/style.css").read_text(encoding="utf-8")
 
 
-def test_mobile_footer_exposes_open_and_more_only():
+def test_mobile_footer_exposes_delete_open_and_more():
     assert "doclib-expanded-open-btn" in SOURCE
     assert "doclib-expanded-mobile-more" in SOURCE
     assert "label: 'Open in new chat'" in SOURCE
     assert "'Open in original' : 'Open document'" in SOURCE
-    assert "label: 'Export file'" in SOURCE
+    assert "label: 'Export file ›'" in SOURCE
+    assert "label: 'Original format'" in SOURCE
+    assert "label: 'Markdown (.md)'" in SOURCE
     assert "'Restore document' : 'Archive document'" in SOURCE
     assert "label: 'Delete document'" in SOURCE
 
-    mobile_css = STYLE.split("The Documents preview footer only exposes Open and More", 1)[1]
+    mobile_css = STYLE.split("On phones, keep Delete explicit", 1)[1]
     mobile_css = mobile_css.split("/* Chat top bar", 1)[0]
     for hidden_action in (
-        ".doclib-expanded-delete-btn",
         ".doclib-expanded-archive-btn",
         ".doclib-expanded-clone-btn",
         ".doclib-expanded-export-btn",
     ):
         assert hidden_action in mobile_css
+    assert ".doclib-expanded-delete-btn {\n        display: inline-flex !important" in mobile_css
     assert ".doclib-expanded-mobile-more" in mobile_css
     assert "display: inline-flex" in mobile_css
     assert "box-sizing: border-box" in mobile_css

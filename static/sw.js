@@ -143,6 +143,8 @@ const PANEL_PRECACHE = [
   '/static/js/editor/document-geometry.js',
   '/static/js/editor/export-dialog.js',
   '/static/js/editor/selection-mask.js',
+  '/static/js/editor/selection-modifiers.js',
+  '/static/js/editor/tool-shortcuts.js',
   '/static/js/editor/filters/blur.js',
   '/static/js/editor/filters/edge-feather.js',
   '/static/js/editor/fx/adj-popup.js',

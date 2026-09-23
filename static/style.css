@@ -9431,7 +9431,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     }
     .compare-score-label {
       position: relative;
-      top: 0;
+      top: -2px;
       display: inline-block;
     }
     .compare-vote-btn:hover { border-color: var(--red); background: color-mix(in srgb, var(--red) 11%, transparent); }
@@ -39084,7 +39084,6 @@ body.doc-find-active mark.doc-find-mark.current {
   position: fixed;
   right: auto;
   bottom: auto;
-  z-index: 100000;
   width: 190px;
   padding: 8px 10px;
   border: 1px solid var(--border);

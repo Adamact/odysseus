@@ -12,7 +12,7 @@ def test_mobile_compare_mounts_accessible_tabs_without_removing_panes():
     index = _read("static/js/compare/index.js")
     panes = _read("static/js/compare/panes.js")
 
-    assert "mountMobilePaneTabs(container, grid)" in index
+    assert "mountMobilePaneTabs(container, grid, (anchor) => _addPane(anchor))" in index
     assert "role', 'tablist'" in panes
     assert "role', 'tab'" in panes
     assert "role', 'tabpanel'" in panes

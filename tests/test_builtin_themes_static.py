@@ -8,7 +8,7 @@ THEME_JS = (ROOT / "static/js/theme.js").read_text(encoding="utf-8")
 
 def test_five_distinct_builtin_themes_are_available() -> None:
     expected = {
-        "eclipse": "constellations",
+        "eclipse": "starfield-depth",
         "porcelain": "dots",
         "arcade": "synapse",
         "blueprint": "dots",

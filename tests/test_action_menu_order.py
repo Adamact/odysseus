@@ -161,13 +161,13 @@ def test_email_settings_show_away_account_and_compact_display_controls() -> None
     assert "enabled ? 'Show' : 'Hide'" in source
     assert "email-settings-inline-link" in source
     assert "email-auto-reply-exclude" not in source
-    assert "_emailWritingStyleHtml(writingStyle) + _emailDisplaySettingsHtml()" in source
+    assert "_emailWritingStyleHtml(writingStyle) + _emailDisplaySettingsHtml(cfg)" in source
     assert ".email-settings-status.is-success" in style
     assert "var(--color-success, #4caf50)" in style
     assert ".email-style-settings-extract svg" in style
     assert "export async function mountEmailSettings(host)" in source
     assert "_openGlobalEmailSettings('show-tags')" in source
-    assert source.count('class="admin-card email-settings-section') == 4
+    assert source.count('class="admin-card email-settings-section') == 5
     assert 'id="settings-email-default-card"' in (ROOT / "static/index.html").read_text(encoding="utf-8")
     assert "multipleAccounts" in source
 

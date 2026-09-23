@@ -56,6 +56,8 @@ class _FakeSkillsManager:
                 "pitfalls": ["do not skip verification"],
                 "requires_toolsets": ["grep"],
                 "status": "published",
+                "audit_verdict": "pass",
+                "confidence": 1.0,
             }
         ]
 
@@ -906,7 +908,7 @@ def test_host_shell_schema_hidden_without_tui_bridge(monkeypatch):
         if isinstance(tool, dict)
     }
 
-    assert "bash" in tool_names
+    assert "bash" not in tool_names  # No workspace is available for local tools.
     assert "host_shell" not in tool_names
 
 

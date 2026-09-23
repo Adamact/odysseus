@@ -9,7 +9,7 @@ def test_notes_sidebar_new_action_matches_library_structure_and_animation():
     css = (ROOT / "static/style.css").read_text(encoding="utf-8")
 
     assert 'class="list-item-plus-btn sidebar-new-item-btn" id="notes-new-note-btn"' in html
-    assert '<span class="list-item-plus-label">note</span>' in html
+    assert '<span class="list-item-plus-label">new</span>' in html[html.index('id="notes-new-note-btn"'):]
     assert "#tool-notes-btn:hover #notes-new-note-btn" in css
     assert "#notes-new-note-btn:hover svg" in css
 
@@ -72,7 +72,7 @@ def test_notes_body_and_tag_arrow_are_nudged_down():
 
     assert css.count("padding: 10px 8px 8px") >= 2
     assert ".notes-pane-body .doclib-chip-scroll-arrow.right" in css
-    assert "top: calc(50% - 2px) !important" in css
+    assert "top: calc(50% - 6px) !important" in css[css.index(".notes-pane-body .doclib-chip-scroll-arrow.right"):]
 
 
 def test_notes_tag_strip_cannot_grow_into_blank_space():
