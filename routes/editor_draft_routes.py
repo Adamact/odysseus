@@ -21,7 +21,7 @@ import logging
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from core.database import EditorDraft, SessionLocal
@@ -76,13 +76,37 @@ def _load_payload(raw: Optional[str]) -> Dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _draft_too_large() -> HTTPException:
+    return HTTPException(
+        413,
+        f"Editor draft exceeds the {EDITOR_DRAFT_MAX_BYTES // (1024 * 1024)} MB safety limit",
+    )
+
+
+def reject_oversized_draft_body(request: Request) -> None:
+    """Refuse an oversized draft on ``Content-Length``, before the body is read.
+
+    ``_dump_payload`` still owns the authoritative byte count, but it only runs
+    after the request has been parsed and re-serialised — by then the payload
+    has already been materialised several times over. Declaring a body past the
+    ceiling is enough to reject it, so do that first and cheaply. A request that
+    lies about or omits the header still hits the exact check further down.
+    """
+    raw_length = request.headers.get("content-length")
+    if not raw_length:
+        return
+    try:
+        declared = int(raw_length)
+    except (TypeError, ValueError):
+        return
+    if declared > EDITOR_DRAFT_MAX_BYTES:
+        raise _draft_too_large()
+
+
 def _dump_payload(payload: Dict[str, Any]) -> str:
     raw = json.dumps(payload or {}, separators=(",", ":"))
     if len(raw.encode("utf-8")) > EDITOR_DRAFT_MAX_BYTES:
-        raise HTTPException(
-            413,
-            f"Editor draft exceeds the {EDITOR_DRAFT_MAX_BYTES // (1024 * 1024)} MB safety limit",
-        )
+        raise _draft_too_large()
     return raw
 
 
@@ -120,7 +144,11 @@ def setup_editor_draft_routes() -> APIRouter:
             db.close()
 
     @router.post("/api/editor-drafts")
-    async def create_draft(request: Request, body: DraftCreate) -> Dict[str, Any]:
+    async def create_draft(
+        request: Request,
+        body: DraftCreate,
+        _size_guard: None = Depends(reject_oversized_draft_body),
+    ) -> Dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -148,7 +176,12 @@ def setup_editor_draft_routes() -> APIRouter:
             db.close()
 
     @router.put("/api/editor-drafts/{draft_id}")
-    async def update_draft(request: Request, draft_id: str, body: DraftUpdate) -> Dict[str, Any]:
+    async def update_draft(
+        request: Request,
+        draft_id: str,
+        body: DraftUpdate,
+        _size_guard: None = Depends(reject_oversized_draft_body),
+    ) -> Dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
