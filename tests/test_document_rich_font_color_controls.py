@@ -5,10 +5,12 @@ import re
 import subprocess
 from pathlib import Path
 
+from tests.helpers.stylesheets import app_css
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
-STYLE = (ROOT / "static/style.css").read_text(encoding="utf-8")
+STYLE = app_css()
 
 
 def test_font_and_color_controls_use_shared_components():

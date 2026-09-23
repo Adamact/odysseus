@@ -3,13 +3,15 @@
 from pathlib import Path
 import re
 
+from tests.helpers.stylesheets import app_css
+
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_history_list_participates_in_shared_library_expansion_layout():
     panel = (ROOT / "static/js/research/panel.js").read_text(encoding="utf-8")
-    css = (ROOT / "static/style.css").read_text(encoding="utf-8")
+    css = app_css()
 
     assert 'id="research-past-list" class="doclib-grid memory-list research-jobs-list"' in panel
     card = css[css.index("#research-pane .research-history-card {"):]
@@ -38,7 +40,7 @@ def test_history_list_participates_in_shared_library_expansion_layout():
 
 
 def test_expanded_history_report_owns_and_scrolls_the_available_height():
-    css = (ROOT / "static/style.css").read_text(encoding="utf-8")
+    css = app_css()
 
     expanded = (
         "#research-pane #research-past-list "

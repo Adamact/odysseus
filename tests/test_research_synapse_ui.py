@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from tests.helpers.stylesheets import app_css
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -19,7 +21,7 @@ def test_active_research_visualizer_has_live_hierarchy_and_balanced_layout():
 
 
 def test_active_research_visualizer_respects_reduced_motion():
-    css = (ROOT / "static/style.css").read_text(encoding="utf-8")
+    css = app_css()
 
     assert "@media (prefers-reduced-motion: reduce)" in css
     assert ".research-synapse .rs-live-dot" in css

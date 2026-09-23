@@ -1,13 +1,25 @@
 from pathlib import Path
 import re
 
+from tests.helpers.stylesheets import app_css
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _occurrences(text, needle):
+    """Every index of needle, so an assertion does not depend on which copy of
+    a selector the cascade happens to put first."""
+    out, i = [], text.find(needle)
+    while i != -1:
+        out.append(i)
+        i = text.find(needle, i + 1)
+    return out
+
+
 def test_calendar_week_view_has_overlap_lanes_and_live_ruler_hooks():
     calendar_src = (ROOT / "static/js/calendar.js").read_text()
-    style_src = (ROOT / "static/style.css").read_text()
+    style_src = app_css()
 
     assert "function _wkLayoutTimedEvents" in calendar_src
     assert "--lane:${lane};--lane-count:${laneCount}" in calendar_src
@@ -20,7 +32,7 @@ def test_calendar_week_view_has_overlap_lanes_and_live_ruler_hooks():
 
 def test_crowded_week_events_expand_left_to_reveal_full_title_on_hover():
     calendar_src = (ROOT / "static/js/calendar.js").read_text()
-    style_src = (ROOT / "static/style.css").read_text()
+    style_src = app_css()
 
     assert "const crowdedClass = laneCount > 1 ? ' cal-wk-block-crowded' : '';" in calendar_src
     assert "--lane-right:${laneRight}%" in calendar_src
@@ -61,7 +73,7 @@ def test_crowded_week_events_expand_left_to_reveal_full_title_on_hover():
 
 def test_mobile_truncated_week_event_expands_before_opening_editor():
     calendar_src = (ROOT / "static/js/calendar.js").read_text()
-    style_src = (ROOT / "static/style.css").read_text()
+    style_src = app_css()
 
     click_idx = calendar_src.index("body.querySelectorAll('.cal-wk-block, .cal-wk-allday-event')")
     edit_idx = calendar_src.index("if (ev) _showEventForm(ev);", click_idx)
@@ -78,7 +90,7 @@ def test_mobile_truncated_week_event_expands_before_opening_editor():
 
 def test_mobile_empty_week_slot_selects_before_opening_new_event():
     calendar_src = (ROOT / "static/js/calendar.js").read_text()
-    style_src = (ROOT / "static/style.css").read_text()
+    style_src = app_css()
 
     assert "let _selectedWeekSlot = null;" in calendar_src
     assert "function _paintSelectedWeekSlot(body)" in calendar_src
@@ -100,7 +112,7 @@ def test_mobile_empty_week_slot_selects_before_opening_new_event():
 
 def test_week_view_hints_when_current_time_is_below_the_visible_field():
     calendar_src = (ROOT / "static/js/calendar.js").read_text()
-    style_src = (ROOT / "static/style.css").read_text()
+    style_src = app_css()
 
     assert "function _updateWeekNowBelowHint(wrap)" in calendar_src
     assert "nowRect.top > wrapRect.bottom - 2" in calendar_src
@@ -115,7 +127,7 @@ def test_week_view_hints_when_current_time_is_below_the_visible_field():
 
 def test_mobile_week_scroll_has_resisted_edge_pull_feedback():
     calendar_src = (ROOT / "static/js/calendar.js").read_text()
-    style_src = (ROOT / "static/style.css").read_text()
+    style_src = app_css()
 
     assert "pullStartedAtTop = _wrap.scrollTop <= 1;" in calendar_src
     assert "pullStartedAtBottom = _wrap.scrollTop >= maxScroll - 1;" in calendar_src
@@ -143,7 +155,7 @@ def test_calendar_view_change_recovers_a_fully_open_day_drawer():
 
 def test_calendar_month_and_agenda_have_visual_depth_hooks():
     calendar_src = (ROOT / "static/js/calendar.js").read_text()
-    style_src = (ROOT / "static/style.css").read_text()
+    style_src = app_css()
 
     assert "cal-weekend" in calendar_src
     assert "cal-empty-day" in calendar_src
@@ -156,7 +168,7 @@ def test_calendar_month_and_agenda_have_visual_depth_hooks():
 
 def test_calendar_event_cards_show_compact_source_badges():
     calendar_src = (ROOT / "static/js/calendar.js").read_text()
-    style_src = (ROOT / "static/style.css").read_text()
+    style_src = app_css()
 
     assert "function _eventSourceHtml" in calendar_src
     assert "${_eventSourceHtml(ev)}" in calendar_src
@@ -166,7 +178,7 @@ def test_calendar_event_cards_show_compact_source_badges():
 
 def test_calendar_toolbar_previous_next_arrows_are_mobile_only():
     calendar_src = (ROOT / "static/js/calendar.js").read_text()
-    style_src = (ROOT / "static/style.css").read_text()
+    style_src = app_css()
 
     assert 'class="cal-nav cal-toolbar-arrow" id="cal-prev"' in calendar_src
     assert 'class="cal-nav cal-toolbar-arrow" id="cal-next"' in calendar_src
@@ -181,7 +193,7 @@ def test_calendar_toolbar_previous_next_arrows_are_mobile_only():
 
 def test_calendar_side_arrows_center_against_calendar_pane():
     calendar_src = (ROOT / "static/js/calendar.js").read_text()
-    style_src = (ROOT / "static/style.css").read_text()
+    style_src = app_css()
 
     assert "function _alignSideNavToCalendar()" in calendar_src
     assert "paneRect.top - contentRect.top + (paneRect.height / 2)" in calendar_src
@@ -191,7 +203,7 @@ def test_calendar_side_arrows_center_against_calendar_pane():
 
 def test_calendar_splitter_double_click_snaps_to_nearest_pane_then_toggles():
     calendar_src = (ROOT / "static/js/calendar.js").read_text()
-    style_src = (ROOT / "static/style.css").read_text()
+    style_src = app_css()
 
     assert "detailH >= calendarH ? 'events' : 'calendar'" in calendar_src
     assert "splitter.addEventListener('dblclick', () => {" in calendar_src
@@ -302,7 +314,7 @@ def test_calendar_settings_are_close_only_and_color_the_name_field():
     assert name_idx < color_idx
     assert "nameInput.style.borderColor = colorInput.value" in calendar_src
     assert "nameInput.style.backgroundColor = colorInput.value" not in calendar_src
-    style_src = (ROOT / "static/style.css").read_text()
+    style_src = app_css()
     toggle_idx = style_src.index(".cal-week-start-toggle")
     button_idx = style_src.index(".cal-week-start-btn", toggle_idx)
     assert "padding: 0;" in style_src[toggle_idx:button_idx]
@@ -312,7 +324,7 @@ def test_calendar_settings_are_close_only_and_color_the_name_field():
 
 def test_calendar_settings_actions_sync_error_and_escape_behavior():
     calendar_src = (ROOT / "static/js/calendar.js").read_text()
-    style_src = (ROOT / "static/style.css").read_text()
+    style_src = app_css()
 
     assert calendar_src.count('class="cal-settings-actions"') >= 4
     assert "justify-content: flex-end;" in style_src[style_src.index(".cal-settings-actions"):]
@@ -331,7 +343,7 @@ def test_calendar_settings_actions_sync_error_and_escape_behavior():
 
 def test_calendar_hides_navigation_in_agenda_and_event_forms():
     calendar_src = (ROOT / "static/js/calendar.js").read_text()
-    style_src = (ROOT / "static/style.css").read_text()
+    style_src = app_css()
 
     assert "_modal?.classList.toggle('cal-navigation-hidden', _view === 'agenda')" in calendar_src
     assert "_modal?.classList.add('cal-navigation-hidden')" in calendar_src
@@ -353,7 +365,7 @@ def test_calendar_event_form_escape_cancels_before_modal_close():
 
 
 def test_calendar_from_and_to_month_day_use_theme_highlight():
-    style_src = (ROOT / "static/style.css").read_text()
+    style_src = app_css()
 
     month_idx = style_src.index('input[type="date"]::-webkit-datetime-edit-month-field')
     day_idx = style_src.index('input[type="date"]::-webkit-datetime-edit-day-field', month_idx)
@@ -364,7 +376,7 @@ def test_calendar_from_and_to_month_day_use_theme_highlight():
 
 def test_calendar_location_hint_uses_accent_map_pin():
     calendar_src = (ROOT / "static/js/calendar.js").read_text()
-    style_src = (ROOT / "static/style.css").read_text()
+    style_src = app_css()
 
     assert 'class="cal-loc-hint"' in calendar_src
     assert '<span>Location</span>' in calendar_src
@@ -382,7 +394,7 @@ def test_calendar_tag_order_prioritizes_personal_work_travel_admin():
 
 def test_long_week_events_keep_their_label_visible_while_scrolling():
     calendar_src = (ROOT / "static/js/calendar.js").read_text()
-    style_src = (ROOT / "static/style.css").read_text()
+    style_src = app_css()
 
     assert 'class="cal-wk-block-label"' in calendar_src
     label_idx = style_src.index(".cal-wk-block-label")
@@ -393,8 +405,12 @@ def test_long_week_events_keep_their_label_visible_while_scrolling():
     block_idx = style_src.index(".cal-wk-block {")
     assert "overflow: clip;" in style_src[block_idx:label_idx]
     head_idx = style_src.index(".cal-wk-col-head {")
-    allday_idx = style_src.rindex(
-        ".cal-wk-allday {", 0, style_src.index(".cal-wk-allday::-webkit-scrollbar")
+    # .cal-wk-allday and its scrollbar rule may now sit in different
+    # stylesheets, so anchoring on the scrollbar rule's offset no longer finds
+    # the block. Take whichever .cal-wk-allday block carries the z-index.
+    allday_idx = next(
+        i for i in _occurrences(style_src, ".cal-wk-allday {")
+        if "z-index: 39;" in style_src[i:i + 500]
     )
     now_idx = style_src.index(".cal-wk-now {")
     assert "z-index: 40;" in style_src[head_idx:head_idx + 500]

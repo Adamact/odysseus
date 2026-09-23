@@ -7780,15 +7780,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       padding: 0 2px;
       font-weight: 600;
     }
-    /* Document library search-term highlight — clear, high-contrast. */
-    mark.doclib-search-hl {
-      background: var(--accent, #e8a830);
-      color: var(--bg, #1a1a1a);
-      border-radius: 2px;
-      padding: 0 2px;
-      font-weight: 600;
-    }
-    .search-empty {
+            .search-empty {
       text-align: center;
       color: color-mix(in srgb, var(--fg) 35%, transparent);
       padding: 24px;
@@ -13285,11 +13277,6 @@ textarea.memory-add-input {
   position: relative;
   top: -2px;
 }
-/* Research bulk bar — right-align the action buttons (keep All + count on
-   the left). Cancel now lives on the Select toggle, so Archive anchors. */
-#doclib-research-bulk #doclib-research-bulk-archive {
-  margin-left: auto;
-}
 #doclib-research-bulk .memory-toolbar-btn {
   position: relative;
   top: 3px;
@@ -13371,12 +13358,6 @@ textarea.memory-add-input {
 #tasks-bulk-delete.tasks-bulk-loading .tasks-bulk-loading-label {
   position: relative;
   top: 0;
-}
-/* Drafts bulk bar defaults to justify-content:flex-end (whole row hugs the
-   right). Reset it so All + count sit on the left and only the action button
-   is pushed right — matching every other bulk bar. */
-#gallery-editor-drafts-bulk {
-  justify-content: flex-start;
 }
 /* Nudge the whole memory + skills bulk buttons (icon + label together) up. */
 #memory-modal #memory-bulk-bar .memory-toolbar-btn,
@@ -14453,10 +14434,6 @@ textarea.memory-add-input {
   transition: opacity 0.1s, border-color 0.1s, left 0.08s ease;
   z-index: 12;
 }
-.doc-divider.doc-divider-handle-idle .doc-divider-collapse {
-  opacity: 0;
-  pointer-events: none;
-}
 .doc-divider.doc-divider-handle-idle:hover .doc-divider-collapse,
 .doc-divider.doc-divider-handle-idle:focus-within .doc-divider-collapse {
   opacity: 0.92;
@@ -14469,7 +14446,6 @@ textarea.memory-add-input {
 .doc-divider-collapse[data-mode="fullscreen"] {
   left: -22px;
 }
-.doc-divider:hover .doc-divider-collapse { opacity: 0.92; }
 .doc-divider-collapse:hover { opacity: 1 !important; border-color: var(--accent, var(--red)); }
 /* The same `›` glyph is in the markup; CSS rotates 180° for the left-pointing
    (fullscreen) state. Smooth transition pairs with the chevron's slide. */
@@ -14507,13 +14483,6 @@ textarea.memory-add-input {
 .doc-divider-hide:hover {
   opacity: 1;
   border-color: var(--accent, var(--red));
-}
-/* Smooth entrance — slide in from the left + fade up so it doesn't snap into
-   place when fullscreen activates. The chevron's vertical centering uses
-   translateY(-50%), so the animation has to keep that part. */
-@keyframes doc-fs-chevron-in {
-  from { opacity: 0; transform: translateY(-50%) translateX(-18px); }
-  to   { opacity: 0.85; transform: translateY(-50%) translateX(0); }
 }
 
 /* Copy / Export split button — main click copies, the caret opens the export menu. */
@@ -14575,13 +14544,6 @@ textarea.memory-add-input {
   transform-origin: right center;
   will-change: clip-path, opacity;
 }
-.doc-editor-pane.doc-pane-leaving {
-  pointer-events: none;
-}
-@keyframes doc-pane-leave {
-  from { transform: translateX(0);    opacity: 1; }
-  to   { transform: translateX(24px); opacity: 0; }
-}
 @media (prefers-reduced-motion: reduce) {
   .doc-editor-pane,
   .doc-editor-pane.doc-pane-leaving { animation: none; }
@@ -14621,19 +14583,6 @@ textarea.memory-add-input {
   -webkit-mask-image: linear-gradient(to right, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
           mask-image: linear-gradient(to right, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
 }
-.doc-tab-scroll.is-at-left {
-  -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 18px), transparent 100%);
-          mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 18px), transparent 100%);
-}
-.doc-tab-scroll.is-at-right {
-  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 18px, #000 100%);
-          mask-image: linear-gradient(to right, transparent 0, #000 18px, #000 100%);
-}
-.doc-tab-scroll.is-at-left.is-at-right {
-  -webkit-mask-image: none;
-          mask-image: none;
-}
-.doc-tab-scroll::-webkit-scrollbar { display: none; }
 .doc-tab-arrow {
   background: none;
   border: none;
@@ -14652,11 +14601,6 @@ textarea.memory-add-input {
 }
 .doc-tab-arrow:hover {
   opacity: 1;
-}
-#doc-tab-right,
-#doc-tab-left {
-  position: relative;
-  top: 3px;
 }
 /* Mobile swipe-down grab handle at the top of the doc sheet. */
 .doc-mobile-grabber { display: none; }
@@ -14686,15 +14630,6 @@ textarea.memory-add-input {
   }
 }
 
-/* Ghost tab shown in the empty state (new, not-yet-saved document). Muted +
-   italic so it reads as a placeholder, and non-interactive so clicking it
-   can't hit the tab handlers (it has no data-doc-id). */
-.doc-tab.doc-tab-ghost {
-  /* New, not-yet-saved doc tab. It already carries .active, so it shows the
-     accent underline like any active tab — that's all we want. The old dashed
-     border + italic/dim "pending" styling looked weird, so they're gone. */
-  pointer-events: none;
-}
 .doc-tab {
   display: flex;
   align-items: center;
@@ -14719,15 +14654,6 @@ textarea.memory-add-input {
   opacity: 1;
   background: color-mix(in srgb, var(--fg) 5%, transparent);
   border-radius: 7px 7px 0 0;
-}
-.doc-tab.active::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: var(--red);
 }
 .doc-tab-title {
   max-width: 140px;
@@ -14936,17 +14862,6 @@ textarea.memory-add-input {
   border-radius: 50%;
   background: var(--accent);
 }
-@keyframes doc-stream-pulse {
-  0%, 100% { opacity: 0.5; }
-  50% { opacity: 1; }
-}
-.doc-updated-flash {
-  animation: doc-update-flash 0.6s ease-out;
-}
-@keyframes doc-update-flash {
-  0%   { box-shadow: inset 0 0 0 2px var(--accent); }
-  100% { box-shadow: inset 0 0 0 2px transparent; }
-}
 
 /* In the doc footer the type picker sits next to the accent Copy/Export split —
    match its 28px height and 6px radius so the right-hand controls line up. */
@@ -15000,13 +14915,6 @@ textarea.memory-add-input {
 }
 .doc-langpicker-trigger:hover {
   border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 60%, var(--border));
-}
-.doc-langpicker-trigger.doc-langpicker-email-compact {
-  width: 28px;
-  min-width: 28px;
-  padding: 0 0 0 6px;
-  justify-content: flex-start;
-  gap: 0;
 }
 .doc-langpicker-trigger.doc-langpicker-email-compact .doc-langpicker-label,
 .doc-langpicker-trigger.doc-langpicker-email-compact > svg:last-child {
@@ -15134,12 +15042,6 @@ textarea.memory-add-input {
 #doc-redo-btn:not(:disabled) {
   opacity: 0.68;
 }
-/* The "T" icon stays centered in the fixed-size button so it grows
-   symmetrically (from the center) instead of jumping around as the size
-   changes. The S/M/L letter is pinned to the bottom-right corner, absolutely
-   positioned so it never shifts the icon either. */
-#doc-fontsize-btn { transform: translateY(-1px); }
-#doc-fontsize-btn svg { flex: 0 0 auto; }
 .doc-fontsize-levels {
   position: absolute;
   right: 6px;
@@ -15160,8 +15062,6 @@ textarea.memory-add-input {
 .doc-fontsize-levels i.active { opacity: 1; }
 /* Collapsed buttons hidden in header, shown in overflow menu */
 .doc-collapsible-btn.doc-collapsed { display: none !important; }
-.doc-overflow-wrapper { order: -1; }
-.doc-overflow-toggle { opacity: 0.5; }
 .doc-overflow-toggle:hover { opacity: 1; }
 .doc-overflow-menu {
   display: none;
@@ -15299,13 +15199,6 @@ textarea.memory-add-input {
   .md-view-toggle .md-view-opt.active { animation: none; }
 }
 
-.doc-md-toolbar.md-preview-active,
-.doc-md-toolbar.md-write-active {
-  overflow: visible;
-  -webkit-mask-image: none;
-          mask-image: none;
-  z-index: 3;
-}
 .doc-md-toolbar.md-preview-active {
   border-bottom-color: var(--bg);
 }
@@ -15391,9 +15284,6 @@ textarea.memory-add-input {
   align-self: flex-end;
   height: 28px;
   margin-bottom: -6px;
-}
-.doc-md-toolbar #doc-render-view-toggle .md-view-opt {
-  height: 28px;
 }
 .doc-md-toolbar #doc-render-view-toggle .md-view-opt:first-child {
   background: var(--sidebar-bg, var(--panel)) !important;
@@ -15561,11 +15451,6 @@ textarea.memory-add-input {
   align-items: center;
   justify-content: center;
 }
-/* Some toolbar buttons baked in svg{opacity:0.7} via inline styles, which
-   compounded with the button's own opacity to look almost invisible.
-   Force the inline svg opacity back to 1 inside the toolbar — the button
-   wrapper's 0.85 is the only fade we need. */
-.doc-md-toolbar button svg[style*="opacity"] { opacity: 1 !important; }
 .doc-md-toolbar button:hover {
   opacity: 1;
 }
@@ -15591,14 +15476,6 @@ textarea.memory-add-input {
 }
 .doc-md-toolbar button.is-active:hover {
   background: color-mix(in srgb, var(--accent, var(--red)) 22%, transparent);
-}
-/* No black tap-flash / focus background on the doc toolbar + tab controls —
-   they're icon buttons, the opacity change is the only feedback we want. */
-.doc-md-toolbar button,
-.doc-tab-new,
-.doc-tab-arrow,
-.doc-tab-play {
-  -webkit-tap-highlight-color: transparent;
 }
 .doc-md-toolbar button:focus:not(:focus-visible),
 .doc-tab-new:focus:not(:focus-visible),
@@ -15672,8 +15549,6 @@ textarea.memory-add-input {
   gap: 0;
   line-height: 1;
 }
-/* Pull the icon down toward the "sign" label so they read as one unit. */
-#doc-pdf-add-sign-btn svg { transform: translateY(2px); }
 .doc-pdf-sign-label {
   font-size: 6.5px;
   letter-spacing: 0.3px;
@@ -15868,10 +15743,6 @@ textarea.memory-add-input {
   font-size: 11px;
   font-weight: 600;
 }
-.doc-outline-count {
-  opacity: 0.48;
-  font-variant-numeric: tabular-nums;
-}
 .doc-outline-list {
   overflow-y: auto;
   padding: 4px;
@@ -15915,13 +15786,6 @@ textarea.memory-add-input {
   text-align: center;
   font-size: 11px;
   opacity: 0.52;
-}
-.doc-outline-target {
-  animation: doc-outline-target-flash 1.05s ease-out;
-}
-@keyframes doc-outline-target-flash {
-  0%, 28% { background-color: color-mix(in srgb, var(--accent, var(--red)) 24%, transparent); }
-  100% { background-color: transparent; }
 }
 
 @media (max-width: 768px) {
@@ -16024,10 +15888,6 @@ textarea.memory-add-input {
   font-size: 11px;
   font-weight: 600;
 }
-.doc-rich-slash-count {
-  opacity: 0.48;
-  font-variant-numeric: tabular-nums;
-}
 .doc-rich-slash-list {
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -16066,11 +15926,6 @@ textarea.memory-add-input {
   font-size: 10px;
   font-weight: 600;
   opacity: 0.82;
-}
-.doc-rich-slash-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .doc-rich-slash-empty {
   padding: 18px 12px;
@@ -16178,18 +16033,6 @@ textarea.memory-add-input {
   color: transparent !important;
   background: transparent !important;
 }
-/* Find marks live in the syntax-highlight overlay, which sits at
-   z-index:0 under a transparent textarea — so they're always visible
-   through the text layer. The previous color-mix variant could
-   compute to near-invisible on themes with dark/desaturated accents;
-   forced solid colors + !important so it ALWAYS pops. */
-mark.doc-find-mark {
-  background: var(--accent) !important;
-  color: var(--bg) !important;
-  border-radius: 2px;
-  padding: 0 1px;
-  box-shadow: 0 0 0 1px var(--accent);
-}
 mark.doc-find-mark.current {
   background: var(--accent) !important;
   color: var(--bg) !important;
@@ -16248,7 +16091,6 @@ mark.doc-find-mark.current {
   text-rendering: geometricPrecision !important;
   box-sizing: border-box;
 }
-.doc-editor-highlight::-webkit-scrollbar { display: none; }
 
 /* Document font size options */
 .doc-font-m .doc-editor-textarea,
@@ -16626,20 +16468,6 @@ mark.doc-find-mark.current {
   z-index: 250;
   overflow: visible;
 }
-/* Arrow pointing toward the editor */
-.doc-suggestion-card::before {
-  content: '';
-  position: absolute;
-  top: 16px;
-  left: -10px;
-  width: 18px;
-  height: 18px;
-  background: var(--panel);
-  border-left: 2px solid var(--accent);
-  border-bottom: 2px solid var(--accent);
-  transform: rotate(45deg);
-  z-index: 1;
-}
 .doc-suggestion-header {
   display: flex;
   align-items: center;
@@ -16681,15 +16509,6 @@ mark.doc-find-mark.current {
   line-height: 1;
   flex-shrink: 0;
   position: relative;
-}
-.doc-suggestion-close::before {
-  content: '';
-  width: 10px;
-  height: 10px;
-  display: block;
-  background: currentColor;
-  -webkit-mask: url("data:image/svg+xml,%3Csvg width='10' height='10' viewBox='0 0 10 10' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M2 2L8 8M8 2L2 8' stroke='black' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg width='10' height='10' viewBox='0 0 10 10' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M2 2L8 8M8 2L2 8' stroke='black' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 .doc-suggestion-close:hover,
 .doc-suggestion-close:focus-visible {
@@ -16913,9 +16732,6 @@ mark.doc-find-mark.current {
   background: var(--accent, var(--red));
   color: #fff;
 }
-.doc-suggestion-accept:hover {
-  filter: brightness(1.15);
-}
 .doc-suggestion-dismiss {
   background: transparent;
   border: 1px solid var(--border);
@@ -16942,21 +16758,6 @@ mark.doc-find-mark.current {
 /* ---- Streaming animation ---- */
 .doc-editor-textarea[readonly] {
   caret-color: var(--red);
-}
-.doc-editor-wrap.animating::after {
-  content: '';
-  position: absolute;
-  top: 6px; right: 8px;
-  width: 6px; height: 6px;
-  border-radius: 50%;
-  background: var(--red);
-  animation: doc-pulse 0.8s ease-in-out infinite;
-  z-index: 3;
-  pointer-events: none;
-}
-@keyframes doc-pulse {
-  0%, 100% { opacity: 0.3; transform: scale(0.8); }
-  50% { opacity: 1; transform: scale(1.2); }
 }
 
 /* Diff overlay */
@@ -16985,7 +16786,6 @@ mark.doc-find-mark.current {
 }
 .diff-stat-del { color: var(--warn); }
 .diff-stat-add { color: var(--green); }
-.doc-diff-content { }
 .doc-diff-line {
   padding: 1px 8px;
   border-radius: 4px;
@@ -17598,13 +17398,6 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
 @media (max-width: 700px) {
   .doc-docx-preview { padding: 12px 8px 28px; }
   .doc-docx-paper { min-height: 0; padding: 34px 24px; font-size: 14px; }
-}
-@media (hover: none) {
-  .doc-preview-hover-edit {
-    opacity: 1;
-    pointer-events: auto;
-    transform: none;
-  }
 }
 .doc-md-preview pre {
   background: var(--panel);
@@ -19292,7 +19085,6 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
 /* Research's Recent (sort) + Select sat 1px lower than the other tabs — nudge up. */
 #doclib-panel-research .memory-sort-select { position: relative; top: 1.5px; }
 #doclib-panel-research .memory-toolbar-btn { top: -4.5px; }
-#doclib-research-search { position: relative; top: -1.5px; }
 .library-sort-picker {
   width: 108px;
   flex: 0 0 108px;
@@ -20264,16 +20056,10 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   color: var(--fg-muted);
   border: 1px solid var(--border);
 }
-/* Restore sits on the right of the Delete in archive previews. */
-.doclib-chat-restore-btn { margin-left: auto; }
 .doclib-chat-restore-btn:hover {
   color: var(--accent, var(--red));
   border-color: var(--accent, var(--red));
 }
-/* Delete + Archive pin to the left of the actions row; the
-   `margin-right: auto` on the last left-side button (Archive) pushes
-   Copy + Open to the right. Delete sits furthest left. */
-.doclib-chat-archive-btn { margin-right: auto; }
 .doclib-chat-archive-btn:hover,
 .doclib-chat-discuss-btn:hover,
 .doclib-chat-copy-btn:hover {
@@ -20441,10 +20227,6 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   overflow: hidden;
   animation: doclib-expand 0.2s ease-out;
 }
-@keyframes doclib-expand {
-  from { opacity: 0.5; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
-}
 .doclib-card.doclib-card-expanded {
   flex-direction: column !important;
   align-items: stretch !important;
@@ -20522,8 +20304,6 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   margin: 0 0 8px;
   flex-shrink: 0;
 }
-/* Hide the section headers while a card is expanded (full-screen reader). */
-.doclib-grid:has(.doclib-card-expanded) > .skills-section-header { display: none; }
 
 /* #skills-list wears both .memory-list and .doclib-grid. doclib-grid's
    max-height:400px would cap the list AND clamp an expanded card — keep
@@ -20642,7 +20422,6 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   flex-wrap: wrap;
   margin-top: 4px;
 }
-.skill-card:not(.doclib-card-expanded) .skill-card-tags { display: none; }
 .skill-tag-pill {
   padding: 1px 5px;
   font-size: 9px;
@@ -20869,9 +20648,6 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   margin-left: 0;
   margin-right: 0;
 }
-.doclib-chip-scroll-frame > .chip-scroll-strip:empty {
-  display: none;
-}
 .doclib-chip-scroll-arrow {
   display: none;
   position: absolute;
@@ -21088,8 +20864,6 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 }
 .skill-kebab-btn:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 10%, transparent); }
 .skill-chevron-up { display: none; align-items: center; opacity: 0.5; flex-shrink: 0; }
-.skill-card.doclib-card-expanded .skill-kebab-btn { display: none; }
-.skill-card.doclib-card-expanded .skill-chevron-up { display: inline-flex; }
 /* Kebab dropdown */
 .skill-kebab-menu {
   position: fixed;
@@ -21173,15 +20947,6 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   opacity: 1;
   color: var(--color-save-green, #4caf50);
   border-color: var(--color-save-green, #4caf50);
-}
-/* Size the expanded skill card to its content (footer sits right under the
-   preview) but cap at the modal height so a long SKILL.md scrolls instead
-   of overflowing. The inherited `.doclib-card-expanded { flex: 1 }` forced
-   the card to fill the whole modal, which left a big empty void between a
-   short skill's text and the footer. */
-.skill-card.doclib-card-expanded {
-  flex: 0 1 auto !important;
-  max-height: 100% !important;
 }
 /* :has()-free expand layout. skills.js adds .skills-has-expanded to the
    skills admin-card when a skill opens, so this works on engines that don't
@@ -21441,9 +21206,6 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   font-size: 9px !important;
   line-height: 1.2 !important;
 }
-.doclib-inline-load-more::before {
-  display: none;
-}
 
 /* Document library toolbar buttons */
 .doclib-toolbar-btn {
@@ -21502,10 +21264,6 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   gap: 3px;
   cursor: pointer;
   color: color-mix(in srgb, var(--fg) 60%, transparent);
-  font-size: 10px;
-}
-#doclib-selected-count {
-  color: color-mix(in srgb, var(--fg) 50%, transparent);
   font-size: 10px;
 }
 #doclib-bulk-bar .memory-toolbar-btn {
@@ -21734,11 +21492,6 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   min-height: 0;
   overflow: hidden;
 }
-.gallery-modal-content:has(#gallery-editor-container[style*="flex"]) .gallery-editor-landing {
-  width: 100%;
-  min-height: 0;
-  box-sizing: border-box;
-}
 /* Photo-detail view sizing (issue #314).
    The detail view is rendered as a `position:absolute; inset:0` overlay
    *inside* `.gallery-images-container`, painted over the photo grid. Because
@@ -21800,10 +21553,6 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   font-size: 12px;
   outline: none;
 }
-#gallery-bulk-count,
-#gallery-editor-drafts-bulk-count {
-  top: -1px !important;
-}
 .gallery-search-enter-hint {
   position: absolute;
   right: 10px;
@@ -21822,9 +21571,6 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 }
 /* Show the hint only once the user has typed something (placeholder gone). */
 .gallery-search:not(:placeholder-shown) ~ .gallery-search-enter-hint { opacity: 0.95; }
-#gallery-select-btn { position: relative; top: 4px !important; font-size: 12px; padding: 10px 11px 12px; min-width: 76px; justify-content: center; }
-#gallery-albums-search { top: -4px; }
-#gallery-albums-select-btn { top: -4px !important; }
 .gallery-search:focus {
   border-color: var(--red);
 }
@@ -21846,11 +21592,6 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   position: relative;
   top: 2px;
   padding-right: 18px;
-}
-#gallery-bulk-delete,
-#gallery-albums-bulk-delete,
-#gallery-editor-drafts-bulk-delete {
-  color: var(--color-error, #f44) !important;
 }
 .gallery-tag-chips {
   display: flex;
@@ -21958,11 +21699,6 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   z-index: 1;
 }
 .gallery-card-play svg { margin-left: 2px; }
-.gallery-detail-image video {
-  max-width: 100%;
-  max-height: 70vh;
-  display: block;
-}
 
 .gallery-fav-btn {
   position: absolute; top: 0px; right: 4px; z-index: 2;
@@ -21973,7 +21709,6 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   opacity: 0; transition: opacity 0.15s;
   padding: 0;
 }
-.gallery-card:hover .gallery-fav-btn { opacity: 1; }
 .gallery-fav-btn.gallery-fav-active { opacity: 1; color: var(--red); }
 
 .gallery-dl-btn {
@@ -21985,11 +21720,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   opacity: 0; transition: opacity 0.15s, background 0.15s;
   padding: 0;
 }
-.gallery-card:hover .gallery-dl-btn { opacity: 1; }
 .gallery-dl-btn:hover { background: rgba(0,0,0,0.7); color: #fff; }
-@media (hover: none) {
-  .gallery-dl-btn { opacity: 0.55; }
-}
 /* In select mode the per-thumbnail hover buttons (favorite + download) just
    get in the way of picking — hide them so the card is a clean select target.
    `body.gallery-selecting` is the authoritative signal (one class for the
@@ -22004,8 +21735,6 @@ body.gallery-selecting .gallery-dl-btn,
 
 /* AI tag chips in detail view */
 .gallery-ai-tags { display: flex; gap: 4px; flex-wrap: wrap; }
-/* Space the user's tag chips off the "add tag" input below them. */
-#gallery-user-tag-chips { margin-bottom: 4px; }
 .gallery-ai-chip {
   background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 25%, transparent);
@@ -22057,7 +21786,6 @@ body.gallery-selecting .gallery-dl-btn,
   opacity: 0.55;
   transition: opacity 0.12s, background 0.12s, color 0.12s;
 }
-.gallery-user-chip:hover .gallery-tag-x { opacity: 0.85; }
 .gallery-tag-x:hover {
   opacity: 1;
   background: color-mix(in srgb, var(--red, #ff5555) 22%, transparent);
@@ -22116,10 +21844,6 @@ body.gallery-selecting .gallery-dl-btn,
   animation: gallery-skeleton-shimmer 1.25s ease-in-out infinite;
 }
 .gallery-card-skeleton:hover { transform: none; box-shadow: none; border-color: var(--border); }
-@keyframes gallery-skeleton-shimmer {
-  0%   { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
-}
 /* Chat attachment image: shimmer skeleton + centered whirlpool shown while a
    sent photo uploads / its thumbnail loads (see chatRenderer buildAttachCards). */
 .attach-image-skeleton {
@@ -22298,10 +22022,6 @@ body.gallery-selecting .gallery-dl-btn,
   pointer-events: none;
   transition: opacity 0.15s;
 }
-.gallery-card:hover .gallery-card-overlay,
-.gallery-card.gallery-card-focus .gallery-card-overlay {
-  opacity: 1;
-}
 .gallery-card-badges {
   display: flex;
   gap: 4px;
@@ -22334,24 +22054,6 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .gallery-select-dot.selected { background: var(--red); border-color: var(--red); }
 .gallery-select-dot:hover { background: color-mix(in srgb, var(--red) 50%, transparent); }
-/* Strong accent ring on the whole photo when selected. Paint it as a
-   foreground pseudo-element so the thumbnail cannot cover the feedback. */
-.gallery-card:has(.gallery-select-dot.selected) {
-  border-color: var(--accent-primary, var(--red));
-}
-.gallery-card:has(.gallery-select-dot.selected)::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: 3;
-  border: 3px solid var(--accent-primary, var(--red));
-  border-radius: inherit;
-  box-sizing: border-box;
-  pointer-events: none;
-}
-.gallery-card:has(.gallery-select-dot.selected) .gallery-select-dot {
-  z-index: 4;
-}
 .gallery-select-btn {
   padding: 9px 10px 11px; background: transparent; color: var(--fg);
   border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
@@ -22532,9 +22234,6 @@ body.gallery-selecting .gallery-dl-btn,
 .gallery-detail-action.danger {
   color: var(--color-error, #e55);
 }
-.gallery-detail-action.danger:hover {
-  border-color: var(--color-error, #e55);
-}
 /* Overflow menu — replaces the seven individual action buttons that used
    to crowd the right side of the detail header. */
 .gallery-detail-menu-wrap { position: relative; }
@@ -22610,16 +22309,6 @@ body.gallery-selecting .gallery-dl-btn,
   max-width: 100%;
   max-height: 100%;
 }
-.gallery-detail-image img,
-.gallery-detail-image video,
-.gallery-detail-img-frame img,
-.gallery-detail-img-frame video {
-  max-width: 100%;
-  max-height: 100%;
-  border-radius: 6px;
-  object-fit: contain;
-  display: block;
-}
 .gallery-detail-nav {
   position: absolute;
   top: 50%;
@@ -22639,22 +22328,10 @@ body.gallery-selecting .gallery-dl-btn,
   z-index: 3;
   padding: 0;
 }
-.gallery-detail-image:hover .gallery-detail-nav { opacity: 0.85; }
 .gallery-detail-nav:hover { opacity: 1 !important; background: rgba(0, 0, 0, 0.7); }
 .gallery-detail-nav-prev { left: 8px; }
 .gallery-detail-nav-next { right: 8px; }
 
-@media (min-width: 769px) {
-  .gallery-modal-content:has(#gallery-detail[style*="flex"]) {
-    height: 92vh;
-  }
-  .gallery-modal-content:has(#gallery-detail[style*="flex"]) > .modal-body,
-  .gallery-images-container:has(> #gallery-detail[style*="flex"]),
-  #gallery-images-container:has(> #gallery-detail[style*="flex"]) > #gallery-detail {
-    height: 100%;
-    min-height: 0;
-  }
-}
 /* Rotate buttons — same pattern as the prev/next arrows but pinned to the
    top corners. Hover-revealed so they don't clutter the image. */
 .gallery-detail-rotate {
@@ -22675,7 +22352,6 @@ body.gallery-selecting .gallery-dl-btn,
   z-index: 3;
   padding: 0;
 }
-.gallery-detail-image:hover .gallery-detail-rotate { opacity: 0.85; }
 .gallery-detail-rotate:hover { opacity: 1 !important; background: rgba(0, 0, 0, 0.7); }
 .gallery-detail-rotate-ccw { left: 8px; }
 .gallery-detail-rotate-cw  { right: 8px; }
@@ -22717,13 +22393,6 @@ body.gallery-selecting .gallery-dl-btn,
 .gallery-detail-fav-inline.active {
   opacity: 1;
   color: var(--red);
-}
-.gallery-detail-nav-disabled {
-  opacity: 0 !important;
-  pointer-events: none;
-}
-@media (hover: none) {
-  .gallery-detail-nav { opacity: 0.7; }
 }
 .gallery-detail-sidebar {
   width: 290px;
@@ -22795,7 +22464,6 @@ body.gallery-selecting .gallery-dl-btn,
   cursor: pointer;
   text-align: left;
 }
-.gallery-detail-inline-link:hover { text-decoration: underline; }
 .gallery-detail-mini-actions {
   display: flex;
   flex-wrap: wrap;
@@ -22825,9 +22493,6 @@ body.gallery-selecting .gallery-dl-btn,
 .gallery-detail-sidebar .gallery-detail-prompt {
   max-width: 100%;
   box-sizing: border-box;
-}
-.gallery-detail-section {
-  margin-bottom: 12px;
 }
 .gallery-date-rel {
   opacity: 0.55;
@@ -22872,7 +22537,6 @@ body.gallery-selecting .gallery-dl-btn,
 /* ↵ enter hint inside the Add-a-tag field (accent), replacing the "press Enter"
    placeholder text. */
 .gallery-tag-input-wrap { position: relative; }
-.gallery-tag-input-wrap .gallery-tag-input { padding-right: 24px; }
 .gallery-tag-enter-hint {
   position: absolute;
   right: 8px;
@@ -22900,8 +22564,6 @@ body.gallery-selecting .gallery-dl-btn,
   pointer-events: none;
   display: none;
 }
-.gallery-name-wrap:focus-within .gallery-name-enter { display: inline-flex; }
-.gallery-name-wrap:focus-within .gallery-detail-name-input { padding-right: 28px; }
 .gallery-tag-save {
   background: none;
   border: 1px solid var(--border);
@@ -30335,11 +29997,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   display: flex; align-items: center; justify-content: center;
   overflow: hidden;
 }
-.gallery-album-cover img {
-  width: 100%; height: 100%;
-  object-fit: cover;
-  display: block;
-}
 .gallery-album-placeholder {
   opacity: 0.4;
   font-size: 40px;
@@ -30409,12 +30066,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   position: relative;
   top: -1px;
 }
-.gallery-editor-landing p {
-  margin: 0;
-  opacity: 0.6;
-  font-size: 13px;
-  max-width: 320px;
-}
 .gallery-editor-landing-actions {
   display: flex; gap: 10px;
   margin-top: 8px;
@@ -30427,7 +30078,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   font-size: 13px;
   opacity: 0.85;
 }
-.gallery-editor-landing-actions .gallery-select-btn:hover { opacity: 1; }
 /* Visible template picker: every canvas ratio is inspectable without opening
    a native menu, and its SVG outline previews the resulting canvas shape. */
 .gallery-editor-template-picker {
@@ -30551,10 +30201,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   gap: 8px;
   margin-bottom: 8px;
 }
-/* Saved-project selection uses the same bulk-bar rhythm as Photos. */
-#gallery-editor-drafts-bulk {
-  margin-top: 0;
-}
 .gallery-editor-drafts-title {
   margin: 0;
   font-size: 11px;
@@ -30633,11 +30279,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   border-color: var(--accent, var(--red));
   color: var(--accent, var(--red));
 }
-.gallery-editor-draft-card.selected {
-  outline: 2px solid var(--accent, var(--red));
-  outline-offset: -2px;
-}
-.gallery-editor-draft-card.select-mode { cursor: pointer; }
 /* Graceful exit when a project card is deleted — fade + shrink before re-render. */
 .gallery-editor-draft-card.gallery-draft-removing {
   opacity: 0;
@@ -30703,29 +30344,11 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   line-height: 0;
 }
 .gallery-drafts-view-toggle button:last-child { border-right: 0; }
-.gallery-drafts-view-toggle button svg {
-  display: block;
-  position: static;
-  transform: none;
-}
 .gallery-drafts-view-toggle button:hover { color: var(--fg); }
 .gallery-drafts-view-toggle button.active {
   height: 22px;
   color: var(--accent, var(--red));
   background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
-}
-.gallery-editor-drafts-grid.list-view {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.gallery-editor-drafts-grid.list-view .gallery-editor-draft-card {
-  display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) 24px;
-  align-items: center;
-  gap: 9px;
-  min-height: 48px;
-  padding: 4px 6px;
 }
 .gallery-editor-drafts-grid.list-view .gallery-editor-draft-thumb {
   width: 44px;
@@ -30739,7 +30362,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   color: var(--fg);
 }
 .gallery-editor-draft-delete-trash { display: none; }
-.gallery-editor-drafts-grid.list-view .gallery-editor-draft-delete-x { display: none; }
 .gallery-editor-drafts-grid.list-view .gallery-editor-draft-delete-trash {
   display: block;
   width: 18px;
@@ -30768,10 +30390,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 .gallery-editor-draft-card:hover {
   border-color: var(--accent, var(--red));
   background: color-mix(in srgb, var(--panel) 90%, transparent);
-}
-.gallery-editor-draft-card:focus-visible {
-  outline: 2px solid var(--accent, var(--red));
-  outline-offset: 2px;
 }
 .gallery-editor-draft-thumb {
   width: 100%;
@@ -30832,7 +30450,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 .gallery-editor-draft-delete {
   padding-bottom: 2px;
 }
-.gallery-editor-draft-card:hover .gallery-editor-draft-delete { opacity: 1; }
 .gallery-editor-draft-delete:hover { background: var(--red); }
 /* On very narrow phones, give project search its own row instead of
    compressing the title and view controls into an overflowing header. */
@@ -30872,7 +30489,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 /* Pin the topbar to the top of the editor so its action buttons remain
    visible if the gallery modal body itself ends up scrolling. */
 .ge-topbar { position: sticky; top: 0; z-index: 5; }
-.ge-topbar.ge-topbar-menu-open { z-index: 10006; }
 
 /* Top bar */
 .ge-topbar {
@@ -31020,15 +30636,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   display: none;
 }
 
-/* Toolbar (left) */
-@keyframes ge-layer-action-flash {
-  from { box-shadow: inset 0 0 0 2px var(--red); background-color: color-mix(in srgb, var(--red) 24%, transparent); }
-  to { box-shadow: inset 0 0 0 2px transparent; }
-}
-.ge-layer-action-flash { animation: ge-layer-action-flash 650ms ease-out; }
-@media (prefers-reduced-motion: reduce) {
-  .ge-layer-action-flash { animation-duration: 1ms; }
-}
 .ge-toolbar {
   display: flex;
   flex-direction: column;
@@ -31079,26 +30686,11 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   border-radius: 6px;
   transition: background 0.15s, opacity 0.15s;
 }
-.ge-tool-btn .ge-tool-label {
-  max-width: 100%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 .ge-tool-btn { position: relative; }
 /* Hover background is now a pseudo so we can shift it 2 px left
    independently from the button's own bounds (which contain the icon
    and label at their already-shifted positions). */
 .ge-tool-btn:hover { opacity: 0.85; }
-.ge-tool-btn:hover::after {
-  content: '';
-  position: absolute;
-  inset: 0 2px 0 -2px;
-  background: color-mix(in srgb, var(--fg) 8%, transparent);
-  border-radius: 6px;
-  z-index: -1;
-  pointer-events: none;
-}
 .ge-tool-btn.active {
   opacity: 1;
   color: var(--red);
@@ -31107,18 +30699,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
      horizontally aligned with its neighbors. The taller highlight is
      drawn by ::before so it can extend up/down without pushing the
      button or shifting the icon. */
-}
-.ge-tool-btn.active::before {
-  content: '';
-  position: absolute;
-  /* Highlight pill shifted 2 px left of the button bounds so it sits
-     under the icon + label (which are also nudged left). Same total
-     width as before — just slid. */
-  inset: 0 2px 0 -2px;
-  background: color-mix(in srgb, var(--red) 18%, transparent);
-  border-radius: 6px;
-  z-index: 0;
-  pointer-events: none;
 }
 /* Tool button contents stay above the active highlight pseudo. Also
    shifted an additional 2 px left so the icon + label sit further inside
@@ -31155,7 +30735,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   opacity: 0.75;
   margin-right: 1px;
 }
-.ge-btn-ai:hover .ge-btn-ai-mark { opacity: 1; }
 
 /* Per-tool clear-selection badge — shows a tiny X in the top-right of
    the Lasso / Wand button when each holds a selection. Click clears
@@ -31180,7 +30759,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   transition: opacity 0.12s, transform 0.12s, box-shadow 0.12s;
   left: auto !important;
 }
-.ge-tool-btn.has-selection .ge-tool-clear { display: inline-flex; }
 .ge-tool-clear:hover {
   opacity: 1;
   transform: scale(1.15);
@@ -31213,10 +30791,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
      page (or the gallery modal). Touches on the canvas are owned by the
      editor's drawing logic — no native pan/zoom. */
   overscroll-behavior: contain;
-}
-.ge-canvas-area.ge-rulers-visible {
-  padding: 18px 0 0 18px;
-  box-sizing: border-box;
 }
 .ge-ruler {
   position: absolute;
@@ -31251,18 +30825,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   border-right: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
   box-sizing: border-box;
-}
-.ge-main-canvas {
-  touch-action: none;
-}
-.ge-canvas-area.ge-pan-ready,
-.ge-canvas-area.ge-pan-ready .ge-main-canvas {
-  cursor: grab !important;
-}
-.ge-canvas-area.ge-panning,
-.ge-canvas-area.ge-panning .ge-main-canvas {
-  cursor: grabbing !important;
-  user-select: none;
 }
 .ge-wand-loading {
   position: absolute;
@@ -31348,21 +30910,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   border-color: color-mix(in srgb, var(--accent, var(--red)) 42%, var(--border));
   box-shadow: 0 8px 22px color-mix(in srgb, #000 24%, transparent);
 }
-.ge-ai-command-collapsed .ge-ai-command-toggle {
-  display: inline-flex;
-}
-.ge-ai-command-collapsed .ge-ai-command-head,
-.ge-ai-command-collapsed .ge-ai-command-form,
-.ge-ai-command-collapsed .ge-ai-command-suggestions,
-.ge-ai-command-collapsed .ge-ai-command-status {
-  display: none;
-}
-@media (hover: none) {
-  .ge-ai-command-collapsed {
-    bottom: 8px;
-    opacity: 0.72;
-  }
-}
 .ge-ai-command-form {
   display: flex;
   align-items: center;
@@ -31407,9 +30954,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   color: var(--fg);
   background: color-mix(in srgb, var(--fg) 10%, transparent);
 }
-.ge-ai-command-clear[hidden] {
-  display: none;
-}
 .ge-ai-command-run {
   position: relative;
   top: -2px;
@@ -31438,18 +30982,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 }
 .ge-ai-command-busy .ge-ai-command-run svg {
   display: none;
-}
-.ge-ai-command-busy .ge-ai-command-run::after {
-  content: '';
-  width: 12px;
-  height: 12px;
-  border: 2px solid color-mix(in srgb, #fff 42%, transparent);
-  border-top-color: #fff;
-  border-radius: 50%;
-  animation: ge-ai-command-spin 0.7s linear infinite;
-}
-@keyframes ge-ai-command-spin {
-  to { transform: rotate(360deg); }
 }
 .ge-ai-command-close {
   width: 28px;
@@ -31487,9 +31019,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   border-radius: 8px;
   background: color-mix(in srgb, var(--panel, var(--bg)) 97%, #000 3%);
   box-shadow: 0 10px 28px color-mix(in srgb, #000 28%, transparent);
-}
-.ge-ai-command-suggestions[hidden] {
-  display: none;
 }
 .ge-ai-command-suggestion {
   width: 100%;
@@ -31541,9 +31070,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   font-size: 10px;
   line-height: 1.3;
   color: var(--fg-muted);
-}
-.ge-ai-command-status:empty {
-  display: none;
 }
 .ge-ai-command-status[data-kind="running"] {
   color: var(--accent, var(--red));
@@ -31635,40 +31161,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   letter-spacing: 0.04em;
   font-weight: 600;
 }
-/* Each shortcut row: key chips + description. The key chips are usually
-   chained with "+" so we use a small horizontal gap between siblings,
-   plus a larger left margin on the trailing text via the kbd:last-of-type
-   sibling rule — keeps "Ctrl+Shift+D Deselect" readable instead of glued. */
-.ge-shortcuts-col > div {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 4px 0;
-  opacity: 0.85;
-  line-height: 1.5;
-}
-/* Push the description text away from the last kbd by adding margin
-   to any text node that follows a kbd. Flex+wrap handles wrap on narrow. */
-.ge-shortcuts-col > div kbd + kbd { margin-left: 0; }
-.ge-shortcuts-col > div kbd:last-of-type { margin-right: 6px; }
-.ge-shortcuts-card kbd,
-#ge-shortcuts-popover kbd {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10px;
-  font-weight: 600;
-  padding: 2px 6px;
-  border: 1px solid color-mix(in srgb, var(--accent, #cc6a3a) 55%, transparent);
-  border-bottom-width: 2px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--accent, #cc6a3a) 14%, transparent);
-  color: var(--accent, #cc6a3a);
-  min-width: 18px;
-  line-height: 1.4;
-}
 .ge-shortcuts-foot {
   margin-top: 12px;
   font-size: 11px;
@@ -31717,7 +31209,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   font-size: 11px;
   white-space: nowrap;
 }
-.ge-quick-mask-bar[hidden] { display: none; }
 .ge-quick-mask-label { font-weight: 600; }
 .ge-quick-mask-tools { display: flex; }
 .ge-quick-mask-tool,
@@ -31757,7 +31248,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   gap: 5px;
   align-items: center;
 }
-.ge-marquee-dimensions[hidden] { display: none; }
 .ge-marquee-dimensions label {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -31806,12 +31296,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   flex-direction: column;
   gap: 6px;
 }
-.ge-layer-geometry-section .ge-section-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
 #ge-layer-geometry-name {
   margin-left: auto;
   min-width: 0;
@@ -31852,8 +31336,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   text-align: right;
   appearance: textfield;
 }
-.ge-layer-geometry-grid input::-webkit-inner-spin-button,
-.ge-layer-geometry-grid input::-webkit-outer-spin-button { appearance: none; }
 .ge-layer-geometry-grid input:focus { outline: none; border-color: var(--red); }
 .ge-layer-geometry-grid input[readonly] { opacity: 0.58; cursor: default; }
 @media (max-width: 700px) {
@@ -31873,16 +31355,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 .ge-pressure-option .toggle-switch input:checked + .toggle-slider::before { transform: translateX(10px); }
 .ge-brush-preset-row select { flex: 1 1 auto; min-width: 0; }
 .ge-brush-preset-row .ge-btn { flex: 0 0 auto; }
-#ge-brush-controls select,
-#ge-eyedropper-section select {
-  height: 26px;
-  min-width: 0;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg);
-  color: var(--fg);
-  font: inherit;
-}
 .ge-text-section,
 .ge-shape-section {
   display: flex;
@@ -31901,13 +31373,11 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   gap: 6px;
   align-items: end;
 }
-.ge-gradient-extra-stop .ge-text-field { min-width: 0; }
 .ge-gradient-stop-remove {
   min-width: 28px;
   height: 28px;
   padding: 0 6px;
 }
-.ge-shape-gradient-add-stop { align-self: flex-start; }
 .ge-text-section textarea,
 .ge-text-section select,
 .ge-text-section input[type="number"],
@@ -31943,7 +31413,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 }
 .ge-text-field select,
 .ge-text-field input { width: 100%; height: 28px; padding: 3px 6px; }
-.ge-text-font-field { grid-column: span 1; }
 .ge-text-format-row { gap: 4px; }
 .ge-text-toggle {
   width: auto;
@@ -31966,10 +31435,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   background: color-mix(in srgb, var(--red) 12%, transparent);
 }
 .ge-text-format-sep { width: 1px; height: 20px; background: var(--border); margin: 0 2px; }
-#ge-text-rasterize { align-self: flex-end; }
 .ge-shape-types { display: flex; gap: 4px; }
-.ge-shape-types .ge-text-toggle { flex: 1 1 25%; }
-#ge-shape-rasterize { align-self: flex-end; }
 .ge-shape-sides-field { max-width: 90px; }
 .ge-direct-text-editor {
   position: fixed;
@@ -31986,7 +31452,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   transform-origin: top left;
   box-shadow: none;
 }
-.ge-direct-text-editor:focus { outline: 1px solid color-mix(in srgb, var(--red) 55%, transparent); }
 
 /* Floating Transform popup — horizontal layout, draggable from
    anywhere on the popup (matches the FX / adjust popups). Defaults
@@ -32007,7 +31472,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   backdrop-filter: blur(6px);
   user-select: none;
 }
-.ge-transform-popup.ge-transform-popup-dragging .ge-transform-popup-head { cursor: grabbing; }
 .ge-transform-popup-head {
   /* Inherits .ge-adj-head styling — flex row, icon + title + buttons,
      bottom border, grab cursor — with the title nudged down 2px for
@@ -32022,9 +31486,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   cursor: grab;
 }
 .ge-transform-popup-head:active { cursor: grabbing; }
-/* Force the title to take all middle space so the [_][×] cluster
-   stays pinned to the right edge. */
-.ge-transform-popup-head .ge-adj-title { flex: 1 1 auto !important; }
 .ge-transform-popup-head .ge-head-btns { margin-left: auto !important; }
 .ge-transform-popup-head .ge-adj-title { position: relative; top: 2px; }
 /* Icon nudged 4px lower than the title baseline so it reads as the
@@ -32060,10 +31521,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   gap: 6px;
   padding: 4px 12px;
 }
-.ge-transform-popup-minimised .ge-transform-popup-body,
-.ge-transform-popup-minimised .ge-transform-popup-hint {
-  display: none;
-}
 .ge-transform-popup-hint { padding: 0 12px; }
 .ge-transform-field {
   display: inline-flex;
@@ -32096,23 +31553,11 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   -moz-appearance: textfield;
   box-sizing: border-box;
 }
-.ge-transform-popup-input::-webkit-outer-spin-button,
-.ge-transform-popup-input::-webkit-inner-spin-button {
-  -webkit-appearance: none;
-  appearance: none;
-  margin: 0;
-  display: none;
-}
 /* Rotation field reserves extra room on the right for both the °
    suffix AND the custom spinner so they don't sit on top of each other.
    The suffix renders inside that reserved zone. */
 .ge-transform-popup-input-rot { width: 76px; padding-right: 30px; }
-.ge-transform-position-field .ge-transform-popup-input { width: 68px; }
 .ge-transform-popup-input:focus { outline: none; border-color: var(--red); }
-.ge-transform-input-locked {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
 /* Custom themed spinner — two slim chevron buttons stacked to the right
    of the input. Tight stack so the pair reads as one control instead of
    two floating arrows. */
@@ -32154,7 +31599,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 .ge-transform-spin button:active {
   background: color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
 }
-.ge-transform-input-locked + .ge-transform-spin { display: none; }
 /* Position the ° suffix to the LEFT of the spinner so they don't
    overlap. The rotation input's larger padding leaves room. */
 .ge-transform-popup-suffix {
@@ -32249,7 +31693,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   accent-color: var(--accent, var(--red));
   margin: 0;
 }
-.ge-transform-preserve-field[hidden] { display: none; }
 
 /* Floating Inpaint prompt — pops next to the user's last brush stroke
    so they can type a description and Generate without diverting to
@@ -32313,12 +31756,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   align-items: center;
   justify-content: center;
 }
-/* Hide the controls wrapper entirely when every tool section inside is
-   hidden — otherwise the padding + border draws an empty band above the
-   layers panel even when no tool needs sliders/buttons. */
-.ge-controls:not(:has(> *:not([style*="display: none"]):not([style*="display:none"]))) {
-  display: none;
-}
 .ge-controls input[type="range"] {
   width: 100%;
   box-sizing: border-box;
@@ -32347,17 +31784,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   background: none;
   overflow: hidden;
 }
-/* Strip the native <input type="color"> chrome (border + padding around
-   the swatch in each engine) so the visible color fills the circle. */
-.ge-color-picker::-webkit-color-swatch-wrapper { padding: 0; }
-.ge-color-picker::-webkit-color-swatch {
-  border: none;
-  border-radius: 50%;
-}
-.ge-color-picker::-moz-color-swatch {
-  border: none;
-  border-radius: 50%;
-}
 /* attachColorPicker swaps the native <input type="color"> for a styled
    text input with the same `.ge-color-picker` class plus
    `.cp-swatch-input`. Force the 24×24 circular swatch back on it so
@@ -32380,7 +31806,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   font-size: 0;
   user-select: none;
 }
-.ge-color-picker.cp-swatch-input::selection { background: transparent; }
 .ge-color-picker.cp-swatch-input:focus {
   outline: 1px solid var(--red);
   outline-offset: 1px;
@@ -32395,30 +31820,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   background: color-mix(in srgb, var(--fg) 25%, transparent);
   border-radius: 999px;
   margin: 0;
-}
-.ge-size-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 9px; height: 9px;
-  border-radius: 50%;
-  background: var(--red);
-  border: none; cursor: pointer;
-}
-.ge-size-slider:hover::-webkit-slider-thumb,
-.ge-size-slider.is-using::-webkit-slider-thumb,
-.ge-size-slider:active::-webkit-slider-thumb {
-  width: 16px; height: 16px;
-}
-.ge-size-slider::-moz-range-thumb {
-  width: 9px; height: 9px;
-  border-radius: 50%;
-  background: var(--red);
-  border: none; cursor: pointer;
-}
-.ge-size-slider:hover::-moz-range-thumb,
-.ge-size-slider.is-using::-moz-range-thumb,
-.ge-size-slider:active::-moz-range-thumb {
-  width: 16px; height: 16px;
 }
 .ge-size-label { font-size: 10px; opacity: 0.5; min-width: 28px; text-align: right; }
 
@@ -32447,9 +31848,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   opacity: 0.7;
   font-variant-numeric: tabular-nums;
 }
-.ge-eraser-row label > span[id$="-label"]:hover {
-  background: color-mix(in srgb, var(--fg) 10%, transparent);
-}
 /* When the value chip is pulled out of its label and placed AFTER the
    slider (see DOM transform in galleryEditor.js init), it sits on the
    row's right edge and naturally shortens the slider's flex space. */
@@ -32465,10 +31863,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   cursor: text;
   border-radius: 3px;
   white-space: nowrap;
-}
-.ge-eraser-row > span[id$="-label"].ge-slider-value:hover {
-  background: color-mix(in srgb, var(--fg) 10%, transparent);
-  opacity: 1;
 }
 
 /* Per-tool model selector row (lives at the top of each AI tool's
@@ -32543,7 +31937,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   flex-direction: column;
   min-width: 140px;
 }
-.ge-merge-menu[hidden] { display: none; }
 .ge-merge-menu .dropdown-item-compact {
   background: none;
   border: none;
@@ -32699,16 +32092,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   width: 16px; height: 16px;
   transition: width 0.12s ease 0s, height 0.12s ease 0s;
 }
-/* Inpaint Brush size slider — slightly larger thumb than the rest of
-   the panel since it's the primary interactive control. */
-#ge-inpaint-brush-slider::-webkit-slider-thumb { width: 12px; height: 12px; }
-#ge-inpaint-brush-slider:hover::-webkit-slider-thumb,
-#ge-inpaint-brush-slider.is-using::-webkit-slider-thumb,
-#ge-inpaint-brush-slider:active::-webkit-slider-thumb { width: 18px; height: 18px; }
-#ge-inpaint-brush-slider::-moz-range-thumb { width: 12px; height: 12px; }
-#ge-inpaint-brush-slider:hover::-moz-range-thumb,
-#ge-inpaint-brush-slider.is-using::-moz-range-thumb,
-#ge-inpaint-brush-slider:active::-moz-range-thumb { width: 18px; height: 18px; }
 
 /* Help "?" icon next to a section title. Subtle by default, hover
    brightens. Tooltip via native `title` attribute. */
@@ -32924,9 +32307,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   cursor: grab;
   user-select: none;
 }
-.ge-adj-popup .ge-adj-title { flex: 1 1 auto; }
 .ge-adj-popup .ge-head-btns { margin-left: auto; }
-.ge-adj-popup .ge-adj-head:active { cursor: grabbing; }
 .ge-adj-icon {
   display: inline-flex;
   align-items: center;
@@ -33008,7 +32389,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   background: color-mix(in srgb, var(--fg) 8%, transparent);
 }
 .ge-fx-dock-icon { display: inline-flex; align-items: center; }
-.ge-fx-dock-label { overflow: hidden; text-overflow: ellipsis; }
 .ge-fx-dock-close {
   margin-left: 2px; opacity: 0.55; padding: 0 2px;
   font-size: 14px; line-height: 1;
@@ -33047,7 +32427,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   cursor: grab;
   user-select: none;
 }
-.ge-history-head:active { cursor: grabbing; }
 .ge-history-title { font-weight: 600; font-size: 12px; flex: 1 1 auto; }
 .ge-history-close {
   background: none; border: none; color: var(--fg-muted);
@@ -33127,7 +32506,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   animation: ge-canvas-spin 0.8s linear infinite;
 }
 .ge-canvas-loading-msg { font-size: 12px; opacity: 0.85; }
-@keyframes ge-canvas-spin { to { transform: rotate(360deg); } }
 
 /* Missing-dependency notice in tool sections (Bg Remove etc.). */
 .ge-dep-notice {
@@ -33220,9 +32598,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   appearance: none;
   background: none;
 }
-.ge-inline-swatch::-webkit-color-swatch-wrapper { padding: 0; }
-.ge-inline-swatch::-webkit-color-swatch { border: none; border-radius: 2px; }
-.ge-inline-swatch::-moz-color-swatch { border: none; border-radius: 2px; }
 
 /* Drop overlay over the gallery editor while a file drag is in flight. */
 .ge-drop-overlay {
@@ -33473,14 +32848,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   padding: 0;
   gap: 3px;
 }
-.ge-adj-cb-row .ge-adj-cb-dot {
-  width: 10px; height: 10px; border-radius: 50%;
-  display: inline-block; flex-shrink: 0;
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 20%, transparent);
-}
-.ge-adj-cb-tone-picker {
-  margin: 0 0 8px;
-}
 .ge-adj-cb-tone-select {
   width: 100%;
   padding: 6px 8px;
@@ -33491,23 +32858,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   color: var(--fg);
 }
 .ge-adj-cb-tone-select:focus { outline: none; border-color: var(--red); }
-.ge-adj-hist-details {
-  margin-bottom: 8px;
-}
-.ge-adj-hist-details > summary {
-  font-size: 11px;
-  color: var(--fg-muted);
-  cursor: pointer;
-  padding: 4px 0;
-  list-style: none;
-  user-select: none;
-}
-.ge-adj-hist-details > summary::-webkit-details-marker { display: none; }
-.ge-adj-hist-details > summary::before {
-  content: '▸ ';
-  display: inline-block;
-  transition: transform 0.12s;
-}
 .ge-adj-hist-details[open] > summary::before {
   content: '▾ ';
 }
@@ -33588,7 +32938,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   border-left-color: var(--red);
   opacity: 1;
 }
-.ge-mask-sub-item.active .ge-layer-name { opacity: 1; font-style: normal; font-weight: 600; }
 .ge-clone-source-status {
   display: flex;
   align-items: center;
@@ -33608,7 +32957,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   flex: 0 0 34px;
   opacity: 0.78;
 }
-.ge-mask-sub-item.active .ge-mask-inline-thumb { opacity: 1; }
 .ge-eraser-preview {
   width: 14px;
   height: 14px;
@@ -33617,27 +32965,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   flex-shrink: 0;
   display: inline-block;
   position: relative;
-}
-/* Opacity preview — translucent disk */
-#ge-eraser-preview-opacity { opacity: 0.5; }
-/* Flow preview — dotted ring to suggest discrete stamping */
-#ge-eraser-preview-flow {
-  background: none;
-  border: 2px dotted var(--fg);
-  opacity: 0.7;
-  width: 12px;
-  height: 12px;
-}
-/* Softness preview — blurred edge */
-#ge-eraser-preview-softness {
-  background: radial-gradient(circle, var(--fg) 0%, var(--fg) 30%, transparent 75%);
-  opacity: 0.7;
-}
-/* Wand feather preview — solid disk that visibly softens at its edge
-   as the user drags the Feather slider. JS sets --feather-blur. */
-#ge-wand-feather-preview {
-  filter: blur(var(--feather-blur, 0px));
-  opacity: 0.8;
 }
 .ge-actions {
   display: flex;
@@ -33684,7 +33011,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 }
 .ge-mask-vis-btn:hover { opacity: 0.85; background: none !important; }
 .ge-mask-vis-btn.visible { opacity: 0.9; }
-.ge-mask-vis-btn.visible:hover { opacity: 1; }
 /* Paint/Erase segmented toggle in the Inpaint Brush section. */
 .ge-inpaint-mode-btn {
   font-size: 11px;
@@ -33746,8 +33072,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 .ge-topbar .ge-btn-sm,
 .ge-topbar select,
 .ge-topbar input { position: relative; top: -2px; }
-.ge-topbar .ge-btn,
-.ge-topbar .ge-btn-sm { text-transform: uppercase; }
 /* The tiny "Gen" / "Inpaint" inline labels now look too high relative to
    the shifted-up controls — nudge them down 2 px to re-align. */
 .ge-topbar span[style*="font-size:9px"] { position: relative; top: 2px; }
@@ -33773,14 +33097,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   gap: 1px;
   padding: 2px 8px !important;
   line-height: 1;
-}
-.ge-stacked-btn .ge-stacked-glyph {
-  font-size: 14px;
-  line-height: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 14px;
 }
 .ge-stacked-btn .ge-stacked-glyph svg { display: block; }
 .ge-stacked-btn .ge-stacked-caret {
@@ -33863,7 +33179,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   color: var(--fg);
   font-size: 10px;
 }
-.ge-layer-selection-bar[hidden] { display: none; }
 .ge-layer-selection-bar > span { flex: 1; opacity: 0.72; }
 .ge-layer-selection-bar .ge-icon-btn {
   width: 24px;
@@ -33874,7 +33189,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   color: inherit;
   opacity: 0.72;
 }
-.ge-layer-selection-bar .ge-icon-btn:hover { opacity: 1; }
 .ge-layer-selection-bar .ge-icon-btn.danger:hover { color: var(--red); }
 /* Layer-row buttons in the right panel — the unicode glyphs (◉, ⤢) have
    irregular baseline metrics so the box reads as too low; shift up 2 px. */
@@ -33903,10 +33217,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   flex-direction: column;
   gap: 2px;
 }
-.ge-save-menu[hidden] { display: none; }
 .ge-save-state-icon { display: none; }
-.ge-stacked-btn .ge-stacked-glyph .ge-save-state-icon[hidden] { display: none !important; }
-.ge-stacked-btn .ge-stacked-glyph .ge-save-state-icon:not([hidden]) { display: block; }
 .ge-save-label { white-space: nowrap; min-width: 0; }
 .ge-save-state-saved { color: var(--fg); }
 .ge-save-menu .dropdown-item-compact {
@@ -33968,12 +33279,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 .ge-image-menu { min-width: 180px; }
 .ge-selection-menu { min-width: 224px; }
 .ge-filter-menu { min-width: 180px; }
-.ge-resize-menu[hidden],
-.ge-edge-menu[hidden],
-.ge-view-menu[hidden],
-.ge-image-menu[hidden],
-.ge-selection-menu[hidden],
-.ge-filter-menu[hidden] { display: none; }
 .ge-resize-menu .dropdown-item-compact,
 .ge-view-menu .dropdown-item-compact,
 .ge-image-menu .dropdown-item-compact,
@@ -34042,7 +33347,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   color: var(--fg);
   font: inherit;
 }
-.ge-selection-save-row .ge-icon-btn { width: 28px; height: 27px; }
 .ge-saved-selection-list { display: flex; flex-direction: column; gap: 1px; }
 .ge-saved-selection-row { display: grid; grid-template-columns: minmax(0, 1fr) 26px; align-items: center; }
 .ge-saved-selection-load,
@@ -34291,13 +33595,10 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   font-size: 10px;
 }
 .ge-export-matte.disabled { opacity: 0.35; pointer-events: none; }
-.ge-export-matte .ge-color-picker { width: 28px; height: 28px; }
 .ge-export-footer {
   border-top: 1px solid var(--border);
   font-size: 10px;
 }
-.ge-export-footer > div { display: flex; gap: 6px; }
-.ge-export-estimate { opacity: 0.6; font-variant-numeric: tabular-nums; }
 @media (max-width: 700px) {
   .ge-export-overlay { padding: 8px; place-items: end center; }
   .ge-export-dialog { width: 100%; max-height: calc(100dvh - 16px); }
@@ -34402,7 +33703,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   text-transform: uppercase;
   opacity: .62;
 }
-.ge-canvas-prompt-custom-label { margin-top: 14px; }
 .ge-canvas-units-field {
   display: flex;
   align-items: center;
@@ -34458,19 +33758,11 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   cursor: pointer;
   position: relative;
 }
-.ge-canvas-anchor::after {
-  content: '';
-  position: absolute;
-  inset: 6px;
-  border-radius: 1px;
-  background: color-mix(in srgb, var(--fg) 38%, transparent);
-}
 .ge-canvas-anchor:hover,
 .ge-canvas-anchor.active {
   border-color: var(--red);
   background: color-mix(in srgb, var(--red) 12%, transparent);
 }
-.ge-canvas-anchor.active::after { background: var(--red); }
 .ge-canvas-resize-options {
   display: flex;
   align-items: flex-end;
@@ -34486,7 +33778,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   opacity: .72;
   cursor: pointer;
 }
-.ge-canvas-lock-option input { accent-color: var(--red); }
 .ge-canvas-interpolation-field {
   display: inline-flex;
   align-items: center;
@@ -34525,7 +33816,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   box-sizing: border-box;
   overflow: hidden;
 }
-.ge-canvas-preset-icon { margin-bottom: 1px; }
 .ge-canvas-preset:hover,
 .ge-canvas-preset.active {
   border-color: var(--red);
@@ -34597,18 +33887,6 @@ button .spinner-whirlpool {
 .ge-panel-resize:active {
   background: color-mix(in srgb, var(--red) 30%, transparent);
 }
-/* Center grip dots so the handle reads as draggable. */
-.ge-panel-resize::before {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 2px;
-  height: 24px;
-  background: color-mix(in srgb, var(--fg) 35%, transparent);
-  border-radius: 2px;
-}
 /* The right panel needs `position: relative` so the handle (absolute)
    anchors to it instead of the viewport. */
 .ge-right-panel {
@@ -34640,20 +33918,7 @@ button .spinner-whirlpool {
   opacity: 0;
   transition: opacity 0.1s;
 }
-.ge-slider-bubble[hidden] { display: none; }
 .ge-slider-bubble.visible { opacity: 1; }
-/* Tail pointing DOWN at the slider (bubble sits above). */
-.ge-slider-bubble::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  bottom: -4px;
-  transform: translateX(-50%);
-  width: 8px;
-  height: 8px;
-  background: var(--red);
-  clip-path: polygon(0 0, 100% 0, 50% 100%);
-}
 
 /* Floating thumbnail shown when hovering a layer row. */
 .ge-layer-thumb {
@@ -34666,10 +33931,6 @@ button .spinner-whirlpool {
   box-shadow: 0 6px 18px color-mix(in srgb, var(--fg) 30%, transparent);
   pointer-events: none;
   display: none;
-}
-.ge-layer-thumb canvas {
-  display: block;
-  border-radius: 4px;
 }
 .ge-layers-header {
   display: flex;
@@ -34704,7 +33965,6 @@ button .spinner-whirlpool {
   gap: 2px;
   pointer-events: auto;
 }
-.ge-layers-merge-menu[hidden] { display: none; }
 .ge-layers-merge-menu .dropdown-item-compact {
   width: 100%;
   background: none;
@@ -34826,7 +34086,6 @@ button .spinner-whirlpool {
   background: #303030;
   image-rendering: auto;
 }
-.ge-layer-item:not(.active) .ge-layer-inline-thumb { opacity: 0.86; }
 /* Row-hover tint removed — kept the layer row's background stable so
    it doesn't shift visually as the user reaches for the opacity slider. */
 .ge-layer-item.active {
@@ -34884,7 +34143,6 @@ button .spinner-whirlpool {
   min-width: 0;
 }
 .ge-layer-opacity-row .ge-layer-opacity { flex: 1 1 auto; width: auto; }
-.ge-layer-opacity-row .ge-layer-lock-btn { flex: 0 0 24px; width: 24px; }
 .ge-layer-group-row .ge-layer-controls {
   grid-column: 1 / -1;
   grid-row: 3;
@@ -34894,10 +34152,6 @@ button .spinner-whirlpool {
   grid-column: 1 / -1;
   grid-row: 2;
   width: 100%;
-}
-.ge-layers-list > .ge-layer-item:not(.ge-adj-sub-item):not(.ge-mask-sub-item) > .ge-layer-controls {
-  grid-column: 1 / -1;
-  grid-row: 3;
 }
 .ge-layer-group-drag { touch-action: none; }
 .ge-layer-group-row.group-dragging {
@@ -34939,7 +34193,6 @@ button .spinner-whirlpool {
   font-weight: 600;
 }
 .ge-layer-group-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ge-layer-item.grouped { padding-left: calc(20px + (var(--layer-group-depth, 1) - 1) * 14px); }
 .ge-group-mask-sub-item { padding-left: calc(20px + var(--group-mask-depth, 1) * 14px); }
 .ge-layer-vis {
   border: none;
@@ -34955,18 +34208,12 @@ button .spinner-whirlpool {
 }
 .ge-layer-vis:hover { opacity: 0.8; }
 .ge-layer-vis.visible { opacity: 0.9; }
-.ge-layer-vis.visible:hover { opacity: 1; }
 .ge-layer-name {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
-}
-.ge-layer-item.clipped .ge-layer-name {
-  display: flex;
-  align-items: center;
-  gap: 4px;
 }
 .ge-layer-clipped-marker {
   display: inline-flex;
@@ -35063,48 +34310,10 @@ button .spinner-whirlpool {
   width: 18px;
   height: 18px;
 }
-/* Shrink the slider thumb — the native default is ~16-20 px which looks
-   massive next to a 3 px track in the compact layer row. */
-.ge-layer-opacity::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--red);
-  border: none;
-  cursor: pointer;
-  /* Match the track: shrink only after a 0.5s grace period. */
-  transition: width 0.12s ease 0.5s, height 0.12s ease 0.5s;
-}
-.ge-layer-opacity::-moz-range-thumb {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--red);
-  border: none;
-  cursor: pointer;
-  transition: width 0.12s ease 0.5s, height 0.12s ease 0.5s;
-}
-.ge-layer-opacity:hover::-webkit-slider-thumb,
-.ge-layer-opacity:active::-webkit-slider-thumb,
-.ge-layer-opacity.dragging::-webkit-slider-thumb,
-.ge-layer-opacity:hover::-moz-range-thumb,
-.ge-layer-opacity:active::-moz-range-thumb,
-.ge-layer-opacity.dragging::-moz-range-thumb {
-  transition: width 0.12s ease 0s, height 0.12s ease 0s;
-}
 .ge-layer-controls {
   display: flex;
   gap: 2px;
   flex-shrink: 0;
-}
-.ge-layer-controls .ge-mask-density {
-  width: 26px;
-  min-width: 24px;
-  height: 4px;
-  flex: 0 0 26px;
-  align-self: center;
 }
 .ge-layer-controls .ge-mask-inspect-btn.active {
   color: var(--accent, var(--red));
@@ -35114,19 +34323,6 @@ button .spinner-whirlpool {
   position: relative;
   flex: 0 0 30px;
 }
-.ge-mask-properties > summary {
-  width: 30px;
-  height: 30px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  list-style: none;
-  cursor: pointer;
-  color: var(--fg);
-  border: 1px solid transparent;
-  border-radius: 4px;
-}
-.ge-mask-properties > summary::-webkit-details-marker { display: none; }
 .ge-mask-properties > summary:hover,
 .ge-mask-properties[open] > summary {
   color: var(--accent, var(--red));
@@ -35146,10 +34342,6 @@ button .spinner-whirlpool {
   background: var(--bg-secondary, var(--bg));
   box-shadow: 0 8px 24px rgba(0,0,0,.28);
 }
-.ge-mask-sub-item:has(.ge-mask-properties[open]) {
-  position: relative;
-  z-index: 50;
-}
 .ge-mask-property-row {
   display: grid;
   grid-template-columns: 52px minmax(0, 1fr) 35px;
@@ -35158,7 +34350,6 @@ button .spinner-whirlpool {
   font-size: 10px;
 }
 .ge-mask-property-row input { min-width: 0; width: 100%; }
-.ge-mask-property-row output { text-align: right; opacity: .7; }
 .ge-mask-apply-btn {
   width: 100%;
   min-height: 26px;
@@ -35170,10 +34361,6 @@ button .spinner-whirlpool {
   font-size: 10px;
 }
 .ge-mask-apply-btn:hover { background: color-mix(in srgb, var(--accent, var(--red)) 22%, transparent); }
-.ge-layers-list > .ge-layer-item:not(.ge-adj-sub-item):not(.ge-mask-sub-item) > .ge-layer-controls,
-.ge-layers-list > .ge-layer-group-row > .ge-layer-controls {
-  display: none;
-}
 .ge-layer-tools {
   display: flex;
   align-items: center;
@@ -35184,14 +34371,12 @@ button .spinner-whirlpool {
   border-top: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
   background: color-mix(in srgb, var(--bg-secondary) 72%, var(--bg));
 }
-.ge-layer-tools[hidden] { display: none; }
 .ge-layer-tools .ge-layer-controls {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   width: 100%;
 }
-.ge-layer-tools .ge-layer-btn { min-width: 26px; }
 .ge-eyedropper-live {
   display: flex;
   align-items: center;
@@ -35249,16 +34434,6 @@ button .spinner-whirlpool {
   flex-shrink: 0;
 }
 .ge-layer-drag:hover { opacity: 0.85; }
-@media (max-width: 700px) {
-  /* Preserve the compact grip while giving long-press reorder a usable
-     touch target. */
-  .ge-layer-drag {
-    width: 28px;
-    min-height: 30px;
-    margin-left: -6px;
-    margin-right: -4px;
-  }
-}
 /* While dragSort lifts the item via absolute positioning, the placeholder
    slot shows where it'll land — give it a subtle red outline so users see
    the target clearly. */
@@ -35321,7 +34496,6 @@ button .spinner-whirlpool {
   background: color-mix(in srgb, var(--fg) 8%, transparent);
 }
 .ge-layer-align-menu { width: 218px; }
-.ge-layer-align-menu .ge-layer-lock-option { grid-template-columns: minmax(0, 1fr); }
 .ge-layer-lock-check {
   width: 16px;
   height: 16px;
@@ -35363,11 +34537,6 @@ button .spinner-whirlpool {
   font-size: 11px;
   -moz-appearance: textfield;
 }
-.ge-crop-apply input[type="number"]::-webkit-outer-spin-button,
-.ge-crop-apply input[type="number"]::-webkit-inner-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
 .ge-crop-x { font-size: 11px; opacity: 0.5; }
 .ge-crop-apply-btn {
   padding: 4px 10px;
@@ -35399,15 +34568,6 @@ button .spinner-whirlpool {
   box-shadow: 0 0 0 1px rgba(0,0,0,0.72);
   display: none;
   box-sizing: border-box;
-}
-.ge-brush-cursor::after {
-  content: '';
-  position: absolute;
-  top: 50%; left: 50%;
-  width: 3px; height: 3px;
-  margin: -1.5px 0 0 -1.5px;
-  background: rgba(255,255,255,0.8);
-  border-radius: 50%;
 }
 .ge-inpaint-section {
   padding: 8px 0; border-top: 1px solid var(--border); margin-top: 4px;
@@ -38085,17 +37245,6 @@ body.doc-find-active .doc-editor-highlight * {
   color: transparent !important;
   background: transparent !important;
 }
-/* Marks remain solid so they pop through the otherwise-invisible
-   overlay; outlined extra-bright for the currently-focused one. */
-body.doc-find-active mark.doc-find-mark {
-  background: var(--accent) !important;
-  color: var(--bg) !important;
-}
-body.doc-find-active mark.doc-find-mark.current {
-  background: var(--accent) !important;
-  box-shadow: 0 0 0 2px var(--fg) !important;
-  outline: 1px solid var(--fg) !important;
-}
 .doc-editor-textarea,
 #doc-editor-code.email-mode .doc-editor-textarea {
   color: var(--fg) !important;
@@ -38941,17 +38090,6 @@ body.doc-find-active mark.doc-find-mark.current {
   white-space: nowrap;
   opacity: 0.74;
 }
-.doc-email-header:not(.doc-email-header-collapsed) .doc-email-collapse-summary {
-  opacity: 0.45;
-}
-.doc-email-header.doc-email-header-collapsed {
-  gap: 0;
-  padding-top: 5px;
-  padding-bottom: 5px;
-}
-.doc-email-header.doc-email-header-collapsed .doc-email-fields {
-  display: none;
-}
 .doc-email-header.doc-email-header-collapsed .doc-email-collapse-btn svg {
   transform: rotate(180deg);
 }
@@ -39030,11 +38168,6 @@ body.doc-find-active mark.doc-find-mark.current {
   z-index: 30;
   pointer-events: auto;
 }
-/* Documents footer — X + Undo stay on the LEFT, Copy/Export group pushed
-   to the RIGHT. Email composer keeps its original flex-end layout. */
-#doc-actions-footer {
-  justify-content: flex-start;
-}
 #doc-actions-footer .email-send-split {
   margin-left: auto;
 }
@@ -39043,17 +38176,6 @@ body.doc-find-active mark.doc-find-mark.current {
 .doc-save-button[data-save-state="saving"] { color: var(--fg-muted, var(--fg)); }
 .doc-save-button[data-save-state="saved"] { color: var(--fg); }
 .doc-save-button[data-save-state="error"] { color: var(--color-danger, #e06c75); }
-.doc-save-button[data-save-state="dirty"] .doc-save-state-dirty,
-.doc-save-button[data-save-state="saving"] .doc-save-state-saving,
-.doc-save-button[data-save-state="saved"] .doc-save-state-saved,
-.doc-save-button[data-save-state="error"] .doc-save-state-error { display: block; }
-.doc-save-button[data-save-state="saving"] .doc-save-state-saving {
-  animation: doc-save-spin 800ms linear infinite;
-}
-@keyframes doc-save-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) {
-  .doc-save-button[data-save-state="saving"] .doc-save-state-saving { animation: none; }
-}
 .doc-stats-wrap {
   position: relative;
   margin-left: 0;
@@ -39093,7 +38215,6 @@ body.doc-find-active mark.doc-find-mark.current {
   color: var(--fg);
   font-size: 11px;
 }
-.doc-stats-popover[hidden] { display: none; }
 .doc-stats-scope {
   padding-bottom: 6px;
   margin-bottom: 5px;
@@ -39110,10 +38231,6 @@ body.doc-find-active mark.doc-find-mark.current {
   justify-content: space-between;
   gap: 14px;
 }
-.doc-stats-row strong {
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
 /* WYSIWYG email body — what the recipient sees, edited in place. */
 .doc-email-richbody {
   flex: 1;
@@ -39129,11 +38246,6 @@ body.doc-find-active mark.doc-find-mark.current {
   white-space: pre-wrap;
   text-align: left;
   word-wrap: break-word;
-}
-.doc-email-richbody:empty::before {
-  content: "Write your email\2026";
-  opacity: 0.4;
-  pointer-events: none;
 }
 .doc-email-richbody.richtext-mode {
   background: var(--bg);
@@ -39155,22 +38267,6 @@ body.doc-find-active mark.doc-find-mark.current {
   opacity: 1;
   pointer-events: auto;
   transform: none;
-}
-@media (max-width: 768px) {
-  .doc-rich-empty-import {
-    top: 106px;
-  }
-}
-.doc-email-richbody.richtext-mode:empty::before {
-  content: "Start writing\2026";
-}
-.doc-email-richbody.richtext-mode ul,
-.doc-email-richbody.richtext-mode ol {
-  padding-left: 1.75em;
-}
-.doc-email-richbody.richtext-mode ul:not(.rich-checklist) > li,
-.doc-email-richbody.richtext-mode ol > li {
-  padding-inline-start: 0.2em;
 }
 .doc-email-richbody.richtext-mode ul.rich-checklist {
   list-style: none;
@@ -39266,12 +38362,6 @@ body.doc-find-active mark.doc-find-mark.current {
   white-space: pre-wrap;
   tab-size: 2;
 }
-.doc-email-richbody.richtext-mode pre code {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  font: inherit;
-}
 
 ::highlight(doc-find-results) {
   color: inherit;
@@ -39307,15 +38397,6 @@ body.doc-find-active mark.doc-find-mark.current {
   max-width: 100%;
   height: auto;
   border-radius: 4px;
-}
-.doc-email-richbody figure.richtext-image .richtext-image-caption {
-  margin-top: 6px;
-  max-width: 100%;
-  color: color-mix(in srgb, var(--fg) 68%, transparent);
-  font-size: 0.84em;
-  line-height: 1.4;
-  text-align: center;
-  overflow-wrap: anywhere;
 }
 .doc-email-richbody figure.richtext-image:has(img.richtext-image-size-60) .richtext-image-caption { width: 60%; }
 .doc-email-richbody figure.richtext-image:has(img.richtext-image-size-35) .richtext-image-caption { width: 35%; }
@@ -39618,11 +38699,6 @@ body.doc-find-active mark.doc-find-mark.current {
 }
 .rich-align-center { text-align: center; }
 .rich-align-right { text-align: right; }
-.doc-email-richbody a { color: var(--accent, #4af); }
-.doc-email-richbody blockquote {
-  margin: 6px 0; padding-left: 10px;
-  border-left: 3px solid var(--border); opacity: 0.8;
-}
 .doc-email-richbody .email-quoted-history {
   margin-top: 14px;
   padding: 10px 0 10px 12px;
@@ -39636,7 +38712,6 @@ body.doc-find-active mark.doc-find-mark.current {
 }
 .doc-email-richbody h1, .doc-email-richbody h2, .doc-email-richbody h3,
 .doc-email-richbody h4, .doc-email-richbody h5, .doc-email-richbody h6 { margin: 0.4em 0; }
-.doc-email-richbody p { margin: 0.5em 0; }
 .email-more-menu {
   position: absolute; bottom: 100%; right: 0; margin-bottom: 6px;
   min-width: 160px; background: var(--bg); border: 1px solid var(--border);
@@ -39705,7 +38780,6 @@ body.doc-find-active mark.doc-find-mark.current {
 #doc-email-more-btn:hover {
   border-color: var(--fg); color: var(--fg);
 }
-#doc-email-more-btn svg { opacity: 0.8; }
 .email-more-wrap { display: inline-flex; }
 .email-attachments {
   display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0 0 58px;
@@ -40182,14 +39256,6 @@ body.doc-find-active mark.doc-find-mark.current {
 @media (max-width: 768px) {
   .doc-email-collapse-btn {
     display: flex;
-  }
-}
-@media (min-width: 769px) {
-  #doc-email-header #doc-email-collapse-btn.doc-email-collapse-btn {
-    display: none !important;
-  }
-  #doc-email-header.doc-email-header-collapsed .doc-email-fields {
-    display: flex !important;
   }
 }
 
@@ -50994,13 +50060,6 @@ body.settings-sidebar-resize-active {
   transform: translateY(1px);
 }
 
-.doclib-section-title-icon {
-  width: 14px;
-  height: 14px;
-  margin-right: 6px;
-  color: var(--accent, var(--red));
-  vertical-align: -2px;
-}
 
 /* Deep Research History uses the same library surface as Memory, Skills, and
    Tasks: one framed block, compact toolbar, filter chips, bulk selection, and
