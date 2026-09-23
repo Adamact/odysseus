@@ -4152,6 +4152,8 @@ def setup_chat_routes(
                                 yield f'data: {json.dumps({"type": "chat_terminal", "data": _terminal_metrics})}\n\n'
                             yield chunk
                         elif chunk.startswith("event: "):
+                            if chunk.startswith("event: error"):
+                                _stream_set(session, status="error")
                             yield chunk
                         elif chunk == "data: [DONE]\n\n":
                             if _chat_terminal_saved:

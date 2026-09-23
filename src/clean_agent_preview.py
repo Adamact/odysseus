@@ -6792,10 +6792,25 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     break
             else:
                 yield event({'delta': '\nThe preview reached its round limit. Please narrow the request.'})
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        if status == 402:
+            detail = 'Payment required by the selected model provider (HTTP 402). Check its billing or credits, or choose another model.'
+        elif status in (401, 403):
+            detail = f'The selected model provider rejected access (HTTP {status}). Check its credentials and permissions.'
+        elif status == 429:
+            detail = 'The selected model provider is rate limiting requests (HTTP 429). Wait before retrying or choose another model.'
+        elif status >= 500:
+            detail = f'The selected model provider is unavailable (HTTP {status}). Retry later or choose another model.'
+        else:
+            detail = f'The selected model provider rejected the request (HTTP {status}). Check the provider or choose another model.'
+        logging.getLogger(__name__).warning('Clean v3 provider request failed with HTTP %s', status)
+        yield f'event: error\ndata: {json.dumps({"status": status, "error": detail})}\n\n'
+        return
     except Exception:
-        import logging
         logging.getLogger(__name__).exception('Clean v3 preview failed')
-        yield event({'delta': '\nThe v3 test encountered an error. No fallback model or fabricated tool call was used.'})
+        yield f'event: error\ndata: {json.dumps({"status": 500, "error": "The model request failed unexpectedly. Check the server log and retry."})}\n\n'
+        return
     elapsed = time.monotonic() - started
     ttft = first_token - started if first_token else None
     yield event({'type': 'metrics', 'data': {

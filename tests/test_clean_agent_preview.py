@@ -4517,6 +4517,53 @@ async def test_stream_emits_incremental_text_and_persistable_history(monkeypatch
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('status,expected', [
+    (402, 'billing or credits'),
+    (401, 'credentials and permissions'),
+    (429, 'rate limiting'),
+    (503, 'unavailable'),
+])
+async def test_preview_provider_http_failure_is_terminal_error_not_assistant_text(monkeypatch, status, expected):
+    import httpx
+    import src.clean_agent_preview as module
+
+    class Response:
+        status_code = status
+
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+
+        def raise_for_status(self):
+            request = httpx.Request('POST', 'https://provider.example/v1/chat/completions')
+            response = httpx.Response(status, request=request)
+            raise httpx.HTTPStatusError('provider secret must not be shown', request=request, response=response)
+
+    class Client:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def stream(self, *args, **kwargs): return Response()
+
+    monkeypatch.setattr(module.httpx, 'AsyncClient', Client)
+    contract = resolve_full_inventory_contract(schemas=[], policy=ToolPolicy())
+    raw = [chunk async for chunk in stream_preview(
+        endpoint_url='https://provider.example/v1/chat/completions', model='test',
+        messages=[{'role': 'user', 'content': 'hello'}], headers={},
+        turn_contract=contract, session_id='test', owner='test',
+        disabled_tools=set(), tool_policy=ToolPolicy(),
+    )]
+
+    assert raw[-1].startswith('event: error\ndata: ')
+    assert all('"delta"' not in chunk for chunk in raw)
+    assert all('"type": "metrics"' not in chunk for chunk in raw)
+    assert 'data: [DONE]' not in raw
+    payload = json.loads(raw[-1].split('data: ', 1)[1])
+    assert payload['status'] == status
+    assert expected in payload['error']
+    assert 'provider secret' not in raw[-1]
+
+
+@pytest.mark.asyncio
 async def test_ajax_c375_clean_runtime_uses_progressive_thinking_without_leaking(monkeypatch):
     import src.clean_agent_preview as module
     requests = []
@@ -6003,7 +6050,9 @@ async def test_context_recovery_is_bounded_and_not_used_for_other_errors(
         disabled_tools=set(), tool_policy=ToolPolicy())]
     assert len(requests) == expected_requests
     assert not any('"type": "tool_start"' in chunk for chunk in raw)
-    assert any('encountered an error' in chunk for chunk in raw)
+    assert raw[-1].startswith('event: error\ndata: ')
+    assert json.loads(raw[-1].split('data: ', 1)[1])['status'] == status
+    assert all('"delta"' not in chunk for chunk in raw)
 
 
 @pytest.mark.asyncio
