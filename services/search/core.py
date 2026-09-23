@@ -3,11 +3,19 @@
 import json
 import logging
 import re
+import time
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List, Set
 from urllib.parse import urlparse
+from src.constants import (
+    ARXIV_API_URL,
+    OPENALEX_API_URL,
+    SCHOLARLY_LOOKUP_TOTAL_BUDGET,
+)
 from src.search_passages import search_excerpt
 
 import httpx
@@ -489,22 +497,80 @@ def _result_strongly_matches_title(title: str, result: dict) -> bool:
     return overlap >= (1.0 if len(wanted) == 2 else 0.8)
 
 
+def _scholarly_user_agent() -> str:
+    """Identify this build to the scholarly APIs using the real app version."""
+    from src.constants import APP_VERSION
+
+    return f"Odysseus/{APP_VERSION} scholarly-title-resolver"
+
+
+_scholarly_deadline: ContextVar[Optional[float]] = ContextVar(
+    "scholarly_deadline", default=None
+)
+
+
+@contextmanager
+def _scholarly_budget():
+    """Open one wall-clock budget shared by every hop of a lookup chain."""
+    token = _scholarly_deadline.set(
+        time.monotonic() + SCHOLARLY_LOOKUP_TOTAL_BUDGET
+    )
+    try:
+        yield
+    finally:
+        _scholarly_deadline.reset(token)
+
+
+def _scholarly_api_get(url: str, params: dict) -> Optional[httpx.Response]:
+    """GET a scholarly metadata API under the shared outbound policy.
+
+    Returns ``None`` when the URL fails the outbound check or the caller's
+    budget is already spent, so callers degrade to their next source instead
+    of raising. ``follow_redirects`` stays on because both APIs redirect to
+    canonical paths, which is exactly why the destination needs checking.
+    """
+    from src.constants import SCHOLARLY_LOOKUP_TIMEOUT
+    from src.url_safety import check_outbound_url
+
+    ok, reason = check_outbound_url(url, block_private=True)
+    if not ok:
+        logger.warning("Scholarly lookup blocked for %s: %s", url, reason)
+        return None
+
+    timeout = SCHOLARLY_LOOKUP_TIMEOUT
+    deadline = _scholarly_deadline.get()
+    if deadline is not None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            logger.info("Scholarly lookup budget exhausted before %s", url)
+            return None
+        timeout = min(timeout, remaining)
+
+    response = httpx.get(
+        url,
+        params=params,
+        headers={"User-Agent": _scholarly_user_agent()},
+        timeout=timeout,
+        follow_redirects=True,
+    )
+    response.raise_for_status()
+    return response
+
+
 def _arxiv_title_results(title: str, count: int = 3) -> list[dict]:
     """Resolve a paper title through arXiv's public Atom API."""
 
     try:
-        response = httpx.get(
-            "https://export.arxiv.org/api/query",
-            params={
+        response = _scholarly_api_get(
+            ARXIV_API_URL,
+            {
                 "search_query": f'ti:"{title}"',
                 "start": 0,
                 "max_results": max(1, min(int(count), 5)),
             },
-            headers={"User-Agent": "Odysseus/0.20 scholarly-title-resolver"},
-            timeout=12.0,
-            follow_redirects=True,
         )
-        response.raise_for_status()
+        if response is None:
+            return []
         root = ET.fromstring(response.text)
     except Exception as exc:
         logger.info("arXiv title lookup failed for %r: %s", title, exc)
@@ -541,20 +607,18 @@ def _openalex_title_results(title: str, count: int = 3) -> list[dict]:
         # OpenAlex treats a literal question mark as query syntax and returns
         # HTTP 400 for otherwise valid titles such as "How Far ... GPT-4V?".
         search_title = re.sub(r"[?]+", " ", str(title or "")).strip()
-        response = httpx.get(
-            "https://api.openalex.org/works",
-            params={
+        response = _scholarly_api_get(
+            OPENALEX_API_URL,
+            {
                 "search": search_title,
                 "per-page": max(1, min(int(count), 5)),
                 "select": (
                     "display_name,doi,primary_location,publication_year,type"
                 ),
             },
-            headers={"User-Agent": "Odysseus/0.20 scholarly-title-resolver"},
-            timeout=12.0,
-            follow_redirects=True,
         )
-        response.raise_for_status()
+        if response is None:
+            return []
         payload = response.json()
     except Exception as exc:
         logger.info("OpenAlex title lookup failed for %r: %s", title, exc)
@@ -597,8 +661,16 @@ def _openalex_title_results(title: str, count: int = 3) -> list[dict]:
 
 
 def _scholarly_title_results(title: str, count: int = 3) -> list[dict]:
-    """Retry a noisy scholarly query as a bare title, then use arXiv API."""
+    """Retry a noisy scholarly query as a bare title, then use arXiv API.
 
+    The three hops share one wall-clock budget so a slow upstream cannot hold a
+    user-facing search open for the sum of every per-request timeout.
+    """
+    with _scholarly_budget():
+        return _scholarly_title_results_inner(title, count)
+
+
+def _scholarly_title_results_inner(title: str, count: int) -> list[dict]:
     try:
         simplified = searxng_search_api(title, count=max(3, count))
     except Exception as exc:
@@ -621,10 +693,11 @@ def _direct_scholarly_title_results(title: str, count: int = 3) -> list[dict]:
 
     # OpenAlex typically resolves titles in under a second and often returns
     # the official arXiv landing page. The arXiv API remains the fallback.
-    openalex = _openalex_title_results(title, count)
-    if openalex:
-        return openalex
-    return _arxiv_title_results(title, count)
+    with _scholarly_budget():
+        openalex = _openalex_title_results(title, count)
+        if openalex:
+            return openalex
+        return _arxiv_title_results(title, count)
 
 
 def _augment_scholarly_results(query: str, results: list[dict], count: int) -> list[dict]:
