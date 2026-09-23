@@ -187,6 +187,79 @@ def test_redirect_limit_is_bounded(monkeypatch):
     assert len(called_urls) == search_core.MAX_SCHOLARLY_REDIRECTS + 1
 
 
+def test_redirect_does_not_replay_query_parameters_to_the_new_destination(monkeypatch):
+    """The original query must not be re-sent to a redirect target.
+
+    The params belong to the endpoint that was asked for. Replaying them across
+    a redirect would hand the search terms to whatever host the redirect names.
+    """
+    calls = []
+
+    def fake_get(url, **kwargs):
+        params = kwargs.get("params")
+        calls.append((url, params))
+        # Mirror real httpx: response.url carries the query that was sent.
+        req = httpx.Request("GET", httpx.URL(url, params=params or {}))
+        if len(calls) == 1:
+            return httpx.Response(
+                302, headers={"Location": "https://redirect.openalex.test/v2"}, request=req
+            )
+        return httpx.Response(200, json={"results": []}, request=req)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr("src.url_safety.check_outbound_url", lambda url, **kw: (True, ""))
+
+    result = search_core._scholarly_api_get(
+        OPENALEX_API_URL, {"search": "confidential-title"}
+    )
+
+    assert result is not None
+    assert len(calls) == 2
+    second_url, second_params = calls[1]
+    assert second_url == "https://redirect.openalex.test/v2"
+    assert second_params is None
+    assert "confidential-title" not in second_url
+
+
+def test_relative_redirect_resolves_against_the_responding_url(monkeypatch):
+    """A relative Location resolves against the URL that answered, not the origin."""
+    calls = []
+
+    def fake_get(url, **kwargs):
+        calls.append(url)
+        req = httpx.Request("GET", httpx.URL(url, params=kwargs.get("params") or {}))
+        if len(calls) == 1:
+            return httpx.Response(
+                302, headers={"Location": "https://mirror.arxiv.test/api/v1/query"}, request=req
+            )
+        if len(calls) == 2:
+            # Relative hop: must resolve against mirror.arxiv.test, not arxiv.
+            return httpx.Response(302, headers={"Location": "../v2/query"}, request=req)
+        return httpx.Response(200, text="<feed/>", request=req)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr("src.url_safety.check_outbound_url", lambda url, **kw: (True, ""))
+
+    result = search_core._scholarly_api_get(ARXIV_API_URL, {"search_query": "x"})
+
+    assert result is not None
+    assert calls[2] == "https://mirror.arxiv.test/api/v2/query"
+
+
+def test_http_error_status_degrades_to_no_results(monkeypatch):
+    """A 500 from a scholarly API must degrade to no results, not raise."""
+
+    def fake_get(url, **kwargs):
+        req = httpx.Request("GET", url)
+        return httpx.Response(500, text="upstream exploded", request=req)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr("src.url_safety.check_outbound_url", lambda url, **kw: (True, ""))
+
+    assert search_core._arxiv_title_results("Attention Is All You Need") == []
+    assert search_core._openalex_title_results("Attention Is All You Need") == []
+
+
 def test_exhausted_budget_skips_the_request(monkeypatch):
     """Once the chain's budget is spent, later hops are skipped, not retried."""
     calls = []
@@ -398,3 +471,52 @@ def test_ordinary_draft_is_unaffected():
     from routes.editor_draft_routes import _dump_payload
 
     assert _dump_payload({"layers": []}) == '{"layers":[]}'
+
+
+def test_route_class_guard_applies_only_to_body_bearing_methods():
+    """The route class must not change GET/DELETE semantics.
+
+    ``EditorDraftRoute`` is attached to the whole editor-draft router, so the
+    bodyless routes run through it too. They must reach their handler
+    untouched — the early ceiling belongs to the methods that carry a draft.
+    """
+    from fastapi import APIRouter
+
+    from routes.editor_draft_routes import EditorDraftRoute
+
+    router = APIRouter(route_class=EditorDraftRoute)
+
+    @router.get("/probe")
+    async def _get_probe():
+        return {"reached": "get"}
+
+    @router.delete("/probe")
+    async def _delete_probe():
+        return {"reached": "delete"}
+
+    @router.post("/probe")
+    async def _post_probe():
+        return {"reached": "post"}
+
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+
+    oversized = {
+        "content-type": "application/json",
+        "content-length": str(EDITOR_DRAFT_MAX_BYTES + 1),
+    }
+
+    # Bodyless methods are unaffected even when a bogus huge length is declared.
+    for method, expected in (("GET", "get"), ("DELETE", "delete")):
+        response = client.request(method, "/probe", content=b"{}", headers=oversized)
+        assert response.status_code == 200, (method, response.text)
+        assert response.json() == {"reached": expected}
+
+    # The same declaration on the body-bearing method is refused.
+    assert client.post("/probe", content=b"{}", headers=oversized).status_code == 413
+
+    # ...and an ordinary POST still reaches the handler.
+    ordinary = client.post("/probe", json={"layers": []})
+    assert ordinary.status_code == 200
+    assert ordinary.json() == {"reached": "post"}
