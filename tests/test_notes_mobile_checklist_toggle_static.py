@@ -87,6 +87,12 @@ def test_mobile_bulk_select_long_press_is_shared_across_card_types():
     assert ".skill-card[data-skill-name]" in helper
     assert ".task-card[data-id]" in helper
     assert "const HOLD_MS = 450" in helper
-    assert "body:has(#memory-select-btn.active)" in css
-    assert "body:has(#skills-select-btn.active)" in css
-    assert "body:has(#tasks-select-btn.active)" in css
+    shared_buttons = (
+        "#memory-select-btn,", "#skills-select-btn,",
+        "#notes-select-btn,", "#tasks-select-btn,",
+    )
+    shared_css = css.split("/* Shared bulk-selection trigger.", 1)[1]
+    selectors = re.findall(r":is\(([^)]*)\)(?:\.active)?::before", shared_css)
+    assert len(selectors) == 2
+    for selector in selectors:
+        assert all(button in selector for button in shared_buttons)

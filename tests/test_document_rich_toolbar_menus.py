@@ -66,8 +66,8 @@ def test_mobile_toolbar_uses_native_momentum_and_distinct_activation_tokens():
           id: 'toggle-doc', title: 'Toggle menu', language: 'richtext',
           current_content: '<p>Toggle target</p>', version_count: 1,
         });
-        await new Promise(resolve => setTimeout(resolve, 450));
       });
+      await page.waitForSelector('#doc-email-richbody p');
 
       const toggle = page.locator('button[data-dd="font"]');
       await toggle.click();
@@ -138,7 +138,9 @@ def test_mobile_toolbar_menu_preserves_selection_and_restores_focus():
           current_content: '<p>Paragraph</p>',
           version_count: 1,
         });
-        await new Promise(resolve => setTimeout(resolve, 450));
+      });
+      await page.waitForSelector('#doc-email-richbody p');
+      await page.evaluate(() => {
         const paragraph = document.querySelector('#doc-email-richbody p');
         const range = document.createRange();
         range.selectNodeContents(paragraph);
@@ -251,7 +253,9 @@ def test_rich_toolbar_menus_track_live_formatting_values():
           current_content: '<p>Stateful text</p>',
           version_count: 1,
         });
-        await new Promise(resolve => setTimeout(resolve, 450));
+      });
+      await page.waitForSelector('#doc-email-richbody p');
+      await page.evaluate(() => {
         const paragraph = document.querySelector('#doc-email-richbody p');
         const range = document.createRange();
         range.selectNodeContents(paragraph);

@@ -64,7 +64,8 @@ def test_rich_document_shortcuts_work_at_desktop_and_mobile_widths():
         await selectText('Align target');
         await page.keyboard.press('Control+Shift+e');
         const center = await page.locator('#doc-email-richbody').evaluate(root => root.children[1].style.textAlign);
-        await page.keyboard.press('Control+Shift+r');
+        await page.locator('[data-dd="align"]').click();
+        await page.locator('#doc-md-dd-menu .doc-overflow-item').filter({ hasText: 'Align right' }).click();
         const right = await page.locator('#doc-email-richbody').evaluate(root => root.children[1].style.textAlign);
         await page.keyboard.press('Control+Shift+j');
         const justify = await page.locator('#doc-email-richbody').evaluate(root => root.children[1].style.textAlign);

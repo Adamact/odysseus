@@ -135,7 +135,7 @@ def test_minimal_notes_clamp_suppresses_admin_schema_expansion() -> None:
     clamp = source[source.index("if _minimal_explicit_notes_mode"):]
 
     assert clamp.index("_needs_admin = False") < clamp.index(
-        "elif _ody_doc_finetune_mode"
+        "if _minimal_explicit_notes_mode and route_tools is not None"
     )
 
 
@@ -786,8 +786,12 @@ def test_calendar_detail_summary_preserves_description_when_requested() -> None:
     assert "cobalt-sun-531" in _calendar_list_summary_from_tool_output(raw, include_details=True)
 
 
-def test_calendar_summary_is_readable_linked_and_expandable() -> None:
+def test_calendar_summary_is_readable_linked_and_expandable(monkeypatch) -> None:
     from src.agent_loop import _calendar_list_summary_from_tool_output
+    from datetime import timezone
+    import src.user_time
+
+    monkeypatch.setattr(src.user_time, "user_timezone", lambda: timezone.utc)
 
     raw = "\n".join(
         [

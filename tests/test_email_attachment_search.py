@@ -160,8 +160,10 @@ def test_attachment_cache_backfill_preserves_message_id(tmp_path, monkeypatch):
 
 def test_single_email_tag_has_no_more_control():
     library = open("static/js/emailLibrary.js", encoding="utf-8").read()
-
-    assert 'class="email-tags-more email-tags-more-single"' not in library
+    group = library[library.index("function _emailTagGroupHtml("):library.index("function _fitEmailCardTags(")]
+    assert "if (visible.length === 1) return visible[0];" in group
+    assert "if (visible.length === 2) return visible.join('');" in group
+    assert group.index("if (visible.length === 2)") < group.index("email-tags-more-single")
 
 
 def test_email_folder_and_filter_pickers_treat_their_buttons_as_inside_clicks():
@@ -181,7 +183,7 @@ def test_empty_reply_has_two_editable_rows_and_reply_survives_compact_toolbar():
     fit_start = library.index("function _fitReaderActions")
     fit_end = library.index("const _readerActionFitObserver", fit_start)
     fit = library[fit_start:fit_end]
-    assert '[data-act="ai-reply"], [data-act="reply-all"]' in fit
+    assert '[data-act="reply-all"], [data-act="forward"]' in fit
     assert '[data-act="reply"]' not in fit
 
 

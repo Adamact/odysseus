@@ -25,18 +25,18 @@ def test_research_settings_use_custom_pickers_and_shared_provider_icons():
     assert "provider === 'google' ? 'google_pse'" in icons
     first_picker_offset = style.split(".research-setting:has(#research-rounds),", 1)[1].split("}", 1)[0]
     assert ".research-setting:has(#research-category)" in first_picker_offset
-    assert "top: -4px;" in first_picker_offset
+    assert "top: 0;" in first_picker_offset
 
 
 def test_completed_research_keeps_primary_and_utility_actions_visible_without_format_icon():
     panel = (ROOT / "static/js/research/panel.js").read_text(encoding="utf-8")
 
     assert "research-job-format-icon" not in panel
-    assert "Visual Report" in panel
-    assert "Discuss" in panel
-    assert 'data-action="copy" title="Copy report to clipboard"' in panel
-    assert 'data-action="dismiss" title="Clear from list"' in panel
-    assert 'data-action="delete" title="Delete from disk"' in panel
+    assert 'data-action="report" title="Open visual report"' in panel
+    assert 'data-action="chat" title="Open follow-up chat with this research as context"' in panel
+    assert "{ action: 'copy', icon: _copyIcon, label: 'Copy report' }" in panel
+    assert "{ action: 'dismiss', icon: _cancelIcon, label: 'Hide from list' }" in panel
+    assert "{ action: 'delete', icon: _trashIcon, label: 'Delete from disk', danger: true }" in panel
 
 
 def test_research_format_survives_live_and_reconnected_jobs():

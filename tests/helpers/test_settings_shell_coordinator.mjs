@@ -847,9 +847,10 @@ function resolveImport(specifier, parent) {
     throw new Error(`Unexpected non-relative import: ${specifier}`);
   }
 
+  const cleanSpecifier = specifier.split('?')[0].split('#')[0];
   return path.resolve(
     path.dirname(parent),
-    specifier,
+    cleanSpecifier,
   );
 }
 

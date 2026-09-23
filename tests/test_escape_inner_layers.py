@@ -22,7 +22,9 @@ def test_rich_escape_closes_toolbar_then_selection_badge() -> None:
           id: 'escape-doc', title: 'Escape', language: 'richtext',
           current_content: '<p>Selected sentence for testing</p>', version_count: 1,
         });
-        await new Promise(resolve => setTimeout(resolve, 700));
+      });
+      await page.waitForSelector('#doc-email-richbody p');
+      await page.evaluate(() => {
         const rich = document.querySelector('#doc-email-richbody');
         const range = document.createRange();
         range.selectNodeContents(rich.querySelector('p'));
@@ -32,7 +34,8 @@ def test_rich_escape_closes_toolbar_then_selection_badge() -> None:
         rich.focus();
         rich.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 20, clientY: 20 }));
       });
-      await page.waitForTimeout(100);
+      await page.waitForSelector('#doc-rich-selection-toolbar');
+      await page.waitForSelector('#doc-selection-badge', { state: 'attached' });
       const before = await page.evaluate(() => ({
         toolbar: !!document.querySelector('#doc-rich-selection-toolbar'),
         badge: document.querySelector('#doc-selection-badge')?.style.display ?? 'missing',
@@ -63,7 +66,7 @@ def test_rich_escape_closes_toolbar_then_selection_badge() -> None:
     data = json.loads(result.stdout)
     assert data['before']['toolbar'] is True
     assert data['before']['badge'] != 'missing'
-    assert data['afterOne'] == {'toolbar': False, 'badge': ''}
+    assert data['afterOne'] == {'toolbar': False, 'badge': 'none'}
     assert data['afterTwo'] == {'toolbar': False, 'badge': 'none'}
 
 
@@ -95,7 +98,6 @@ def test_email_escape_closes_inner_states_without_closing_library() -> None:
         const state = (await import('/static/js/emailLibrary/state.js')).state;
         const modal = document.querySelector('#email-lib-modal');
         state._selectMode = true;
-        modal.classList.add('email-reading');
       });
       await page.keyboard.press('Escape');
       const select = await page.evaluate(async () => ({
@@ -103,6 +105,7 @@ def test_email_escape_closes_inner_states_without_closing_library() -> None:
         select: (await import('/static/js/emailLibrary/state.js')).state._selectMode,
         reading: document.querySelector('#email-lib-modal')?.classList.contains('email-reading'),
       }));
+      await page.evaluate(() => document.querySelector('#email-lib-modal').classList.add('email-reading'));
       await page.keyboard.press('Escape');
       const reading = await page.evaluate(() => ({
         modal: !!document.querySelector('#email-lib-modal'),
@@ -121,5 +124,5 @@ def test_email_escape_closes_inner_states_without_closing_library() -> None:
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)
     assert data['settings'] == {'modal': True, 'settings': False}
-    assert data['select'] == {'modal': True, 'select': False, 'reading': True}
+    assert data['select'] == {'modal': True, 'select': False, 'reading': False}
     assert data['reading'] == {'modal': True, 'reading': False}

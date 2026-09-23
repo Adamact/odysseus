@@ -784,6 +784,15 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
         # Content words such as "reviews", "which", "highlights", or
         # "final" must not become a public-Web lookup operation.
         return None
+    if re.fullmatch(
+        _REQUEST_PREFIX + r"(?:which\s+search\s+(?:backend|provider)\s+am\s+i\s+on"
+        r"(?:\s+right\s+now)?|what\s+(?:default\s+)?time\s+filter\s+is\s+"
+        r"my\s+search\s+set\s+to(?:\s+by\s+default)?|show\s+me\s+the\s+whole\s+"
+        r"search\s+(?:settings?\s+)?group)[?!.]*",
+        text,
+        re.I,
+    ):
+        return frozenset({"manage_settings"})
     if (
         re.search(r"\b(?:look\s*up|search|find)\b", text, re.I)
         and re.search(
@@ -797,6 +806,7 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
             text,
             re.I,
         )
+        and not re.search(r"\b(?:inbox|emails?|mails?|calendar|meetings?|my\s+notes?)\b", text, re.I)
     ):
         # Current lookups need discovery before navigation. Letting the model
         # begin on an arbitrary browser page can ground an answer in stale or
@@ -811,7 +821,7 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
         r"compare|pros?|cons?|opinions?|thoughts?|about)\b",
         text,
         re.I,
-    ):
+    ) and not re.search(r"\b(?:inbox|emails?|mails?|calendar|meetings?|my\s+notes?)\b", text, re.I):
         # Product/service review requests are current public-web lookups even
         # when the user does not say "search". Route them to web_search before
         # the model sees a schema; otherwise a no-tool contract invites raw
@@ -973,15 +983,6 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
         re.I,
     ):
         return frozenset({"web_search"})
-    if re.fullmatch(
-        _REQUEST_PREFIX + r"(?:which\s+search\s+(?:backend|provider)\s+am\s+i\s+on"
-        r"(?:\s+right\s+now)?|what\s+(?:default\s+)?time\s+filter\s+is\s+"
-        r"my\s+search\s+set\s+to(?:\s+by\s+default)?|show\s+me\s+the\s+whole\s+"
-        r"search\s+(?:settings?\s+)?group)[?!.]*",
-        text,
-        re.I,
-    ):
-        return frozenset({"manage_settings"})
     if re.fullmatch(
         _REQUEST_PREFIX + r"(?:is\s+there\s+)?anything\s+new\s+(?:in|on|about)\s+"
         r"[^?!.]{2,160}\b(?:today|this\s+(?:week|month|year)|recently)[?!.]*",
@@ -4320,6 +4321,8 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
     established_family = immediately_established_family(text, history)
     if established_family and not newly_named_families:
         return frozenset({established_family})
+    if selected_tools_for_request(raw_text) == frozenset({"manage_settings"}):
+        return frozenset({"cookbook_admin"})
     concrete_urls = re.findall(r"\bhttps?://[^\s<>\"']+", raw_text, re.I)
     workspace_media = re.search(
         r"(?:file://)?/workspace/[^\s`\"']+\."

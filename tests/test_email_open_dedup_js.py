@@ -127,15 +127,16 @@ def test_attachment_warning_only_checks_authored_reply_text():
     assert "text.split(/^>|^On .* wrote:/m)" not in helper
 
 
-def test_email_send_saves_recovery_draft_before_send_and_closes_only_on_success():
+def test_email_send_saves_recovery_draft_before_send_and_retains_it_on_failure():
     source = (_REPO / "static/js/document.js").read_text(encoding="utf-8")
     send = source[source.index("async function _sendEmail"):source.index("\n\n  async function _saveDraft", source.index("async function _sendEmail"))]
 
     assert "async function _saveEmailDraftForRecovery" in source
     assert send.index("_saveEmailDraftForRecovery({") < send.index("fetch(`${API_BASE}/api/email/send`")
+    assert send.index("if (isLibraryOpen()) closeLibrary();") > send.index("const sendRequest = fetch(")
+    assert send.index("if (isLibraryOpen()) closeLibrary();") < send.index("const res = await sendRequest")
     success_branch = send[send.index("if (data.success) {"):]
-    assert "closeLibrary()" in success_branch
-    assert send.index("closeLibrary()") > send.index("const res = await sendRequest")
+    assert "fetch(`${API_BASE}/api/document/${sendDocId}`, { method: 'DELETE' })" in success_branch
     assert "Draft kept in Drafts." in send
     assert "recoveryDraft.draft_uid" in send
 

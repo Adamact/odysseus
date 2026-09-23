@@ -19,17 +19,7 @@ _SESSIONS = _REPO / "static" / "js" / "sessions.js"
 _SHELL_URL = (_REPO / "static" / "js" / "startupShell.js").as_uri()
 _HAS_NODE = shutil.which("node") is not None
 
-_IMPORT_REWRITES = {
-    "import Storage from './storage.js';": "import Storage from './storage.mjs';",
-    "import uiModule, { autoResize, styledPrompt } from './ui.js';": (
-        "import uiModule, { autoResize, styledPrompt } from './ui.mjs';"
-    ),
-    "import { providerLogo } from './providers.js';": (
-        "import { providerLogo } from './providers.mjs';"
-    ),
-    "import themeModule from './theme.js';": "import themeModule from './theme.mjs';",
-    "import spinnerModule from './spinner.js';": "import spinnerModule from './spinner.mjs';",
-}
+_IMPORT_REWRITES = {}
 
 _STUBS = {
     "storage.mjs": r"""
@@ -66,6 +56,15 @@ export default ui;
     ),
     "theme.mjs": "export default {};\n",
     "spinner.mjs": "export default {};\n",
+    "actionMenuOrder.mjs": (
+        "export const SELECT_MENU_ICON = '';\n"
+        "export const actionMenuRank = () => 0;\n"
+        "export const orderActionMenuItems = (items) => items;\n"
+    ),
+    "escMenuStack.mjs": (
+        "export const registerEscapeLayer = () => () => {};\n"
+        "export const bindMenuDismiss = () => {};\n"
+    ),
 }
 
 _HARNESS = r"""
@@ -303,12 +302,40 @@ def results(tmp_path_factory):
     source = _SESSIONS.read_text(encoding="utf-8")
     versioned_rewrites = (
         (
-            r"import chatRenderer from './chatRenderer\.js(?:\?v=[A-Za-z0-9_-]+)?';",
+            r"import Storage from './storage\.js(?:[?#][^']*)?';",
+            "import Storage from './storage.mjs';",
+        ),
+        (
+            r"import uiModule, \{ autoResize, styledPrompt \} from './ui\.js(?:[?#][^']*)?';",
+            "import uiModule, { autoResize, styledPrompt } from './ui.mjs';",
+        ),
+        (
+            r"import chatRenderer from './chatRenderer\.js(?:[?#][^']*)?';",
             "import chatRenderer from './chatRenderer.mjs';",
         ),
         (
-            r"import \{ initModelPicker, updateModelPicker \} from './modelPicker\.js(?:\?v=[A-Za-z0-9_-]+)?';",
+            r"import \{ providerLogo \} from './providers\.js(?:[?#][^']*)?';",
+            "import { providerLogo } from './providers.mjs';",
+        ),
+        (
+            r"import \{ initModelPicker, updateModelPicker \} from './modelPicker\.js(?:[?#][^']*)?';",
             "import { initModelPicker, updateModelPicker } from './modelPicker.mjs';",
+        ),
+        (
+            r"import themeModule from './theme\.js(?:[?#][^']*)?';",
+            "import themeModule from './theme.mjs';",
+        ),
+        (
+            r"import spinnerModule from './spinner\.js(?:[?#][^']*)?';",
+            "import spinnerModule from './spinner.mjs';",
+        ),
+        (
+            r"import \{ actionMenuRank, orderActionMenuItems, SELECT_MENU_ICON \} from './actionMenuOrder\.js(?:[?#][^']*)?';",
+            "import { actionMenuRank, orderActionMenuItems, SELECT_MENU_ICON } from './actionMenuOrder.mjs';",
+        ),
+        (
+            r"import \{ registerEscapeLayer, bindMenuDismiss \} from './escMenuStack\.js(?:[?#][^']*)?';",
+            "import { registerEscapeLayer, bindMenuDismiss } from './escMenuStack.mjs';",
         ),
     )
     for pattern, replacement in versioned_rewrites:

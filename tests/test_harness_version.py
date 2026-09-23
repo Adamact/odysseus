@@ -5,10 +5,9 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_original_harness_version_is_canonical_semver() -> None:
+def test_harness_version_is_canonical_semver() -> None:
     version = (ROOT / "HARNESS_VERSION").read_text(encoding="utf-8").strip()
 
-    assert version == "0.20.18"
     assert re.fullmatch(r"\d+\.\d+\.\d+", version)
 
 

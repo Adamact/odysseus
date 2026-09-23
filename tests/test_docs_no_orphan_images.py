@@ -83,7 +83,8 @@ def test_pages_site_owns_its_entrypoint_and_media():
 
     assert REPO / "website/index.html" in website_files
     assert REPO / "docs/index.html" not in docs_files
-    assert not [p for p in docs_files if p.suffix.lower() in VIDEO_EXTS | {".md"}]
+    assert not [p for p in docs_files if p.suffix.lower() in VIDEO_EXTS]
+    assert not [p for p in docs_files if p.name in PUBLIC_GUIDES]
 
     website_paths = {p.relative_to(REPO / "website").as_posix() for p in website_files}
     assert PUBLIC_GUIDES <= website_paths

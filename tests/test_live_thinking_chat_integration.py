@@ -145,15 +145,15 @@ def test_final_response_skips_duplicate_end_of_stream_render():
         "// --- Final render (skip if stream was ever backgrounded or currently in background) ---",
         "} // end if (!_isBgFinal)",
     )
-    assert "if (!terminalFinalResponseRendered) _renderStream();" in post_loop
+    assert "if (!terminalFinalResponseRendered && !_turnRendering.isVisible(roundHolder.querySelector('.body'), _terminalAnswerHtml(roundText, roundHolder.querySelector('.body')))) _renderStream();" in post_loop
     assert "const finalDisplay = terminalFinalResponseRendered ? '' : _streamDisplayText" in post_loop
 
 
 def test_only_rich_completed_turns_reload_saved_canonical_assistant_row():
     assert "if (_canonicalTerminalSaved && _savedAssistantMessageId && !_pendingContinue)" not in _CHAT
     assert "if (!_pendingContinue)" in _CHAT
-    assert "fall back to its latest" in _CHAT
-    assert ": [...history].reverse().find(msg => msg && msg.role === 'assistant');" in _CHAT
+    assert "if (!streamSessionId || !_savedAssistantMessageId) return false;" in _CHAT
+    assert "String(msg.metadata?._db_id || '') === _savedAssistantMessageId" in _CHAT
     assert "const _needsCanonicalTurnRebuild" in _CHAT
     assert "lastToolThread" in _CHAT
     assert "_streamTurnMarker.remove();" in _CHAT

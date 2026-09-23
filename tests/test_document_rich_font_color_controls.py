@@ -1,6 +1,7 @@
 """Numeric font sizes and the shared app color picker in Rich Text."""
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -11,7 +12,7 @@ STYLE = (ROOT / "static/style.css").read_text(encoding="utf-8")
 
 
 def test_font_and_color_controls_use_shared_components():
-    assert "import { attachColorPicker } from './colorPicker.js?v=20260831richtexttools91';" in DOC_JS
+    assert re.search(r"import \{ attachColorPicker \} from './colorPicker\.js\?v=[A-Za-z0-9_-]+';", DOC_JS)
     assert 'data-dd="textsize" title="Font size" aria-label="Font size"' in DOC_JS
     for size, pixels in {1: 10, 2: 13, 3: 16, 4: 18, 5: 24, 6: 32, 7: 48}.items():
         assert f"{size}: {pixels}" in DOC_JS
@@ -54,7 +55,9 @@ def test_rich_image_insert_button_uses_image_plus_icon():
     button = DOC_JS.split('id="md-toolbar-attach-btn"', 1)[1].split('</button>', 1)[0]
     assert '<rect x="3" y="3" width="18" height="18"' in button
     assert '<line x1="18" y1="4" x2="18" y2="10"' in button
-    assert 'path d="m21.44 11.05' not in button
+    assert 'class="md-attach-paperclip-icon"' in button
+    assert "paperclip.style.display = isEmail ? '' : 'none'" in DOC_JS
+    assert "imageIcon.style.display = isEmail ? 'none' : ''" in DOC_JS
 
 
 def test_selection_clear_formatting_only_shows_for_formatted_ranges():
@@ -100,13 +103,14 @@ def test_numeric_font_size_and_custom_colors_work_on_desktop_and_mobile():
             current_content: '<p>Font target</p><p>Color target</p><p>Highlight target</p>',
             version_count: 1,
           });
-          await new Promise(resolve => setTimeout(resolve, 450));
         }, suffix);
+        await page.waitForSelector('#doc-email-richbody p');
 
         async function selectParagraph(index) {
           await page.evaluate(index => {
             const rich = document.querySelector('#doc-email-richbody');
             const paragraph = rich.querySelectorAll('p')[index];
+            if (!paragraph) throw new Error(`Missing paragraph ${index}: ${rich.innerHTML}`);
             rich.focus();
             const range = document.createRange();
             range.selectNodeContents(paragraph);

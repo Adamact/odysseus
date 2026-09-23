@@ -52,7 +52,9 @@ def test_slash_menu_filters_converts_blocks_inserts_tables_and_fits_mobile():
           current_content: '<p>Opening paragraph</p><p><br></p>',
           version_count: 1,
         });
-        await new Promise(resolve => setTimeout(resolve, 450));
+      });
+      await page.waitForFunction(() => document.querySelectorAll('#doc-email-richbody p').length >= 2);
+      await page.evaluate(() => {
         const block = document.querySelector('#doc-email-richbody p:last-child');
         const range = document.createRange();
         range.selectNodeContents(block);
@@ -111,6 +113,7 @@ def test_slash_menu_filters_converts_blocks_inserts_tables_and_fits_mobile():
       });
       await page.keyboard.type('/');
       await page.waitForSelector('#doc-rich-slash-menu');
+      await page.mouse.move(1, 1);
       await page.keyboard.press('End');
       const mobile = await page.locator('#doc-rich-slash-menu').evaluate(el => {
         const rect = el.getBoundingClientRect();
@@ -131,6 +134,7 @@ def test_slash_menu_filters_converts_blocks_inserts_tables_and_fits_mobile():
         };
       });
       await page.keyboard.press('Home');
+      const homeOptions = await page.locator('.doc-rich-slash-label').allTextContents();
       const homeLabel = await page.locator('.doc-rich-slash-item.is-active .doc-rich-slash-label').textContent();
       await page.keyboard.press('Escape');
       const escaped = await page.locator('#doc-rich-slash-menu').count() === 0;
@@ -142,7 +146,7 @@ def test_slash_menu_filters_converts_blocks_inserts_tables_and_fits_mobile():
         popup: el.hasAttribute('aria-haspopup'),
       }));
 
-      console.log(JSON.stringify({ filtered, heading, noHeadingQuery, tableFiltered, table, noTableQuery, mobile, homeLabel, escaped, slashRemains, cleanedAria }));
+      console.log(JSON.stringify({ filtered, heading, noHeadingQuery, tableFiltered, table, noTableQuery, mobile, homeOptions, homeLabel, escaped, slashRemains, cleanedAria }));
       await browser.close();
     """
     result = subprocess.run(
@@ -169,7 +173,8 @@ def test_slash_menu_filters_converts_blocks_inserts_tables_and_fits_mobile():
     assert mobile["activeLabel"] == "Image"
     assert mobile["activeDescendant"] == mobile["activeId"]
     assert mobile["scrollTop"] > 0
-    assert data["homeLabel"] == "Text"
+    assert data["homeOptions"][0] == "Text"
+    assert data["homeLabel"] == data["homeOptions"][0], data
     assert data["escaped"] is True
     assert data["slashRemains"] is True
     assert data["cleanedAria"] == {

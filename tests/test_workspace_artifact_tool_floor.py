@@ -1037,14 +1037,14 @@ def test_visual_text_extraction_is_distinct_from_speech_transcription():
 
 
 def test_local_media_routes_select_dedicated_ocr_for_visual_text():
+    import re
+
     source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
 
     assert source.count(
         "_ocr_requested = _visual_text_extraction_requested(_last_user)"
     ) == 3
-    assert source.count(
-        '{"extract_text"}\n                if _ocr_requested'
-    ) == 3
+    assert len(re.findall(r'\{"extract_text"\}\s*\n\s*if _ocr_requested', source)) == 3
 
 
 def test_workspace_paths_split_on_chinese_list_punctuation():
@@ -1656,7 +1656,8 @@ def test_local_media_is_exempt_from_pure_web_schema_and_round_clamps():
     pure_web_start = source.index("    _local_media_turn = bool(")
     pure_web_end = source.index("\n    if (\n        _pure_web_turn", pure_web_start)
     assert "and not _local_media_turn" in source[pure_web_start:pure_web_end]
-    assert source.count("if _pure_web_turn:") >= 3
+    assert source.count("if _pure_web_turn:") == 2
+    assert 'if _pure_web_turn and tool_surface != "full":' in source
 
 
 def test_empty_local_media_round_nudges_export_instead_of_ending():
@@ -2189,10 +2190,13 @@ def test_python_emits_one_final_bare_expression_without_duplicating_print():
     assert explicit["output"] == "once"
 
 
-def test_python_loaded_code_sees_virtual_workspace_alias(monkeypatch):
+def test_python_loaded_code_sees_virtual_workspace_alias(monkeypatch, tmp_path):
     """Absolute /workspace paths must work inside generated Python scripts."""
     import asyncio
     import shutil
+    import sys
+    import venv
+    from types import SimpleNamespace
 
     if not shutil.which("bwrap"):
         return
@@ -2201,21 +2205,75 @@ def test_python_loaded_code_sees_virtual_workspace_alias(monkeypatch):
 
     from src.agent_tools import subprocess_tools
     from src import tool_execution
-    workspace = Path("/home/pewds/odysseus-tool-work")
+    workspace = tmp_path
+    environment = tmp_path / "confined-venv"
+    venv.EnvBuilder(with_pip=False).create(environment)
+    monkeypatch.setattr(subprocess_tools, "sys", SimpleNamespace(
+        prefix=str(environment),
+        executable=str(environment / "bin" / "python"),
+        version_info=sys.version_info,
+    ))
     script = workspace / ".python-workspace-alias-test.py"
     output = workspace / ".python-workspace-alias-test.txt"
+    outside = workspace / "host-sibling.txt"
+    outside.write_text("must stay hidden from private /tmp")
     script.write_text(
-        "from pathlib import Path; Path('/workspace/.python-workspace-alias-test.txt').write_text('ok')"
+        "from pathlib import Path; "
+        "assert not list(Path('/tmp').rglob('host-sibling.txt')); "
+        "Path('/workspace/.python-workspace-alias-test.txt').write_text('ok')"
     )
     monkeypatch.setattr(tool_execution, "agent_cwd", lambda: str(workspace))
     result = asyncio.run(subprocess_tools.PythonTool().execute(
-        f"import runpy; runpy.run_path('{script}', run_name='__main__')",
+        "import runpy; runpy.run_path('/workspace/.python-workspace-alias-test.py', run_name='__main__')",
         {},
     ))
     assert result["exit_code"] == 0, result
     assert output.read_text() == "ok"
-    script.unlink()
-    output.unlink()
+
+
+def test_workspace_namespace_mounts_only_a_nested_python_environment(monkeypatch, tmp_path):
+    import shlex
+
+    from src.agent_tools import subprocess_tools
+
+    monkeypatch.setattr(subprocess_tools.shutil, "which", lambda name: "/usr/bin/bwrap")
+    environment = tmp_path / "nested" / "venv"
+    environment.mkdir(parents=True)
+    (environment / "pyvenv.cfg").write_text("home = /usr/bin\n")
+    command = subprocess_tools._wrap_workspace_namespace(
+        "echo ok", str(tmp_path), interpreter_prefix=str(environment),
+    )
+    args = shlex.split(command)
+    assert ["--ro-bind", str(environment), str(environment)] in [
+        args[index:index + 3] for index in range(len(args) - 2)
+    ]
+    assert ["--tmpfs", "/tmp"] in [
+        args[index:index + 2] for index in range(len(args) - 1)
+    ]
+
+
+def test_workspace_namespace_rejects_broad_or_symlinked_python_prefixes(monkeypatch, tmp_path):
+    import shlex
+
+    from src.agent_tools import subprocess_tools
+
+    monkeypatch.setattr(subprocess_tools.shutil, "which", lambda name: "/usr/bin/bwrap")
+    linked_root = tmp_path / "linked-root"
+    linked_root.symlink_to("/", target_is_directory=True)
+    for unsafe_prefix in ("/", "/tmp", "/var", "/home", str(linked_root)):
+        command = subprocess_tools._wrap_workspace_namespace(
+            "echo ok", str(tmp_path), interpreter_prefix=unsafe_prefix,
+        )
+        args = shlex.split(command)
+        assert ["--ro-bind", unsafe_prefix, unsafe_prefix] not in [
+            args[index:index + 3] for index in range(len(args) - 2)
+        ]
+        assert ["--tmpfs", "/tmp"] in [
+            args[index:index + 2] for index in range(len(args) - 1)
+        ]
+        assert ["--bind", str(tmp_path), "/workspace"] in [
+            args[index:index + 3] for index in range(len(args) - 2)
+        ]
 
 
 def test_workspace_namespace_preserves_the_64_bit_dynamic_loader(monkeypatch):
