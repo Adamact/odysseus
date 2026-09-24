@@ -4,11 +4,40 @@ The old src.search provider path aliases this module; these tests pin the
 behavior at the single implementation point.
 """
 
+import ipaddress
 import sys
 import pytest
 
 from services.search import core
 from services.search import providers
+
+
+@pytest.fixture(autouse=True)
+def _deterministic_outbound_dns(monkeypatch):
+    """Keep the outbound-URL policy running, but take it off live DNS.
+
+    ``_scholarly_api_get`` validates each destination through
+    ``check_outbound_url`` before it reaches the mocked ``httpx`` transport, and
+    that check resolves the hostname. Without this stub these tests depend on
+    real DNS: on a DNS64/NAT64 network an IPv4-only host such as
+    export.arxiv.org resolves to ``64:ff9b::<v4>``, so the lookup is judged on a
+    synthesised address that has nothing to do with the title-resolution,
+    fallback, request-parameter and ordering behaviour asserted here.
+
+    Only name resolution is replaced. The policy itself still runs in full, and
+    a literal-IP host still resolves to itself, so a test that points at a
+    prohibited address is still genuinely rejected. This is deliberately not a
+    stand-in for SSRF/NAT64 coverage, which lives in tests/test_url_safety.py
+    and tests/test_review_20260923_fixes.py.
+    """
+
+    def _resolve(host: str):
+        try:
+            return [str(ipaddress.ip_address(host))]
+        except ValueError:
+            return ["93.184.216.34"]  # public, policy-clean
+
+    monkeypatch.setattr("src.url_safety._default_resolver", _resolve)
 
 
 def test_html_transport_fallback_preserves_query_constraints(monkeypatch):

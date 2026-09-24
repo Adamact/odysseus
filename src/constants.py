@@ -140,6 +140,16 @@ LLM_HOSTS = [h.strip() for h in os.getenv("LLM_HOSTS", "").split(",") if h.strip
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 SEARXNG_INSTANCE = os.getenv("SEARXNG_INSTANCE", "http://localhost:8080")
 
+# Scholarly title resolution. These are the only third-party metadata APIs the
+# search path calls directly, so they get named constants rather than literals
+# repeated at each call site. The budget bounds the whole SearXNG -> OpenAlex ->
+# arXiv chain: each hop used to get its own full timeout, so one scholarly query
+# could stall a user-facing search for the sum of all three.
+ARXIV_API_URL = "https://export.arxiv.org/api/query"
+OPENALEX_API_URL = "https://api.openalex.org/works"
+SCHOLARLY_LOOKUP_TIMEOUT = 12.0
+SCHOLARLY_LOOKUP_TOTAL_BUDGET = 20.0
+
 # Cleanup configuration
 CLEANUP_ENABLED = os.getenv("CLEANUP_ENABLED", "True").lower() == "true"
 CLEANUP_INTERVAL_HOURS = int(os.getenv("CLEANUP_INTERVAL_HOURS", "24"))
