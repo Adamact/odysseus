@@ -82,6 +82,8 @@ from src.tool_approvals import (
 )
 from src.tool_types import ToolBlock
 from src.turn_contract import selected_tools_for_request, with_turn_contract
+from src.agent_runtime.journal import propose_action, execute_action
+from src.agent_runtime.completion import with_completion_gate
 from src.tool_utils import _truncate, get_mcp_manager
 from src.agent_tools import (
     parse_tool_blocks,
@@ -20324,6 +20326,7 @@ def _blocks_before_inference(turn_contract) -> bool:
 
 
 @with_turn_contract
+@with_completion_gate
 async def stream_agent_loop(
     endpoint_url: str,
     model: str,
@@ -29694,7 +29697,10 @@ async def stream_agent_loop(
                     _completion_requirements,
                 )
                 _round_decision = _round_evidence.evaluate()
-                if not _round_decision.can_complete and _evidence_repair_rounds < 2:
+                # Missing evidence is an incomplete result, not a reason to
+                # manufacture additional provider rounds. Actual diagnostic
+                # failures can still enter the bounded recovery path.
+                if _round_decision.status.value == "failed" and _evidence_repair_rounds < 2:
                     _evidence_repair_rounds += 1
                     _missing = ", ".join(_round_decision.missing_artifacts)
                     _declared_verifiers = _completion_requirements.verifier_commands
@@ -31423,6 +31429,15 @@ async def stream_agent_loop(
         local_network_budget_hit = False
         local_inspection_budget_hit = False
         for i, block in enumerate(tool_blocks):
+            native_call = converted_calls[i] if i < len(converted_calls) else None
+            tool_call_id = _resolved_tool_call_id(
+                native_call,
+                session_id=str(session_id or ""),
+                round_num=round_num,
+                tool_index=i,
+                tool_name=block.tool_type,
+            )
+            _runtime_action = propose_action(block, tool_call_id, native_call)
             _call_signature = _tool_call_signature(block.tool_type, block.content)
             _previous_failure = _failed_call_history.get(_call_signature)
             _blocked_failed_retry = bool(
@@ -31439,6 +31454,8 @@ async def stream_agent_loop(
             )
             # --- Tool budget check ---
             if max_tool_calls > 0 and total_tool_calls >= max_tool_calls:
+                if _runtime_action is not None:
+                    _runtime_action.finish({'blocked': True, 'exit_code': 1, 'error': 'tool budget exceeded'})
                 yield f'data: {json.dumps({"type": "budget_exceeded", "limit": max_tool_calls, "used": total_tool_calls})}\n\n'
                 budget_hit = True
                 break
@@ -31450,26 +31467,22 @@ async def stream_agent_loop(
                 )
             ):
                 local_network_budget_hit = True
+                if _runtime_action is not None:
+                    _runtime_action.finish({'blocked': True, 'exit_code': 1, 'error': 'network action budget exceeded'})
                 break
             if (
                 _tui_local_inspection_turn
                 and total_tool_calls >= _TUI_LOCAL_INSPECTION_TOOL_CALL_CAP
             ):
                 local_inspection_budget_hit = True
+                if _runtime_action is not None:
+                    _runtime_action.finish({'blocked': True, 'exit_code': 1, 'error': 'inspection budget exceeded'})
                 break
             if local_inspection_budget_hit:
                 break
 
             if not (_blocked_failed_retry or _blocked_redundant_read):
                 total_tool_calls += 1
-            native_call = converted_calls[i] if i < len(converted_calls) else None
-            tool_call_id = _resolved_tool_call_id(
-                native_call,
-                session_id=str(session_id or ""),
-                round_num=round_num,
-                tool_index=i,
-                tool_name=block.tool_type,
-            )
             normalized_native_block = _normalize_native_tool_shell_wrapper(block, _last_user)
             if normalized_native_block != block:
                 logger.info(
@@ -32722,7 +32735,8 @@ async def stream_agent_loop(
                                 "error": "Web recovery action is repeated or exceeds the execution budget.",
                                 "output": _web_execution_budget.instruction(),
                             }
-                        return await execute_tool_block(
+                        return await execute_action(
+                            execute_tool_block, _runtime_action,
                             block,
                             session_id=session_id,
                             disabled_tools=disabled_tools,
@@ -33256,6 +33270,10 @@ async def stream_agent_loop(
 
             # Emit tool_output (include ui_event data if present)
             tool_output_data = {"type": "tool_output", "tool": block.tool_type, "command": cmd_display, "output": output_text, "exit_code": result.get("exit_code"), "execution_attempted": _execution_attempted, "blocked": bool(result.get("blocked", False))}
+            if _runtime_action is not None:
+                _runtime_action.normalize(block, 'agent_loop compatibility adapters')
+                _runtime_action.finish(result)
+                tool_output_data['action_receipt'] = _runtime_action.to_dict()
             # Keep exact arguments on email mutation events. The frontend uses
             # these UIDs to reconcile an agent cleanup immediately, even when
             # a provider returns only human-readable MCP text.

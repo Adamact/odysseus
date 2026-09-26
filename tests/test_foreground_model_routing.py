@@ -2331,6 +2331,9 @@ def test_multi_round_agent_uses_only_selected_model(monkeypatch):
             yield f'data: {json.dumps({"delta": "done"})}\n\n'
         yield "data: [DONE]\n\n"
 
+    from tests.runtime_evidence_helpers import authoritative_executor
+
+    @authoritative_executor
     async def fake_execute(block, *args, **kwargs):
         return "bash", {"output": "ok", "exit_code": 0}
 

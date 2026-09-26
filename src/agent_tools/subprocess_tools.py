@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 import httpx
 
 from src.constants import MAX_OUTPUT_CHARS
+from src.agent_runtime.journal import mark_operation_started
 
 # Agent shell calls must fail fast enough for the loop to recover and choose a
 # better tool.  A one-hour default can pin an entire benchmark worker on an
@@ -690,6 +691,7 @@ class BashTool:
                 )
         except RuntimeError as exc:
             return {"error": str(exc), "exit_code": 1}
+        mark_operation_started('subprocess', pid=proc.pid)
         stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
             proc,
             timeout=DEFAULT_BASH_TIMEOUT,
@@ -1015,6 +1017,7 @@ class PythonTool:
                 env=_subproc_env,
                 cwd=agent_cwd(),
             )
+        mark_operation_started('subprocess', pid=proc.pid)
         stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
             proc,
             timeout=DEFAULT_PYTHON_TIMEOUT,
