@@ -35,43 +35,61 @@ _EXECUTION_CLAIM = re.compile(
     r'\b(?:(?:I|we|I\'ve|we\'ve)\s+(?:have\s+)?(?:successfully\s+)?(?:ran|executed|tested|verified|created|updated|modified|wrote|saved|fixed|completed)|'
     r'(?:file|artifact|command|script|service|server)\s+(?:was\s+|has\s+been\s+|is\s+)?(?:successfully\s+)?(?:created|updated|written|saved|executed|started)|'
     r'(?:successfully\s+)(?:ran|executed|created|updated|saved|completed))\b', re.I)
+_UNATTESTED_TEST_METRIC = re.compile(
+    r'\b\d+\s+(?:(?:unit|integration)\s+)?tests?\s+pass(?:ed|ing)?\b|'
+    r'\b\d+\s+passed\b|\b\d+(?:\.\d+)?%\s+(?:test\s+)?coverage\b', re.I)
+_UNBOUNDED_SUCCESS = re.compile(
+    r'\b(?:everything|all\s+(?:bugs|issues))\s+(?:is\s+|are\s+|has\s+been\s+)?'
+    r'(?:fixed|resolved|working)\b', re.I)
 
 
 def completion_answer(text: str, ledger: EvidenceLedger, decision: CompletionDecision) -> tuple[str, str]:
-    """Return the answer and a reason if unsupported execution claims were removed."""
-    if decision.status == CompletionStatus.AWAITING_USER:
-        # A question may still falsely assert that preceding work passed.
-        unsupported = ''
-    elif not decision.can_complete:
-        unsupported = decision.reason
-    else:
-        unsupported = ''
-    if (_TEST_CLAIM.search(text) or _TEST_STATUS_CLAIM.search(text)) and decision.status != CompletionStatus.VERIFIED:
-        unsupported = unsupported or 'no current passing executable verification supports the claim'
+    """Keep explanatory prose; remove unsupported assertions and attach facts.
+
+    Exit status proves neither test counts nor coverage. A bad assertion is
+    removed at statement boundaries instead of erasing an entire explanation.
+    The execution outcome remains separate from a discarded model assertion.
+    """
+    incomplete = decision.reason if not decision.can_complete and decision.status != CompletionStatus.AWAITING_USER else ''
     productive = [event for event in ledger.events
                   if event.authoritative and event.success
                   and event.tool not in {'update_plan', 'todowrite', 'ask_user'}]
-    if (_EXECUTION_CLAIM.search(text) or _TERMINAL_SUCCESS.search(text)) and not productive:
-        unsupported = unsupported or 'no successful operation supports the execution claim'
-    if not unsupported:
-        # For a declared execution contract, publish facts selected from the
-        # receipts rather than an unconstrained model claim (test counts,
-        # coverage and "everything fixed" cannot be inferred from exit status).
-        if decision.can_complete and (ledger.requirements.required_artifacts or ledger.requirements.verifier_required):
-            parts = []
-            if ledger.requirements.required_artifacts:
-                parts.append('Output available: ' + ', '.join(ledger.requirements.required_artifacts) + '.')
-            if decision.status == CompletionStatus.VERIFIED:
-                parts.append('The latest executable verification passed.')
-            elif any(e.kind == EvidenceKind.ARTIFACT_VALIDATION and e.authoritative and e.success for e in ledger.events):
-                parts.append('Artifact readback verified. No passing executable test result was recorded.')
-            else:
-                parts.append('No passing executable test result was recorded.')
-            return ' '.join(parts), ''
-        return text, ''
-    missing = (" Missing artifacts: " + ", ".join(decision.missing_artifacts) + "."
-               if decision.missing_artifacts else '')
-    return "The task is incomplete: " + unsupported.rstrip('.') + '.' + missing, unsupported
+    kept = []
+    removed = ''
+    for statement in re.split(r'(?<=[.!?])(?=\s)|(?<=\n)', text):
+        why = ''
+        if _UNATTESTED_TEST_METRIC.search(statement) or _UNBOUNDED_SUCCESS.search(statement):
+            why = 'test counts, coverage or exhaustive correctness were not established by execution evidence'
+        elif (_TEST_CLAIM.search(statement) or _TEST_STATUS_CLAIM.search(statement)) and decision.status != CompletionStatus.VERIFIED:
+            why = 'no current passing executable verification supports the claim'
+        elif (_EXECUTION_CLAIM.search(statement) or _TERMINAL_SUCCESS.search(statement)) and not productive:
+            why = 'no successful operation supports the execution claim'
+        elif incomplete and _TERMINAL_SUCCESS.search(statement):
+            why = incomplete
+        if why:
+            removed = removed or why
+        else:
+            kept.append(statement)
+    prose = ''.join(kept).strip() if removed else text
+    if incomplete or (removed and decision.status in {CompletionStatus.UNVERIFIED, CompletionStatus.AWAITING_USER}):
+        reason = incomplete or removed
+        missing = (' Missing artifacts: ' + ', '.join(decision.missing_artifacts) + '.'
+                   if decision.missing_artifacts else '')
+        notice = 'The task is incomplete: ' + reason.rstrip('.') + '.' + missing
+        return notice + ('\n\n' + prose if prose.strip() else ''), reason
+    if decision.can_complete and (ledger.requirements.required_artifacts or ledger.requirements.verifier_required or removed):
+        facts = []
+        if ledger.requirements.required_artifacts:
+            facts.append('Output available: ' + ', '.join(ledger.requirements.required_artifacts) + '.')
+        if decision.status == CompletionStatus.VERIFIED:
+            facts.append('The latest executable verification passed.')
+        elif any(e.kind == EvidenceKind.ARTIFACT_VALIDATION and e.authoritative and e.success for e in ledger.events):
+            facts.append('Artifact readback verified. No passing executable test result was recorded.')
+        else:
+            facts.append('No passing executable test result was recorded.')
+        summary = ' '.join(facts)
+        return (prose.rstrip() + '\n\n' + summary) if prose.strip() else summary, removed
+    return prose, removed
 
 
 def _event(data: dict) -> str:
@@ -154,13 +172,22 @@ def with_completion_gate(func):
                         has_final = True
                         answer_events.append(data)
                         continue
-                    if 'delta' in data and not data.get('thinking'):
+                    if 'delta' in data or isinstance(data.get('thinking'), str):
                         if first_answer_at is None:
                             first_answer_at = perf_counter()
-                        if has_final:
-                            answer = ''
-                            has_final = False
-                        answer += str(data.get('delta') or '')
+                        # Boolean thinking=True marks a reasoning-only delta;
+                        # a textual thinking companion must not hide an answer
+                        # delta. Both shapes remain buffered until the gate.
+                        if isinstance(data.get('thinking'), str):
+                            answer_events.append({'delta': data['thinking'], 'thinking': True})
+                            data = {key: value for key, value in data.items() if key != 'thinking'}
+                            if 'delta' not in data:
+                                continue
+                        if data.get('thinking') is not True and 'delta' in data:
+                            if has_final:
+                                answer = ''
+                                has_final = False
+                            answer += str(data.get('delta') or '')
                         answer_events.append(data)
                         continue
                     yield chunk
@@ -172,15 +199,20 @@ def with_completion_gate(func):
             # useful and must not be replaced merely because the budget ended.
             presentation_decision = ledger.evaluate(awaiting_user=awaiting) if exhausted else decision
             safe_answer, reason = completion_answer(answer, ledger, presentation_decision)
-            if reason and decision.can_complete:
+            # Evaluate each earlier draft as well as the final replacement.
+            # Never replay an unsupported intermediate success claim.
+            draft = ''.join(str(e.get('delta') or e.get('content') or '')
+                            + (e['thinking'] if isinstance(e.get('thinking'), str) else '')
+                            for e in answer_events)
+            _, unsafe_draft = completion_answer(draft, ledger, presentation_decision)
+            if not answer.strip() and unsafe_draft:
+                reason = reason or unsafe_draft
+                safe_answer = 'The task is incomplete: ' + reason.rstrip('.') + '.'
+            if reason and decision.can_complete and decision.status == CompletionStatus.UNVERIFIED:
                 decision = CompletionDecision(CompletionStatus.UNVERIFIED, False, reason,
                                               decision.evidence_ids, decision.missing_artifacts)
             released_at = perf_counter()
             yield _event({'type': 'completion_decision', 'data': decision.to_dict()})
-            # Evaluate each earlier draft as well as the final replacement.
-            # Never replay an unsupported intermediate success claim.
-            draft = ''.join(str(e.get('delta') or e.get('content') or '') for e in answer_events)
-            _, unsafe_draft = completion_answer(draft, ledger, presentation_decision)
             replaced_answer = bool(reason or unsafe_draft or safe_answer != answer)
             if replaced_answer:
                 yield _event({'type': 'final_response', 'content': safe_answer})
@@ -200,6 +232,11 @@ def with_completion_gate(func):
                 if replaced_answer:
                     metadata['round_texts'] = [safe_answer]
                     metadata['completion_gate_reason'] = reason or unsafe_draft or 'receipt_summary'
+                if isinstance(metadata.get('thinking'), str):
+                    _, unsafe_thinking = completion_answer(metadata['thinking'], ledger,
+                        replace(presentation_decision, can_complete=True))
+                    if unsafe_thinking:
+                        metadata.pop('thinking')
                 yield _event(event)
             if done:
                 yield 'data: [DONE]\n\n'

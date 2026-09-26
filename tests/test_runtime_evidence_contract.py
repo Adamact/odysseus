@@ -144,6 +144,75 @@ def test_declared_execution_contract_does_not_publish_invented_test_counts():
     assert 'executable verification passed' in answer
 
 
+def test_valid_explanation_survives_receipt_summary():
+    ledger = EvidenceLedger.from_tool_events([
+        {'tool': 'write_file', 'command': '{"path":"app.py"}', 'exit_code': 0},
+        {'tool': 'bash', 'command': 'python -m unittest', 'exit_code': 0},
+    ], CompletionRequirements(required_artifacts=('app.py',)))
+    explanation = 'Empty cells are normalized before integer conversion. This avoids ValueError for missing rows.'
+    answer, reason = completion_answer(explanation + '\n\nTests passed.', ledger, ledger.evaluate())
+    assert explanation in answer
+    assert 'Tests passed.' in answer
+    assert answer.endswith('The latest executable verification passed.')
+    assert not reason
+
+
+def test_unattested_statistics_removed_without_erasing_explanation():
+    ledger = EvidenceLedger.from_tool_events([
+        {'tool': 'write_file', 'command': '{"path":"app.py"}', 'exit_code': 0},
+        {'tool': 'bash', 'command': 'python -m unittest', 'exit_code': 0},
+    ], CompletionRequirements(required_artifacts=('app.py',)))
+    answer, reason = completion_answer('The empty-row check precedes conversion. All 938 tests passed, 100% coverage.\nThis keeps missing input distinct from zero.', ledger, ledger.evaluate())
+    assert 'The empty-row check precedes conversion.' in answer
+    assert 'This keeps missing input distinct from zero.' in answer
+    assert '938' not in answer and '100%' not in answer
+    assert reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('thinking', [True, 'Checking the result'])
+async def test_mixed_thinking_delta_cannot_publish_success_before_gate(thinking):
+    @with_completion_gate
+    async def stream(messages):
+        yield 'data: ' + json.dumps({'delta': 'All tests passed.', 'thinking': thinking}) + '\n\n'
+        yield 'data: {"type":"tool_start","tool":"bash"}\n\n'
+        yield 'data: {"type":"metrics","data":{"thinking":"All tests passed."}}\n\n'
+        yield 'data: [DONE]\n\n'
+    events = decode([chunk async for chunk in stream([])])
+    assert events[0] == {'type': 'tool_start', 'tool': 'bash'}
+    assert events[1]['type'] == 'completion_decision'
+    assert not events[1]['data']['can_complete']
+    assert 'All tests passed.' not in json.dumps(events)
+    assert any(e.get('type') == 'final_response' and e['content'].startswith('The task is incomplete:') for e in events)
+
+
+@pytest.mark.asyncio
+async def test_mixed_reasoning_and_answer_preserve_saved_response_ownership():
+    from routes.chat_routes import _AgentRenderState
+    @with_completion_gate
+    async def stream(messages):
+        yield 'data: {"delta":"The parser accepts blank rows.","thinking":"Considering the input format."}\n\n'
+        yield 'data: [DONE]\n\n'
+    events = decode([chunk async for chunk in stream([])])
+    state = _AgentRenderState()
+    for event in events:
+        state.consume(event)
+    assert state.content == 'The parser accepts blank rows.'
+    assert any(e.get('thinking') is True and e['delta'] == 'Considering the input format.' for e in events)
+
+
+@pytest.mark.asyncio
+async def test_unverified_metadata_claim_does_not_replace_valid_answer():
+    @with_completion_gate
+    async def stream(messages):
+        yield 'data: {"delta":"This expression adds two values."}\n\n'
+        yield 'data: {"type":"metrics","data":{"thinking":"All tests passed."}}\n\n'
+        yield 'data: [DONE]\n\n'
+    events = decode([chunk async for chunk in stream([])])
+    assert any(e.get('delta') == 'This expression adds two values.' for e in events)
+    assert 'All tests passed.' not in json.dumps(events)
+
+
 @record_action
 async def successful_backend(block):
     mark_dispatch()
