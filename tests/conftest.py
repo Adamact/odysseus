@@ -98,21 +98,25 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.fixture(scope="session", autouse=True)
 def _serve_test_static():
-    """Ensure static assets are available on loopback port 7011 for browser integration tests."""
+    """Serve this worktree's assets; non-browser runs can request an ephemeral port."""
     import socket
     import threading
     import http.server
     import socketserver
     from pathlib import Path
 
+    port = int(os.environ.get("ODYSSEUS_TEST_STATIC_PORT", "7011"))
+    if not 0 <= port <= 65535:
+        raise ValueError("ODYSSEUS_TEST_STATIC_PORT must be between 0 and 65535")
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        is_bound = (sock.connect_ex(("127.0.0.1", 7011)) == 0)
+        is_bound = (sock.connect_ex(("127.0.0.1", port)) == 0) if port else False
     finally:
         sock.close()
 
     if is_bound:
-        raise RuntimeError("port 7011 is already in use; browser tests require this worktree's static server")
+        raise RuntimeError(f"port {port} is already in use; browser tests require this worktree's static server")
 
     root_dir = Path(__file__).resolve().parent.parent
 
@@ -133,7 +137,7 @@ def _serve_test_static():
     class _Server(socketserver.TCPServer):
         allow_reuse_address = True
 
-    server = _Server(("127.0.0.1", 7011), _Handler)
+    server = _Server(("127.0.0.1", port), _Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
