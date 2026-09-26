@@ -574,6 +574,7 @@ class EvidenceLedger:
         self.requirements = requirements or CompletionRequirements()
         self.events: list[EvidenceEvent] = []
         self._verification_versions: dict[str, str] = {}
+        self._verification_versions_captured = False
 
     @classmethod
     def from_tool_events(
@@ -716,6 +717,7 @@ class EvidenceLedger:
             if authoritative:
                 versions = event.get('artifact_versions')
                 self._verification_versions = dict(versions) if isinstance(versions, Mapping) else {}
+                self._verification_versions_captured = isinstance(versions, Mapping)
             self._append(
                 kind=EvidenceKind.VERIFIER_RESULT,
                 success=success,
@@ -791,7 +793,9 @@ class EvidenceLedger:
             for path in self.requirements.required_artifacts:
                 identity = artifact_identity(path, self.requirements.workspace_root)
                 expected = self._verification_versions.get(identity)
-                if expected in {'unobserved', 'missing-or-unreadable'}:
+                if expected in {'unobserved', 'missing-or-unreadable'} or (
+                    expected is None and self._verification_versions_captured
+                ):
                     return CompletionDecision(CompletionStatus.BLOCKED, False,
                                               'artifact version could not be established for verification',
                                               (latest_verifier.event_id,))

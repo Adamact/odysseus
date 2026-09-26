@@ -155,6 +155,10 @@ def with_completion_gate(func):
                         if isinstance(declared, dict):
                             requirements = requirements_from_runtime_context({'completion_requirements': declared})
                             requirements = replace(requirements, workspace_root=trusted_workspace or '')
+                            # New obligations affect future receipts only. Never
+                            # backfill historical versions with present bytes.
+                            journal.observed_artifacts = tuple(dict.fromkeys(
+                                (*journal.observed_artifacts, *requirements.required_artifacts)))
                         continue
                     if kind == 'ask_user':
                         awaiting = True
@@ -215,6 +219,13 @@ def with_completion_gate(func):
             yield _event({'type': 'completion_decision', 'data': decision.to_dict()})
             replaced_answer = bool(reason or unsafe_draft or safe_answer != answer)
             if replaced_answer:
+                reasoning = [event for event in answer_events if event.get('thinking') is True]
+                _, unsafe_reasoning = completion_answer(
+                    ''.join(str(event.get('delta') or '') for event in reasoning), ledger,
+                    replace(presentation_decision, can_complete=True))
+                if not unsafe_reasoning:
+                    for event in reasoning:
+                        yield _event(event)
                 yield _event({'type': 'final_response', 'content': safe_answer})
             else:
                 for event in answer_events:

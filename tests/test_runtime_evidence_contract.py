@@ -220,6 +220,44 @@ async def successful_backend(block):
 
 
 @pytest.mark.asyncio
+async def test_corrected_answer_preserves_safe_reasoning():
+    @with_completion_gate
+    async def stream(messages):
+        yield 'data: {"delta":"Considering blank rows.","thinking":true}\n\n'
+        yield 'data: {"delta":"All tests passed."}\n\n'
+        yield 'data: [DONE]\n\n'
+    events = decode([chunk async for chunk in stream([])])
+    assert events[0]['type'] == 'completion_decision'
+    assert events[1] == {'delta': 'Considering blank rows.', 'thinking': True}
+    assert events[2]['type'] == 'final_response'
+    assert 'All tests passed.' not in json.dumps(events)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('declare_before_verification', [True, False])
+async def test_late_artifact_obligations_cannot_reuse_unobserved_versions(tmp_path, declare_before_verification):
+    (tmp_path / 'app.py').write_text('original')
+    declaration = 'data: ' + json.dumps({'type': 'metrics', 'data': {
+        'completion_requirements': {'required_artifacts': ['app.py']}}}) + '\n\n'
+    @with_completion_gate
+    async def stream(messages, workspace=None):
+        if declare_before_verification:
+            yield declaration
+        await successful_backend(ToolBlock('write_file', '{"path":"app.py"}'))
+        await successful_backend(ToolBlock('bash', 'python -m unittest'))
+        (tmp_path / 'app.py').write_text('changed after verification')
+        if not declare_before_verification:
+            yield declaration
+        yield 'data: {"delta":"Tests passed."}\n\n'
+        yield 'data: [DONE]\n\n'
+    events = decode([chunk async for chunk in stream([], workspace=str(tmp_path))])
+    decision = next(e['data'] for e in events if e.get('type') == 'completion_decision')
+    assert not decision['can_complete']
+    assert decision['status'] == 'blocked'
+    assert 'Tests passed.' not in json.dumps(events)
+
+
+@pytest.mark.asyncio
 async def test_normalization_preserves_provider_arguments_and_replay_identity():
     journal = ActionJournal(run_id='known')
     original = ToolBlock('write_file', 'original arguments')
