@@ -289,12 +289,25 @@ class ReadFileTool:
             data = data[:MAX_READ_CHARS] + f"\n... [truncated at {MAX_READ_CHARS} chars]"
         return {"output": data, "exit_code": 0}
 
+class _EmptyBodyWouldTruncate(Exception):
+    """Raised inside the write thread when an undeclared empty body is about to
+    replace a file that holds bytes. Carries the size at risk so the caller can be
+    told what it would have lost (#6414)."""
+
+    def __init__(self, path: str, existing_bytes: int):
+        super().__init__(path)
+        self.path = path
+        self.existing_bytes = existing_bytes
+
 class WriteFileTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
         lines = content.split("\n", 1)
         raw_path = lines[0].strip()
         body = lines[1] if len(lines) > 1 else ""
+        # Only the fenced inline-JSON form can say "this file is meant to be empty":
+        # the text form's `path\n` and a body a parser dropped look identical here.
+        declared_clear = False
         # Decode JSON-object args (the fenced inline-args shape
         # ```write_file {"path": "...", "content": "..."}```), matching
         # ReadFileTool above. Without this the whole JSON string becomes the
@@ -307,7 +320,17 @@ class WriteFileTool:
                 _a = json.loads(_stripped)
                 if isinstance(_a, dict) and "path" in _a:
                     raw_path = str(_a.get("path", "")).strip()
-                    body = str(_a.get("content", ""))
+                    _content = _a.get("content")
+                    # A `content` key that is literally an empty (or whitespace-only)
+                    # string is the caller declaring the file should be cleared. A
+                    # missing key or a null is what a parser that lost the body leaves
+                    # behind, so neither declares anything. The old
+                    # `str(_a.get("content", ""))` also turned null into the 4 bytes
+                    # "None", which could be neither refused nor honoured.
+                    declared_clear = isinstance(_content, str) and not _content.strip()
+                    body = "" if _content is None else (
+                        _content if isinstance(_content, str) else str(_content)
+                    )
             except (json.JSONDecodeError, TypeError, ValueError):
                 pass
         try:
@@ -322,6 +345,15 @@ class WriteFileTool:
                         old = f.read()
                 except (FileNotFoundError, IsADirectoryError, UnicodeDecodeError, OSError):
                     old = ""
+                if not body.strip() and not declared_clear:
+                    # Why size on disk rather than `old`: the read above answers ""
+                    # for a file it cannot decode, so a non-UTF-8 target holding real
+                    # bytes looks empty through `old` and would still be truncated.
+                    # Why in this position: open(path, "w") truncates on entry, so a
+                    # check after the write has nothing left to protect.
+                    existing_bytes = os.path.getsize(path) if os.path.isfile(path) else 0
+                    if existing_bytes > 0:
+                        raise _EmptyBodyWouldTruncate(path, existing_bytes)
                 d = os.path.dirname(path)
                 if d:
                     os.makedirs(d, exist_ok=True)
@@ -329,6 +361,17 @@ class WriteFileTool:
                     f.write(body)
                 return old, len(body)
             old_content, size = await asyncio.to_thread(_write)
+        except _EmptyBodyWouldTruncate as e:
+            return {
+                "error": (
+                    f"write_file: refused to write an empty body over {e.path} — it holds "
+                    f"{e.existing_bytes} bytes, which the write would have destroyed, so "
+                    f"the file is unchanged. To clear it on purpose, resend with an "
+                    f"explicit empty content: "
+                    f'{{"path": "{raw_path}", "content": ""}}'
+                ),
+                "exit_code": 1,
+            }
         except PermissionError:
             return {"error": f"write_file: {path}: permission denied", "exit_code": 1}
         except OSError as e:
