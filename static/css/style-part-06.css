@@ -1,0 +1,6011 @@
+/* Fragment 7/9 of the former static/style.css.
+ *
+ * This is a mechanical, order-preserving slice: rules were moved verbatim
+ * and this file's position in the <link> order of static/index.html is what
+ * keeps the cascade identical. Reordering the links, or moving a rule between
+ * fragments, can change which of two competing declarations wins.
+ *
+ * static/index.html and the PRECACHE list in static/sw.js must list every
+ * fragment in the same order. tests/test_static_stylesheet_manifest.py and
+ * tests/test_css_computed_style_snapshot.py both fail if that drifts.
+ */
+.ge-ai-command-status {
+  margin-top: 4px;
+  font-size: 10px;
+  line-height: 1.3;
+  color: var(--fg-muted);
+}
+.ge-ai-command-status[data-kind="running"] {
+  color: var(--accent, var(--red));
+}
+.ge-ai-command-status[data-kind="done"] {
+  color: var(--green, #4caf50);
+}
+.ge-ai-command-status[data-kind="error"] {
+  color: var(--red, #e5484d);
+}
+/* Loading overlay shown while a large image is decoding — centered
+   whirlpool + "Loading" caption over a translucent dim. */
+.ge-loading-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  pointer-events: none;
+}
+/* Full-editor cover (project load): above the toolbar/panel and near-opaque so
+   the top toolbar/old content doesn't peek through while loading. */
+.ge-loading-overlay-full {
+  z-index: 200;
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  pointer-events: auto;
+}
+.ge-loading-overlay .ge-loading-inner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--fg) 18%, transparent);
+}
+.ge-loading-overlay .ge-loading-text {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+/* Shortcuts cheatsheet (toggled by `?` or the keyboard icon in the top bar). */
+#ge-shortcuts-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+#ge-shortcuts-overlay[hidden] { display: none; }
+.ge-shortcuts-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 18px 12px;
+  box-shadow: 0 8px 30px color-mix(in srgb, var(--fg) 25%, transparent);
+  width: min(720px, 92vw);
+  max-height: 86vh;
+  overflow-y: auto;
+  color: var(--fg);
+}
+.ge-shortcuts-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  font-weight: 600;
+  font-size: 13px;
+}
+.ge-shortcuts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px 24px;
+}
+@media (min-width: 720px) {
+  .ge-shortcuts-grid { grid-template-columns: repeat(4, 1fr); }
+}
+.ge-shortcuts-col h5 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  opacity: 0.6;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+.ge-shortcuts-foot {
+  margin-top: 12px;
+  font-size: 11px;
+  opacity: 0.55;
+  text-align: center;
+}
+.ge-main-canvas {
+  /* Cursor is managed entirely by JS so each tool can show its own
+     icon (move arrow, circle overlay, etc.) without CSS fighting it. */
+  image-rendering: pixelated;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+  background: repeating-conic-gradient(#808080 0% 25%, #a0a0a0 0% 50%) 50% / 16px 16px;
+}
+
+/* Transform-overlay canvas — sits over the main canvas with extra
+   margin so resize / rotation handles can render OUTSIDE the image
+   bounds. Pointer events disabled so it doesn't intercept clicks. */
+.ge-transform-overlay {
+  position: absolute;
+  image-rendering: pixelated;
+  pointer-events: none;
+  z-index: 5;
+}
+.ge-selection-overlay {
+  position: absolute;
+  image-rendering: pixelated;
+  pointer-events: none;
+  z-index: 4;
+}
+.ge-quick-mask-bar {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 18;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 4px 5px 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.24);
+  color: var(--fg);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.ge-quick-mask-label { font-weight: 600; }
+.ge-quick-mask-tools { display: flex; }
+.ge-quick-mask-tool,
+.ge-quick-mask-done {
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.ge-quick-mask-tool:first-child { border-radius: 4px 0 0 4px; }
+.ge-quick-mask-tool:last-child { border-radius: 0 4px 4px 0; border-left: 0; }
+.ge-quick-mask-tool.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.ge-quick-mask-done { border-radius: 4px; }
+.ge-marquee-constraint-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 5px 7px;
+  font-size: 10px;
+}
+.ge-marquee-constraint-row > select {
+  min-width: 0;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+.ge-marquee-dimensions {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 26px;
+  gap: 5px;
+  align-items: center;
+}
+.ge-marquee-dimensions label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 4px;
+}
+.ge-marquee-dimensions input {
+  width: 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 2px 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+.ge-marquee-dimensions .ge-icon-btn { width: 26px; height: 26px; }
+
+/* Right panel */
+.ge-right-panel {
+  width: 250px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+  /* The whole panel scrolls so every tool control is reachable; the
+     layers-actions row uses position:sticky to stay pinned at the
+     bottom of the viewport while scrolling. */
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Controls */
+.ge-controls {
+  flex: 0 0 auto;
+  padding: 10px 10px 6px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ge-layer-geometry-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+#ge-layer-geometry-name {
+  margin-left: auto;
+  min-width: 0;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-muted);
+  font-size: 9px;
+  font-weight: 400;
+  text-transform: none;
+}
+.ge-layer-geometry-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+.ge-layer-geometry-grid label {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  color: var(--color-muted);
+  font-size: 9px;
+}
+.ge-layer-geometry-grid input {
+  width: 100%;
+  height: 26px;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 3px 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  text-align: right;
+  appearance: textfield;
+}
+.ge-layer-geometry-grid input:focus { outline: none; border-color: var(--red); }
+.ge-layer-geometry-grid input[readonly] { opacity: 0.58; cursor: default; }
+@media (max-width: 700px) {
+  .ge-layer-geometry-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+/* Brush controls (Color + Size) — give the two rows breathing room
+   between them, since neither sits inside a separator-bordered section. */
+#ge-brush-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.ge-brush-pressure-row { justify-content: space-between; gap: 6px; }
+.ge-pressure-option { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; opacity: 0.7; }
+.ge-pressure-option .toggle-switch { width: 24px; height: 14px; }
+.ge-pressure-option .toggle-slider::before { width: 10px; height: 10px; }
+.ge-pressure-option .toggle-switch input:checked + .toggle-slider::before { transform: translateX(10px); }
+.ge-brush-preset-row select { flex: 1 1 auto; min-width: 0; }
+.ge-brush-preset-row .ge-btn { flex: 0 0 auto; }
+.ge-text-section,
+.ge-shape-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.ge-shape-gradient-extra-stops {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ge-gradient-extra-stop {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: end;
+}
+.ge-gradient-stop-remove {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+}
+.ge-text-section textarea,
+.ge-text-section select,
+.ge-text-section input[type="number"],
+.ge-shape-section input[type="number"] {
+  box-sizing: border-box;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+.ge-text-section textarea {
+  width: 100%;
+  min-height: 58px;
+  resize: vertical;
+  padding: 6px 7px;
+  line-height: 1.35;
+}
+.ge-text-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(56px, 0.42fr) auto;
+  gap: 6px;
+  align-items: end;
+}
+.ge-text-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  font-size: 9px;
+  color: var(--color-muted);
+}
+.ge-text-field select,
+.ge-text-field input { width: 100%; height: 28px; padding: 3px 6px; }
+.ge-text-format-row { gap: 4px; }
+.ge-text-toggle {
+  width: auto;
+  min-width: 24px;
+  flex: 1 1 24px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+}
+.ge-text-toggle:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
+.ge-text-toggle.active {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 55%, var(--border));
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+}
+.ge-text-format-sep { width: 1px; height: 20px; background: var(--border); margin: 0 2px; }
+.ge-shape-types { display: flex; gap: 4px; }
+.ge-shape-sides-field { max-width: 90px; }
+.ge-direct-text-editor {
+  position: fixed;
+  z-index: 10020;
+  box-sizing: border-box;
+  padding: 4px;
+  overflow: hidden;
+  resize: both;
+  border: 1px dashed var(--red);
+  outline: 1px solid color-mix(in srgb, var(--red) 24%, transparent);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--bg) 8%, transparent);
+  caret-color: var(--red);
+  transform-origin: top left;
+  box-shadow: none;
+}
+
+/* Floating Transform popup — horizontal layout, draggable from
+   anywhere on the popup (matches the FX / adjust popups). Defaults
+   to the right side of the editor (over the layers panel). */
+/* Match the .ge-adj-popup layout convention: icon + title + [_][×]
+   header bar, then the body. Drag from the header (same as FX popups). */
+.ge-transform-popup {
+  position: absolute;
+  z-index: 10020;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 0 8px;
+  background: color-mix(in srgb, var(--panel) 98%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 42%, var(--border));
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(6px);
+  user-select: none;
+}
+.ge-transform-popup-head {
+  /* Inherits .ge-adj-head styling — flex row, icon + title + buttons,
+     bottom border, grab cursor — with the title nudged down 2px for
+     visual balance and explicit horizontal padding so the icon doesn't
+     hug the left edge. */
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  padding-top: 10px;
+  touch-action: none;
+  cursor: grab;
+}
+.ge-transform-popup-head:active { cursor: grabbing; }
+.ge-transform-popup-head .ge-head-btns { margin-left: auto !important; }
+.ge-transform-popup-head .ge-adj-title { position: relative; top: 2px; }
+/* Icon nudged 4px lower than the title baseline so it reads as the
+   row's anchor rather than floating above it. */
+.ge-transform-popup-head .ge-adj-icon { position: relative; top: 4px; }
+/* Mobile-only: shift the head content UP to match the rest of the
+   editor's mobile popup styling. */
+@media (max-width: 820px) {
+  .ge-transform-popup-head .ge-adj-title { top: -2px; }
+  .ge-transform-popup-head .ge-adj-icon { top: 0; }
+}
+/* Make sure the head-buttons cluster sits hard-right with a small
+   gap, matching the FX-popup convention. */
+.ge-transform-popup-head .ge-head-btns { margin-left: auto; }
+.ge-transform-min-hint {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.45;
+  margin-right: -2px;
+  line-height: 1;
+  color: var(--fg-muted);
+}
+/* Small "Merge" text label next to each merge / flatten button so the
+   icons read at a glance instead of needing the title-tooltip. */
+.ge-merge-label {
+  font-size: 10px;
+  margin-left: 4px;
+  opacity: 0.75;
+}
+.ge-transform-popup-body {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+}
+.ge-transform-popup-hint { padding: 0 12px; }
+.ge-transform-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+}
+.ge-transform-field label {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.65;
+  min-width: 12px;
+  text-align: right;
+}
+/* Hide the native browser spin-buttons entirely — we render our own
+   themed ▲/▼ via .ge-transform-spin (see below). */
+.ge-transform-popup-input {
+  width: 76px;
+  height: 24px;
+  padding: 0 18px 0 6px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  cursor: text;
+  -moz-appearance: textfield;
+  box-sizing: border-box;
+}
+/* Rotation field reserves extra room on the right for both the °
+   suffix AND the custom spinner so they don't sit on top of each other.
+   The suffix renders inside that reserved zone. */
+.ge-transform-popup-input-rot { width: 76px; padding-right: 30px; }
+.ge-transform-popup-input:focus { outline: none; border-color: var(--red); }
+/* Custom themed spinner — two slim chevron buttons stacked to the right
+   of the input. Tight stack so the pair reads as one control instead of
+   two floating arrows. */
+.ge-transform-spin {
+  position: absolute;
+  right: 3px;
+  top: 50%;
+  /* Nudged up 4px relative to the input's vertical center. */
+  transform: translateY(calc(-50% - 4px));
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  height: 18px;
+}
+.ge-transform-spin button {
+  flex: 1 1 0;
+  width: 12px;
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  font-size: 7px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.ge-transform-spin button:first-child { border-radius: 3px 3px 0 0; border-bottom: 0; }
+.ge-transform-spin button:last-child  { border-radius: 0 0 3px 3px; }
+.ge-transform-spin button:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 25%, transparent);
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 55%, var(--border));
+}
+.ge-transform-spin button:active {
+  background: color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
+}
+/* Position the ° suffix to the LEFT of the spinner so they don't
+   overlap. The rotation input's larger padding leaves room. */
+.ge-transform-popup-suffix {
+  position: absolute;
+  right: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  opacity: 0.55;
+  pointer-events: none;
+}
+.ge-transform-aspect-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg-muted);
+  cursor: pointer;
+  /* 2px smaller than the W/H input height so it reads as a chip-style
+     toggle rather than another form field. Pulled up 2px so it tucks
+     between W and H rather than sitting on their baseline. */
+  height: 22px;
+  width: 22px;
+  padding: 0;
+  position: relative;
+  top: -3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.5;
+  transition: opacity 0.12s, color 0.12s, border-color 0.12s;
+}
+.ge-transform-aspect-btn:hover { opacity: 1; }
+.ge-transform-aspect-btn.active {
+  opacity: 1;
+  color: var(--accent, var(--red));
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 50%, var(--border));
+}
+/* Quick-action cluster (flip H, flip V, rotate 90°) — sits between the
+   rotation input and the Apply button. Each button matches the input
+   height and uses the editor's accent palette on hover. */
+.ge-transform-quick {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+  /* Pulled up 2px so the flip/rotate icons sit slightly higher than the
+     W/H/rotation inputs, matching the visual weight of the head row. */
+  position: relative;
+  top: -2px;
+  border-left: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+.ge-transform-quick-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: none;
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+  transition: opacity 0.12s, color 0.12s, border-color 0.12s, background 0.12s;
+}
+.ge-transform-quick-btn:hover {
+  opacity: 1;
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+}
+.ge-transform-quick-btn:active {
+  background: color-mix(in srgb, var(--accent, var(--red)) 25%, transparent);
+}
+.ge-transform-popup-hint {
+  font-size: 10px;
+  opacity: 0.5;
+  margin: 0;
+  line-height: 1.3;
+}
+.ge-transform-preserve-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 12px;
+  font-size: 10px;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+.ge-transform-preserve-field input {
+  accent-color: var(--accent, var(--red));
+  margin: 0;
+}
+
+/* Floating Inpaint prompt — pops next to the user's last brush stroke
+   so they can type a description and Generate without diverting to
+   the side panel. */
+.ge-inpaint-popup {
+  position: fixed;
+  z-index: 280;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--fg) 25%, transparent);
+}
+.ge-inpaint-popup-input {
+  width: 240px;
+  padding: 6px 8px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 12px;
+  position: relative;
+  top: 0;
+}
+.ge-inpaint-popup-input:focus { outline: none; border-color: var(--red); }
+.ge-inpaint-popup-run {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  position: relative;
+  top: 1px;
+}
+.ge-inpaint-popup-close {
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 4px;
+  margin-left: 2px;
+  cursor: pointer;
+  position: relative;
+  top: 0;
+  opacity: 0.7;
+  transition: opacity 0.15s, color 0.15s;
+}
+.ge-inpaint-popup-close:hover { opacity: 1; color: var(--fg); }
+/* Loading state: the popup's panel chrome (bg/border/shadow) gets out
+   of the way so only the whirlpool floats over the canvas. */
+.ge-inpaint-popup.ge-inpaint-popup-loading {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  padding: 0;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.ge-controls input[type="range"] {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  display: block;
+}
+.ge-control-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--fg);
+}
+.ge-control-row label {
+  flex-shrink: 0;
+  opacity: 0.7;
+  min-width: 36px;
+}
+.ge-color-picker {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  padding: 0;
+  cursor: pointer;
+  background: none;
+  overflow: hidden;
+}
+/* attachColorPicker swaps the native <input type="color"> for a styled
+   text input with the same `.ge-color-picker` class plus
+   `.cp-swatch-input`. Force the 24×24 circular swatch back on it so
+   it doesn't render as a wide text box stretched across the row. */
+.ge-color-picker.cp-swatch-input {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  padding: 0;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  /* Hide the (read-only) text caret + selection so the element reads
+     as a swatch, not a text field. */
+  color: transparent;
+  text-shadow: none;
+  caret-color: transparent;
+  font-size: 0;
+  user-select: none;
+}
+.ge-color-picker.cp-swatch-input:focus {
+  outline: 1px solid var(--red);
+  outline-offset: 1px;
+}
+.ge-size-slider {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 8px;
+  accent-color: var(--red);
+  -webkit-appearance: none;
+  appearance: none;
+  background: color-mix(in srgb, var(--fg) 25%, transparent);
+  border-radius: 999px;
+  margin: 0;
+}
+.ge-size-label { font-size: 10px; opacity: 0.5; min-width: 28px; text-align: right; }
+
+/* Eraser controls: tighter rows + a small brush preview on the left of
+   each label so the user can see what each slider affects. The three
+   previews share the same dot but each leans on a different rendering
+   trick (alpha / scatter / blur) to mirror its slider's effect. */
+.ge-eraser-row {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px;
+  padding: 2px 0;
+  /* Lets the trailing value span pin to the row's right edge so it
+     stays visible when the slider expands left over the label. */
+  position: relative;
+}
+/* Inline value chip next to the label text. (Previously absolutely-
+   positioned over the slider track to ride the expand animation, which
+   caused overlap now that the dynamic-slider behavior is off for these.) */
+.ge-eraser-row label > span[id$="-label"] {
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 3px;
+  cursor: text;
+  font-size: 10px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+/* When the value chip is pulled out of its label and placed AFTER the
+   slider (see DOM transform in galleryEditor.js init), it sits on the
+   row's right edge and naturally shortens the slider's flex space. */
+.ge-eraser-row > span[id$="-label"].ge-slider-value {
+  flex: 0 0 auto;
+  margin: 0 0 0 6px;
+  padding: 0 4px;
+  font-size: 10px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+  min-width: 34px;
+  text-align: right;
+  cursor: text;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+/* Per-tool model selector row (lives at the top of each AI tool's
+   section in the side panel). Mirrors the inpaint Model row layout. */
+.ge-tool-model-row {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  min-width: 0;
+}
+.ge-tool-model-row > label {
+  font-size: 11px;
+  opacity: 0.6;
+  flex: 0 0 auto;
+}
+.ge-tool-model {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 10px;
+  padding: 2px 4px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+/* Section label inside a dropdown — small uppercase header. */
+.dropdown-section-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.5;
+  font-weight: 600;
+  padding: 6px 8px 2px;
+}
+.dropdown-section-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+  opacity: 0.6;
+}
+
+/* Inline numeric editor that replaces the value chip on click. */
+.ge-slider-edit {
+  position: absolute;
+  z-index: 11;
+  font: inherit;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  padding: 1px 4px;
+  border: 1px solid var(--red);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--fg);
+  outline: none;
+  text-align: center;
+}
+
+/* Merge dropdown — position is set by JS each time it opens (relative to
+   the button's bounding rect) because the parent .ge-layers has
+   overflow:hidden which would otherwise clip the popup. */
+.ge-merge-menu {
+  position: fixed;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--fg) 25%, transparent);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+}
+.ge-merge-menu .dropdown-item-compact {
+  background: none;
+  border: none;
+  width: 100%;
+  text-align: left;
+  padding: 5px 8px;
+  font-size: 11px;
+  gap: 8px;
+  font: inherit;
+  font-size: 11px;
+}
+
+/* Thin separator inside a tool section. */
+.ge-section-divider {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 10px -2px;
+  opacity: 0.6;
+}
+
+/* Small explanatory paragraph under AI tool section labels. */
+.ge-section-hint {
+  font-size: 10.5px;
+  line-height: 1.45;
+  opacity: 0.55;
+  margin: 0 0 8px;
+}
+/* Clone-tool hint swaps between "Alt-click" (desktop) and "Double-tap"
+   (mobile) so the on-screen instruction matches the actual gesture. */
+.ge-clone-hint-mobile { display: none; }
+@media (max-width: 820px) {
+  .ge-clone-hint-desktop { display: none; }
+  .ge-clone-hint-mobile { display: inline; }
+}
+/* Section title + adjacent "?" affordance — collapses the long
+   explanatory paragraph into a hoverable tooltip so the side panel
+   stays compact. */
+.ge-section-title-with-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+/* Drop the source-whitespace text node between the title text and the
+   ? span so the chip hugs the title with no extra gap. */
+.ge-section-title-with-help .ge-section-help { margin-left: 0; }
+.ge-section-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  color: var(--fg-muted);
+  font-size: 9px;
+  font-weight: 700;
+  cursor: help;
+  user-select: none;
+  transition: background 0.12s, color 0.12s;
+}
+.ge-section-help:hover,
+.ge-section-help:focus-visible {
+  background: color-mix(in srgb, var(--fg) 24%, transparent);
+  color: var(--fg);
+  outline: none;
+}
+
+/* Lightweight section title — used inside the inpaint panel to group
+   the mask actions (Eye / Invert / Clear) under a "Selection" header. */
+.ge-section-title {
+  margin: 10px 0 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.5;
+  font-weight: 600;
+}
+/* Selection-row buttons stay compact so eye + invert + clear fit on
+   one line beside each other. */
+.ge-inpaint-mask-row {
+  display: flex !important;
+  gap: 4px;
+  align-items: center;
+}
+.ge-inpaint-mask-row .ge-btn {
+  flex: 0 0 auto;
+}
+.ge-inpaint-mask-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.5;
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+/* Fixed label column so the three sliders start at the same x and have
+   the same length when unused. Without this, "Flow" (4 chars) leaves
+   more room than "Opacity" (7 chars). */
+.ge-eraser-row label {
+  font-size: 10px;
+  opacity: 0.55;
+  flex: 0 0 78px;
+  white-space: nowrap;
+  display: inline-flex;
+  justify-content: space-between;
+  gap: 4px;
+}
+/* Fixed-size slider track for all side-panel sliders — no dynamic
+   width/height expansion on drag. Only the thumb grows on interaction
+   (see ::-webkit-slider-thumb / ::-moz-range-thumb below). */
+.ge-eraser-row input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 8px;
+  accent-color: var(--red);
+  -webkit-appearance: none;
+  appearance: none;
+  background: color-mix(in srgb, var(--fg) 25%, transparent);
+  border-radius: 999px;
+  margin: 0;
+  position: relative;
+  z-index: 2;
+}
+.ge-eraser-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--red);
+  border: none;
+  cursor: pointer;
+  transition: width 0.12s ease 0.5s, height 0.12s ease 0.5s;
+}
+.ge-eraser-row input[type="range"]:hover::-webkit-slider-thumb,
+.ge-eraser-row input[type="range"].is-using::-webkit-slider-thumb,
+.ge-eraser-row input[type="range"]:active::-webkit-slider-thumb {
+  width: 16px; height: 16px;
+  transition: width 0.12s ease 0s, height 0.12s ease 0s;
+}
+.ge-eraser-row input[type="range"]::-moz-range-thumb {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: var(--red);
+  border: none;
+  cursor: pointer;
+  transition: width 0.12s ease 0.5s, height 0.12s ease 0.5s;
+}
+.ge-eraser-row input[type="range"]:hover::-moz-range-thumb,
+.ge-eraser-row input[type="range"].is-using::-moz-range-thumb,
+.ge-eraser-row input[type="range"]:active::-moz-range-thumb {
+  width: 16px; height: 16px;
+  transition: width 0.12s ease 0s, height 0.12s ease 0s;
+}
+
+/* Help "?" icon next to a section title. Subtle by default, hover
+   brightens. Tooltip via native `title` attribute. */
+.ge-section-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-left: 4px;
+  font-size: 9px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--fg-muted);
+  background: none;
+  cursor: help;
+  vertical-align: middle;
+  position: relative;
+  top: -1px;
+  opacity: 0.7;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+}
+.ge-section-help:hover { opacity: 1; color: var(--fg); border-color: var(--fg-muted); }
+
+/* Layer-FX popup — floating window bound to one layer. */
+.ge-fx-popup {
+  position: fixed;
+  z-index: 300;
+  width: 320px;
+  max-height: 80vh;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.45);
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  color: var(--fg);
+}
+.ge-fx-popup-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+.ge-fx-popup-title { font-size: 12px; }
+.ge-fx-popup-close {
+  background: none; border: none; color: var(--fg-muted);
+  font-size: 18px; line-height: 1; cursor: pointer; padding: 0 4px;
+}
+.ge-fx-popup-close:hover { color: var(--fg); }
+.ge-fx-popup-body { padding: 8px 10px; overflow-y: auto; }
+.ge-fx-popup-foot {
+  display: flex; gap: 6px; padding: 6px 10px;
+  border-top: 1px solid var(--border);
+}
+.ge-fx-group-title {
+  font-size: 10px; font-weight: 600; opacity: 0.6;
+  text-transform: uppercase; letter-spacing: 0.5px;
+  margin: 8px 0 4px;
+}
+.ge-fx-group-title:first-child { margin-top: 0; }
+.ge-fx-cb-tone {
+  font-size: 10px; opacity: 0.55; font-style: italic;
+  margin: 4px 0 2px;
+}
+.ge-fx-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 2px 0;
+}
+.ge-fx-row-label {
+  font-size: 10px; opacity: 0.7;
+  flex: 0 0 110px; white-space: nowrap;
+}
+.ge-fx-row input[type="range"] {
+  flex: 1 1 auto; min-width: 0;
+  height: 6px; accent-color: var(--red);
+  -webkit-appearance: none; appearance: none;
+  background: color-mix(in srgb, var(--fg) 25%, transparent);
+  border-radius: 999px;
+}
+.ge-fx-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 11px; height: 11px; border-radius: 50%;
+  background: var(--red); border: none; cursor: pointer;
+}
+.ge-fx-row input[type="range"]::-moz-range-thumb {
+  width: 11px; height: 11px; border-radius: 50%;
+  background: var(--red); border: none; cursor: pointer;
+}
+.ge-fx-row-value {
+  font-size: 10px; opacity: 0.7; font-variant-numeric: tabular-nums;
+  flex: 0 0 40px; text-align: right;
+}
+
+/* Layer-row FX button — tinted when the layer has any non-identity FX. */
+.ge-layer-fx-btn {
+  opacity: 0.55;
+}
+.ge-layer-fx-btn:hover { opacity: 0.9; }
+.ge-layer-fx-btn.active {
+  opacity: 1;
+  color: var(--accent, var(--red));
+}
+/* Add-mask button on each layer row. Subtle by default; lights up red
+   when a lasso/wand selection is live so the user instantly sees that
+   clicking it will bake that selection into a mask on this layer. */
+.ge-layer-mask-btn {
+  opacity: 0.45;
+}
+.ge-layer-mask-btn:hover { opacity: 0.9; }
+.ge-layer-mask-btn.from-selection {
+  opacity: 1;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+}
+
+/* Shared frosted-glass style for FX menu + adjustment popups. */
+.ge-frosted {
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.55);
+}
+
+/* FX dropdown menu from the layer-row fx icon. */
+.ge-fx-menu {
+  position: fixed;
+  z-index: 305;
+  min-width: 200px;
+  padding: 4px;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ge-fx-menu-item {
+  background: none;
+  border: none;
+  text-align: left;
+  padding: 7px 10px;
+  font-size: 12px;
+  color: var(--fg);
+  border-radius: 5px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ge-fx-menu-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--fg-muted);
+  flex-shrink: 0;
+}
+.ge-fx-menu-item:hover {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.ge-fx-menu-item:hover .ge-fx-menu-icon { color: var(--fg); }
+
+.ge-add-layer-menu {
+  position: fixed;
+  z-index: 10004;
+  width: 218px;
+  padding: 5px;
+  border-radius: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.ge-add-layer-menu button {
+  height: 30px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.ge-add-layer-menu button:hover { background: color-mix(in srgb, var(--fg) 10%, transparent); }
+.ge-add-layer-symbol {
+  width: 16px;
+  display: inline-flex;
+  justify-content: center;
+  color: var(--accent, var(--red));
+  font-size: 13px;
+}
+.ge-add-layer-divider { height: 1px; margin: 4px 5px; background: color-mix(in srgb, var(--fg) 10%, transparent); }
+
+/* Per-type adjustment popup. */
+.ge-adj-popup {
+  position: fixed;
+  z-index: 305;
+  width: 320px;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  color: var(--fg);
+}
+.ge-adj-popup .ge-adj-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+  cursor: grab;
+  user-select: none;
+}
+.ge-adj-popup .ge-head-btns { margin-left: auto; }
+.ge-adj-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--fg-muted);
+  flex-shrink: 0;
+}
+.ge-adj-title { font-weight: 600; font-size: 12px; flex: 1 1 auto; }
+.ge-adj-min, .ge-adj-close, .ge-history-close {
+  background: none; border: none; color: var(--fg-muted);
+  font-size: 16px; line-height: 1; cursor: pointer; padding: 0 4px;
+  flex-shrink: 0;
+}
+.ge-history-close:hover { color: var(--fg); }
+/* Mobile-only: shift head icons/buttons up and enlarge the minimise
+   glyph so it reads as a window-minimise affordance, not a centered
+   minus. Desktop keeps the original tight head styling. */
+@media (max-width: 820px) {
+  .ge-adj-icon {
+    position: relative;
+    top: -4px;
+  }
+  .ge-adj-title {
+    position: relative;
+    top: -2px;
+  }
+  .ge-adj-min, .ge-adj-close, .ge-history-close {
+    position: relative;
+    top: -4px;
+  }
+  .ge-adj-min,
+  .ge-adj-popup .ge-adj-min,
+  .ge-history-head .ge-adj-min,
+  .ge-transform-popup-head .ge-adj-min {
+    font-size: 22px !important;
+    font-weight: 600 !important;
+    padding: 0 8px !important;
+    line-height: 0.6 !important;
+    position: relative;
+    top: 4px;
+  }
+  .ge-adj-head .ge-transform-aspect-btn {
+    position: relative;
+    top: -4px;
+  }
+}
+.ge-adj-min:hover, .ge-adj-close:hover { color: var(--fg); }
+
+/* Floating dock at bottom-right for minimised FX popups. */
+#ge-fx-dock {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 12px;
+  z-index: 304;
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+  align-items: center;
+  pointer-events: none;
+  max-width: calc(100vw - 24px);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.ge-fx-dock-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--fg);
+  cursor: pointer;
+  pointer-events: auto;
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.ge-fx-dock-chip:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.ge-fx-dock-icon { display: inline-flex; align-items: center; }
+.ge-fx-dock-close {
+  margin-left: 2px; opacity: 0.55; padding: 0 2px;
+  font-size: 14px; line-height: 1;
+}
+.ge-fx-dock-close:hover { opacity: 1; color: var(--red); }
+
+/* Sub-layer row icon in the layer panel. */
+.ge-adj-sub-name {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 4px;
+}
+.ge-adj-sub-icon {
+  display: inline-flex; align-items: center;
+  color: var(--accent, var(--red));
+  flex-shrink: 0;
+}
+.ge-adj-sub-icon svg { width: 11px; height: 11px; }
+
+/* History panel — labeled timeline of edits. */
+#ge-history-panel {
+  position: fixed;
+  z-index: 10004;
+  width: 240px;
+  max-height: 60vh;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  color: var(--fg);
+  font-size: 11px;
+}
+.ge-history-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+  cursor: grab;
+  user-select: none;
+}
+.ge-history-title { font-weight: 600; font-size: 12px; flex: 1 1 auto; }
+.ge-history-close {
+  background: none; border: none; color: var(--fg-muted);
+  font-size: 16px; line-height: 1; cursor: pointer; padding: 0 4px;
+  flex-shrink: 0;
+}
+.ge-history-close:hover { color: var(--fg); }
+.ge-history-list { overflow-y: auto; padding: 4px 0; }
+.ge-history-row {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%;
+  padding: 5px 10px;
+  background: none; border: none;
+  text-align: left; cursor: pointer;
+  color: var(--fg); font-size: 11px;
+}
+.ge-history-row:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.ge-history-row.current { background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent); }
+.ge-history-row.current .ge-history-row-dot { background: var(--accent, var(--red)); }
+.ge-history-row.future { opacity: 0.45; }
+.ge-history-row-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--fg-muted);
+  flex-shrink: 0;
+}
+.ge-history-row-label { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ge-history-row-time { font-size: 9px; opacity: 0.55; flex-shrink: 0; }
+
+/* Tight button group in popup heads — min + close sit immediately next
+   to each other with no inherited flex gap, pushed to the right edge. */
+.ge-head-btns {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.ge-head-btns > button {
+  width: 26px;
+  height: 26px;
+  padding: 0 !important;
+  margin: 0;
+  font-size: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+}
+.ge-head-btns > button:hover {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+
+/* Detail-header heart toggle — sits next to the icon Edit button. */
+.gallery-detail-fav-header { opacity: 0.7; transition: opacity 0.15s, color 0.15s; }
+.gallery-detail-fav-header:hover { opacity: 1; }
+.gallery-detail-fav-header.active { color: var(--red); opacity: 1; }
+
+/* Canvas loading overlay — covers the canvas area while a blocking op
+   (rotation, big resize, etc.) runs. */
+.ge-canvas-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-radius: 8px;
+  pointer-events: auto;
+}
+.ge-canvas-loading-spinner {
+  width: 32px; height: 32px;
+  border: 3px solid color-mix(in srgb, var(--fg) 25%, transparent);
+  border-top-color: var(--accent, var(--red));
+  border-radius: 50%;
+  animation: ge-canvas-spin 0.8s linear infinite;
+}
+.ge-canvas-loading-msg { font-size: 12px; opacity: 0.85; }
+
+/* Missing-dependency notice in tool sections (Bg Remove etc.). */
+.ge-dep-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 30%, transparent);
+  border-radius: 6px;
+  margin: 4px 0 8px;
+  font-size: 11px;
+}
+.ge-dep-notice-text { flex: 1 1 auto; line-height: 1.4; }
+.ge-dep-notice-text strong { display: block; margin-bottom: 2px; }
+.ge-dep-notice-text code {
+  font-family: 'Fira Code', monospace;
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.ge-dep-notice .ge-btn { flex-shrink: 0; }
+
+/* Brief highlight on a Cookbook deps row arrived-at via deep-link. */
+.cookbook-pkg-flash { animation: cookbook-pkg-flash 1.4s ease-out; }
+@keyframes cookbook-pkg-flash {
+  0%   { background: color-mix(in srgb, var(--accent, var(--red)) 30%, transparent); }
+  100% { background: transparent; }
+}
+
+/* Flash highlight when an anchor-link ([Name](#task-/#skill-/#research-))
+   opens a panel and focuses a specific item. */
+@keyframes anchor-item-flash {
+  0%   { background: color-mix(in srgb, var(--accent, var(--red)) 28%, transparent); }
+  60%  { background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent); }
+  100% { background: transparent; }
+}
+.task-card-flash,
+.skill-row-flash,
+.research-card-flash {
+  animation: anchor-item-flash 2s ease-out;
+  border-radius: 6px;
+}
+
+.memory-item-focus {
+  animation: anchor-item-flash 2.2s ease-out;
+  outline: 1px solid color-mix(in srgb, var(--accent, var(--red)) 45%, transparent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Preview dot icons for the Blur sub-menu — visual cue for each blur
+   type (Gaussian = soft round, Zoom = radial streaks). */
+.ge-blur-icon {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+  background: var(--fg);
+}
+.ge-blur-icon.ge-blur-gaussian {
+  background: radial-gradient(circle, var(--fg) 0%, var(--fg) 25%, transparent 75%);
+  filter: blur(1.5px);
+}
+.ge-blur-icon.ge-blur-zoom {
+  background: radial-gradient(circle, var(--fg) 0%, var(--fg) 20%, transparent 60%);
+  box-shadow:
+    0 -5px 0 -3px var(--fg),
+    0 5px 0 -3px var(--fg),
+    -5px 0 0 -3px var(--fg),
+    5px 0 0 -3px var(--fg),
+    -4px -4px 0 -3px var(--fg),
+    4px -4px 0 -3px var(--fg),
+    -4px 4px 0 -3px var(--fg),
+    4px 4px 0 -3px var(--fg);
+}
+
+/* Inline-swatch color picker — small square that fits next to a title. */
+.ge-inline-swatch {
+  width: 16px !important;
+  height: 16px !important;
+  padding: 0 !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 3px !important;
+  cursor: pointer;
+  flex-shrink: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  background: none;
+}
+
+/* Drop overlay over the gallery editor while a file drag is in flight. */
+.ge-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 200;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+  border: 3px dashed color-mix(in srgb, var(--accent, var(--red)) 80%, transparent);
+  border-radius: 8px;
+}
+.ge-drop-overlay-msg {
+  padding: 12px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+  backdrop-filter: blur(10px);
+  border-radius: 8px;
+}
+
+/* Small buttons that show an SVG icon + text label side-by-side. */
+.ge-btn-iconlabel {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.ge-btn-iconlabel svg {
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+.ge-btn-iconlabel:hover svg { opacity: 1; }
+
+.ge-adj-body {
+  padding: 8px 12px;
+  max-height: 60vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.ge-adj-preset-field {
+  display: grid;
+  grid-template-columns: 46px 1fr;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 12px 0;
+  color: color-mix(in srgb, var(--fg) 65%, transparent);
+  font-size: 10px;
+}
+.ge-adj-preset-select {
+  min-width: 0;
+  width: 100%;
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  color: var(--fg);
+  font: inherit;
+}
+.ge-adj-preset-select:focus { outline: none; border-color: var(--accent, var(--red)); }
+.ge-adj-popup { box-sizing: border-box; overflow: hidden; }
+.ge-adj-foot {
+  display: flex; gap: 6px; justify-content: flex-end;
+  padding: 8px 12px;
+  border-top: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.ge-adj-foot-spacer { flex: 1 1 auto; }
+.ge-adj-compare-btn.is-active {
+  color: var(--accent, var(--red));
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+}
+.ge-adj-channel-field {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  color: color-mix(in srgb, var(--fg) 65%, transparent);
+  font-size: 10px;
+}
+.ge-adj-channel-select,
+.ge-adj-selective-range {
+  width: 100%;
+  min-width: 0;
+  height: 27px;
+  padding: 0 25px 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--fg);
+  font: inherit;
+}
+.ge-gradient-map-preview {
+  height: 24px;
+  margin-bottom: 9px;
+  border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent);
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--ge-gradient-start), var(--ge-gradient-end));
+}
+.ge-gradient-color-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.ge-gradient-color-row label {
+  display: grid;
+  grid-template-columns: 1fr 30px;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  opacity: .75;
+}
+.ge-gradient-color-row input[type="color"] {
+  width: 30px;
+  height: 24px;
+  padding: 1px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+}
+.ge-adj-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 28px;
+  font-size: 10px;
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+}
+.ge-adj-toggle-row input { accent-color: var(--red); }
+.ge-curves-wrap {
+  width: 100%;
+  aspect-ratio: 14 / 9;
+  border: 1px solid color-mix(in srgb, var(--fg) 14%, transparent);
+  background: #0b0d10;
+  overflow: hidden;
+}
+.ge-curves-canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+.ge-adj-help { margin: 7px 0 0; font-size: 9px; line-height: 1.35; opacity: .5; }
+.ge-adjustment-layer-item .ge-layer-adjustment-marker { color: var(--accent, var(--red)); }
+.ge-adjustment-layer-item .ge-layer-adjustment-marker svg { width: 12px; height: 12px; }
+/* Mobile-only: oversize the foot Cancel/Apply buttons to match the
+   Transform popup. Desktop keeps the original ge-btn-sm sizing. */
+@media (max-width: 820px) {
+  .ge-adj-foot .ge-adj-cancel-btn,
+  .ge-adj-foot .ge-adj-apply-btn {
+    padding: 8px 16px !important;
+    font-size: 13px !important;
+    min-width: 80px;
+    text-align: center;
+  }
+}
+.ge-adj-row {
+  display: flex; align-items: center; gap: 3px;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  line-height: 1;
+}
+.ge-adj-row > label {
+  flex: 0 0 96px;
+  font-size: 10px;
+  opacity: 0.7;
+}
+.ge-adj-row input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 6px;
+  accent-color: var(--red);
+  -webkit-appearance: none; appearance: none;
+  background: color-mix(in srgb, var(--fg) 25%, transparent);
+  border-radius: 999px;
+}
+/* Mobile-only: fixed-size sliders + taller rows so the thumb growing
+   on active doesn't push the row height around. */
+@media (max-width: 820px) {
+  .ge-adj-row {
+    min-height: 28px;
+  }
+  /* Let the slider consume the space left after the label and value chip.
+     A fixed 160px track overflows the 320px phone sheet once the popup's
+     horizontal padding and controls are included. */
+  .ge-adj-row > label {
+    flex: 0 0 clamp(72px, 26vw, 96px);
+    min-width: 0;
+  }
+  .ge-adj-row input[type="range"] {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 56px;
+    max-width: none;
+  }
+}
+@media (max-width: 360px) {
+  /* Give Gradient Map's color labels and swatches a usable tap width on
+     narrow phones; the popup remains scrollable if the extra row is needed. */
+  .ge-gradient-color-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+}
+.ge-adj-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--red);
+  cursor: pointer; border: none;
+  transition: width 0.12s ease, height 0.12s ease;
+}
+.ge-adj-row input[type="range"]:hover::-webkit-slider-thumb,
+.ge-adj-row input[type="range"]:active::-webkit-slider-thumb {
+  width: 18px; height: 18px;
+}
+.ge-adj-row input[type="range"]::-moz-range-thumb {
+  width: 12px; height: 12px;
+  border-radius: 50%; background: var(--red); border: none; cursor: pointer;
+  transition: width 0.12s ease, height 0.12s ease;
+}
+.ge-adj-row input[type="range"]:hover::-moz-range-thumb,
+.ge-adj-row input[type="range"]:active::-moz-range-thumb {
+  width: 18px; height: 18px;
+}
+/* Value chip — fixed-width column, text aligned LEFT so the chip's
+   left edge always sits immediately after the slider regardless of
+   value length. Without a fixed width Hue's "180 °" made its slider
+   shorter than Saturation's "100" since slider was flex-1. */
+.ge-adj-value {
+  flex: 0 0 34px;
+  margin-left: 0;
+  padding: 0 2px;
+  font-size: 10px; opacity: 0.7; text-align: left;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: text;
+}
+.ge-adj-value:hover { opacity: 1; }
+.ge-adj-cb-tone {
+  font-size: 10px; opacity: 0.55; font-style: italic;
+  margin: 2px 0 0;
+  line-height: 1;
+}
+.ge-adj-cb-row {
+  padding: 0;
+  gap: 3px;
+}
+.ge-adj-cb-tone-select {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  color: var(--fg);
+}
+.ge-adj-cb-tone-select:focus { outline: none; border-color: var(--red); }
+.ge-adj-hist-details[open] > summary::before {
+  content: '▾ ';
+}
+.ge-adj-hist-details .ge-adj-hist-wrap {
+  margin-top: 4px;
+}
+.ge-adj-histogram {
+  display: block;
+  width: 100%;
+  height: 80px;
+  border-radius: 4px;
+  background: rgba(0,0,0,0.25);
+}
+.ge-adj-hist-wrap {
+  position: relative;
+  margin-bottom: 14px;
+}
+.ge-adj-clip-status {
+  margin-top: 3px;
+  color: var(--fg-muted);
+  font-size: 10px;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+}
+.ge-adj-hist-handles {
+  position: absolute;
+  left: 0; right: 0;
+  bottom: -10px;
+  height: 12px;
+  pointer-events: none;
+}
+.ge-adj-hist-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  cursor: ew-resize;
+  pointer-events: auto;
+  border-style: solid;
+  border-width: 0 6px 10px 6px;
+  border-color: transparent transparent var(--fg-muted) transparent;
+  filter: drop-shadow(0 1px 1px rgba(0,0,0,0.4));
+}
+.ge-adj-hist-handle:hover { border-bottom-color: var(--fg); }
+.ge-adj-hist-handle.hist-h-black { border-bottom-color: #111; }
+.ge-adj-hist-handle.hist-h-white { border-bottom-color: #fff; }
+.ge-adj-hist-handle.hist-h-gamma { border-bottom-color: var(--accent, var(--red)); }
+/* Per-slider revert button. */
+.ge-adj-revert {
+  background: none; border: none;
+  color: var(--fg-muted); cursor: pointer;
+  padding: 2px 4px; margin-left: 2px;
+  opacity: 0.55;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: opacity 0.15s, color 0.15s;
+}
+.ge-adj-revert:hover { opacity: 1; color: var(--fg); }
+
+/* Adjustment sub-layer row in the layer panel — indented under parent. */
+.ge-adj-sub-item {
+  padding-left: 18px;
+  opacity: 0.85;
+  border-left: 2px solid color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);
+  margin-left: 6px;
+  font-size: 10.5px;
+}
+.ge-adj-sub-item .ge-layer-name {
+  opacity: 0.85;
+  font-style: italic;
+}
+/* Mask sub-layer rows. Same indent as adj sub-layers but the
+   highlight bar uses fg-muted instead of accent — these aren't FX
+   effects, just selection-state. When activated (the click target
+   for paint / inpaint / generate), border + name go full strength. */
+.ge-mask-sub-item {
+  border-left-color: color-mix(in srgb, var(--fg) 30%, transparent);
+}
+.ge-mask-sub-item.active {
+  border-left-color: var(--red);
+  opacity: 1;
+}
+.ge-clone-source-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  margin: 2px 0 5px;
+  padding: 0 6px;
+  color: var(--fg);
+  opacity: 0.68;
+  font-size: 10px;
+}
+.ge-clone-source-status span { flex: 1; min-width: 0; }
+.ge-clone-source-status .ge-icon-btn { margin-left: auto; }
+.ge-mask-inline-thumb {
+  width: 34px;
+  height: 26px;
+  flex: 0 0 34px;
+  opacity: 0.78;
+}
+.ge-eraser-preview {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--fg);
+  flex-shrink: 0;
+  display: inline-block;
+  position: relative;
+}
+.ge-actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.ge-btn {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.ge-btn:hover { background: color-mix(in srgb, var(--fg) 10%, var(--bg)); }
+.ge-btn.active {
+  background: color-mix(in srgb, var(--accent, var(--red)) 16%, var(--bg));
+  border-color: var(--accent, var(--red));
+  color: var(--accent, var(--red));
+}
+.ge-btn-sm { padding: 3px 6px; font-size: 10px; }
+/* Busy state on AI tool buttons — whirlpool + verb text side by side. */
+.ge-btn-processing {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.ge-btn-busy-label { font-size: inherit; line-height: 1; }
+/* Mask-vis eye button is icon-only — strip the inherited .ge-btn
+   background / border so it reads as a plain affordance, matching
+   the layer-row eye toggles. */
+.ge-mask-vis-btn {
+  background: none !important;
+  border: none !important;
+  padding: 2px 4px !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.5;
+  transition: opacity 0.12s;
+}
+.ge-mask-vis-btn:hover { opacity: 0.85; background: none !important; }
+.ge-mask-vis-btn.visible { opacity: 0.9; }
+/* Paint/Erase segmented toggle in the Inpaint Brush section. */
+.ge-inpaint-mode-btn {
+  font-size: 11px;
+  padding: 4px 8px;
+  opacity: 0.6;
+  border: 1px solid var(--border);
+}
+.ge-inpaint-mode-btn:hover { opacity: 0.85; }
+.ge-inpaint-mode-btn.active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+  border-color: var(--accent, var(--red));
+  color: var(--accent, var(--red));
+  font-weight: 600;
+}
+/* Wand New / + Add / − Subtract segmented toggle. */
+.ge-wand-mode-btn {
+  flex: 1 1 0;
+  font-size: 11px;
+  padding: 4px 6px;
+  opacity: 0.6;
+  border: 1px solid var(--border);
+}
+.ge-wand-mode-btn:hover { opacity: 0.85; }
+.ge-wand-mode-btn.active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+  border-color: var(--accent, var(--red));
+  color: var(--accent, var(--red));
+  font-weight: 600;
+}
+.ge-wand-live-btn {
+  flex: 0 0 auto;
+  opacity: 0.6;
+  min-width: 46px;
+  height: 22px;
+  padding: 0 10px !important;
+  border-radius: 999px !important;
+  font-size: 10px;
+  line-height: 1;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s, background 0.15s;
+}
+.ge-wand-live-btn:hover { opacity: 0.85; }
+.ge-wand-live-btn.active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+  border-color: var(--accent, var(--red));
+  color: var(--accent, var(--red));
+  font-weight: 600;
+}
+/* Top-bar buttons (undo/redo, zoom +/-, Fit, 1:1, Resize, Edge, Import,
+   Download, Save) — visually their glyphs sit too low compared to the
+   surrounding labels, so shift contents up 2 px via asymmetric padding. */
+/* Visually the buttons sit lower than the surrounding text labels on the
+   topbar. Keep the box padding symmetric but lift the whole box 2 px so it
+   centers against the adjacent label baselines. */
+.ge-topbar .ge-btn,
+.ge-topbar .ge-btn-sm,
+.ge-topbar select,
+.ge-topbar input { position: relative; top: -2px; }
+/* The tiny "Gen" / "Inpaint" inline labels now look too high relative to
+   the shifted-up controls — nudge them down 2 px to re-align. */
+.ge-topbar span[style*="font-size:9px"] { position: relative; top: 2px; }
+/* The Gen and Inpaint model selects — must visually sit on the same line as
+   the small "Gen" / "Inpaint" labels (which are at top:2px). Use !important
+   so this beats the generic `.ge-topbar select` rule above no matter what
+   element-vs-class specificity quirks. */
+.ge-topbar .ge-ai-model { position: relative !important; top: 1px !important; }
+/* The ◢ glyph baseline reads lower than the surrounding text — shift it
+   up 1 px so it visually centers with the "Edge" label. */
+.ge-edge-glyph { position: relative; top: -1px; }
+/* Flex-line-break helper used in the mobile transform popup. Hidden by
+   default so desktop keeps its single-row layout. */
+.ge-row-break { display: none; }
+/* Stacked button — glyph on top, small uppercase label below. Currently
+   used for Undo/Redo so users get an obvious "UNDO" / "REDO" affordance
+   label without losing the compact icon. */
+.ge-stacked-btn {
+  display: inline-flex !important;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 2px 8px !important;
+  line-height: 1;
+}
+.ge-stacked-btn .ge-stacked-glyph svg { display: block; }
+.ge-stacked-btn .ge-stacked-caret {
+  margin-left: 2px;
+  font-size: 7px;
+  line-height: 1;
+  opacity: 0.55;
+}
+.ge-stacked-btn .ge-stacked-label {
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  opacity: 0.65;
+  font-weight: 600;
+  position: relative;
+  top: 2px;
+}
+/* Zoom % indicator — magnifier glyph on top, percentage label below.
+   Matches the Undo/Redo stacked-button layout so the topbar reads as
+   one consistent row of stacked icons. */
+.ge-zoom-stack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  line-height: 1;
+  padding: 0 4px;
+}
+.ge-zoom-stack .ge-zoom-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+  /* Glyph nudged 1 px right (was 2 px left). */
+  position: relative;
+  left: -1px;
+}
+.ge-zoom-stack .ge-zoom-glyph svg {
+  width: 16px;
+  height: 16px;
+}
+.ge-zoom-stack .ge-zoom-label {
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  opacity: 0.65;
+  font-weight: 600;
+  position: relative;
+  top: 4px;
+  left: 1px;
+}
+/* + Add sits 1 px below the title baseline to match the surrounding
+   header buttons after the recent header restructure. */
+.ge-layers-header #ge-add-layer { position: relative; top: 1px; }
+.ge-layer-blend-row {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  padding: 4px 7px;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
+  font-size: 10px;
+  color: color-mix(in srgb, var(--fg) 62%, transparent);
+}
+.ge-layer-blend-row select {
+  width: 100%;
+  min-width: 0;
+  height: 25px;
+  padding: 0 24px 0 7px;
+  border-radius: 4px;
+  font-size: 10px;
+}
+.ge-layer-selection-bar {
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent, var(--red)) 8%, var(--bg-secondary));
+  color: var(--fg);
+  font-size: 10px;
+}
+.ge-layer-selection-bar > span { flex: 1; opacity: 0.72; }
+.ge-layer-selection-bar .ge-icon-btn {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  opacity: 0.72;
+}
+.ge-layer-selection-bar .ge-icon-btn.danger:hover { color: var(--red); }
+/* Layer-row buttons in the right panel — the unicode glyphs (◉, ⤢) have
+   irregular baseline metrics so the box reads as too low; shift up 2 px. */
+.ge-layer-vis,
+.ge-layer-btn { position: relative; top: -2px; }
+/* Delete (×) button glyph baseline reads even lower than the visibility
+   icon — push it up an extra 2 px so it visually centers. */
+.ge-layer-btn.danger { top: -4px; }
+/* Save / Save as new / Download dropdown anchored to the primary Save
+   button in the topbar. */
+.ge-save-wrap {
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.ge-save-menu {
+  position: fixed;
+  min-width: 160px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--fg) 18%, transparent);
+  z-index: 10005;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ge-save-state-icon { display: none; }
+.ge-save-label { white-space: nowrap; min-width: 0; }
+.ge-save-state-saved { color: var(--fg); }
+.ge-save-menu .dropdown-item-compact {
+  width: 100%;
+  background: none;
+  border: none;
+  text-align: left;
+  font: inherit;
+}
+
+/* Resize and Edge popups in the topbar — same anchored-dropdown pattern as
+   the Save menu. Resize lists preset canvas sizes; Edge is a tiny form.
+   Image + Filter menus reuse the same chrome. */
+.ge-resize-wrap,
+.ge-edge-wrap,
+.ge-view-wrap,
+.ge-image-wrap,
+.ge-selection-wrap,
+.ge-filter-wrap { position: relative; display: inline-block; }
+.ge-resize-menu,
+.ge-edge-menu,
+.ge-view-menu,
+.ge-image-menu,
+.ge-selection-menu,
+.ge-filter-menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  right: 0;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--fg) 18%, transparent);
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* Mobile: escape the topbar's stacking context (z 5) so the dropdown
+   lands above the bottom-sheet panels (z 50 / 60). Switch to fixed and
+   pin under the topbar. */
+@media (max-width: 820px) {
+  .ge-resize-menu,
+  .ge-edge-menu,
+  .ge-view-menu,
+  .ge-image-menu,
+  .ge-selection-menu,
+  .ge-filter-menu {
+    position: fixed;
+    top: 44px;
+    right: 8px;
+    z-index: 500;
+    max-width: calc(100vw - 16px);
+  }
+}
+.ge-resize-menu { min-width: 200px; }
+.ge-edge-menu { min-width: 220px; padding: 10px; gap: 6px; }
+.ge-view-menu { min-width: 174px; }
+.ge-image-menu { min-width: 180px; }
+.ge-selection-menu { min-width: 224px; }
+.ge-filter-menu { min-width: 180px; }
+.ge-resize-menu .dropdown-item-compact,
+.ge-view-menu .dropdown-item-compact,
+.ge-image-menu .dropdown-item-compact,
+.ge-selection-menu .dropdown-item-compact,
+.ge-filter-menu .dropdown-item-compact {
+  width: 100%;
+  background: none;
+  border: none;
+  text-align: left;
+  font: inherit;
+}
+.ge-view-toggle .ge-view-check { opacity: 0; }
+.ge-view-toggle.active .ge-view-check { opacity: 1; color: var(--red); }
+.ge-view-grid-size {
+  display: grid;
+  grid-template-columns: 1fr 52px auto;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  font-size: 10px;
+  color: var(--color-muted);
+}
+.ge-view-grid-size input {
+  width: 52px;
+  height: 24px;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  text-align: right;
+}
+/* Sub-menu label inside the Filter / Image dropdown — small uppercase
+   header so "Blur" / "Selection" reads as a category, not an action. */
+.ge-filter-submenu-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.45;
+  font-weight: 600;
+  padding: 4px 8px 2px;
+  pointer-events: none;
+}
+/* Disabled dropdown items (e.g. Fill when there's no selection) read
+   as muted + non-interactive. */
+.ge-image-menu .dropdown-item-compact:disabled,
+.ge-selection-menu .dropdown-item-compact:disabled,
+.ge-filter-menu .dropdown-item-compact:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.ge-selection-save-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  gap: 5px;
+  padding: 3px 4px;
+}
+.ge-selection-save-row input {
+  min-width: 0;
+  height: 27px;
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+.ge-saved-selection-list { display: flex; flex-direction: column; gap: 1px; }
+.ge-saved-selection-row { display: grid; grid-template-columns: minmax(0, 1fr) 26px; align-items: center; }
+.ge-saved-selection-load,
+.ge-saved-selection-delete {
+  min-width: 0;
+  height: 26px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.ge-saved-selection-load { padding: 3px 8px; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.ge-saved-selection-delete { opacity: 0.45; font-size: 15px; }
+.ge-saved-selection-load:hover,
+.ge-saved-selection-delete:hover { background: var(--hover); opacity: 1; }
+.ge-saved-selection-empty { padding: 4px 8px 6px; font-size: 10px; opacity: 0.45; }
+/* Filter live-preview modal — translucent backdrop over the editor
+   with a frosted parameter panel anchored top-right. The active layer
+   re-renders live as the user drags the sliders. */
+.ge-filter-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 14;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: 60px 20px 20px;
+  background: rgba(0, 0, 0, 0.18);
+  pointer-events: auto;
+}
+.ge-filter-modal {
+  width: 240px;
+  background: color-mix(in srgb, var(--panel) 95%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(10px);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ge-filter-modal-head {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.7;
+}
+.ge-filter-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ge-filter-row label {
+  font-size: 10px;
+  opacity: 0.7;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.ge-filter-row-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  opacity: 0.85;
+}
+.ge-filter-row input[type="range"] {
+  width: 100%;
+}
+.ge-filter-row input[type="color"] {
+  width: 100%;
+  height: 24px;
+  padding: 1px;
+  border: 1px solid var(--border, #333);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+.ge-filter-modal-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+/* Controlled image export. */
+.ge-export-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10020;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.56);
+}
+.ge-export-dialog {
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.48);
+}
+.ge-export-head,
+.ge-export-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+}
+.ge-export-head { border-bottom: 1px solid var(--border); }
+.ge-export-head h2 {
+  margin: 0;
+  font-size: 13px;
+  letter-spacing: 0;
+}
+.ge-export-close {
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.6;
+}
+.ge-export-close:hover { opacity: 1; }
+.ge-export-body {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.25fr) minmax(220px, 0.75fr);
+  gap: 14px;
+  padding: 14px;
+}
+.ge-export-preview-wrap {
+  min-height: 300px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background-color: #22262d;
+  background-image:
+    linear-gradient(45deg, rgba(255,255,255,0.06) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255,255,255,0.06) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255,255,255,0.06) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255,255,255,0.06) 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+}
+.ge-export-preview {
+  display: block;
+  max-width: calc(100% - 24px);
+  max-height: 420px;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.38);
+}
+.ge-export-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ge-export-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  font-size: 10px;
+  opacity: 0.78;
+}
+.ge-export-field > span {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.ge-export-field input[type="text"],
+.ge-export-field input[type="number"] {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 7px 8px;
+  font: inherit;
+  font-size: 11px;
+}
+.ge-export-field input:focus { outline: none; border-color: var(--red); }
+.ge-export-format {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.ge-export-format button {
+  min-height: 30px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+.ge-export-format button:last-child { border-right: 0; }
+.ge-export-format button.active {
+  background: color-mix(in srgb, var(--red) 18%, var(--bg));
+  color: var(--red);
+}
+.ge-export-dimensions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr);
+  gap: 5px;
+  align-items: end;
+}
+.ge-export-link {
+  width: 28px;
+  height: 29px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  opacity: 0.45;
+  cursor: pointer;
+}
+.ge-export-link.active { opacity: 1; color: var(--red); border-color: var(--red); }
+.ge-export-quality input { width: 100%; accent-color: var(--red); }
+.ge-export-surface-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+.ge-export-toggle,
+.ge-export-matte {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+}
+.ge-export-matte.disabled { opacity: 0.35; pointer-events: none; }
+.ge-export-footer {
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+}
+@media (max-width: 700px) {
+  .ge-export-overlay { padding: 8px; place-items: end center; }
+  .ge-export-dialog { width: 100%; max-height: calc(100dvh - 16px); }
+  .ge-export-body { grid-template-columns: 1fr; padding: 10px; }
+  .ge-export-preview-wrap { min-height: 190px; max-height: 260px; }
+  .ge-export-preview { max-height: 230px; }
+}
+.ge-menu-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+.ge-edge-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ge-edge-label {
+  font-size: 11px;
+  opacity: 0.65;
+}
+.ge-edge-input {
+  padding: 6px 8px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 12px;
+}
+.ge-edge-input:focus { outline: none; border-color: var(--red); }
+.ge-edge-actions {
+  display: flex;
+  gap: 6px;
+}
+.ge-edge-actions .ge-btn { flex: 1; }
+.ge-edge-hint {
+  margin: 0;
+  font-size: 10px;
+  opacity: 0.5;
+  line-height: 1.4;
+}
+
+/* Styled "New canvas" prompt — replaces the native browser prompt(). */
+.ge-canvas-prompt {
+  max-width: 430px;
+  width: 90vw;
+}
+.ge-canvas-prompt .modal-header h4 { margin: 0; font-size: 14px; }
+.ge-canvas-prompt-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  justify-content: center;
+  margin: 6px 0 2px;
+}
+.ge-canvas-prompt-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+.ge-canvas-prompt-field > span {
+  font-size: 11px;
+  opacity: 0.65;
+}
+.ge-canvas-prompt-field input {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 14px;
+}
+.ge-canvas-prompt-field input:focus { outline: none; border-color: var(--red); }
+.ge-canvas-prompt-x {
+  font-size: 18px;
+  opacity: 0.4;
+  align-self: center;
+  padding-bottom: 8px;
+  position: relative;
+  top: 8px;
+}
+.ge-canvas-prompt-hint {
+  margin: 0 auto 0 0;
+  font-size: 11px;
+  opacity: 0.5;
+  line-height: 1.35;
+  text-align: left;
+}
+.ge-canvas-prompt-section-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 2px 0 7px;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  opacity: .62;
+}
+.ge-canvas-units-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 8px 0 2px;
+  font-size: 11px;
+  opacity: .75;
+}
+.ge-canvas-control-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.ge-canvas-prompt-icon,
+.ge-canvas-preset-icon {
+  flex: 0 0 auto;
+  opacity: .68;
+}
+.ge-canvas-units-field select,
+.ge-canvas-interpolation-field select {
+  min-width: 112px;
+  padding: 5px 7px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+}
+.ge-canvas-anchor-label {
+  margin: 14px 0 6px;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  opacity: .62;
+  text-align: center;
+}
+.ge-canvas-anchor-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 22px);
+  gap: 5px;
+  justify-content: center;
+}
+.ge-canvas-anchor {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  cursor: pointer;
+  position: relative;
+}
+.ge-canvas-anchor:hover,
+.ge-canvas-anchor.active {
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+}
+.ge-canvas-resize-options {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
+.ge-canvas-lock-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  opacity: .72;
+  cursor: pointer;
+}
+.ge-canvas-interpolation-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  opacity: .72;
+}
+.ge-canvas-interpolation-field select {
+  min-width: 92px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+.ge-canvas-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.ge-canvas-preset {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.ge-canvas-preset:hover,
+.ge-canvas-preset.active {
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+}
+.ge-canvas-preset span,
+.ge-canvas-preset strong {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ge-canvas-preset span { font-size: 11px; font-weight: 600; }
+.ge-canvas-preset strong { font-size: 10px; font-weight: 500; opacity: .62; }
+.ge-canvas-prompt-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+
+.ge-btn-primary {
+  background: var(--red);
+  color: #fff;
+  border-color: var(--red);
+  font-weight: 600;
+}
+.ge-btn-primary:hover { background: color-mix(in srgb, var(--red) 85%, #000); }
+.ge-zoom-label { font-size: 10px; opacity: 0.5; }
+
+/* Nudge whirlpool spinners 1px down so they sit on the text baseline
+   when placed inside action buttons (Generate, Harmonize, etc). */
+.ge-btn .ai-spinner-whirlpool,
+.ge-btn .spinner-whirlpool,
+button .ai-spinner-whirlpool,
+button .spinner-whirlpool {
+  position: relative;
+  top: 1px;
+}
+
+/* Layers panel */
+.ge-layers {
+  /* Natural height now that the whole right panel scrolls — flex:1
+     would collapse the list inside a scrolling parent. */
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+/* Vertical drag handle that sits on the LEFT edge of the right panel.
+   Drag horizontally to widen / narrow the entire side panel. Slim
+   by default; brighter on hover so the user notices it's interactive. */
+.ge-panel-resize {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+  background: transparent;
+  z-index: 5;
+  transition: background 0.12s;
+}
+.ge-panel-resize:hover,
+.ge-panel-resize:active {
+  background: color-mix(in srgb, var(--red) 30%, transparent);
+}
+/* The right panel needs `position: relative` so the handle (absolute)
+   anchors to it instead of the viewport. */
+.ge-right-panel {
+  position: relative;
+}
+
+/* Floating value bubble that pops above the slider thumb while
+   dragging. Solves the "I can't see the number" problem when the
+   slider's opaque plate covers the row's right-edge value chip. */
+.ge-slider-bubble {
+  /* Fixed positioning so the bubble escapes any overflow:hidden/auto
+     on the slider's ancestor chain (the layers list clips, and used
+     to swallow the bubble entirely). JS sets viewport-relative
+     left/top; the translate centers and lifts the bubble above the
+     slider thumb. */
+  position: fixed;
+  transform: translate(-50%, -100%);
+  z-index: 10000;
+  padding: 5px 10px;
+  background: var(--red);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  border-radius: 6px;
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--red) 40%, transparent);
+  pointer-events: none;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.ge-slider-bubble.visible { opacity: 1; }
+
+/* Floating thumbnail shown when hovering a layer row. */
+.ge-layer-thumb {
+  position: fixed;
+  z-index: 60;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--fg) 30%, transparent);
+  pointer-events: none;
+  display: none;
+}
+.ge-layers-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg);
+  opacity: 0.8;
+  border-bottom: 1px solid var(--border);
+  position: relative;
+}
+.ge-layers-title { flex: 1; }
+.ge-layers-grab { display: none; } /* mobile only */
+.ge-layers-merge-wrap { position: relative; display: inline-flex; }
+.ge-layers-merge-wrap #ge-layers-merge-btn { position: relative; top: 0; }
+.ge-layers-merge-menu {
+  /* Fixed positioning so the menu escapes the layers panel's overflow
+     clipping (which made it look transparent). JS sets exact coords
+     via getBoundingClientRect on the trigger button at open time. */
+  position: fixed;
+  z-index: 200;
+  min-width: 160px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--fg) 18%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  pointer-events: auto;
+}
+.ge-layers-merge-menu .dropdown-item-compact {
+  width: 100%;
+  background: none;
+  border: none;
+  text-align: left;
+  font: inherit;
+}
+.ge-layers-actions {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+  /* Pin the action row to the bottom of the right panel's scroll
+     viewport. Without this, when the tool-controls section is tall
+     enough to overflow the panel, the merge buttons get pushed below
+     the fold and require scrolling to reach. */
+  position: sticky;
+  bottom: 0;
+  background: var(--panel);
+  z-index: 4;
+  /* Centered cluster instead of stretching the buttons to fill the
+     panel width. */
+  justify-content: center;
+}
+/* Merge / flatten buttons sit content-sized so the cluster reads as a
+   centered group of three, not three stretched bars across the panel. */
+.ge-layers-actions .ge-btn {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 4px 8px;
+  font-size: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.ge-layers-actions .ge-icon-btn {
+  /* Icon-only buttons stay narrow — no risk of label overflow. */
+  flex: 0 0 auto;
+  padding: 4px 8px;
+}
+.ge-layers-actions .ge-btn svg {
+  flex-shrink: 0;
+  margin-right: 0 !important;
+}
+.ge-layers-list {
+  /* Cap the list so a huge layer stack scrolls within its own box
+     rather than pushing the whole panel arbitrarily tall. */
+  max-height: 320px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0;
+}
+.ge-layer-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  transition: background 0.1s;
+  font-size: 11px;
+  color: var(--fg);
+}
+.ge-layer-item:focus-visible,
+.ge-layer-group-row:focus-visible {
+  outline: 1px solid var(--accent, var(--red));
+  outline-offset: -1px;
+}
+@media (min-width: 701px) {
+  .ge-layers-list > .ge-layer-item:not(.ge-adj-sub-item):not(.ge-mask-sub-item) {
+    display: grid;
+    grid-template-columns: 12px 22px 34px minmax(0, 1fr) 24px;
+    row-gap: 5px;
+  }
+  .ge-layers-list > .ge-layer-item:not(.ge-adj-sub-item):not(.ge-mask-sub-item) > .ge-layer-drag {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .ge-layers-list > .ge-layer-item:not(.ge-adj-sub-item):not(.ge-mask-sub-item) > .ge-layer-vis {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .ge-layers-list > .ge-layer-item:not(.ge-adj-sub-item):not(.ge-mask-sub-item) > .ge-layer-inline-thumb {
+    grid-column: 3;
+    grid-row: 1;
+  }
+  .ge-layers-list > .ge-layer-item:not(.ge-adj-sub-item):not(.ge-mask-sub-item) > .ge-layer-name,
+  .ge-layers-list > .ge-layer-item:not(.ge-adj-sub-item):not(.ge-mask-sub-item) > .ge-layer-name-input {
+    grid-column: 4;
+    grid-row: 1;
+  }
+  .ge-layers-list > .ge-layer-item:not(.ge-adj-sub-item):not(.ge-mask-sub-item) > .ge-layer-lock-btn {
+    grid-column: 5;
+    grid-row: 1;
+  }
+  .ge-layers-list > .ge-layer-item:not(.ge-adj-sub-item):not(.ge-mask-sub-item) > .ge-layer-opacity-row {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100%;
+  }
+  .ge-layers-list > .ge-layer-item:not(.ge-adj-sub-item):not(.ge-mask-sub-item) > .ge-layer-controls {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    justify-content: flex-end;
+    min-width: 0;
+  }
+}
+.ge-layer-inline-thumb {
+  display: block;
+  width: 34px;
+  height: 26px;
+  flex: 0 0 34px;
+  object-fit: contain;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 3px;
+  background: #303030;
+  image-rendering: auto;
+}
+/* Row-hover tint removed — kept the layer row's background stable so
+   it doesn't shift visually as the user reaches for the opacity slider. */
+.ge-layer-item.active {
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+  border-left-color: var(--red);
+}
+/* "Active parent" — the layer is selected, but a mask sub-layer below
+   it is the actual paint target. Soft hint so the user can see which
+   parent owns the active mask without competing with the mask's
+   strong red highlight. */
+.ge-layer-item.active-parent {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  border-left-color: color-mix(in srgb, var(--fg) 30%, transparent);
+}
+.ge-layer-item.selected:not(.active):not(.active-parent) {
+  background: color-mix(in srgb, var(--accent, var(--red)) 7%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
+}
+.ge-layer-group-row {
+  min-height: 36px;
+  display: grid;
+  grid-template-columns: 12px 18px 24px 34px minmax(0, 1fr) 24px;
+  grid-template-rows: auto auto auto;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 7px 3px calc(7px + var(--group-depth, 0) * 14px);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  background: color-mix(in srgb, var(--bg-secondary) 78%, var(--bg));
+  color: var(--fg);
+  width: 100%;
+  box-sizing: border-box;
+}
+.ge-layer-group-row .ge-layer-group-drag { grid-column: 1; grid-row: 1; }
+.ge-layer-group-row .ge-layer-group-toggle { grid-column: 2; grid-row: 1; }
+.ge-layer-group-row .ge-layer-vis { grid-column: 3; grid-row: 1; }
+.ge-layer-group-row .ge-group-inline-thumb { grid-column: 4; grid-row: 1; }
+.ge-layer-group-row .ge-layer-group-name { grid-column: 5; grid-row: 1; }
+.ge-layer-group-row .ge-layer-lock-btn { grid-column: 6; grid-row: 1; }
+.ge-layer-group-row .ge-layer-opacity-row {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+}
+.ge-layer-group-row .ge-layer-opacity-row .ge-layer-opacity {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+}
+.ge-layer-opacity-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.ge-layer-opacity-row .ge-layer-opacity { flex: 1 1 auto; width: auto; }
+.ge-layer-group-row .ge-layer-controls {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  justify-content: flex-end;
+}
+.ge-layers-list > .ge-layer-item:not(.ge-adj-sub-item):not(.ge-mask-sub-item) > .ge-layer-opacity-row {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  width: 100%;
+}
+.ge-layer-group-drag { touch-action: none; }
+.ge-layer-group-row.group-dragging {
+  opacity: 0.62;
+  outline: 1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);
+}
+.ge-group-drop-line {
+  position: absolute;
+  z-index: 20;
+  left: 6px;
+  right: 6px;
+  height: 2px;
+  pointer-events: none;
+  background: var(--accent, var(--red));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg) 65%, transparent);
+}
+.ge-layer-group-row.active {
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, var(--bg-secondary));
+  box-shadow: inset 2px 0 0 var(--accent, var(--red));
+}
+.ge-layer-group-toggle {
+  width: 18px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  opacity: 0.62;
+}
+.ge-layer-group-toggle svg { transition: transform 120ms ease; }
+.ge-layer-group-toggle.expanded svg { transform: rotate(90deg); }
+.ge-layer-group-name {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 600;
+}
+.ge-layer-group-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ge-group-mask-sub-item { padding-left: calc(20px + var(--group-mask-depth, 1) * 14px); }
+.ge-layer-vis {
+  border: none;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+  padding: 2px 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.4;
+  transition: opacity 0.12s;
+}
+.ge-layer-vis:hover { opacity: 0.8; }
+.ge-layer-vis.visible { opacity: 0.9; }
+.ge-layer-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.ge-layer-clipped-marker {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  color: var(--accent, var(--red));
+  opacity: 0.82;
+}
+.ge-layer-name-input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-size: 11px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  min-width: 0;
+}
+/* All sliders inside the image editor share the same visual language as
+   the layer opacity slider — rounded pill, dim track, red thumb. Track
+   AND thumb grow when interacting for finer tweaking. */
+.gallery-editor-container input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: color-mix(in srgb, var(--fg) 25%, transparent);
+  border-radius: 999px;
+  accent-color: var(--red);
+  cursor: pointer;
+  transition: height 0.15s ease;
+}
+.gallery-editor-container input[type="range"]:hover,
+.gallery-editor-container input[type="range"]:focus,
+.gallery-editor-container input[type="range"]:active {
+  height: 10px;
+}
+.gallery-editor-container input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--red);
+  border: none;
+  cursor: pointer;
+  transition: width 0.12s ease, height 0.12s ease;
+}
+.gallery-editor-container input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--red);
+  border: none;
+  cursor: pointer;
+  transition: width 0.12s ease, height 0.12s ease;
+}
+.gallery-editor-container input[type="range"]:hover::-webkit-slider-thumb,
+.gallery-editor-container input[type="range"]:focus::-webkit-slider-thumb,
+.gallery-editor-container input[type="range"]:active::-webkit-slider-thumb {
+  width: 18px;
+  height: 18px;
+}
+.gallery-editor-container input[type="range"]:hover::-moz-range-thumb,
+.gallery-editor-container input[type="range"]:focus::-moz-range-thumb,
+.gallery-editor-container input[type="range"]:active::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+}
+
+/* Layer-row opacity slider — fixed track, only thumb grows on
+   interaction. Takes a bit of row space at rest, but no jumpy expand
+   animation. */
+.ge-layer-opacity {
+  width: 70px;
+  height: 6px;
+  accent-color: var(--red);
+  flex-shrink: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  background: color-mix(in srgb, var(--fg) 25%, transparent);
+  border-radius: 999px;
+  position: relative;
+  top: 0;
+}
+.ge-layer-opacity:hover::-webkit-slider-thumb,
+.ge-layer-opacity:active::-webkit-slider-thumb,
+.ge-layer-opacity.dragging::-webkit-slider-thumb {
+  width: 18px;
+  height: 18px;
+}
+.ge-layer-opacity:hover::-moz-range-thumb,
+.ge-layer-opacity:active::-moz-range-thumb,
+.ge-layer-opacity.dragging::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+}
+.ge-layer-controls {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.ge-layer-controls .ge-mask-inspect-btn.active {
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+}
+.ge-mask-properties {
+  position: relative;
+  flex: 0 0 30px;
+}
+.ge-mask-properties > summary:hover,
+.ge-mask-properties[open] > summary {
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+}
+.ge-mask-properties-panel {
+  position: fixed;
+  z-index: 9999;
+  right: auto;
+  top: 0;
+  width: 190px;
+  padding: 8px;
+  display: grid;
+  gap: 7px;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: 5px;
+  background: var(--bg-secondary, var(--bg));
+  box-shadow: 0 8px 24px rgba(0,0,0,.28);
+}
+.ge-mask-property-row {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) 35px;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+}
+.ge-mask-property-row input { min-width: 0; width: 100%; }
+.ge-mask-apply-btn {
+  width: 100%;
+  min-height: 26px;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 55%, var(--border));
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 10px;
+}
+.ge-mask-apply-btn:hover { background: color-mix(in srgb, var(--accent, var(--red)) 22%, transparent); }
+.ge-layer-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  min-height: 34px;
+  padding: 3px 7px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  background: color-mix(in srgb, var(--bg-secondary) 72%, var(--bg));
+}
+.ge-layer-tools .ge-layer-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  width: 100%;
+}
+.ge-eyedropper-live {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  padding: 3px 6px;
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.ge-eyedropper-loupe {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  border-radius: 4px;
+  image-rendering: pixelated;
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 22%, transparent);
+}
+.ge-eyedropper-live-swatch {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  border-radius: 4px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 22%, transparent);
+}
+.ge-eyedropper-live-values {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  font-size: 10px;
+  line-height: 1.25;
+}
+.ge-eyedropper-live-values > span { opacity: .62; font-variant-numeric: tabular-nums; }
+.ge-eyedropper-live-swatch.empty {
+  background: repeating-linear-gradient(135deg, transparent 0 4px, color-mix(in srgb, var(--fg) 18%, transparent) 4px 6px);
+}
+.ge-eyedropper-live code {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  opacity: .75;
+}
+/* Left-edge drag handle on each layer row. */
+.ge-layer-drag {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  margin-right: 2px;
+  opacity: 0.4;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  flex-shrink: 0;
+}
+.ge-layer-drag:hover { opacity: 0.85; }
+/* While dragSort lifts the item via absolute positioning, the placeholder
+   slot shows where it'll land — give it a subtle red outline so users see
+   the target clearly. */
+.ge-layers-list .drag-placeholder {
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--red) 50%, transparent);
+  border-radius: 4px;
+  box-sizing: border-box;
+}
+.ge-layer-item.dragging {
+  background: var(--panel);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--fg) 25%, transparent);
+  border-radius: 4px;
+}
+.ge-layer-btn {
+  border: none;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+  opacity: 0.4;
+  transition: opacity 0.1s;
+}
+.ge-layer-btn:hover { opacity: 0.8; }
+.ge-layer-btn.active { color: var(--accent, var(--red)); opacity: 0.95; }
+.ge-layer-btn:disabled { cursor: default; opacity: 0.16; }
+.ge-layer-btn.danger:hover { color: var(--red); opacity: 1; }
+
+.ge-layer-lock-menu {
+  position: fixed;
+  z-index: 10004;
+  width: 176px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel, var(--bg));
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+.ge-layer-lock-option {
+  width: 100%;
+  height: 30px;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.ge-layer-lock-option:hover,
+.ge-layer-lock-option:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.ge-layer-align-menu { width: 218px; }
+.ge-layer-lock-check {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--fg) 28%, transparent);
+  border-radius: 3px;
+  color: var(--accent, var(--red));
+  font-size: 11px;
+  line-height: 1;
+}
+@media (max-width: 700px) {
+  .ge-layer-lock-menu { width: auto; }
+  .ge-layer-lock-option { height: 44px; font-size: 13px; }
+}
+
+/* Crop apply button */
+.ge-crop-apply {
+  position: absolute;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+.ge-crop-apply input[type="number"] {
+  width: 56px;
+  padding: 3px 4px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 11px;
+  -moz-appearance: textfield;
+}
+.ge-crop-x { font-size: 11px; opacity: 0.5; }
+.ge-crop-apply-btn {
+  padding: 4px 10px;
+  background: var(--red);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  position: relative;
+  top: -2px;
+}
+.ge-crop-apply-btn:hover { background: color-mix(in srgb, var(--red) 85%, #000); }
+
+/* Text input floating */
+.ge-text-input {
+  background: var(--bg);
+  border: 1px solid var(--red);
+  color: var(--fg);
+  padding: 4px 8px;
+  font-size: 14px;
+  border-radius: 4px;
+  min-width: 120px;
+}
+.ge-brush-cursor {
+  position: fixed; pointer-events: none; z-index: 2147483647;
+  border: 1.5px solid #fff; border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.72);
+  display: none;
+  box-sizing: border-box;
+}
+.ge-inpaint-section {
+  padding: 8px 0; border-top: 1px solid var(--border); margin-top: 4px;
+}
+.ge-inpaint-popover-head {
+  display: none;
+}
+@media (min-width: 821px) {
+  .ge-controls.ge-inpaint-popover-host {
+    padding: 0;
+    border-bottom: 0;
+    gap: 0;
+  }
+  .ge-inpaint-section.ge-inpaint-popover {
+    position: fixed;
+    z-index: 10004;
+    width: 330px;
+    max-height: calc(100vh - 24px);
+    overflow-y: auto;
+    padding: 10px;
+    margin: 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.42);
+  }
+  .ge-inpaint-section.ge-inpaint-popover .ge-inpaint-popover-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: -10px -10px 8px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    cursor: grab;
+    user-select: none;
+  }
+  .ge-inpaint-section.ge-inpaint-popover > .ge-section-title-with-help:not(.ge-inpaint-popover-title) {
+    display: none;
+  }
+  .ge-inpaint-section.ge-inpaint-popover .ge-inpaint-popover-title {
+    margin: 0;
+    flex: 1 1 auto;
+  }
+  .ge-inpaint-section.ge-inpaint-popover .ge-inpaint-popover-close {
+    flex: 0 0 auto;
+    position: relative;
+    top: -8px;
+    border: none;
+    background: none;
+    color: var(--fg-muted);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 4px;
+    border-radius: 4px;
+    transition: color 0.14s ease, background-color 0.14s ease;
+  }
+  .ge-inpaint-section.ge-inpaint-popover .ge-inpaint-popover-close:hover {
+    color: var(--fg);
+    background: color-mix(in srgb, var(--fg) 10%, transparent);
+  }
+}
+.ge-inpaint-model-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ge-inpaint-model-row label {
+  flex: 0 0 auto;
+  font-size: 10px;
+  opacity: 0.65;
+}
+.ge-inpaint-model-row #ge-ai-inpaint {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 10px;
+  padding: 4px 6px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.ge-inpaint-prompt {
+  width: 100%; padding: 6px 8px; background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 4px; font-size: 12px;
+  font-family: inherit; margin-top: 4px; box-sizing: border-box;
+}
+.ge-inpaint-prompt:focus { border-color: var(--red); outline: none; }
+
+/* Responsive: stack on narrow screens */
+@media (max-width: 700px) {
+  /* The editor body holds the sidebar | canvas | layers panel; on
+     mobile we stack them as toolbar (top) → canvas (middle) → layers
+     (bottom). Without this the body stays a flex row and the canvas
+     ends up zero-width because the sidebar takes the full width. */
+  .ge-editor-body {
+    flex-direction: column;
+  }
+  /* Brush/Size-style rows: stack the label above its slider so the
+     slider gets a full row instead of getting smashed against the
+     panel's right edge. Doesn't touch .ge-eraser-row which has its own
+     value-chip-on-the-right layout. */
+  .ge-control-row:not(.ge-eraser-row):has(input[type="range"]) {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+  }
+  .ge-control-row:not(.ge-eraser-row):has(input[type="range"]) > input[type="range"] {
+    width: 100%;
+  }
+  /* More breathing room around lasso/wand sliders on mobile so they
+     don't hug the right edge of the controls panel. */
+  #ge-lasso-section .ge-eraser-row,
+  #ge-wand-section .ge-eraser-row {
+    padding-right: 12px;
+    margin-top: 6px;
+  }
+  /* Lasso action buttons (Clear / Copy / To Mask / Bg Remove): pin to
+     the right edge of the row instead of left-aligned. */
+  #ge-lasso-section .ge-actions,
+  #ge-wand-section .ge-actions {
+    justify-content: flex-end;
+  }
+  /* Universal thumb-grow on active for every slider on mobile. */
+  .ge-controls input[type="range"]:active::-webkit-slider-thumb,
+  .ge-controls input[type="range"].is-using::-webkit-slider-thumb {
+    width: 22px;
+    height: 22px;
+  }
+  .ge-controls input[type="range"]:active::-moz-range-thumb,
+  .ge-controls input[type="range"].is-using::-moz-range-thumb {
+    width: 22px;
+    height: 22px;
+  }
+  .ge-controls input[type="range"]::-webkit-slider-thumb,
+  .ge-controls input[type="range"]::-moz-range-thumb {
+    transition: width 0.12s ease, height 0.12s ease;
+  }
+  .ge-toolbar {
+    flex-direction: row;
+    width: 100%;
+    height: auto;
+    padding: 4px 0;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-shrink: 0;
+    gap: 0;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .ge-toolbar::-webkit-scrollbar { display: none; }
+  /* Section labels in the toolbar were vertical breaks — turn them
+     into thin vertical dividers when the column flows horizontally. */
+  .ge-tool-sep {
+    border-top: none;
+    border-left: 1px solid var(--border);
+    margin: 0 4px;
+    padding: 0;
+    width: 1px;
+    height: 24px;
+    text-indent: -9999px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .ge-tool-btn {
+    flex-shrink: 0;
+    width: 48px;
+  }
+  /* Canvas is the main thing — give it as much vertical space as
+     the editor body can spare. min-height keeps it visible even when
+     the right panel is at its max. */
+  .ge-canvas-area {
+    flex: 1 1 auto;
+    min-height: 40vh;
+  }
+  /* Right panel = layers list. Docked as a bottom sheet with a peek
+     state: collapsed shows the header strip (and the active layer
+     row peeks through), expanded reveals all layers + actions. The
+     user swipes up to expand, down to collapse — the active layer is
+     never fully hidden. */
+  .ge-right-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    max-height: 70vh;
+    height: 70vh;
+    background: var(--panel);
+    border-left: none;
+    border-top: 1px solid var(--border);
+    border-radius: 12px 12px 0 0;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
+    z-index: 50;
+    flex-shrink: 0;
+    /* Peek height grows with the layer count up to a cap. JS sets the
+       `--peek-height` custom property from _renderLayerPanel(); default
+       fallback is enough for the header + one row. */
+    transform: translateY(calc(100% - var(--peek-height, 110px)));
+    transition: transform 0.22s ease-out;
+  }
+  .ge-right-panel.expanded {
+    transform: translateY(0);
+  }
+  /* Minimized: panel slides almost fully off-screen — only a thin
+     handle strip remains visible so the user can swipe back up. */
+  .ge-right-panel.minimized {
+    transform: translateY(calc(100% - 24px));
+  }
+  .ge-layers-grab {
+    display: block !important;
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 40px;
+    height: 4px;
+    background: color-mix(in srgb, var(--fg) 30%, transparent);
+    border-radius: 2px;
+  }
+  .ge-layers-header {
+    padding-top: 16px;
+    position: relative;
+  }
+  /* In peek state, the layers list takes the full panel height (~70vh)
+     and never overflows so its own scrollbar doesn't activate. Constrain
+     the list to the visible peek area so it scrolls properly when there
+     are more layers than the peek can show. */
+  .ge-right-panel:not(.expanded) .ge-layers-list {
+    max-height: calc(var(--peek-height, 110px) - 52px);
+    -webkit-overflow-scrolling: touch;
+  }
+  /* Mobile layer-row buttons — bump hit targets up so fingers can
+     reliably tap visibility / fx / delete. */
+  .ge-layer-vis,
+  .ge-layer-btn,
+  .ge-layer-fx-btn {
+    width: 40px !important;
+    height: 40px !important;
+    font-size: 18px !important;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .ge-layer-btn svg,
+  .ge-layer-fx-btn svg {
+    width: 18px;
+    height: 18px;
+  }
+  .ge-layers-list {
+    overflow-x: clip;
+  }
+  .ge-layers-list > .ge-layer-item:not(.ge-adj-sub-item):not(.ge-mask-sub-item) {
+    display: grid;
+    grid-template-columns: 12px 40px 34px minmax(0, 1fr) 40px;
+    grid-template-rows: 40px auto 40px;
+    align-items: center;
+    row-gap: 3px;
+  }
+  .ge-layers-list > .ge-layer-group-row {
+    grid-template-columns: 12px 40px 40px 34px minmax(0, 1fr) 40px;
+    grid-template-rows: 40px auto 40px;
+    align-items: center;
+    row-gap: 3px;
+  }
+  .ge-layer-group-row .ge-layer-group-drag { grid-column: 1; grid-row: 1; }
+  .ge-layer-group-row .ge-layer-group-toggle { grid-column: 2; grid-row: 1; }
+  .ge-layer-group-row .ge-layer-vis { grid-column: 3; grid-row: 1; }
+  .ge-layer-group-row .ge-group-inline-thumb { grid-column: 4; grid-row: 1; }
+  .ge-layer-group-row .ge-layer-group-name { grid-column: 5; grid-row: 1; }
+  .ge-layer-group-row .ge-layer-lock-btn { grid-column: 6; grid-row: 1; }
+  .ge-layer-group-row .ge-layer-opacity-row {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    margin-left: 52px;
+    width: auto;
+  }
+  .ge-layer-group-row .ge-layer-controls {
+    grid-column: 1 / -1;
+    grid-row: 3;
+  }
+  .ge-layers-list > .ge-layer-item:not(.ge-adj-sub-item):not(.ge-mask-sub-item) > .ge-layer-drag {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .ge-layers-list > .ge-layer-item:not(.ge-adj-sub-item):not(.ge-mask-sub-item) > .ge-layer-vis {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .ge-layers-list > .ge-layer-item:not(.ge-adj-sub-item):not(.ge-mask-sub-item) > .ge-layer-inline-thumb {
+    grid-column: 3;
+    grid-row: 1;
+  }
+  .ge-layers-list > .ge-layer-item:not(.ge-adj-sub-item):not(.ge-mask-sub-item) > .ge-layer-name,
+  .ge-layers-list > .ge-layer-item:not(.ge-adj-sub-item):not(.ge-mask-sub-item) > .ge-layer-name-input {
+    grid-column: 4;
+    grid-row: 1;
+  }
+  .ge-layers-list > .ge-layer-item:not(.ge-adj-sub-item):not(.ge-mask-sub-item) > .ge-layer-lock-btn {
+    grid-column: 5;
+    grid-row: 1;
+  }
+  .ge-layers-list > .ge-layer-item:not(.ge-adj-sub-item):not(.ge-mask-sub-item) > .ge-layer-opacity-row {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    display: flex;
+    width: auto;
+    min-width: 0;
+    margin-left: 52px;
+  }
+  .ge-mask-sub-item {
+    display: grid;
+    grid-template-columns: 40px 34px minmax(80px, 1fr) auto;
+    grid-template-rows: 40px;
+    align-items: center;
+    padding-left: 8px;
+  }
+  .ge-mask-sub-item > .ge-layer-vis { grid-column: 1; grid-row: 1; }
+  .ge-mask-sub-item > .ge-mask-inline-thumb { grid-column: 2; grid-row: 1; }
+  .ge-mask-sub-item > .ge-layer-name {
+    grid-column: 3;
+    grid-row: 1;
+    display: flex !important;
+    min-width: 0;
+  }
+  .ge-mask-sub-item > .ge-layer-controls {
+    grid-column: 4;
+    grid-row: 1;
+    min-width: 0;
+    justify-content: flex-start;
+  }
+  .ge-mask-sub-item > .ge-layer-controls .ge-layer-btn {
+    width: 30px !important;
+    min-width: 30px !important;
+    height: 30px !important;
+    font-size: 14px !important;
+  }
+  /* Layer opacity slider stays at its expanded size at all times on
+     mobile — there's room for it and the resize-on-hover felt jittery
+     when scrolling. */
+  .ge-layer-opacity,
+  .ge-layer-opacity:hover,
+  .ge-layer-opacity:active,
+  .ge-layer-opacity.dragging {
+    width: 160px !important;
+    height: 10px !important;
+  }
+  /* Transform / adjust popups dock at the TOP of the viewport on
+     mobile so they overlay the topbar instead of eating canvas space.
+     Fixed positioning escapes any transformed ancestor stacking. */
+  .ge-transform-popup,
+  .ge-adj-popup,
+  .ge-fx-popup {
+    position: fixed !important;
+    left: 8px !important;
+    right: 8px !important;
+    top: 32px !important;
+    bottom: auto !important;
+    max-width: calc(100vw - 16px) !important;
+    width: auto !important;
+    min-width: 0 !important;
+    min-height: 240px !important;
+    max-height: calc(100vh - 40px);
+    overflow-y: auto;
+    z-index: 10003 !important;
+  }
+  .ge-fx-menu {
+    position: fixed !important;
+    left: 8px !important;
+    right: 8px !important;
+    top: auto !important;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 8px) !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: calc(100vw - 16px) !important;
+    z-index: 10002 !important;
+  }
+  /* Hide both the minimise and × close buttons in the header on
+     mobile — a clearly labelled Cancel button next to Apply in the
+     body is more discoverable than tiny header icons. */
+  .ge-transform-popup #ge-transform-min,
+  .ge-transform-popup #ge-transform-cancel {
+    display: none !important;
+  }
+  /* Wrap the transform body into precision rows on mobile:
+       Row 1: X + Y
+       Row 2: W + H
+       Row 3: ↻ rotate + quick actions + Apply/Cancel */
+  .ge-transform-popup-body {
+    flex-wrap: wrap !important;
+    align-items: center;
+    row-gap: 8px;
+    column-gap: 6px;
+  }
+  .ge-transform-popup-body #ge-transform-rot {
+    width: 3.5ch !important;
+    min-width: 0 !important;
+  }
+  /* 3-row layout, enforced by explicit `.ge-row-break` elements in the
+     DOM (the only reliable way to force a flex-wrap line break).
+       Row 1: W input + H input
+       Row 2: aspect lock + ↻ rotate input
+       Row 3: flip-h, flip-v, rot-90 + Cancel + Apply */
+  .ge-transform-popup-body .ge-row-break {
+    display: block;
+    flex-basis: 100%;
+    height: 0;
+    width: 100%;
+  }
+  /* Flip buttons slightly bigger so they're easier to tap. */
+  .ge-transform-quick-btn {
+    padding: 8px 10px !important;
+    min-width: 40px;
+    min-height: 40px;
+  }
+  .ge-transform-quick-btn svg {
+    width: 18px;
+    height: 18px;
+  }
+  /* Cancel + Apply share the right side of row 2, same size, paired. */
+  .ge-transform-popup-body #ge-transform-cancel-btn {
+    margin-left: auto;
+  }
+  .ge-transform-popup-body #ge-transform-cancel-btn,
+  .ge-transform-popup-body #ge-transform-apply {
+    padding: 8px 16px !important;
+    font-size: 13px !important;
+    min-width: 80px;
+    text-align: center;
+  }
+  /* Stepper-style number control on mobile:
+       [ − ]  [ input ]  [ + ]
+     Stack reverses so the − sits visually on the LEFT of the input, +
+     on the RIGHT. Big finger-sized squares, big +/- glyphs, both
+     buttons support tap-and-hold auto-repeat (JS) for fast scrubbing. */
+  .ge-transform-field {
+    display: inline-flex !important;
+    align-items: stretch;
+    gap: 0;
+  }
+  .ge-transform-field > label {
+    display: inline-flex;
+    align-items: center;
+    padding-right: 6px;
+    font-weight: 600;
+  }
+  .ge-transform-field:not(:has(#ge-transform-rot)) > label {
+    position: relative;
+    top: -1px;
+  }
+  .ge-transform-spin {
+    display: inline-flex !important;
+    flex-direction: row !important;
+    /* Use grid-order to swap positions of [−][+]: the − should sit
+       BEFORE the input, the + AFTER it. Achieve this by absolute
+       order — first child styled differently, second styled
+       differently, then we move the whole .ge-transform-spin's first
+       button visually before the input via reverse-flex. */
+    order: 0;
+    width: auto !important;
+  }
+  .ge-transform-field {
+    flex-direction: row;
+  }
+  /* Re-flow:  label  +  [-]  +  input  +  [+]
+     We split the .ge-transform-spin's two buttons across the field's
+     flex line using order: order:0 for −, order:2 for input, order:3
+     for +. The spin <span> itself gets `display: contents` so its
+     children can be reordered independently against the input. */
+  .ge-transform-spin {
+    display: contents !important;
+  }
+  .ge-transform-field > input.ge-transform-popup-input {
+    order: 2;
+    text-align: center;
+  }
+  .ge-transform-spin button[data-spin="down"] {
+    order: 1;
+  }
+  .ge-transform-spin button[data-spin="up"] {
+    order: 3;
+  }
+  /* The buttons themselves — chunky, square, identical in size. Reset
+     the base `:first-child` rule (which strips the bottom border for
+     the old stacked layout) so both buttons render with the same
+     visual box in the new row layout. */
+  .ge-transform-spin button {
+    box-sizing: border-box !important;
+    width: 36px !important;
+    height: 36px !important;
+    min-width: 36px;
+    min-height: 36px;
+    padding: 0 0 0 0 !important;
+    font-size: 18px !important;
+    font-weight: 700;
+    line-height: 1 !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 6px !important;
+    flex-shrink: 0;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    top: -4px;
+  }
+  .ge-transform-spin button:first-child,
+  .ge-transform-spin button:last-child {
+    border-radius: 6px !important;
+    border-bottom: 1px solid var(--border) !important;
+  }
+  /* Graphic-editor adjustment buttons use text glyphs that sit visually low —
+     lift them to match the +/- button alignment. */
+  .ge-adj-close,
+  .ge-adj-min {
+    padding-top: 0 !important;
+    padding-bottom: 8px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+  .ge-transform-spin button[data-spin="down"] { margin-right: 4px; }
+  .ge-transform-spin button[data-spin="up"]   { margin-left: 4px; }
+  /* The input between them — generous tap area and clear typography. */
+  .ge-transform-field > input.ge-transform-popup-input {
+    height: 36px !important;
+    padding: 0 6px !important;
+    font-size: 14px !important;
+    min-width: 56px;
+    position: relative;
+    top: 2px;
+  }
+  /* Rotate input — compact so it fits on row 2 alongside the flip
+     quick buttons and the Cancel + Apply pair. */
+  .ge-transform-field > #ge-transform-rot.ge-transform-popup-input {
+    min-width: 0;
+    width: 64px !important;
+  }
+  /* Suffix (°) sits right after the rotate input but before the + button. */
+  .ge-transform-popup-suffix { order: 3; align-self: center; padding: 0 2px; }
+  /* Slider thumb grows only while actively dragged — keeps the resting
+     row compact, thumb pops larger when the user grabs it. */
+  .gallery-editor-container input[type="range"]:active::-webkit-slider-thumb,
+  .ge-layer-opacity:active::-webkit-slider-thumb,
+  .ge-layer-opacity.dragging::-webkit-slider-thumb {
+    width: 22px !important;
+    height: 22px !important;
+  }
+  .gallery-editor-container input[type="range"]:active::-moz-range-thumb,
+  .ge-layer-opacity:active::-moz-range-thumb,
+  .ge-layer-opacity.dragging::-moz-range-thumb {
+    width: 22px !important;
+    height: 22px !important;
+  }
+  /* Slider value bubble on mobile — bigger text/padding for
+     readability. Position is JS-driven via `position: fixed` from the
+     base rule, so don't override top/bottom here — `bottom: 100%`
+     with fixed positioning was pushing the bubble off-screen. */
+  .ge-slider-bubble {
+    font-size: 14px !important;
+    padding: 5px 10px !important;
+  }
+  /* Editor topbar — scrolls horizontally on narrow viewports. Buttons
+     fill more vertical+horizontal space so each is a comfortable
+     finger-tap target instead of feeling cramped. */
+  .ge-topbar {
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    gap: 6px;
+    padding: 6px 8px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .ge-topbar::-webkit-scrollbar { display: none; }
+  .ge-topbar-left,
+  .ge-topbar-right {
+    flex-shrink: 0;
+    gap: 6px;
+  }
+  .ge-alpha-badge {
+    display: none;
+  }
+  #ge-undo {
+    position: sticky !important;
+    left: 8px;
+    background: var(--panel);
+    z-index: 8;
+    box-shadow: 8px 0 10px -10px color-mix(in srgb, var(--fg) 55%, transparent);
+  }
+  .ge-topbar .ge-btn,
+  .ge-topbar .ge-btn-sm {
+    padding: 7px 11px !important;
+    font-size: 13px !important;
+    min-height: 34px;
+    line-height: 1;
+    top: 0 !important;
+  }
+  .ge-topbar .ge-btn svg,
+  .ge-topbar .ge-btn-sm svg {
+    width: 16px;
+    height: 16px;
+  }
+  .ge-topbar select,
+  .ge-topbar input,
+  .ge-topbar .ge-ai-model {
+    padding: 6px 8px !important;
+    font-size: 12px !important;
+    min-height: 32px;
+    top: 0 !important;
+  }
+  .ge-topbar .ge-canvas-size {
+    font-size: 12px !important;
+    padding: 0 6px;
+    line-height: 34px;
+  }
+  #ge-history-panel {
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    bottom: 0 !important;
+    width: auto !important;
+    max-height: min(60dvh, 420px);
+    border-radius: 12px 12px 0 0 !important;
+    z-index: 10001 !important;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
+  }
+  #ge-history-panel .ge-history-head { cursor: default; }
+  #ge-shortcuts-btn {
+    display: none !important;
+  }
+  /* Topbar popups that need real interaction (Resize sliders, Edge
+     form, Save with sub-items) become bottom-sheet slide-ups on
+     mobile so there's room to interact. Image and Filter are tight
+     single-column dropdowns — they stay anchored to their button. */
+  .ge-resize-menu,
+  .ge-edge-menu,
+  .ge-save-menu {
+    position: fixed !important;
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    bottom: 0 !important;
+    min-width: 0 !important;
+    max-width: 100vw !important;
+    width: auto;
+    padding: 18px 16px 24px !important;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px 12px 0 0 !important;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
+    z-index: 10005;
+    animation: ge-controls-slide-up 0.2s ease-out;
+  }
+  /* Image / Filter stay as anchored dropdowns; just cap width
+     so they don't run off-screen on narrow viewports. */
+  .ge-image-menu,
+  .ge-selection-menu,
+  .ge-filter-menu {
+    max-width: calc(100vw - 16px);
+  }
+  .ge-resize-menu::before,
+  .ge-edge-menu::before,
+  .ge-save-menu::before {
+    content: '';
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 40px;
+    height: 4px;
+    background: color-mix(in srgb, var(--fg) 30%, transparent);
+    border-radius: 2px;
+  }
+  /* The Edge form needs a bit of breathing room when it spans the
+     viewport; the W/H inputs in the crop apply pop should stay compact. */
+  .ge-edge-menu { padding: 12px; }
+  .ge-canvas-prompt {
+    width: calc(100vw - 16px) !important;
+    max-width: none !important;
+  }
+  .ge-canvas-prompt-footer {
+    flex-wrap: wrap;
+  }
+  .ge-canvas-prompt-footer .ge-canvas-prompt-hint {
+    flex: 1 0 100%;
+    margin-bottom: 2px;
+  }
+  /* Inpaint floating prompt — keep it inside the canvas area on
+     mobile so it doesn't run off the right edge. */
+  .ge-inpaint-popup {
+    max-width: calc(100vw - 16px);
+  }
+  .ge-inpaint-popup-input { width: 160px; }
+
+  /* Tool-specific controls (brush size/color, eraser opacity/flow,
+     lasso feather, inpaint prompt panel, etc.) lift out of the right
+     panel and dock as a slide-up bottom sheet so they have actual room
+     to breathe on a phone. A short grab-handle visually separates it
+     from the canvas. */
+  .ge-controls {
+    position: fixed !important;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 60;
+    border-bottom: none;
+    border-top: 1px solid var(--border);
+    background: var(--panel);
+    border-radius: 12px 12px 0 0;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
+    max-height: 60vh;
+    overflow-y: auto;
+    padding: 18px 16px 24px;
+    gap: 12px;
+    /* Slide-up entrance animation when the controls become visible. */
+    animation: ge-controls-slide-up 0.18s ease-out;
+  }
+  .ge-controls::before {
+    content: '';
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 40px;
+    height: 4px;
+    background: color-mix(in srgb, var(--fg) 30%, transparent);
+    border-radius: 2px;
+  }
+  @keyframes ge-controls-slide-up {
+    from { transform: translateY(100%); }
+    to   { transform: translateY(0); }
+  }
+  /* User swiped the sheet down — keep tool active but hide its
+     controls. Re-tapping the same tool button toggles back. */
+  .ge-controls.dismissed {
+    transform: translateY(100%);
+    pointer-events: none;
+    /* Smooth slide-out matching the slide-in duration. */
+    animation: none;
+    transition: transform 0.18s ease-in;
+  }
+}
+
+/* ── Group Chat ────────────────────────────────────── */
+.msg-group .role {
+  font-weight: 600;
+}
+#group-toggle-btn.active,
+.overflow-menu-item#overflow-group-btn.active {
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+}
+/* Group model picker — match app theme */
+#group-model-picker .modal-content {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+}
+#group-model-picker .modal-header {
+  border-bottom: 1px solid var(--border);
+}
+#group-model-picker .memory-item {
+  border-radius: 6px;
+  transition: background 0.1s;
+}
+#group-model-picker .memory-item:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+#group-model-picker input[type="checkbox"] {
+  accent-color: var(--accent, var(--red));
+}
+#group-model-picker input[type="radio"] {
+  accent-color: var(--accent, var(--red));
+}
+#group-model-picker .btn-primary {
+  background: var(--accent, var(--red));
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+}
+#group-model-picker .btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+#group-model-picker .btn-primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+/* ── Email document type ── */
+.doc-email-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+}
+.email-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.email-field label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg);
+  opacity: 0.5;
+  min-width: 50px;
+  text-align: right;
+}
+.email-field input {
+  flex: 1;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--fg);
+  outline: none;
+}
+.email-field input:focus {
+  border-color: var(--accent, #4a9eff);
+}
+.email-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 2px;
+}
+.email-draft-btn {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 14px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.email-draft-btn:hover { background: var(--hover-bg, rgba(255,255,255,0.05)); }
+.email-draft-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Email inbox list ── */
+.email-body { border-top: 1px solid var(--border); }
+.email-folder-bar { padding: 4px 8px; border-bottom: 1px solid var(--border); }
+.email-folder-select {
+  background: transparent; border: 1px solid var(--border); border-radius: 4px;
+  color: var(--fg); font-size: 11px; padding: 2px 6px; cursor: pointer; width: 100%; height: 26px;
+}
+.email-item {
+  display: flex; align-items: flex-start; gap: 8px; padding: 8px 12px;
+  cursor: pointer; border-bottom: 1px solid var(--border); position: relative; transition: background 0.1s;
+}
+.email-item:hover { background: var(--hover-bg, rgba(255,255,255,0.03)); }
+.email-item-spam:hover { opacity: 0.75; }
+.email-tag-spam {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 30%, transparent);
+  color: var(--accent, var(--red));
+  border-radius: 10px; padding: 1px 6px; font-size: 9px; font-weight: 600;
+  text-transform: lowercase; letter-spacing: 0.3px;
+}
+.email-spam-unflag {
+  background: none; border: none; color: inherit; cursor: pointer;
+  padding: 0 2px; font-size: 10px; line-height: 1; opacity: 0.6;
+}
+.email-spam-unflag:hover { opacity: 1; color: var(--fg); }
+/* Unread state is now a subtle icon, not full styling */
+.email-done-check {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 50%; background: transparent;
+  border: 1.5px solid var(--border); color: transparent;
+  flex-shrink: 0; cursor: pointer; transition: all 0.15s;
+  margin-right: 4px;
+}
+.email-done-check:hover { border-color: var(--accent, #4a9eff); }
+.email-done-check.active { background: var(--accent, #4a9eff); border-color: var(--accent, #4a9eff); color: #fff; }
+.email-done-check.active svg { display: block; }
+.email-done-check svg { display: none; }
+
+
+
+
+.email-delete-busy > :not(.email-delete-overlay) {
+  opacity: 0.42;
+  transition: opacity 0.12s ease;
+}
+
+.email-delete-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--panel, var(--bg)) 82%, transparent);
+  pointer-events: none;
+}
+
+.email-delete-overlay .spinner-whirlpool,
+.email-delete-overlay .ai-spinner-whirlpool {
+  margin: 0 !important;
+}
+
+.doclib-card.email-card-removing {
+  pointer-events: none !important;
+  max-height: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  border-color: transparent !important;
+  opacity: 0;
+  transform: translateX(-10px) scale(0.985);
+  transition:
+    opacity 0.18s ease,
+    transform 0.22s ease,
+    max-height 0.23s ease,
+    padding 0.23s ease,
+    margin 0.23s ease,
+    border-color 0.18s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doclib-card.email-card-removing {
+    transition: opacity 0.08s ease;
+    transform: none;
+  }
+}
+
+/* Library card done check — always visible, subtle icon next to title */
+.email-card-done {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0; cursor: pointer;
+  transition: opacity 0.15s, color 0.15s;
+  opacity: 0.15; color: var(--fg);
+}
+.email-card-titlerow .memory-item-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.email-card-titlerow { position: relative; min-width: 0; }
+.email-card-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  flex: 0 0 auto;
+  min-width: max-content;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.email-card-status > * {
+  flex: 0 0 auto;
+}
+.email-card-status + .email-card-nav-arrows {
+  margin-left: 6px;
+}
+.email-card-status .email-card-nav-arrows {
+  margin-left: 2px;
+}
+.email-card-attachment {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 13px;
+  width: 13px;
+  height: 18px;
+}
+/* Hover preview: bright accent when unchecked so the user sees a check coming.
+   Once active, keep the exact same color on hover so the done state does not
+   visually flip while the pointer is still over it. */
+.email-card-done:not(.active):hover {
+  opacity: 0.75 !important;
+  color: var(--accent-primary, var(--red));
+}
+.email-card-done.active { opacity: 0.95; color: var(--accent-primary, var(--red)); }
+.email-card-done.active:hover {
+  opacity: 0.95 !important;
+  color: var(--accent-primary, var(--red)) !important;
+}
+.email-card-favorite {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  position: relative;
+  top: -3px;
+  opacity: 0.18;
+  transition: opacity 0.15s, color 0.15s, transform 0.15s;
+}
+.email-card-favorite:hover,
+.email-card-favorite:focus-visible {
+  opacity: 0.8;
+  color: var(--accent-primary, var(--red));
+}
+.email-card-favorite.active {
+  opacity: 0.9;
+  color: var(--accent-primary, var(--red));
+}
+@keyframes check-pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.7) rotate(-10deg); }
+  70% { transform: scale(1.1) rotate(4deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+@keyframes check-unpop {
+  0%   { transform: scale(1); opacity: 0.95; }
+  35%  { transform: scale(0.45) rotate(8deg); opacity: 0.05; }
+  65%  { transform: scale(0.9); opacity: 0.2; }
+  100% { transform: scale(1); }
+}
+
+/* Expanded email preview in library — override .memory-item row layout */
+.doclib-card.email-card-expanded.memory-item {
+  cursor: default !important;
+  background: var(--bg) !important;
+  border: 1px solid var(--border) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  /* Fill the available grid height instead of the old hardcoded 70vh —
+     the modal already caps height (90dvh on mobile, auto on desktop), so
+     the card just needs to flex into whatever remains. */
+  flex: 1 1 auto !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  gap: 0 !important;
+}
+.doclib-card.email-card-expanded.memory-item > div:first-child {
+  /* The summary content (subject, date) - acts as the title bar. Left padding
+     trimmed 14→6px to shift the title 8px left total. */
+  padding: 2px 4px 10px !important;  /* top trimmed to lift the header text up */
+  margin-top: -14px !important;      /* pull the whole bar up into the freed space */
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto !important;
+  width: 100%;
+}
+/* Keep the per-card '...' actions menu visible while the email card is
+   expanded — we used to hide it and surface a duplicate menu button in
+   the expanded header, but that was redundant. The bottom menu now
+   carries the actions in both states. */
+/* When expanded inline, show the subject a touch larger than the 12px card
+   title (close to the new-tab window header) without being oversized. */
+.doclib-card.email-card-expanded .memory-item-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+/* The sender name is redundant once expanded (the From: row shows it just
+   below), so drop it and keep only the date — which then sits left-aligned
+   directly under the subject. Nudge the date 1px right to line up exactly with
+   the subject text, and up closer to it. */
+.doclib-card.email-card-expanded .email-meta-sender,
+.doclib-card.email-card-expanded .email-meta-sep {
+  display: none;
+}
+.doclib-card.email-card-expanded .memory-item-meta {
+  margin-top: -9px !important;
+}
+.doclib-card.email-card-expanded .email-meta-date {
+  margin-left: 3px;
+}
+.email-card-reader {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  font-size: 12px;
+}
+.email-card-reader-loading {
+  background: color-mix(in srgb, var(--bg) 86%, #000 14%);
+  border-top: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  min-height: 240px;
+}
+.email-card-reader-error {
+  background: color-mix(in srgb, var(--bg) 86%, #000 14%);
+  border-top: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+}
+.email-reader-load-error {
+  display: flex;
+  min-height: 180px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--fg);
+}
+.email-reader-load-error-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+.email-reader-load-error-msg {
+  max-width: min(460px, 92%);
+  color: color-mix(in srgb, var(--fg) 62%, transparent);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.email-skeleton-line,
+.email-skeleton-dot {
+  display: block;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--fg) 12%, transparent) 0%,
+    color-mix(in srgb, var(--fg) 22%, transparent) 45%,
+    color-mix(in srgb, var(--fg) 12%, transparent) 90%
+  );
+  background-size: 220% 100%;
+  animation: email-skeleton-shimmer 1.35s ease-in-out infinite;
+}
+.email-skeleton-dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+}
+.email-list-skeleton {
+  position: absolute;
+  inset: 0;
+  padding: 10px 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+.email-skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+}
+.email-skeleton-lines {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.email-reader-skeleton {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  flex: 1;
+}
+.email-reader-skeleton-header {
+  min-height: 60px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 72%, transparent);
+}
+.email-reader-skeleton-header .chip { width: 132px; height: 18px; }
+.email-reader-skeleton-header .chip.short { width: 78px; }
+.email-reader-skeleton-header .action {
+  width: 38px;
+  height: 28px;
+  margin-left: auto;
+  border-radius: 6px;
+}
+.email-reader-skeleton-header .action + .action { margin-left: 0; }
+.email-reader-skeleton-atts {
+  display: flex;
+  gap: 7px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.email-reader-skeleton-atts .attachment { width: 126px; height: 20px; border-radius: 6px; }
+.email-reader-skeleton-atts .attachment.short { width: 88px; }
+.email-reader-skeleton-body {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding: 16px 14px;
+  min-height: 340px;
+  flex: 1;
+}
+.email-reader-skeleton-body .body { width: 88%; height: 9px; border-radius: 6px; }
+.email-reader-skeleton-body .body.wide { width: 100%; }
+.email-reader-skeleton-body .body.medium { width: 94%; }
+.email-reader-skeleton-body .body.short { width: 62%; }
+.email-reader-skeleton-body .body.gap {
+  margin-top: 12px;
+  width: 78%;
+}
+.email-search-progress-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 6px 10px;
+  font-size: 11px;
+  opacity: 0.65;
+}
+.email-search-progress-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-primary, var(--red));
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-primary, var(--red)) 35%, transparent);
+  animation: email-search-progress-pulse 1.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .email-skeleton-line,
+  .email-skeleton-dot,
+  .email-inline-image-skeleton,
+  .email-inline-image-placeholder.is-loading .email-inline-image-icon,
+  .email-inline-image-frame.is-loading,
+  .email-search-progress-dot {
+    animation: none;
+  }
+}
+/* Per-email unread dot in the expanded reader's title row. Background color
+   stays inline (per-sender hue from _senderColor), but the dot gets a soft
+   breathing glow + a 4px vertical nudge so it reads as centered against
+   the row instead of riding the baseline. */
+.email-card-unread-dot {
+  position: relative;
+  top: 0;
+  animation: email-card-unread-breathe 2.2s ease-in-out infinite;
+}
+.email-reader-header {
+  display: flex;
+  flex-direction: row;
+  /* Top-align so when the user expands To/Cc, the action cluster
+     stays on the From line above instead of drifting to the middle. */
+  align-items: flex-start;
+  gap: 12px;
+  /* Taller header so the 44px-tall absolute-positioned action
+     cluster inside the From row has vertical breathing room. */
+  padding: 8px 14px;
+  min-height: 60px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+  /* Containing block for the absolute action cluster. */
+  position: relative;
+  /* Container so the action-cluster wrap breakpoints below react to
+     the reader's own width instead of the page viewport. */
+  container-type: inline-size;
+  container-name: emailreader;
+}
+.email-reader-header > .email-reader-actions {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+/* Meta block stacks the From / To / Cc rows; each row keeps label
+   tight to its chip(s) on the same line. The recipient-chips inside
+   scroll horizontally so long lists slide under the floating action
+   cluster on the right. */
+.email-reader-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  /* Positioning context for the absolute action cluster. */
+  position: relative;
+}
+.email-reader-meta .recipient-chips {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  gap: 4px;
+  max-width: 100%;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.email-reader-meta .recipient-chips::-webkit-scrollbar { display: none; }
+.email-reader-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.email-reader-meta-row.email-reader-meta-from {
+  position: relative;
+  /* Never wrap "From:" off the chip onto its own line — the chip
+     span has overflow-x scroll built in, so it shrinks/scrolls
+     instead of jumping to a new row. */
+  flex-wrap: nowrap;
+  min-width: 0;
+  /* Reserve space on the right for the 1-row cluster in wide mode. */
+  padding-right: 320px;
+}
+.email-reader-meta > .email-reader-meta-details {
+  min-width: 0;
+  padding-right: 320px;
+}
+.email-reader-meta > .email-reader-actions-inline {
+  position: absolute;
+  top: 1px;
+  right: 0;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 4px;
+  z-index: 2;
+  /* Sit visually above the From baseline like the lifted overlay. */
+  margin-top: -9px;
+}
+/* Recipient chip span keeps at least ~4 characters visible (60px)
+   before the overflow-scroll kicks in, so the sender / first
+   recipient name is always partly readable. */
+.email-reader-meta .recipient-chips {
+  min-width: 60px;
+}
+/* Medium reader widths: cap the cluster at 3 icons per row so it
+   never wraps past 2 rows. min-width forces the cluster to reserve
+   enough room for 3 icons in a row — without it, grid col 2 could
+   shrink below the cap and the cluster fanned out into 4+ short
+   rows. */
+@container emailreader (max-width: 450px) {
+  .email-reader-meta > .email-reader-actions-inline {
+    /* 3 icons (48px each) + 2 gaps (4px each) = 152px exact. Adding
+       6px slack so subpixel rounding can't tip a row from 3 to 2
+       icons and fan the cluster into a 3rd row. */
+    min-width: 158px;
+    max-width: 158px;
+    /* Solid background so the email body content behind the cluster
+       doesn't peek through the gaps between icons or the slack on
+       the right edge when the cluster's wrapped to 2 rows. */
+    background: var(--bg);
+  }
+  .email-reader-meta > .email-reader-actions-inline .memory-toolbar-btn.reader-icon-btn {
+    width: 48px;
+    min-width: 48px;
+    max-width: 48px;
+    height: 40px;
+    padding-left: 0;
+    padding-right: 0;
+    gap: 2px;
+  }
+  .email-reader-meta > .email-reader-actions-inline .reader-btn-label {
+    display: block;
+    max-width: 44px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 8px;
+    line-height: 1;
+  }
+  /* Tighten the right-side padding now that the cluster is 158px
+     wide (instead of the ~308 wide 1-row layout). */
+  .email-reader-meta-row.email-reader-meta-from,
+  .email-reader-meta > .email-reader-meta-details {
+    padding-right: 170px;
+  }
+  /* Cluster wrapped to 2 rows (44px + 4 gap + 44px = 92px) sits
+     absolute above the From baseline. Set min-height on the meta
+     (a descendant of the container, more reliable than targeting
+     the container itself) so the header grows enough to contain
+     the cluster + 4px of breathing room between the cluster's
+     bottom and the header bottom. */
+  .email-reader-meta {
+    min-height: 96px;
+  }
+}
+/* Very narrow reader: once the chip span has shrunk to its ~4
+   character min, the cluster snaps to absolute overlay with a soft
+   shadow so it visually floats above the truncated chip. */
+@container emailreader (max-width: 380px) {
+  /* Pane too narrow even for 158px of right-side reservation — kill
+     the padding so chips use the full width, and let the cluster
+     overlay via z-index + shadow. */
+  .email-reader-meta-row.email-reader-meta-from,
+  .email-reader-meta > .email-reader-meta-details {
+    padding-right: 0;
+  }
+  .email-reader-meta > .email-reader-actions-inline {
+    /* Keep the same -7px lift as the medium-width state so the
+       cluster doesn't slide ~4px DOWN when it transitions into
+       overlay mode. */
+    /* margin-top stays inherited at -7px from the base rule. */
+    /* 158px content + 22px padding-left so the inner row still fits
+       3 icons cleanly. */
+    min-width: 180px;
+    max-width: 180px;
+    background: linear-gradient(to right, transparent 0, var(--bg) 18px);
+    padding-left: 22px;
+    /* Soft shadow on the left edge so the overlap reads as the
+       cluster "floating over" the chip. */
+    box-shadow: -6px 0 12px -6px rgba(0, 0, 0, 0.25);
+  }
+}
+/* Mobile: drop the box-shadow AND the left-edge gradient fade —
+   either can read as a shadow under the icons on phone screens.
+   Also lift the cluster 1px more.  !important needed because the
+   @container query overlay rule has the same selector specificity. */
+@media (max-width: 768px) {
+  .memory-toolbar-btn[data-mode="ai-reply-fast"] {
+    height: 30px !important;
+    min-height: 30px !important;
+  }
+  .email-reader-meta > .email-reader-actions-inline {
+    box-shadow: none !important;
+    background: none !important;
+    padding-left: 0 !important;
+    margin-top: -10px;
+  }
+}
+/* Docked panes used to flow the cluster under the meta; now they
+   share the same absolute-top-right + wrap behaviour as undocked.
+   No docked-specific overrides — the container queries below pick
+   the right cluster size and overlay state from the reader width. */
+/* Gmail-style chevron — collapsed view shows only From; the chevron
+   reveals the To/Cc details inline below. */
+.email-reader-meta-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: -3px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.55;
+  cursor: pointer;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.email-reader-meta-toggle:hover { opacity: 1; background: color-mix(in srgb, currentColor 10%, transparent); }
+.email-reader-meta-toggle svg { transition: transform 0.15s ease; }
+.email-reader-meta-toggle.open svg { transform: rotate(180deg); }
+.email-reader-meta-toggle.email-reader-cc-toggle {
+  width: auto;
+  min-width: 18px;
+  gap: 3px;
+  margin-left: 1px;
+  padding: 0 5px;
+  color: var(--accent, var(--red));
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+}
+.email-reader-meta-details {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* When expanded, To/Cc details live in the header flow. A floating popover
+   can overlap the folded attachment strip directly beneath the header. */
+.email-reader-meta > .email-reader-meta-details:not([hidden]) {
+  position: relative;
+  top: auto;
+  left: auto;
+  right: auto;
+  margin-top: 4px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+  z-index: 1;
+}
+/* Reserve a fixed label width so From: / To: / Cc: all align and
+   their chips start at the same x. */
+.email-reader-meta-row strong { opacity: 0.5; font-weight: 600; flex-shrink: 0; min-width: 36px; }
+.email-reader-meta-row > span {
+  white-space: nowrap;
+  min-width: 0;
+}
+/* Recipient chips */
+.recipient-chips {
+  display: inline-flex !important; flex-wrap: wrap; gap: 4px;
+  white-space: normal !important; overflow: visible !important;
+  text-overflow: clip !important;
+}
+.recipient-chip {
+  display: inline-flex; align-items: center;
+  gap: 5px;
+  padding: 1px 8px; font-size: 10px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--fg);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, max-width 0.2s;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.recipient-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.recipient-chip-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  top: -2px;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  opacity: 0.55;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.recipient-chip-copy:hover,
+.recipient-chip-copy.copied {
+  opacity: 1;
+  color: var(--accent-primary, var(--red));
+}
+.recipient-chip-copy[hidden] {
+  display: none !important;
+}
+.recipient-chip:hover {
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 40%, transparent);
+}
+.recipient-chip.expanded {
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 15%, transparent);
+  border-color: var(--accent-primary, var(--red));
+  max-width: 500px;
+}
+.recipient-chip.popover-open {
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 15%, transparent);
+  border-color: var(--accent-primary, var(--red));
+}
+.recipient-chip-popover {
+  position: fixed;
+  z-index: 12050;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(420px, calc(100vw - 20px));
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary, var(--red)) 45%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 96%, var(--fg) 4%);
+  color: var(--fg);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.42);
+  font-size: 12px;
+  line-height: 1.35;
+  pointer-events: auto;
+}
+.recipient-chip-popover-main {
+  min-width: 0;
+}
+.recipient-chip-popover-name {
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recipient-chip-popover-detail {
+  overflow-wrap: anywhere;
+  opacity: 0.86;
+}
+.recipient-chip-popover-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  color: inherit;
+  cursor: pointer;
+}
+.recipient-chip-popover-copy:hover,
+.recipient-chip-popover-copy.copied {
+  color: var(--accent-primary, var(--red));
+  border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 55%, transparent);
+}
+@container docpane (max-width: 460px) {
+  .email-reader-header {
+    flex-direction: column;
+    gap: 6px;
+  }
+  .email-reader-header > .email-reader-actions {
+    /* On narrow widths fall back to in-flow so it doesn't overlap
+       the meta entirely. */
+    position: static;
+    align-self: flex-end;
+    background: none;
+    padding-left: 0;
+  }
+  .email-reader-meta-row:not(.email-reader-meta-from) {
+    padding-right: 0;
+  }
+  .email-reader-meta-row strong {
+    min-width: 0;
+  }
+  .recipient-chip {
+    max-width: 100%;
+  }
+}
+/* Mobile: long recipient lists (To/Cc with many addresses) shouldn't wrap to
+   N rows and push the body down. Keep them on one row, horizontally scrollable,
+   no scrollbar chrome. */
+@media (max-width: 768px) {
+  .recipient-chips {
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .recipient-chips::-webkit-scrollbar { display: none; }
+  .recipient-chip { flex-shrink: 0; }
+}
+.email-reader-actions {
+  display: flex; flex-direction: column; gap: 4px; align-items: flex-end;
+  flex-shrink: 0;
+  margin-top: -4px;
+}
+/* Two stacked rows: Reply/Reply-all/Forward on the From line, with
+   Summary/AI-reply/More on a row below. */
+.email-reader-actions-row {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+.email-reader-atts {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.email-reader-body {
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  min-height: 0;
+  background: var(--panel);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--border) 65%, transparent);
+  /* Use the OS colored emoji font for incoming mail content */
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif,
+               "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla";
+  font-variant-emoji: emoji;
+}
+.email-reader-body.html-body img { max-width: 100%; height: auto; }
+.email-reader-body.html-body [style*="max-width:600px"],
+.email-reader-body.html-body [style*="max-width: 600px"],
+.email-reader-body.html-body [style*="width:600px"],
+.email-reader-body.html-body [style*="width: 600px"],
+.email-reader-body.html-body table[width="600"] {
+  max-width: none !important;
+  width: 100% !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+}
+.email-reader-body.html-body [align="center"] {
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+}
+.email-reader-body .email-inline-image-placeholder {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  max-width: min(100%, 360px);
+  min-height: 58px;
+  margin: 6px 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 72%, transparent);
+  color: var(--fg);
+  vertical-align: middle;
+}
+.email-inline-image-skeleton {
+  width: 58px;
+  height: 42px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--fg) 7%, transparent) 0%,
+    color-mix(in srgb, var(--fg) 13%, transparent) 45%,
+    color-mix(in srgb, var(--fg) 7%, transparent) 90%
+  );
+  background-size: 220% 100%;
+  animation: email-skeleton-shimmer 1.35s ease-in-out infinite;
+}
+.email-inline-image-icon {
+  opacity: 0.52;
+  display: inline-flex;
+}
+.email-inline-image-placeholder.is-loading .email-inline-image-icon svg {
+  display: none;
+}
+.email-inline-image-info {
+  display: inline-flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+.email-inline-image-title {
+  font-size: 11px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.email-inline-image-sub {
+  font-size: 10px;
+  opacity: 0.58;
+}
+.email-inline-image-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+.email-inline-image-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transform: translateY(-2px);
+  height: 24px;
+  line-height: 1;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  color: inherit;
+  font: inherit;
+  font-size: 10px;
+  text-decoration: none;
+  cursor: pointer;
+}
+.email-inline-image-btn:hover {
+  border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 55%, var(--border));
+  color: var(--accent-primary, var(--red));
+}
+.email-inline-image-download-btn {
+  width: 24px;
+  min-width: 24px;
+  padding: 0;
+}
+.email-inline-image-loaded {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+.email-inline-image-frame {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: min(360px, 100%);
+  min-height: 90px;
+  margin: 6px 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--fg) 7%, transparent) 0%,
+    color-mix(in srgb, var(--fg) 13%, transparent) 45%,
+    color-mix(in srgb, var(--fg) 7%, transparent) 90%
+  );
+  background-size: 220% 100%;
+}
+.email-inline-image-frame .email-inline-image-loaded {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.email-inline-image-load-all {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 100%;
+  margin: -4px 0 6px;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 72%, transparent);
+  font-size: 11px;
+}
+.email-inline-image-load-all span {
+  opacity: 0.68;
+  margin-right: auto;
+}
+.email-inline-image-load-all button {
+  transform: translateY(-4px);
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  color: inherit;
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+.email-inline-image-load-all button:hover {
+  border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 55%, var(--border));
+  color: var(--accent-primary, var(--red));
+}
+@media (max-width: 520px) {
+  .email-reader-body .email-inline-image-placeholder {
+    display: flex;
+    width: 100%;
+  }
+  .email-inline-image-skeleton {
+    width: 48px;
+  }
+  .email-inline-image-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+.email-reader-body.html-body table { max-width: 100%; border-collapse: collapse; }
+/* Gmail Drive chips arrive with inline width/height/border/padding from
+   Gmail's composer (border:1px solid #ddd, white-ish bg assumed). On a
+   dark theme that reads as a near-invisible white box. Override with a
+   theme-aware chip surface so the filename + icon stay visible. */
+.email-reader-body .gmail_chip,
+.email-reader-body .gmail_drive_chip {
+  width: auto !important;
+  max-width: 100% !important;
+  height: auto !important;
+  max-height: none !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px;
+  padding: 6px 10px !important;
+  margin: 6px 0 !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.email-reader-body .gmail_chip:hover,
+.email-reader-body .gmail_drive_chip:hover {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border)) !important;
+  background: color-mix(in srgb, var(--accent, var(--red)) 6%, transparent);
+}
+.email-reader-body .gmail_chip a,
+.email-reader-body .gmail_drive_chip a {
+  color: var(--accent, var(--red)) !important;
+  display: inline-flex !important;
+  align-items: center;
+  gap: 6px;
+  max-width: 100% !important;
+}
+.email-reader-body .gmail_chip a > span,
+.email-reader-body .gmail_drive_chip a > span {
+  color: var(--fg) !important;
+  font-size: 12px;
+}
+.email-reader-body .gmail_chip img,
+.email-reader-body .gmail_drive_chip img {
+  width: 16px !important;
+  height: 16px !important;
+  padding-right: 0 !important;
+  filter: none;
+}
+
+/* Force any phone/sms/date/address auto-link to inherit the body color so
+   numbers don't render as bright-blue browser-default text inside email
+   content. format-detection in <head> turns off detection on iOS, but some
+   mail clients ship pre-wrapped tel: links — those still need taming. */
+.email-reader-body a[href^="tel:"],
+.email-reader-body a[href^="sms:"],
+.email-reader-body a[x-apple-data-detectors],
+.email-bubble-body a[href^="tel:"],
+.email-bubble-body a[href^="sms:"],
+.email-bubble-body a[x-apple-data-detectors],
+.email-thread-turn-body a[href^="tel:"],
+.email-thread-turn-body a[href^="sms:"],
+.email-thread-turn-body a[x-apple-data-detectors] {
+  color: inherit !important;
+  text-decoration: none !important;
+  pointer-events: auto;
+}
+.email-reader-body a,
+.email-bubble-body a,
+.email-thread-turn-body a {
+  color: var(--accent-primary, var(--red));
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  cursor: pointer;
+}
+.email-reader-body a:hover,
+.email-bubble-body a:hover,
+.email-thread-turn-body a:hover { opacity: 0.8; }
+/* Summary block — same band chrome as Attachments / Signature / Earlier-
+   thread (no accent tint, no rounded corners, no leading star icon). The
+   only difference is the label, so all collapsible sections in the email
+   reader look uniform. */
+.email-summary-panel {
+  margin: 0 0 12px 0;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-primary, var(--red)) 30%, transparent);
+  border-radius: 6px;
+}
+.email-summary-header {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+  color: var(--accent-primary, var(--red)); opacity: 0.85;
+  margin-bottom: 6px; letter-spacing: 0.4px;
+}
+.email-summary-content {
+  font-size: 12px; line-height: 1.5; color: var(--fg); white-space: pre-wrap;
+}
+/* Click-to-fold: tap the summary header to collapse/expand. The chevron
+   flips when collapsed, the content hides + the panel's bottom margin
+   tightens so a folded summary doesn't take up vertical space. */
+.email-summary-toggle { cursor: pointer; user-select: none; }
+.email-summary-panel.collapsed { padding-bottom: 6px; margin-bottom: 6px; }
+.email-translation-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px;
+}
+.email-translation-busy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+.email-translation-spinner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+}
+.email-translation-loading-text {
+  opacity: 0.68;
+  font-size: 12px;
+}
+.email-translation-panel .email-translation-icon {
+  color: var(--accent-primary, var(--red));
+}
+
+/* Foldable attachments — same fold-on-click UX as the summary panel. */
+.email-reader-atts-wrap {
+  display: flex; flex-direction: column;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.email-reader-atts-header {
+  display: flex; align-items: center; gap: 5px;
+  padding: 6px 14px;
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+  color: var(--fg); opacity: 0.7;
+  cursor: pointer; user-select: none;
+  letter-spacing: 0.4px;
+}
+.email-attachments-download-all {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary, var(--red)) 35%, transparent);
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 9%, transparent);
+  color: var(--accent-primary, var(--red));
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.email-attachments-download-all:hover {
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 60%, transparent);
+}
+.email-attachments-download-all .spinner-whirlpool,
+.email-attachments-download-all .ai-spinner-whirlpool {
+  width: 12px !important;
+  height: 12px !important;
+  margin: 0 !important;
+}
+.email-reader-atts-wrap > .email-reader-atts {
+  border-bottom: none !important;
+}
+.email-reader-atts-hidden-note {
+  padding: 0 14px 6px;
+  font-size: 10px;
+  color: var(--fg-muted);
+  opacity: 0.65;
+}
+
+/* Quote fold = neutral full-width band (matches attachments header). */
+.email-quote-fold {
+  margin: 0 -14px;
+  padding: 0;
+  border: 0;
+  border-top: 1px solid var(--border) !important;
+  border-radius: 0;
+  outline: 0 !important;
+  box-shadow: none !important;
+  /* Neutralise any rich-mail HTML that injects a yellow / colored bg
+     or border onto blockquote ancestors. */
+  background: transparent !important;
+}
+/* Same neutralisation for any element nested inside the fold (the inner
+   blockquote, paragraphs, divs from the original message). Yellow outlines
+   in Outlook-style mails almost always come from inline border-color or
+   box-shadow on these. */
+.email-quote-fold *,
+.email-quote-fold *::before,
+.email-quote-fold *::after {
+  outline-color: transparent !important;
+  box-shadow: none !important;
+}
+.email-quote-fold blockquote,
+.email-quote-fold blockquote[type="cite"],
+.email-quote-fold table,
+.email-quote-fold div {
+  border-color: var(--border) !important;
+  /* Override the .msg blockquote rule that sets a colored left border via
+     var(--hl-function) — that's where the "yellow" outline was coming from. */
+  border-left-color: var(--border) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+/* JS marks the last .email-quote-fold in each email body with this class,
+   so it's the only one that gets rounded bottom corners. Avoids :has()
+   browser-support quirks. */
+.email-quote-fold.last-fold {
+  border-radius: 0 0 8px 8px;
+  overflow: hidden;
+}
+/* ── Threaded reply turns (recursive parser) ── */
+.email-thread-turn-body {
+  padding: 8px 14px 4px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+/* Nested turns indent slightly + get their own card outline so the
+   reply hierarchy is obvious at a glance. */
+.email-thread-turn-body .email-thread-turn {
+  margin: 8px 0 4px;
+  margin-left: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+}
+/* The original blockquote's left stripe is redundant when each turn is
+   already a card — drop it inside thread bodies. */
+.email-thread-turn-body blockquote {
+  border-left: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  background: transparent !important;
+}
+/* Flatten the inner blockquote: no rounded corners, no yellow tint
+   inherited from rich-mail HTML. Subtle left border + neutral bg. */
+.email-quote-fold blockquote {
+  margin: 0;
+  padding: 8px 12px;
+  border: 0;
+  border-left: 2px solid var(--border);
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: inherit;
+}
+/* "From … · Date …" chip appended to the summary line */
+.email-fold-summary-meta {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.55;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+/* Sender name is the primary affordance — slightly larger and not all-caps so
+   "From: Sam" feels like a click target on the person, not a section label. */
+.email-fold-summary-name {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0.1px;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.email-quote-fold .email-fold-summary {
+  display: flex; align-items: center; gap: 5px;
+  padding: 6px 14px;
+  cursor: pointer; list-style: none;
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.4px;
+  /* Force neutral page colors regardless of any rich-mail HTML wrapping us */
+  color: var(--fg) !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  text-shadow: none !important;
+  font-style: normal !important;
+  opacity: 0.7;
+  user-select: none;
+  border-radius: 0;
+}
+.email-quote-fold .email-fold-summary > * {
+  /* Prevent inline-color attrs on summary children (icon SVGs, meta span)
+     from picking up a forced color from ancestor email HTML. */
+  color: inherit !important;
+  background: transparent !important;
+}
+.email-quote-fold .email-fold-summary { list-style: none; list-style-type: none; }
+.email-quote-fold[open] > *:not(summary) {
+  padding: 8px 14px 12px 14px;
+  border-top: 1px solid var(--border);
+}
+
+/* Signature fold = clean full-width band like the attachments header. No
+   accent overlay, no rounded corners — neutral chrome so it doesn't look
+   like the AI Summary panel. */
+.email-sig-fold {
+  margin: 8px 0 0;
+  padding: 0;
+  border: 0;
+  border-top: 1px dashed color-mix(in srgb, var(--fg) 18%, transparent);
+  background: transparent;
+  border-radius: 0;
+}
+.email-sig-fold .email-fold-summary {
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 0;
+  cursor: pointer;
+  list-style: none; list-style-type: none;
+  font-size: 9.5px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--fg); opacity: 0.55;
+  user-select: none;
+}
+.email-sig-fold[open] > *:not(summary) {
+  padding: 6px 0 0;
+  border-top: 0;
+  font-size: 11px; line-height: 1.45;
+  color: color-mix(in srgb, var(--fg) 75%, transparent);
+  white-space: pre-wrap;
+}
+
+/* ── Chat-bubble layout for email threads ──
+   Each parsed turn becomes a bubble. The active account's outgoing
+   replies align right (mine); everyone else aligns left (theirs).
+   Bubbles read top→bottom oldest→newest, like a chat. */
+.email-bubbles {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0 8px;
+  margin: 0 -2px;
+}
+.email-bubble-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+.email-bubble {
+  flex: 0 1 auto;
+  max-width: 90%;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  font-size: 12.5px;
+  line-height: 1.5;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+  overflow: hidden;
+}
+.email-bubble-mine .email-bubble {
+  background: color-mix(in srgb, var(--bubble-accent, var(--fg)) 10%, var(--bg));
+  border-color: color-mix(in srgb, var(--bubble-accent, var(--border)) 35%, var(--border));
+  border-radius: 14px 14px 4px 14px;
+}
+.email-bubble-theirs .email-bubble {
+  background: color-mix(in srgb, var(--bubble-accent, var(--fg)) 5%, var(--panel));
+  border-color: color-mix(in srgb, var(--bubble-accent, var(--border)) 25%, var(--border));
+  border-radius: 14px 14px 14px 4px;
+}
+.email-bubble-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 10.5px;
+  margin-bottom: 4px;
+  opacity: 0.7;
+  min-width: 0;
+}
+.email-bubble-author {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 50ch;
+}
+.email-bubble-date {
+  opacity: 0.7;
+  font-weight: 400;
+  white-space: nowrap;
+}
+.email-bubble-body {
+  white-space: normal;
+  /* Reader-controlled typography — override sender's inline styles AND
+     attribute-based sizing (<font size>, <big>, <small>, h1..h6). Weight
+     and italics still pass through for emphasis. */
+  font-family: inherit;
+  font-size: var(--email-body-size, 13.5px);
+  line-height: 1.5;
+}
+/* Heading tags carry browser-default font-size multipliers that bypass
+   `font-size: inherit` when an inline style was set; pin them too. */
+.email-bubble-body h1,
+.email-bubble-body h2,
+.email-bubble-body h3,
+.email-bubble-body h4,
+.email-bubble-body h5,
+.email-bubble-body h6,
+.email-bubble-body big,
+.email-bubble-body small,
+.email-bubble-body font {
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+/* Sender HTML often wraps content in a fixed-width <div style="width:600px">
+   or <table width="600">. Override so content fills the reader's available
+   width — otherwise resizing the email window doesn't reflow anything. */
+.email-bubble-body,
+.email-bubble-body * {
+  max-width: 100% !important;
+}
+.email-bubble-body div[style*="width"],
+.email-bubble-body table[width],
+.email-bubble-body table {
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+.email-bubble-body blockquote {
+  border-left: 2px solid var(--border) !important;
+  margin: 4px 0 !important;
+  padding: 4px 10px !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+  color: inherit;
+}
+.email-bubble-avatar {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  /* Per-sender color set inline (`style="background:hsl(...)"`); this
+     fallback only kicks in when JS hasn't assigned one. */
+  background: color-mix(in srgb, var(--fg) 14%, transparent);
+  color: #fff;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.22);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  user-select: none;
+}
+/* Sig folds inside a bubble: tone down — no full-bleed band, since the
+   bubble already provides the chrome. */
+.email-bubble-body .email-sig-fold {
+  margin: 8px 0 0;
+  border-top: 1px dashed var(--border);
+}
+.email-bubble-body .email-sig-fold[open] > *:not(summary),
+.email-bubble-body .email-quote-fold[open] > *:not(summary) {
+  padding: 6px 0 0;
+  border-top: 0;
+}
+@media (max-width: 600px) {
+  .email-bubble { max-width: 96%; }
+  .email-bubble-avatar { display: none; }
+}
+
+/* ── Schedule Send modal ── */
+.schedule-send-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 18px 12px;
+}
+.schedule-send-label {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--fg);
+  opacity: 0.55;
+  margin-top: 6px;
+}
+.schedule-send-label:first-child { margin-top: 0; }
+.schedule-send-presets {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.schedule-send-presets .memory-toolbar-btn {
+  padding: 5px 10px 11px;
+  font-size: 12px;
+  justify-content: center;
+  line-height: 1;
+}
+.schedule-send-confirm svg {
+  width: 12px;
+  height: 12px;
+  vertical-align: -1px;
+  margin-right: 6px;
+}
+.schedule-send-datetime {
+  font-size: 13px;
+  padding: 8px 10px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: none;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+.schedule-send-datetime:focus {
+  border-color: var(--hl-function);
+}
+.schedule-send-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px 14px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+.schedule-send-confirm {
+  background: var(--accent-primary, var(--red)) !important;
+  color: #fff !important;
+  border-color: var(--accent-primary, var(--red)) !important;
+}
+.schedule-send-confirm:hover {
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 85%, white) !important;
+}
+
+/* Senders embed inline colors in their HTML that clash with the app's
+   theme (black text in dark mode, white backgrounds, yellow highlights,
+   etc.). Force theme colors on every descendant of the rendered body so
+   emails inherit the user's chosen palette regardless of what the
+   sender's mail client emits. */
+.email-reader-body *,
+.email-bubble-body * {
+  color: var(--fg) !important;
+  -webkit-text-fill-color: currentColor !important;
+  background-color: transparent !important;
+  background-image: none !important;
+}
+.email-reader-body a,
+.email-bubble-body a,
+.email-thread-turn-body a {
+  color: var(--hl-function) !important;
+}
+.email-reader-body a[href^="tel:"],
+.email-reader-body a[href^="sms:"],
+.email-reader-body a[href^="x-apple-data-detectors:"],
+.email-reader-body a[x-apple-data-detectors],
+.email-bubble-body a[href^="tel:"],
+.email-bubble-body a[href^="sms:"],
+.email-bubble-body a[href^="x-apple-data-detectors:"],
+.email-bubble-body a[x-apple-data-detectors],
+.email-thread-turn-body a[href^="tel:"],
+.email-thread-turn-body a[href^="sms:"],
+.email-thread-turn-body a[href^="x-apple-data-detectors:"],
+.email-thread-turn-body a[x-apple-data-detectors] {
+  color: inherit !important;
+  -webkit-text-fill-color: currentColor !important;
+  text-decoration: none !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  -webkit-background-clip: border-box !important;
+  background-clip: border-box !important;
+}
+
+/* Prefer local/system emoji fonts; avoid remote font providers. */
+.doc-editor-textarea, .doc-editor-highlight, #doc-editor-code,
+.doc-md-preview, .doc-csv-preview {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', monospace;
+  font-variant-emoji: text;
+}
+/* Preview panes claim the editor's space so the action footer stays pinned
+   at the bottom of the pane even when the rendered content is short
+   (shorter table, single-paragraph markdown, etc). */
+.doc-csv-preview,
+.doc-md-preview {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Email documents override: use colored system emoji in compose. */
+.doc-editor-textarea.email-mode,
+#doc-editor-code.email-mode,
+#doc-editor-code.email-mode .doc-editor-highlight,
+#doc-editor-code.email-mode .doc-editor-textarea {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif,
+               "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla" !important;
+  font-variant-emoji: emoji;
+}
+
+/* Single-layer rendering for ALL documents (not just email): the highlight
+   overlay (<pre> with hljs spans) and the transparent textarea use two
+   different rendering paths internally — the textarea uses the browser's
+   native form line-breaker, the overlay uses CSS line-breaking — and they
+   can never be guaranteed to wrap byte-identical no matter how many CSS
+   properties are pinned. Pick one source of truth: make the textarea its
+   own visible text, hide the overlay. Trade-off: no syntax highlighting in
+   the live editor (rendered markdown preview / chat output still has it).
+   The caret is now glued to the typed text by definition since both are
+   rendered by the same element. */
+.doc-editor-highlight,
+#doc-editor-code.email-mode .doc-editor-highlight {
+  display: none !important;
+}
+/* Find bar is open: float the highlight overlay ON TOP of the
+   textarea with transparent background + transparent text, so only
+   the solid <mark.doc-find-mark> spans are visible. pointer-events
+   off so clicks still go through to the textarea below. */
+body.doc-find-active .doc-editor-highlight,
+body.doc-find-active #doc-editor-code.email-mode .doc-editor-highlight {
+  display: block !important;
+  z-index: 5 !important;
+  background: transparent !important;
+  pointer-events: none;
+}
+body.doc-find-active .doc-editor-highlight,
+body.doc-find-active .doc-editor-highlight * {
+  color: transparent !important;
+  background: transparent !important;
+}

@@ -1,0 +1,6011 @@
+/* Fragment 6/9 of the former static/style.css.
+ *
+ * This is a mechanical, order-preserving slice: rules were moved verbatim
+ * and this file's position in the <link> order of static/index.html is what
+ * keeps the cascade identical. Reordering the links, or moving a rule between
+ * fragments, can change which of two competing declarations wins.
+ *
+ * static/index.html and the PRECACHE list in static/sw.js must list every
+ * fragment in the same order. tests/test_static_stylesheet_manifest.py and
+ * tests/test_css_computed_style_snapshot.py both fail if that drifts.
+ */
+.hwfit-sf-cb:hover { color: var(--fg); }
+/* Speculative method + tokens controls — render inline beside the checkbox */
+.hwfit-spec-group .hwfit-spec-method,
+.hwfit-spec-group .hwfit-spec-tokens {
+  height: 20px;
+  padding: 0 4px;
+  font-size: 11px;
+  /* Match the generic .hwfit-sf serve controls: inherit font + 4px radius
+     so the Speculative method/token widgets read as the same control
+     family as the rest of the panel (they were 'Fira Code'/3px before). */
+  font-family: inherit;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+}
+.hwfit-spec-group .hwfit-spec-method { min-width: 110px; }
+.hwfit-spec-group .hwfit-spec-tokens { width: 44px; text-align: center; }
+/* The vLLM Speculative input was a bare <input type="number"> with the
+   native browser up/down spinner showing. Hide the spinner so it
+   matches the cleaner MTP-spec input next to it. */
+.hwfit-spec-tokens-bare {
+  -moz-appearance: textfield;
+  appearance: textfield;
+  /* Tighten + center now that the spinner column is gone — without this
+     the input still reserves the old 44px and the number floats with a
+     dead gutter on the right. !important beats the inline width=44px
+     that ships in the markup. */
+  width: 30px !important;
+  padding-right: 4px !important;
+  text-align: center;
+}
+/* Themed step buttons replacing the native number-input spinner. */
+.hwfit-numstep {
+  display: inline-flex;
+  align-items: stretch;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.hwfit-numstep:focus-within { border-color: var(--accent, var(--red)); }
+.hwfit-numstep .hwfit-spec-tokens {
+  border: none !important;
+  border-radius: 0 !important;
+  width: 38px;
+  height: 100%;
+  background: transparent;
+  -moz-appearance: textfield;
+  appearance: textfield;
+  margin: 0;
+}
+.hwfit-numstep-btn {
+  width: 16px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border: none;
+  color: var(--accent, var(--red));
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  opacity: 1;
+  transition: background 0.12s, opacity 0.12s, color 0.12s;
+}
+.hwfit-numstep-btn:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+  color: var(--accent, var(--red));
+}
+.hwfit-numstep-btn:active {
+  background: color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);
+}
+.hwfit-numstep-btn[data-step="-1"] { border-right: 1px solid var(--border); }
+.hwfit-numstep-btn[data-step="1"]  { border-left:  1px solid var(--border); }
+/* Custom toggle switch */
+.hwfit-sf-cb input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 28px;
+  height: 14px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--fg) 15%, transparent);
+  position: relative;
+  cursor: pointer;
+  margin: 0;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+.hwfit-sf-cb input[type="checkbox"]::after {
+  content: '';
+  position: absolute;
+  top: 1px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #000;
+  transition: transform 0.2s, background 0.2s;
+}
+.hwfit-sf-cb input[type="checkbox"]:checked {
+  background: var(--accent, var(--red));
+}
+.hwfit-sf-cb input[type="checkbox"]:checked::after {
+  transform: translateX(14px);
+  background: #fff;
+}
+.hwfit-serve-extra label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 10px;
+  color: var(--fg-muted);
+  letter-spacing: 0.3px;
+}
+.hwfit-serve-extra .hwfit-sf {
+  width: 100%;
+}
+.hwfit-serve-cmd-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  color: var(--fg-muted);
+  font-size: 10px;
+  letter-spacing: 0.3px;
+}
+.hwfit-serve-cmd {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 4px;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  font-family: 'Berkeley Mono', 'SF Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  white-space: pre;
+  word-break: normal;
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  color: var(--fg);
+  line-height: 1.5;
+  min-height: 112px;
+  overflow: auto;
+}
+.hwfit-serve-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+  align-items: center;
+}
+.hwfit-serve-actions .cookbook-btn {
+  padding: 5px 14px;
+  font-size: 11px;
+}
+.hwfit-serve-actions-spacer { flex: 1 1 auto; }
+.hwfit-serve-actions .cookbook-serve-slots {
+  margin: 0;
+  align-self: stretch;
+}
+.hwfit-serve-launch {
+  background: var(--accent-primary, var(--red));
+  color: #fff;
+  border: 1px solid var(--accent-primary, var(--red));
+  border-radius: 4px;
+  font-weight: 700;
+}
+.hwfit-serve-launch:hover {
+  opacity: 0.9;
+}
+
+/* Task header ⋮ menu button */
+.cookbook-task-save-btn {
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  opacity: 0.3;
+  padding: 2px;
+  flex-shrink: 0;
+  transition: opacity 0.15s;
+  position: relative;
+  top: -4px;
+  transform: scale(1.15);
+}
+.cookbook-task-save-btn:hover { opacity: 0.8; }
+.cookbook-task-edit-btn {
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  opacity: 0.3;
+  padding: 2px;
+  flex-shrink: 0;
+  transition: opacity 0.15s;
+  position: relative;
+  top: -4px;
+  transform: scale(1.15);
+}
+.cookbook-task-edit-btn:hover { opacity: 0.8; }
+.cookbook-task-menu-btn {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--fg-muted);
+  font-size: 16px;
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+  opacity: 0;
+  border-radius: 4px;
+  position: relative;
+  top: -3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+.cookbook-task:hover .cookbook-task-menu-btn { opacity: 0.6; }
+.cookbook-task-menu-btn:hover {
+  opacity: 1 !important;
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  border-color: var(--border);
+  color: var(--fg);
+}
+.cookbook-task-menu-btn.cookbook-menu-active {
+  opacity: 1 !important;
+  background: color-mix(in srgb, var(--fg) 9%, transparent);
+  border-color: var(--border);
+  color: var(--fg);
+}
+@media (max-width: 768px) {
+  .cookbook-task .cookbook-task-menu-btn {
+    opacity: 0.72;
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    top: -3px;
+  }
+  .cookbook-task .cookbook-task-menu-btn:active {
+    opacity: 1;
+    background: color-mix(in srgb, var(--fg) 9%, transparent);
+    border-color: var(--border);
+  }
+}
+
+/* Launch-command textarea wrapper — Copy pill floats at the top-right
+   corner of the field (chat run-output pattern). */
+.hwfit-serve-cmd-wrap {
+  position: relative;
+}
+.hwfit-serve-cmd-title {
+  margin: 2px 0 3px;
+  font-size: 10px;
+  color: var(--fg-muted);
+  letter-spacing: 0.3px;
+}
+.hwfit-serve-cmd-details[open] > .hwfit-serve-cmd-summary {
+  color: var(--accent, var(--red));
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 48%, var(--border));
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
+}
+.hwfit-serve-copy-inline {
+  position: absolute;
+  top: 4px; right: 4px;
+  z-index: 2;
+  width: 26px !important;
+  height: 26px !important;
+  min-width: 26px !important;
+  padding: 0 !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+  transition: opacity 0.12s, color 0.12s;
+}
+.hwfit-serve-copy-inline:hover { opacity: 1; color: var(--accent-primary, var(--red)); }
+.hwfit-serve-copy-inline.copied { opacity: 1; color: var(--color-save-green, #4caf50); }
+.hwfit-serve-copy-inline svg { display: block; }
+
+/* Split button: Clear Server (main) + ^ arrow (more actions). The two halves
+   are visually joined — left button square on its right edge, arrow square
+   on its left edge — so they read as one widget. */
+.cookbook-gpu-split { display: inline-flex; flex-shrink: 0; }
+.cookbook-gpu-split .cookbook-gpu-split-arrow svg { display: block; }
+
+.cookbook-task-dropdown {
+  /* Must sit above the cookbook modal (whose auto-stack z-index starts at
+     300 and climbs whenever the modal is brought to the front). 1000 was
+     not enough — the dropdown rendered behind the modal on mobile. */
+  z-index: 10000;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  min-width: auto;
+  width: max-content;
+}
+.cookbook-task-dropdown .dropdown-item-compact {
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.cookbook-task-dropdown .dropdown-item-compact:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
+}
+.cookbook-dropdown-danger:hover {
+  color: var(--red) !important;
+}
+.cookbook-task-retry:hover { color: var(--color-warning, #f0ad4e); }
+.cookbook-task-kill:hover { color: var(--color-error, var(--warn)); }
+
+/* Serve "Edit command" modal */
+.cookbook-edit-overlay {
+  position: fixed; inset: 0; z-index: 10000;
+  background: rgba(0,0,0,0.5);
+  display: flex; align-items: center; justify-content: center;
+}
+.cookbook-edit-modal {
+  width: min(720px, 92vw);
+  background: var(--panel, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.cookbook-edit-title {
+  font-size: 13px; font-weight: 600; color: var(--fg);
+}
+.cookbook-edit-textarea {
+  width: 100%;
+  min-height: 140px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  padding: 8px;
+  outline: none;
+  resize: vertical;
+  white-space: pre;
+  overflow: auto;
+}
+.cookbook-edit-textarea:focus { border-color: var(--accent, var(--fg)); }
+.cookbook-edit-actions {
+  display: flex; gap: 8px; justify-content: flex-end;
+}
+.cookbook-edit-save {
+  background: color-mix(in srgb, var(--accent) 20%, transparent) !important;
+  border-color: var(--accent) !important;
+}
+
+/* Running tasks */
+/* Each running task is a real card with a left accent stripe coloured by
+   status, instead of an invisible divider against bg. */
+.cookbook-task {
+  margin: 0 0 8px;
+  border: 1px solid var(--border);
+  border-left: 3px solid color-mix(in srgb, var(--fg) 30%, transparent);
+  border-radius: 8px;
+  overflow: hidden;
+  max-width: 100%;
+  min-width: 0;
+  background: color-mix(in srgb, var(--fg) 3%, var(--bg));
+  transition: border-color 0.15s, background 0.15s;
+}
+.cookbook-task:hover {
+  border-color: color-mix(in srgb, var(--fg) 25%, var(--border));
+  background: color-mix(in srgb, var(--fg) 5%, var(--bg));
+}
+/* Status-driven left stripe via :has() — graceful fallback to neutral. */
+.cookbook-task:has(.cookbook-task-running) { border-left-color: var(--green, #50fa7b); }
+.cookbook-task:has(.cookbook-task-downloading) { border-left-color: var(--color-accent, #00aaff); }
+.cookbook-task:has(.cookbook-task-done)    { border-left-color: var(--green, #50fa7b); }
+.cookbook-task:has(.cookbook-task-error)   { border-left-color: var(--color-error, var(--warn, #f87171)); }
+.cookbook-task:has(.cookbook-task-queued)  { border-left-color: var(--color-warning, #f0ad4e); }
+
+/* Serve crashed / unreachable — full red frame so a dead server in the
+   Running tab is obvious at a glance (mirrors the endpoint health dot). */
+.cookbook-task.cookbook-task-unreachable,
+.cookbook-task[data-type="serve"][data-status="error"],
+.cookbook-task[data-type="serve"][data-status="crashed"] {
+  border-color: var(--color-error, #f44);
+  border-left-color: var(--color-error, #f44);
+  background: color-mix(in srgb, var(--color-error, #f44) 8%, var(--bg));
+}
+
+.cookbook-task-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  font-size: 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 6%, transparent);
+  /* Pin the row so flex parents + Firefox mobile can't squeeze its height to 0,
+     which hides the type pill + model name and leaves only the sub-line +
+     output visible. */
+  flex-shrink: 0;
+  min-height: 32px;
+}
+.cookbook-task-type {
+  text-transform: uppercase;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  width: 67.3px;
+  text-align: center;
+}
+.cookbook-task-type[data-type="serve"] {
+  background: color-mix(in srgb, var(--green, #50fa7b) 16%, transparent);
+  color: var(--green, #50fa7b);
+}
+.cookbook-dl-add-server {
+  position: relative;
+  top: -3px;
+}
+.cookbook-task-type[data-type="download"] {
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  color: var(--fg-muted);
+}
+/* Finished state — overrides the per-type colors so a completed download or
+   serve task shows the same green FINISHED chip. */
+.cookbook-task-type.cookbook-task-type-done {
+  background: color-mix(in srgb, var(--green, #50fa7b) 16%, transparent);
+  color: var(--green, #50fa7b);
+}
+.cookbook-task-backend {
+  width: 67.3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  opacity: 0.5;
+}
+.cookbook-task-name {
+  flex: 1;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cookbook-task-wave {
+  font-size: 11px;
+  letter-spacing: -1px;
+  color: #fff;
+  /* Gentle pulse on top of the cycling bars so a running task reads as clearly
+     alive — especially when the card is collapsed and the log isn't visible. */
+  animation: cookbook-wave-pulse 1.3s ease-in-out infinite;
+}
+.cookbook-task-indicator {
+  min-width: 24px;
+  text-align: center;
+  flex-shrink: 0;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  /* The done/clear pill inside is wider than 24px and would otherwise
+     overflow into the edit/save buttons that sit immediately before it on
+     a serve task. Push it right so it stops crashing into them on desktop. */
+  margin-left: 8px;
+}
+.cookbook-task-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  position: relative;
+  top: 0;
+  cursor: pointer;
+  padding: 1px 6px 1px 4px;
+  border-radius: 9px;
+  color: var(--red, #ff5555);
+  transition: background 0.15s;
+}
+.cookbook-task-check svg { flex-shrink: 0; }
+.cookbook-task-check:hover { background: color-mix(in srgb, var(--red, #ff5555) 18%, transparent); }
+/* Terminal task clear pill. */
+.cookbook-task-done-label,
+.cookbook-task-clear-label {
+  font-size: 9px;
+  line-height: 1;
+  text-transform: lowercase;
+}
+.cookbook-task-done-label { color: var(--red, #ff5555); }
+.cookbook-task-clear-label { display: none; }
+.cookbook-task-check-ico { display: none; }
+.cookbook-task-clear-ico { display: inline; }
+.cookbook-task[data-status="done"] .cookbook-task-check {
+  color: var(--green, #50fa7b);
+}
+.cookbook-task[data-status="done"] .cookbook-task-check:hover {
+  background: color-mix(in srgb, var(--green, #50fa7b) 16%, transparent);
+}
+.cookbook-task[data-status="done"] .cookbook-task-done-label {
+  color: var(--green, #50fa7b);
+}
+@media (max-width: 820px) {
+  .cookbook-task-check {
+    top: 2px;
+  }
+}
+.cookbook-task-start-now {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  position: relative;
+  top: -4px;
+  cursor: pointer;
+  /* Tightened vertical padding so the hover-background isn't disproportionately
+     tall vs the icon+label. */
+  padding: 0 6px 0 4px;
+  height: 14px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 9px;
+  line-height: 1;
+  text-transform: lowercase;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.cookbook-task-start-now svg {
+  flex-shrink: 0;
+  position: relative;
+  top: 0;
+}
+.cookbook-task-start-now:hover {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+/* "Serve" button on a finished download — green pill matching the "running" /
+   finished badge (it sits next to the green FINISHED chip + check). */
+.cookbook-task-serve-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px 1px 4px;
+  border: 0;
+  border-radius: 9px;
+  line-height: 1;
+  flex-shrink: 0;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 9px;
+  text-transform: lowercase;
+  background: transparent;
+  color: var(--green, #50fa7b);
+  position: relative;
+  top: -2px;
+  margin-right: 2px;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  transition: background 0.15s;
+}
+.cookbook-task-serve-btn svg { flex-shrink: 0; }
+.cookbook-task-serve-btn:hover { background: color-mix(in srgb, var(--green, #50fa7b) 16%, transparent); }
+.cookbook-task-sub {
+  padding: 1px 10px 4px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.cookbook-task-session {
+  font-size: 9px;
+  color: var(--fg-muted);
+  font-family: 'Fira Code', monospace;
+  opacity: 0.35;
+  letter-spacing: 0.3px;
+}
+.cookbook-task-server {
+  font-size: 9px;
+  color: var(--fg-muted);
+  font-family: 'Fira Code', monospace;
+  opacity: 0.4;
+}
+.cookbook-task-uptime {
+  font-size: 9px;
+  color: var(--fg-muted);
+  font-family: 'Fira Code', monospace;
+  opacity: 0.4;
+}
+.cookbook-task-status {
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-weight: 600;
+  text-align: left;
+  flex-shrink: 0;
+  line-height: 16px;
+}
+.cookbook-task-running { background: color-mix(in srgb, var(--green, #50fa7b) 20%, transparent); color: var(--green, #50fa7b); }
+.cookbook-task-downloading { background: color-mix(in srgb, var(--color-accent, #00aaff) 20%, transparent); color: var(--color-accent, #00aaff); }
+/* Stopping: same pill treatment as "running" but orange. */
+.cookbook-task-stopping { background: color-mix(in srgb, var(--orange, #ffb86c) 22%, transparent); color: var(--orange, #ffb86c); }
+.cookbook-task-done { background: color-mix(in srgb, var(--green) 15%, transparent); color: var(--green); }
+.cookbook-task-error { background: color-mix(in srgb, var(--color-error, var(--warn)) 20%, transparent); color: var(--color-error, var(--warn)); }
+/* Crashed: same filled-pill treatment as "running" but red, with a red border. */
+.cookbook-task-crashed { background: color-mix(in srgb, var(--red, #ff5555) 16%, transparent); color: var(--red, #ff5555); border: 1px solid var(--red, #ff5555); padding: 0 5px; }
+.cookbook-task-stopped { background: color-mix(in srgb, var(--color-warning, #f0ad4e) 22%, transparent); color: var(--color-warning, #f0ad4e); }
+.cookbook-task-queued { background: color-mix(in srgb, var(--color-warning, #f0ad4e) 15%, transparent); color: var(--color-warning, #f0ad4e); }
+/* Stopped / crashed servers get an orange surround instead of the heavier
+   red — communicates "this isn't running, here's the last command you used,
+   relaunch when ready" without screaming "error". Color stays normal so the
+   command text remains easy to copy. */
+.cookbook-task[data-status="stopped"],
+.cookbook-task[data-status="error"],
+.cookbook-task[data-status="crashed"] {
+  border-color: color-mix(in srgb, var(--color-warning, #f0ad4e) 55%, var(--border));
+  background: color-mix(in srgb, var(--color-warning, #f0ad4e) 6%, var(--bg));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-warning, #f0ad4e) 18%, transparent);
+}
+.cookbook-task[data-status="stopped"] .cookbook-output-pre,
+.cookbook-task[data-status="error"]   .cookbook-output-pre,
+.cookbook-task[data-status="crashed"] .cookbook-output-pre {
+  border-top-color: color-mix(in srgb, var(--color-warning, #f0ad4e) 35%, var(--border));
+}
+.cookbook-task-retry,
+.cookbook-task .cookbook-output-wrap { margin: 0; }
+.cookbook-task .cookbook-output-pre {
+  border-radius: 0;
+  border-top: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
+  max-height: 150px;
+  max-width: 100%;
+  overflow-x: hidden;
+  box-sizing: border-box;
+  background: color-mix(in srgb, var(--fg) 5%, var(--bg));
+}
+.cookbook-task .cookbook-output-pre:empty {
+  display: none;
+}
+.cookbook-task-collapsed {
+  display: none !important;
+}
+.cookbook-task[data-type="serve"] .cookbook-task-header {
+  margin: 4px 4px 0;
+  border-radius: 6px;
+}
+.cookbook-task[data-type="serve"] .cookbook-output-wrap {
+  margin: 0 4px 4px;
+}
+.cookbook-task[data-type="serve"] .cookbook-output-pre {
+  border-radius: 6px;
+}
+
+/* Env bar — match admin-card */
+.cookbook-env-bar {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+}
+.cookbook-env-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.cookbook-env-row .cookbook-field-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Tabs — match library tabs */
+.cookbook-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+/* Mobile: every modal tab strip should swipe horizontally instead of wrapping
+   or getting cut off. Hide the scrollbar (still pannable via touch / drag). */
+@media (max-width: 768px) {
+  /* Server settings actions need a less fiddly touch target on phones. */
+  #cookbook-server-add.cal-add-btn-text {
+    height: 37px;
+    border-radius: 18.5px;
+  }
+  .cookbook-server-check-btn,
+  .cookbook-server-key-btn,
+  .cookbook-server-cancel-btn,
+  .cookbook-server-rm-btn,
+  .cookbook-server-save-btn {
+    height: 31px !important;
+    min-height: 31px;
+    border-radius: 7px;
+  }
+
+  .cookbook-official-filter {
+    flex: 0 0 auto;
+  }
+
+  .cookbook-dep-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .cookbook-dep-row > .cookbook-dep-info {
+    flex: 1 1 100%;
+  }
+  .cookbook-dep-build-deps {
+    flex: 0 1 auto;
+    max-width: 100%;
+    margin-left: auto;
+    order: 20;
+  }
+  .cookbook-dep-row > .cookbook-dep-installed,
+  .cookbook-dep-row > .cookbook-dep-installed-btn,
+  .cookbook-dep-row > .cookbook-dep-na,
+  .cookbook-dep-row > .cookbook-dep-install:not(.cookbook-dep-build-deps) {
+    margin-left: auto;
+  }
+
+  .cookbook-tabs,
+  .memory-tabs,
+  .admin-tabs,
+  .lib-tabs,
+  .gallery-tabs,
+  .preset-tabs {
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+  .cookbook-tabs::-webkit-scrollbar,
+  .memory-tabs::-webkit-scrollbar,
+  .admin-tabs::-webkit-scrollbar,
+  .lib-tabs::-webkit-scrollbar,
+  .gallery-tabs::-webkit-scrollbar,
+  .preset-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .cookbook-tabs > *,
+  .memory-tabs > *,
+  .admin-tabs > *,
+  .lib-tabs > *,
+  .gallery-tabs > *,
+  .preset-tabs > * {
+    flex-shrink: 0;
+  }
+}
+.cookbook-tab {
+  /* `background: none` isn't enough on Windows — Chrome/Edge fall back to the
+     OS native button background (dark gray / black under dark mode) when
+     no explicit color + appearance reset is applied. Force transparent +
+     appearance:none so the tab inherits the modal's panel color. */
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  background-color: transparent;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--fg-muted);
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 0.1s, border-color 0.1s;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.cookbook-tab:hover {
+  color: var(--fg);
+}
+.cookbook-tab.active {
+  color: var(--accent, var(--red));
+  border-bottom-color: var(--accent, var(--red));
+}
+/* Mobile: hide tab icons so labels don't wrap to a new row */
+@media (max-width: 640px) {
+  .cookbook-tab svg {
+    display: none;
+  }
+  .cookbook-tab {
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+  /* Mobile cookbook text: match the calendar/library modal scale. iOS keeps
+     its no-zoom safeguard below; Android does not need inflated controls. */
+  .cookbook-body {
+    font-size: 13px;
+  }
+  .cookbook-body h2 { font-size: 14px; }
+  .cookbook-body .memory-desc,
+  .cookbook-body .doclib-desc { font-size: 12px; }
+  .cookbook-body .memory-item-title { font-size: 13px; }
+  .cookbook-body .memory-item-meta { font-size: 11px !important; }
+  .cookbook-body .hwfit-sf,
+  .cookbook-body .cookbook-field-input,
+  .cookbook-body .cookbook-dl-repo { font-size: 13px; }
+  .cookbook-body .memory-toolbar-btn { font-size: 12px; }
+}
+
+/* Mobile cookbook sizing — kept in line with calendar/library modals. */
+@media (max-width: 768px) {
+  .hwfit-serve-row-core .hwfit-context-label {
+    grid-column: 1 / -1;
+  }
+  /* The Speculative control (checkbox + method dropdown + token stepper)
+     is too wide for a phone — the stepper ran off the right edge of the
+     modal. Let the group wrap onto its own line, take full width, and
+     shrink the method dropdown so the +/− stepper stays on-screen. */
+  .hwfit-spec-group {
+    flex-wrap: wrap;
+    flex-basis: 100%;
+    column-gap: 4px;
+    row-gap: 4px;
+  }
+  .hwfit-spec-group .hwfit-spec-method {
+    min-width: 0;
+    flex: 0 1 82px;
+    max-width: 82px;
+  }
+  .hwfit-numstep { flex: 0 0 auto; }
+  .hwfit-spec-group .hwfit-help-chip-inline {
+    flex: 0 0 auto;
+    margin-left: 2px !important;
+  }
+  .cookbook-card-title { font-size: 13px; }
+  .cookbook-card-desc { font-size: 12px; }
+  .cookbook-field-label { font-size: 12px; }
+  /* All cookbook controls share one compact field scale. */
+  .cookbook-field-input { font-size: 13px; padding: 6px 8px; }
+  select.cookbook-field-input { font-size: 13px !important; padding: 5px 8px; }
+  /* Repo input + model search read oversized at 16px; bring their text and
+     placeholder hints down to match the rest of the cookbook. */
+  .cookbook-dl-repo, .hwfit-search { font-size: 13px !important; }
+  .cookbook-cmd-preview { font-size: 12px; padding: 8px 10px; }
+  .cookbook-btn { font-size: 12px; padding: 6px 12px; }
+  .cookbook-tab { font-size: 13px; }
+  .cookbook-task-header { font-size: 13px; padding: 6px 10px; }
+  .cookbook-task-name { font-size: 13px; }
+  .cookbook-task-sub { font-size: 11px; }
+  .cookbook-task-status {
+    font-size: 10px;
+    /* Vertical alignment of the phase/loading badge against the task title. */
+    position: relative;
+    top: 2px;
+  }
+  /* Keep the ascii wave aligned with the badge (both 2px down). */
+  .cookbook-task-wave {
+    position: relative;
+    top: 2px;
+  }
+  /* Session id (serve-…) + uptime sub-line down 1px. */
+  .cookbook-task-session,
+  .cookbook-task-uptime {
+    position: relative;
+    top: 1px;
+  }
+  /* Rest of the header row down 2px to match the status badge + wave: the
+     model title, the serve/download type tag, and the edit/save/menu icons. */
+  .cookbook-task-type,
+  .cookbook-task-name,
+  .cookbook-task-edit-btn,
+  .cookbook-task-save-btn {
+    position: relative;
+    top: 2px;
+  }
+  /* The ⋮ menu sits higher than the rest of the row. */
+  .cookbook-task-menu-btn {
+    position: relative;
+    top: -2px;
+    /* Mobile has no hover — the base rule's opacity:0 left the ⋮ button
+       invisible AND effectively unclickable. Always show + give a proper
+       touch target. */
+    opacity: 0.7 !important;
+    width: 32px !important;
+    height: 32px !important;
+    font-size: 18px !important;
+  }
+  /* The copied-confirmation checkmark sits 2px higher than the copy icon. */
+  .cookbook-output-copy.copied svg {
+    position: relative;
+    top: 2px;
+  }
+  .cookbook-section-title { font-size: 12px; }
+  .cookbook-settings-label { font-size: 12px; }
+  .cookbook-settings-hint { font-size: 11px; }
+  .cookbook-settings-input { font-size: 13px; }
+  /* Settings stack is flex:1 + overflow:hidden with no inner scroll, so on a
+     short mobile viewport its lower half gets clipped. Let it scroll. */
+  .cookbook-settings-stack { overflow-y: auto !important; -webkit-overflow-scrolling: touch; }
+  /* The Servers card is flex:1 + its own overflow-y:auto — a nested scroll that
+     collapses and crops its list inside the now-scrolling stack. Let both cards
+     take natural height and scroll the whole stack as one instead. */
+  .cookbook-settings-stack > .admin-card {
+    flex: 0 0 auto !important;
+    overflow: visible !important;
+  }
+  .cookbook-dl-repo { font-size: 13px !important; }
+  .cookbook-dl-btn { font-size: 14px; }
+  .cookbook-serve-preset-name { font-size: 14px; }
+  .cookbook-serve-preset-meta { font-size: 12px; }
+  .cookbook-saved-name { font-size: 14px; }
+  .cookbook-saved-host { font-size: 12px; }
+  .cookbook-slot-btn { font-size: 13px; }
+  /* The serve-panel "Save" split button reads larger than the surrounding
+     controls (it's also bold) — knock it down so it matches the row. */
+  .cookbook-saved-save,
+  .cookbook-saved-arrow { font-size: 11px; }
+  .cookbook-output-pre { font-size: 12px; }
+  .cookbook-dep-tag { font-size: 12px; }
+  .cookbook-checkbox-label { font-size: 13px; }
+  .cookbook-gpu-btn { font-size: 13px; }
+}
+
+/* Slider — range + text value */
+.cookbook-slider-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cookbook-slider {
+  flex: 1;
+  min-width: 0;
+  height: 6px;
+  margin: 8px 0;
+  padding: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  background: linear-gradient(to right, var(--accent, var(--red)) 0%, var(--accent, var(--red)) 50%, color-mix(in srgb, var(--fg) 12%, transparent) 50%);
+  border-radius: 4px;
+  outline: none;
+  cursor: pointer;
+  transition: opacity 0.1s;
+}
+.cookbook-slider-value {
+  width: 64px !important;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 11px;
+}
+
+/* Toggle switches — match admin-switch */
+.cookbook-checkbox-row {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 4px 0;
+}
+.cookbook-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  cursor: pointer;
+  user-select: none;
+}
+.cookbook-checkbox-label:hover { color: var(--fg); }
+.cookbook-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 30px;
+  height: 16px;
+  background: color-mix(in srgb, var(--fg) 15%, transparent);
+  border-radius: 8px;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.08s;
+  flex-shrink: 0;
+}
+.cookbook-checkbox::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--panel);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+  transition: transform 0.08s;
+}
+.cookbook-checkbox:checked {
+  background: var(--red);
+}
+
+/* GPU toggle grid */
+.cookbook-gpu-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+}
+.cookbook-gpu-label {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  margin-right: 4px;
+  white-space: nowrap;
+}
+.cookbook-gpu-btn {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  font-size: 11px;
+  font-family: inherit;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.cookbook-gpu-btn:hover {
+  color: var(--fg);
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.cookbook-gpu-btn.active {
+  background: var(--red);
+  color: var(--panel);
+  border-color: var(--red);
+}
+
+/* Instance / Save buttons */
+.cookbook-add-instance-btn,
+.cookbook-save-btn {
+  background: transparent;
+  border: 1px dashed color-mix(in srgb, var(--accent) 50%, transparent);
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+  font-size: 11px;
+}
+.cookbook-add-instance-btn:hover,
+.cookbook-save-btn:hover {
+  border-color: var(--accent);
+  color: var(--fg);
+}
+.cookbook-remove-instance-btn {
+  background: transparent;
+  border: none;
+  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.cookbook-remove-instance-btn:hover { color: var(--red); }
+
+/* Preset chips */
+/* Saved card styling */
+.cookbook-saved-card .cookbook-card-desc {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+}
+.cookbook-delete-preset-btn {
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+  font-size: 12px;
+}
+.cookbook-delete-preset-btn:hover {
+  color: var(--red);
+}
+
+
+/* Kill button */
+.cookbook-kill-btn {
+  border-color: var(--color-error);
+  color: var(--color-error);
+  background: transparent;
+}
+.cookbook-kill-btn:hover {
+  background: var(--color-error);
+  color: var(--panel);
+  border-color: var(--color-error);
+}
+
+/* Error diagnosis banner */
+.cookbook-diagnosis {
+  margin-top: 6px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--color-error) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-error) 30%, transparent);
+  border-radius: 6px;
+  /* The diagnosis body can carry traceback fragments and long unbroken
+     paths (e.g. /home/.../snapshots/<sha>/<file>.gguf). Without these,
+     a single long token pushes the card wider than the cookbook modal,
+     scrolling the row right and clipping the action buttons. */
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.cookbook-diagnosis pre,
+.cookbook-diagnosis code {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+.cookbook-diag-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  position: relative;
+  top: -4px;
+  margin-bottom: -4px;
+}
+.cookbook-diag-fold {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-error);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-right: auto;
+}
+.cookbook-diag-fold:hover {
+  background: transparent;
+  color: var(--color-error);
+  opacity: 0.85;
+}
+.cookbook-diag-chevron {
+  display: inline-block;
+  width: 10px;
+  font-size: 10px;
+}
+.cookbook-diag-copy {
+  border: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  padding: 0 2px;
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.cookbook-diag-copy:hover {
+  background: transparent;
+  color: var(--fg);
+}
+.cookbook-diag-copy.copied {
+  color: var(--green, #50fa7b);
+}
+.cookbook-diag-copy svg {
+  display: block;
+}
+.cookbook-diag-dismiss {
+  border: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  padding: 0;
+  width: 16px;
+  height: 18px;
+  min-height: 18px;
+  line-height: 16px;
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  top: -2px;
+}
+.cookbook-diag-dismiss:hover {
+  background: transparent;
+  color: var(--color-error);
+}
+.cookbook-diag-message {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-error);
+  margin-bottom: 4px;
+  margin-left: 2px;
+  user-select: text;
+}
+.cookbook-diag-suggestion {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--fg-muted);
+  margin-bottom: 8px;
+  margin-left: 2px;
+  user-select: text;
+}
+.cookbook-diag-fixes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.cookbook-diag-actions {
+  position: relative;
+  display: inline-flex;
+}
+.cookbook-diag-action-trigger {
+  font-size: 11px;
+  padding: 4px 10px;
+  min-height: 24px;
+  background: var(--panel);
+  border: 1px solid color-mix(in srgb, var(--color-error) 40%, transparent);
+  color: var(--fg);
+}
+.cookbook-diag-action-trigger:hover {
+  border-color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+}
+.cookbook-diag-menu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  min-width: 180px;
+  z-index: 80;
+}
+.cookbook-diag-menu button {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+  white-space: nowrap;
+}
+.cookbook-diag-btn {
+  font-size: 11px;
+  padding: 4px 10px;
+  background: var(--panel);
+  border: 1px solid color-mix(in srgb, var(--color-error) 40%, transparent);
+  color: var(--fg);
+}
+.cookbook-diag-btn:hover {
+  border-color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+}
+/* Icons on the left of diagnosis action buttons (Retry / Copy / Edit / etc.). */
+.cookbook-diag-btn,
+.cookbook-diag-menu button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.cookbook-diag-btn-ico {
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+/* ── What Fits? (hardware model fitting tab in cookbook) ── */
+.cookbook-group.hidden { display: none !important; }
+
+/* Section titles */
+.cookbook-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+  opacity: 0.7;
+  margin: 10px 0 4px;
+}
+.cookbook-section-title:first-child { margin-top: 0; }
+
+/* Download input */
+.cookbook-dl-input {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 4px;
+  align-items: stretch;
+}
+.cookbook-dl-repo {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  font-family: 'Fira Code', monospace;
+  font-size: 12px;
+  padding: 5px 8px;
+}
+.cookbook-dl-repo:focus {
+  border-color: var(--accent, var(--red));
+  outline: none;
+}
+.cookbook-dl-repo::placeholder {
+  color: var(--fg-muted);
+  opacity: 0.5;
+  font-family: inherit;
+}
+/* Brief border+glow flash when an Ollama row in the hwfit list autofills the
+   Download input — helps the user see what landed when the input is offscreen
+   or above a tall list. */
+.cookbook-dl-repo.cookbook-dl-flash {
+  border-color: var(--red) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--red) 25%, transparent) !important;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.cookbook-dl-btn {
+  background: var(--accent, var(--red));
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 0 14px;
+  height: 28px;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  margin-top: -4px;
+}
+.cookbook-dl-btn:hover {
+  opacity: 0.9;
+}
+.cookbook-dl-gguf-row {
+  margin-top: -1px;
+  gap: 5px;
+  align-items: center;
+  justify-content: flex-end;
+  font-size: 11px;
+  position: relative;
+  top: -2px;
+}
+.cookbook-dl-gguf-label {
+  opacity: 0.65;
+  flex-shrink: 0;
+}
+#cookbook-dl-gguf-quant {
+  height: 28px;
+  min-width: 118px;
+  flex: 0 0 auto;
+}
+#cookbook-dl-gguf-note {
+  opacity: 0.55;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 240px;
+}
+
+/* HF link in search panel */
+.hwfit-panel-hf-link {
+  font-size: 10px;
+  color: var(--red);
+  text-decoration: none;
+  margin-left: auto;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--red) 40%, transparent);
+  border-radius: 3px;
+  transition: all 0.15s;
+}
+.hwfit-panel-hf-link:hover {
+  color: #fff;
+  background: var(--red);
+  border-color: var(--red);
+}
+
+.cookbook-server-toggle {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  user-select: none;
+  list-style: none;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--fg-muted);
+  transition: background 0.1s, color 0.1s;
+}
+.cookbook-server-toggle:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.cookbook-server-toggle svg {
+  opacity: 0.5;
+  transition: transform 0.2s;
+}
+.cookbook-server-details[open] .cookbook-server-toggle svg {
+  transform: rotate(45deg);
+}
+.cookbook-settings-content {
+  padding: 6px 0;
+}
+.cookbook-settings-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+.cookbook-settings-label {
+  font-size: 10px;
+  color: var(--fg-muted);
+}
+.cookbook-settings-hint {
+  opacity: 0.5;
+  font-weight: 400;
+}
+.cookbook-settings-input {
+  width: 100%;
+  font-size: 11px;
+  padding: 4px 6px;
+}
+.cookbook-settings-subtitle {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin: 8px 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cookbook-server-add {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--fg-muted);
+  font-size: 13px;
+  width: 16px;
+  height: 16px;
+  position: relative;
+  top: -3px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 0;
+  padding-bottom: 3px;
+  line-height: 16px;
+  text-align: center;
+  transition: color 0.1s, border-color 0.1s;
+}
+.cookbook-server-add:hover {
+  color: var(--fg);
+  border-color: var(--fg);
+}
+.cookbook-server-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+.cookbook-srv-status {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #777;
+  transition: background 0.2s, box-shadow 0.2s, transform 0.15s;
+  cursor: pointer;
+}
+.cookbook-srv-status.testing {
+  background: var(--color-warning, #f0ad4e);
+  animation: cookbook-srv-pulse 0.9s ease-in-out infinite;
+}
+.cookbook-srv-status.ok {
+  background: var(--cookbook-server-color, var(--color-success, #50fa7b));
+  /* Soft outer ring + breathing halo so active servers glow like LEDs. */
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--cookbook-server-color, var(--color-success, #50fa7b)) 25%, transparent),
+    0 0 10px 2px color-mix(in srgb, var(--cookbook-server-color, var(--color-success, #50fa7b)) 55%, transparent);
+  animation: cookbook-srv-glow-ok 2.4s ease-in-out infinite;
+}
+.cookbook-srv-status.fail {
+  background: var(--red, #e06c75);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--red, #e06c75) 25%, transparent),
+    0 0 10px 2px color-mix(in srgb, var(--red, #e06c75) 55%, transparent);
+}
+@keyframes cookbook-srv-glow-ok {
+  0%, 100% {
+    box-shadow:
+      0 0 0 2px color-mix(in srgb, var(--cookbook-server-color, var(--color-success, #50fa7b)) 22%, transparent),
+      0 0 8px 1px color-mix(in srgb, var(--cookbook-server-color, var(--color-success, #50fa7b)) 45%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 3px color-mix(in srgb, var(--cookbook-server-color, var(--color-success, #50fa7b)) 38%, transparent),
+      0 0 14px 3px color-mix(in srgb, var(--cookbook-server-color, var(--color-success, #50fa7b)) 75%, transparent);
+  }
+}
+.cookbook-server-row input.hwfit-sf,
+.cookbook-server-row select.hwfit-sf {
+  font-size: 11px;
+  padding: 0 6px;
+  margin: 0;
+  height: 24px;
+  min-height: 24px;
+  max-height: 24px;
+  line-height: 24px;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: inherit;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+}
+.cookbook-server-row select.hwfit-sf {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%23999'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  padding-right: 18px;
+}
+/* Each server is its own card block (mirrors the Running tab's task cards):
+   full border + accent left-rail + rounded corners + subtle fill, spaced. */
+.cookbook-server-entry {
+  position: relative;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--cookbook-server-color, color-mix(in srgb, var(--fg) 30%, transparent));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 3%, var(--bg));
+  box-sizing: border-box;
+}
+.cookbook-server-entry:last-child { margin-bottom: 0; }
+.cookbook-server-row .cookbook-srv-color-wrap {
+  width: 28px;
+  flex-shrink: 0;
+  flex-grow: 0;
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  color: var(--cookbook-server-color, var(--fg-muted));
+}
+.cookbook-server-row .cookbook-srv-color-dot {
+  position: static;
+  transform: none;
+  pointer-events: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.55;
+  z-index: 1;
+}
+.cookbook-server-row .cookbook-srv-color-wrap.has-color .cookbook-srv-color-dot {
+  opacity: 1;
+}
+.cookbook-server-row .cookbook-srv-color-btn {
+  width: 26px;
+  height: 26px;
+  padding: 0 !important;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 50%;
+  top: -2px;
+}
+.cookbook-server-row .cookbook-srv-color-btn:hover {
+  background: color-mix(in srgb, var(--cookbook-server-color, var(--fg)) 14%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cookbook-server-color, var(--fg)) 18%, transparent);
+}
+.cookbook-server-row .cookbook-srv-color-caret {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0.65;
+}
+.cookbook-server-row .cookbook-srv-color-wrap.has-color .cookbook-srv-color-btn {
+  color: var(--fg);
+  border-color: transparent;
+  background-color: transparent;
+  box-shadow: none;
+}
+.cookbook-server-row .cookbook-srv-color-wrap.has-color .cookbook-srv-color-dot {
+  background: var(--cookbook-server-color, currentColor);
+}
+.cookbook-server-row .cookbook-srv-color-wrap.has-color .cookbook-srv-color-caret {
+  color: var(--fg-muted);
+}
+.cookbook-srv-color-menu {
+  position: absolute;
+  z-index: 5000;
+  top: calc(100% + 4px);
+  left: 0;
+  width: 138px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  box-shadow: 0 8px 24px color-mix(in srgb, #000 35%, transparent);
+}
+.cookbook-srv-color-menu.hidden {
+  display: none;
+}
+.cookbook-srv-color-item {
+  width: 100%;
+  height: 24px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--swatch-color, var(--fg)) 10%, transparent);
+  color: var(--fg);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 7px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+}
+.cookbook-srv-color-item:hover,
+.cookbook-srv-color-item.active {
+  border-color: color-mix(in srgb, var(--swatch-color, var(--accent, var(--red))) 55%, var(--border));
+  background: color-mix(in srgb, var(--swatch-color, var(--accent, var(--red))) 18%, var(--bg));
+}
+.cookbook-srv-color-item-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--swatch-color, var(--fg-muted));
+  border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent);
+  flex-shrink: 0;
+}
+/* Normalize every control on a server row to the same 24-px height — with
+   many servers the small per-control height drift was very visible. */
+.cookbook-server-row > * {
+  height: 24px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+.cookbook-server-row > input.hwfit-sf,
+.cookbook-server-row > select.hwfit-sf,
+.cookbook-server-row > button,
+.cookbook-server-row .cookbook-srv-actions > button {
+  height: 24px;
+  line-height: 22px;
+  padding: 0 8px;
+  font-size: 11px;
+  box-sizing: border-box;
+}
+.cookbook-server-row .cookbook-srv-actions > .close-btn { width: 24px; padding: 0; line-height: 22px; }
+.cookbook-server-row .cookbook-dep-tag { display: inline-flex; align-items: center; height: 24px; padding: 0 6px; line-height: 1; }
+.cookbook-server-rm {
+  width: 22px;
+  height: 22px;
+  font-size: 10px;
+  opacity: 0.55;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: opacity 0.12s, background 0.12s, color 0.12s, border-color 0.12s;
+}
+.cookbook-server-rm:hover {
+  opacity: 1;
+  background: var(--red);
+  color: #fff;
+  border-color: var(--red);
+}
+/* Labelled "Delete server" variant (lives in the Model Directory row) — override
+   the 22x22 icon box with a normal text button. */
+.cookbook-server-rm-btn {
+  width: auto;
+  height: auto;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-family: inherit;
+  background: none;
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 40%, var(--border));
+  white-space: nowrap;
+  position: relative;
+  top: -3px;
+}
+/* The "+" glyph in the Servers-header "+ Add" button, nudged up 1px (scoped so
+   the shared calendar +New pill is unaffected). */
+#cookbook-server-add .cal-add-plus { position: relative; top: -1px; }
+/* Save button on a new server entry — same shape as Delete, accent-colored;
+   turns green once saved. */
+.cookbook-server-save-btn {
+  width: auto;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-family: inherit;
+  cursor: pointer;
+  background: none;
+  color: var(--accent, var(--red));
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.cookbook-server-save-btn:hover { background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent); }
+/* Connection controls use the same compact typography as the server's
+   Delete and Save actions, despite living in the title row. */
+.cookbook-server-check-btn,
+.cookbook-server-key-btn {
+  padding: 2px 8px;
+  font-size: 10px;
+  font-family: inherit;
+  font-weight: 400;
+  line-height: 1;
+  white-space: nowrap;
+}
+/* Cancel (discard a new server) — same shape/size as Save, muted. */
+.cookbook-server-cancel-btn {
+  width: auto;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-family: inherit;
+  cursor: pointer;
+  background: none;
+  color: var(--fg-muted, var(--fg));
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.cookbook-server-cancel-btn:hover { color: var(--fg); border-color: var(--fg); }
+.cookbook-server-save-btn.saved {
+  color: var(--green, #50fa7b);
+  border-color: color-mix(in srgb, var(--green, #50fa7b) 45%, var(--border));
+  cursor: default;
+}
+.cookbook-path-row {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 3px;
+  align-items: center;
+}
+.cookbook-path-input {
+  flex: 1;
+}
+.cookbook-path-add {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--fg-muted);
+  font-size: 12px;
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+  transition: color 0.1s, border-color 0.1s;
+}
+.cookbook-path-add:hover {
+  color: var(--fg);
+  border-color: var(--fg);
+}
+
+/* Server selector in search toolbar */
+.hwfit-server-select {
+  min-width: 70px;
+}
+/* GPU toggle buttons */
+.hwfit-gpu-toggles {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  position: relative;
+  top: -3px;
+}
+.hwfit-gpu-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg-muted);
+  font-size: 10px;
+  padding: 0 5px;
+  cursor: pointer;
+  min-width: 20px;
+  height: 28px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+  font-family: inherit;
+}
+.hwfit-gpu-btn:hover {
+  color: var(--fg);
+  border-color: var(--fg);
+}
+.hwfit-gpu-btn.active {
+  background: var(--accent, var(--red));
+  color: #fff;
+  border-color: var(--accent, var(--red));
+}
+/* Pool selector for heterogeneous GPU boxes — sits left of the RAM/GPU buttons */
+.hwfit-gpu-group {
+  background: var(--bg-elev, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  font-size: 10px;
+  height: 28px;
+  padding: 0 4px;
+  cursor: pointer;
+  box-sizing: border-box;
+  font-family: inherit;
+  max-width: 190px;
+}
+.hwfit-gpu-group:hover { border-color: var(--fg); }
+@keyframes cookbookCmdFlash {
+  0%   { box-shadow: 0 0 0 0 var(--accent, var(--red)); border-color: var(--accent, var(--red)); }
+  30%  { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, var(--red)) 40%, transparent); border-color: var(--accent, var(--red)); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+/* "Confirmed working" tick on a saved serve config (auto-saved once its endpoint registered) */
+.cookbook-saved-confirmed {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  line-height: 0;
+}
+.hwfit-container { display: flex; flex-direction: column; gap: 8px; }
+.hwfit-toolbar {
+  display: flex; gap: 4px; align-items: center; flex-wrap: wrap;
+}
+.hwfit-toolbar .spinner-whirlpool canvas {
+  position: relative;
+  top: -2px;
+}
+#hwfit-cache-scan .spinner-whirlpool canvas {
+  position: relative;
+  top: -2px;
+}
+.hwfit-toolbar select,
+.hwfit-toolbar input {
+  height: 28px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-family: inherit;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-sizing: border-box;
+}
+.hwfit-toolbar select:focus,
+.hwfit-toolbar input:focus { outline: none; border-color: var(--red); }
+.hwfit-toolbar .hwfit-usecase-btn {
+  min-width: 0;
+  width: 108px;
+  flex-shrink: 0;
+  font-size: 10px;
+  top: -3px;
+}
+.hwfit-toolbar .hwfit-quant { min-width: 0; width: 78px; flex-shrink: 0; font-size: 10px; }
+.hwfit-toolbar .hwfit-engine-btn { min-width: 0; width: 116px; flex-shrink: 0; font-size: 10px; }
+.hwfit-advanced-panel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.hwfit-advanced-panel.hidden { display: none; }
+.hwfit-advanced-panel .hwfit-engine-btn {
+  top: -3px;
+  width: 116px;
+  min-width: 116px;
+  box-sizing: border-box;
+  font-size: 11px;
+}
+.hwfit-advanced-panel .hwfit-quant {
+  width: 78px;
+  min-width: 78px;
+  height: 28px;
+  box-sizing: border-box;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  position: relative;
+  top: 0;
+}
+.hwfit-advanced-panel .hwfit-quant option {
+  background: var(--panel, var(--bg));
+  color: var(--fg);
+}
+.hwfit-advanced-btn.active {
+  color: var(--accent, var(--red));
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+}
+
+/* Dot inside the Fit column header — click to toggle the fit-only filter
+   (off = show too-tight rows; on = hide them). */
+.hwfit-fit-dot {
+  display: inline-block;
+  margin-right: 4px;
+  font-size: 8px;
+  line-height: 1;
+  color: color-mix(in srgb, var(--fg) 35%, transparent);
+  cursor: pointer;
+  vertical-align: middle;
+  position: relative;
+  top: -1px;  /* nudge 1px up so the small dot sits centered with the "Fit" caps */
+  transition: color 0.12s ease, text-shadow 0.12s ease;
+}
+/* Quant suffix appended to model names when the storage format isn't in the
+   repo id — e.g. "(FP4-MoE-Mixed)" after DeepSeek-V4-Flash. Muted to read as
+   metadata, not part of the name. */
+.hwfit-name-quant {
+  font-size: 0.78em;
+  opacity: 0.55;
+  font-weight: 400;
+  margin-left: 4px;
+}
+.hwfit-fit-dot:hover { color: var(--accent, var(--red)); }
+.hwfit-fit-dot.active {
+  color: var(--green, #50fa7b);
+  text-shadow: 0 0 4px color-mix(in srgb, var(--green, #50fa7b) 55%, transparent);
+}
+.hwfit-help-chip {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--fg) 22%, transparent);
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+  position: relative;
+  top: -1px;
+  margin-left: -1px;
+}
+.hwfit-help-chip:hover {
+  color: var(--accent, var(--red));
+  border-color: color-mix(in srgb, var(--fg) 45%, transparent);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.hwfit-help-chip-inline {
+  margin-left: -2px;
+  margin-right: 0;
+  top: 0;  /* parent rule sets top:-1px; nudge inline variant 1px lower */
+}
+/* Quant select + inline ? wrapper — the ? sits inside the dropdown's bordered
+   box, anchored on the right just left of the chevron. */
+.hwfit-quant-wrap, .hwfit-engine-wrap, .hwfit-usecase-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.hwfit-engine-btn,
+.hwfit-usecase-btn {
+  height: 28px;
+  padding: 0 30px 0 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  position: relative;
+  top: -7px;
+}
+.hwfit-engine-btn-icon,
+.hwfit-engine-item-icon,
+.hwfit-usecase-btn-icon,
+.hwfit-usecase-item-icon {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent, var(--red));
+  flex-shrink: 0;
+}
+.hwfit-engine-btn-label,
+.hwfit-usecase-btn-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hwfit-engine-caret,
+.hwfit-usecase-caret {
+  position: absolute;
+  right: 6px;
+  opacity: 0.55;
+  pointer-events: none;
+}
+.hwfit-engine-menu,
+.hwfit-usecase-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 120;
+  padding: 4px;
+  background: var(--panel, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.22);
+}
+.hwfit-engine-item,
+.hwfit-usecase-item {
+  width: 100%;
+  min-height: 26px;
+  padding: 5px 7px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--fg);
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+.hwfit-engine-item:hover,
+.hwfit-engine-item.active,
+.hwfit-usecase-item:hover,
+.hwfit-usecase-item.active {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.hwfit-engine-item-label,
+.hwfit-usecase-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hwfit-quant-wrap .hwfit-quant-help,
+.hwfit-engine-wrap .hwfit-engine-help {
+  position: absolute;
+  right: 20px;   /* sits just left of the native select chevron */
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: auto;
+  margin: 0;
+}
+.hwfit-ctx-control {
+  height: 28px;
+  min-width: 134px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg-muted);
+  background: var(--bg);
+  font-size: 10px;
+  box-sizing: border-box;
+}
+.hwfit-ctx-control span {
+  /* Match Quant/Engine select label style: no uppercase, no letter-spacing. */
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.9;
+}
+.hwfit-ctx-control input[type="range"] {
+  width: 64px;
+  min-width: 64px;
+  height: 4px;
+  padding: 0;
+  border: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  /* Hardcoded grey rail — was background:transparent here, which was the
+     LATER-in-cascade override that kept making the rail invisible. */
+  background: rgba(150, 150, 150, 0.65) !important;
+  border-radius: 999px;
+  accent-color: var(--accent, var(--red));
+}
+.hwfit-ctx-control output {
+  min-width: 28px;
+  text-align: right;
+  color: var(--fg);
+  font-weight: 600;
+}
+.hwfit-server-toggle { flex-shrink: 0; font-size: 10px !important; padding: 3px 8px !important; white-space: nowrap; }
+.hwfit-env-row { gap: 6px; flex-wrap: wrap; }
+.hwfit-hw {
+  display: flex; flex-wrap: wrap; column-gap: 4px; row-gap: 7px; padding: 4px 0;
+}
+.hwfit-hw-chip {
+  font-size: 10px; padding: 0 8px; border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--fg); opacity: 0.7; white-space: nowrap;
+  border: 0;
+  font-family: inherit;
+  line-height: 1;
+  height: 17px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  /* Cap chip width so a long label (e.g. heterogeneous GPU group
+     "1× RTX 4090 + 1× RTX 3060") wraps to the next row instead of
+     overflowing the modal. Full text stays in the tooltip. */
+  max-width: 100%;
+}
+.hwfit-hw-chip-toggle {
+  /* Allow the chip body to truncate with an ellipsis when the chip
+     itself is capped at its container's width. Without this, the
+     toggle button keeps its intrinsic width and pushes the × button
+     off-screen on narrow viewports. */
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hwfit-hw-chip button,
+.hwfit-hw-chip-dismiss,
+.hwfit-hw-chip-manual,
+.hwfit-hw-chip-toggle,
+.hwfit-hw-chip-x {
+  appearance: none;
+  -webkit-appearance: none;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  /* Inherit the chip's line-height so a slightly larger × glyph
+     doesn't push past the 17px chip height (which was clipping the
+     text vertically in the multi-button layout). */
+  line-height: inherit;
+}
+.hwfit-chip-x {
+  display: inline-block;
+  transform: translateY(-1px);
+}
+.hwfit-hw-chip-dismiss:hover { opacity: 1; }
+/* Two-part chip: text body toggles dim on click, × removes the chip.
+   Visual minimal — just a slightly bigger × so it's easier to hit. */
+.hwfit-hw-chip-toggle {
+  cursor: pointer;
+  /* `!important` because the earlier `.hwfit-hw-chip button { font:
+     inherit }` reset (same specificity, defined later in source)
+     was winning over the plain rule and leaving the manual chip's
+     button at the browser-default ~13px. Forcing it locally so the
+     manual chip's text matches every other chip's text. */
+  font-size: 10px !important;
+  line-height: 1 !important;
+  transform: translateY(-3px);
+}
+.hwfit-hw-chip-x {
+  cursor: pointer;
+  /* `!important` for the same cascade reason as the toggle button —
+     the `.hwfit-hw-chip button { font: inherit }` reset was leaving
+     the regular chips' × inheriting the chip's 10px while the
+     manual chip's × landed on the browser default (~13px), making
+     manual look bigger. Lock every × at 13px. */
+  font-size: 11px !important;
+  line-height: 1 !important;
+  transform: translateY(-3px);
+}
+.hwfit-hw-chip-x:hover {
+  opacity: 0.75;
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
+}
+.hwfit-hw-chip-off {
+  /* Ghosted: drop the pill background so it reads as "off" rather than
+     "selected but faded". Lower text opacity matches the muted feel. */
+  background: transparent !important;
+  opacity: 0.4;
+}
+.hwfit-hw-chip-manual {
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 45%, transparent);
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+  color: var(--accent, var(--red));
+  opacity: 1;
+  cursor: pointer;
+  font-family: inherit;
+  margin-inline: 3px;
+  padding-left: 7px;
+  padding-right: 7px;
+}
+.hwfit-hw-chip-manual:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 22%, transparent);
+}
+.hwfit-hw-manual-btn {
+  min-width: 42px;
+}
+.hwfit-manual-panel {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  box-sizing: border-box;
+}
+.hwfit-manual-panel.hidden { display: none; }
+.hwfit-manual-panel label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 9px;
+  color: var(--fg-muted);
+}
+.hwfit-manual-panel select,
+.hwfit-manual-panel input,
+.hwfit-manual-panel button {
+  height: 24px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 10px;
+  padding: 0 6px;
+  box-sizing: border-box;
+}
+.hwfit-manual-panel input { width: 72px; }
+.hwfit-manual-panel button { cursor: pointer; }
+.hwfit-manual-panel button svg {
+  flex: 0 0 auto;
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+}
+.hwfit-manual-panel .hwfit-hw-manual-clear svg,
+.hwfit-manual-panel .hwfit-hw-manual-save svg {
+  position: relative;
+  top: 2px;
+  color: var(--accent, var(--red));
+}
+.hwfit-hw-manual-btn svg,
+.hwfit-manual-panel .hwfit-hw-manual-clear svg {
+  color: var(--accent, var(--red));
+}
+.hwfit-manual-panel .hwfit-hw-manual-clear > span,
+.hwfit-manual-panel .hwfit-hw-manual-save > span {
+  position: relative;
+  top: -2px;
+}
+.hwfit-manual-panel .hwfit-hw-manual-save {
+  margin-left: auto;
+}
+.hwfit-manual-panel button:hover { border-color: var(--fg); }
+/* GPU driver error (e.g. NVML version mismatch) — stands out from the muted
+   chips and hints there's a real problem, with the full message on hover. */
+.hwfit-hw-chip-error {
+  background: color-mix(in srgb, var(--red) 16%, transparent);
+  color: var(--red); opacity: 1; cursor: help;
+  border: 1px solid color-mix(in srgb, var(--red) 40%, transparent);
+}
+.hwfit-list {
+  max-height: 52vh; overflow-y: auto; display: flex; flex-direction: column; gap: 2px;
+}
+.hwfit-loading {
+  display: flex; align-items: center; justify-content: center;
+  color: var(--fg-muted); padding: 16px 0; font-size: 12px;
+}
+.hwfit-hw-visibility-warning {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  text-align: left;
+  margin-top: 8px;
+}
+.hwfit-hw-visibility-warning-title {
+  font-weight: 600;
+}
+.hwfit-hw-visibility-warning-body {
+  opacity: 0.78;
+  line-height: 1.45;
+}
+.hwfit-hw-visibility-warning-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.hwfit-row {
+  display: flex; align-items: center; gap: 6px; padding: 5px 8px;
+  border-radius: 6px; cursor: pointer; font-size: 11px;
+  transition: background 0.1s;
+}
+.hwfit-row:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
+/* Scan/Download model rows enter like the other library lists. Keep the
+   column header static and only replay this when the list had no model rows,
+   so ordinary filtering and sorting remain instant. */
+.hwfit-list.cookbook-hwfit-models-just-loaded > .hwfit-row:not(.hwfit-header) {
+  animation: section-domino-in 0.36s cubic-bezier(0.22, 1.61, 0.36, 1) backwards;
+}
+.hwfit-list.cookbook-hwfit-models-just-loaded > .hwfit-row:nth-child(2)  { animation-delay: 0.04s; }
+.hwfit-list.cookbook-hwfit-models-just-loaded > .hwfit-row:nth-child(3)  { animation-delay: 0.08s; }
+.hwfit-list.cookbook-hwfit-models-just-loaded > .hwfit-row:nth-child(4)  { animation-delay: 0.12s; }
+.hwfit-list.cookbook-hwfit-models-just-loaded > .hwfit-row:nth-child(5)  { animation-delay: 0.16s; }
+.hwfit-list.cookbook-hwfit-models-just-loaded > .hwfit-row:nth-child(6)  { animation-delay: 0.20s; }
+.hwfit-list.cookbook-hwfit-models-just-loaded > .hwfit-row:nth-child(7)  { animation-delay: 0.24s; }
+.hwfit-list.cookbook-hwfit-models-just-loaded > .hwfit-row:nth-child(8)  { animation-delay: 0.28s; }
+.hwfit-list.cookbook-hwfit-models-just-loaded > .hwfit-row:nth-child(9)  { animation-delay: 0.32s; }
+.hwfit-list.cookbook-hwfit-models-just-loaded > .hwfit-row:nth-child(10) { animation-delay: 0.36s; }
+.hwfit-list.cookbook-hwfit-models-just-loaded > .hwfit-row:nth-child(11) { animation-delay: 0.40s; }
+.hwfit-list.cookbook-hwfit-models-just-loaded > .hwfit-row:nth-child(12) { animation-delay: 0.44s; }
+.hwfit-list.cookbook-hwfit-models-just-loaded > .hwfit-row:nth-child(13) { animation-delay: 0.48s; }
+.hwfit-list.cookbook-hwfit-models-just-loaded > .hwfit-row:nth-child(n+14) { animation-delay: 0.48s; }
+/* Already-downloaded rows: dim slightly so attention falls on undownloaded
+   options. The green dot stays bright as the "this is local" cue. */
+.hwfit-row:has(.hwfit-dl-dot) { opacity: 0.55; }
+.hwfit-header {
+  cursor: default; position: sticky; top: 0; z-index: 1;
+  background: var(--panel); border-bottom: 1px solid var(--border);
+  padding: 4px 8px; font-weight: 600;
+}
+.hwfit-header:hover { background: var(--panel); }
+.hwfit-header .hwfit-col { font-size: 9px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.3px; }
+.hwfit-sortable:hover { color: var(--fg) !important; }
+.hwfit-sort-active { color: var(--red) !important; }
+.hwfit-col {
+  flex-shrink: 0; white-space: nowrap; text-align: left;
+  font-size: 9px; color: var(--fg-muted);
+}
+.hwfit-fit { width: 52px; font-weight: 700; text-transform: uppercase; }
+.hwfit-name {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  font-weight: 500; font-size: 11px; color: var(--fg);
+}
+.hwfit-c-score  { width: 40px; font-weight: 700; font-size: 11px; color: var(--fg); }
+.hwfit-moe {
+  display: inline-block; padding: 0 4px; border-radius: 4px; margin-left: 4px;
+  background: color-mix(in srgb, var(--red) 15%, transparent);
+  color: var(--red); font-weight: 600; font-size: 8px;
+}
+.hwfit-sort, .hwfit-quant { width: auto; min-width: 70px; flex-shrink: 0; }
+.hwfit-row-active { background: color-mix(in srgb, var(--red) 8%, transparent); }
+
+/* ── Inline action panel (expands below a model row) ── */
+.hwfit-action-panel {
+  border: 1px solid var(--border); border-left: 3px solid var(--red);
+  border-radius: 0 6px 6px 6px; background: var(--panel);
+  padding: 10px 12px; margin: 2px 0 6px; font-size: 11px;
+  display: flex; flex-direction: column; gap: 8px;
+  animation: hwfit-panel-in 0.15s ease-out;
+}
+.hwfit-panel-header {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+}
+.hwfit-panel-model {
+  font-size: 11px; font-weight: 600; color: var(--fg);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0;
+}
+.hwfit-panel-badge {
+  font-size: 9px; padding: 2px 8px; border-radius: 10px;
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  color: var(--red); font-weight: 600; flex-shrink: 0;
+}
+.hwfit-panel-fields {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+}
+.hwfit-panel-fields label, .hwfit-adv-grid label {
+  display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--fg-muted); white-space: nowrap;
+}
+.hwfit-panel-fields input, .hwfit-panel-fields select,
+.hwfit-adv-grid input, .hwfit-adv-grid select {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+  color: var(--fg); font-size: 11px; padding: 3px 6px; font-family: inherit;
+  outline: none; transition: border-color 0.15s;
+}
+.hwfit-panel-fields input:focus, .hwfit-adv-grid input:focus,
+.hwfit-panel-fields select:focus, .hwfit-adv-grid select:focus {
+  border-color: var(--red);
+}
+.hwfit-panel-fields input[type="text"] { width: 60px; }
+.hwfit-adv-grid input[type="text"] { width: 80px; }
+.hwfit-adv-grid {
+  display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 6px 0;
+}
+.hwfit-cb input[type="checkbox"] { margin: 0 2px 0 0; }
+.hwfit-panel-advanced, .hwfit-panel-settings {
+  font-size: 10px;
+}
+.hwfit-panel-advanced summary, .hwfit-panel-settings summary {
+  cursor: pointer; color: var(--fg-muted); font-size: 10px;
+  user-select: none; padding: 2px 0;
+}
+.hwfit-panel-advanced summary:hover, .hwfit-panel-settings summary:hover { color: var(--fg); }
+.hwfit-panel-cmd {
+  font-family: 'Berkeley Mono', 'SF Mono', 'Fira Code', monospace;
+  font-size: 10px; padding: 6px 8px; border-radius: 4px;
+  background: var(--bg); border: 1px solid var(--border);
+  white-space: pre-wrap; word-break: break-all; max-height: 60px; overflow-y: auto;
+  color: var(--fg-muted);
+}
+.hwfit-panel-actions {
+  display: flex; gap: 4px; flex-wrap: wrap;
+}
+.hwfit-panel-note {
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--fg-muted);
+  background: color-mix(in srgb, var(--yellow, #f1fa8c) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--yellow, #f1fa8c) 18%, var(--border));
+  border-radius: 4px;
+  padding: 5px 7px;
+}
+
+/* ── Saved presets ── */
+.hwfit-preset {
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+  border: 1px solid var(--border); border-radius: 6px; font-size: 11px;
+  transition: border-color 0.15s;
+}
+.hwfit-preset:hover { border-color: var(--red); }
+.hwfit-preset-name { font-weight: 600; color: var(--fg); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hwfit-preset-model { font-size: 9px; color: var(--fg-muted); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hwfit-preset-backend { font-size: 9px; padding: 1px 6px; border-radius: 8px; background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg-muted); }
+
+@media (max-width: 600px) {
+  .hwfit-c-ctx, .hwfit-c-speed, .hwfit-c-mode { display: none; }
+  .hwfit-panel-fields { flex-direction: column; align-items: stretch; }
+  .hwfit-panel-fields input[type="text"] { width: 100%; }
+  .hwfit-preset-model { display: none; }
+}
+
+/* ===== Settings Modal Layout ===== */
+.settings-modal-content {
+  width: min(1040px, 94vw);
+  max-height: 85vh;
+  padding: 0;
+  container-type: inline-size;
+  container-name: settings-modal;
+}
+
+/* Issue #208 — anchor the Settings window to the TOP of the chat area instead
+   of vertically centering it. The base .modal uses `align-items:center`, so a
+   centered window grows and shrinks around its own midpoint when you switch
+   between tabs whose content differs in height (Add Models vs. Shortcuts,
+   etc.). That makes the in-modal nav rail — and the whole window — appear to
+   jump up and down between pages. Pinning the top edge keeps the nav rail and
+   surrounding layout visually stable; the panel only ever grows downward.
+   Desktop only: on mobile the panel is a full-height bottom sheet that is
+   already top-stable, and a margin there would push it past the viewport. The
+   drag/dock code clears this margin (sets inline margin:0) the moment a window
+   is dragged, so moving the window still works exactly as before. */
+@media (min-width: 769px) {
+  #settings-modal { align-items: flex-start; }
+  #settings-modal .settings-modal-content { margin-top: 7vh; }
+}
+
+.settings-modal-content .modal-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-layout {
+  display: flex;
+  min-height: 400px;
+  max-height: calc(85vh - 60px);
+}
+
+.settings-modal-content[style*="height"],
+#settings-modal.modal-right-docked .settings-modal-content {
+  overflow: hidden;
+}
+
+.settings-modal-content[style*="height"] .settings-layout,
+#settings-modal.modal-right-docked .settings-layout {
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: none;
+}
+
+.settings-modal-content[style*="height"] .settings-panels,
+#settings-modal.modal-right-docked .settings-panels,
+.settings-modal-content[style*="height"] .settings-sidebar,
+#settings-modal.modal-right-docked .settings-sidebar {
+  min-height: 0;
+}
+
+.settings-sidebar {
+  position: relative;
+  width: var(--settings-sidebar-width, 220px);
+  flex: 0 0 var(--settings-sidebar-width, 220px);
+  min-width: 0;
+  border-right: 1px solid var(--border);
+  padding: 8px;
+  transition: width 0.16s ease, flex-basis 0.16s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+}
+
+.settings-sidebar-divider { height: 1px; background: var(--border); margin: 8px 12px; }
+.settings-sidebar-label {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  opacity: 0.35;
+  padding: 4px 12px 2px;
+}
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.1s;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.settings-nav-item:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--fg);
+}
+
+.settings-nav-item.active {
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  color: var(--red);
+}
+
+.settings-nav-item svg {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.settings-nav-item.active svg {
+  opacity: 1;
+}
+
+.settings-sidebar-divider { height: 1px; background: var(--border); margin: 8px 12px; }
+
+/* Keyboard shortcuts */
+.shortcut-category {
+  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+  opacity: 0.4; padding: 8px 0 4px; margin-top: 4px;
+}
+.shortcut-category:first-child { margin-top: 0; padding-top: 0; }
+.shortcut-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 30%, transparent);
+}
+.shortcut-row:last-child { border-bottom: none; }
+.shortcut-row.shortcut-conflict { background: color-mix(in srgb, var(--warn) 6%, transparent); border-radius: 4px; padding: 5px 6px; }
+.shortcut-label { font-size: 12px; display: flex; align-items: center; gap: 6px; }
+.shortcut-icon { display: inline-flex; opacity: 0.5; flex-shrink: 0; }
+.shortcut-warn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; border-radius: 50%; background: var(--warn); color: #fff;
+  font-size: 9px; font-weight: 700; margin-left: 4px;
+}
+.shortcut-controls { display: flex; align-items: center; gap: 4px; }
+/* Inline hint shown while rebinding a shortcut ("press a key" → "↵ Enter
+   to save"). Subtle so it doesn't compete with the key caps. */
+.shortcut-hint {
+  font-size: 10px;
+  opacity: 0.6;
+  color: var(--accent, var(--red));
+  white-space: nowrap;
+  margin-right: 2px;
+}
+.shortcut-hint[hidden] { display: none; }
+.shortcut-key {
+  font-family: inherit; font-size: 0; padding: 2px 4px;
+  background: transparent; border: none; border-radius: 4px;
+  color: var(--fg); cursor: pointer; display: flex; align-items: center; gap: 2px;
+  transition: all 0.15s;
+}
+.shortcut-key:hover { background: color-mix(in srgb, var(--accent, #cc6a3a) 8%, transparent); }
+/* Unbound shortcut — show a dashed "Set" placeholder instead of keycaps. */
+.shortcut-key-unset { font-size: 10px; }
+.shortcut-unset {
+  font-size: 10px;
+  padding: 2px 8px;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+.shortcut-key-unset:hover .shortcut-unset { border-color: var(--accent, var(--red)); color: var(--fg); }
+.shortcut-key kbd {
+  display: inline-block; font-family: inherit; font-size: 10px;
+  padding: 2px 6px; min-width: 20px; text-align: center;
+  /* Highlight kbd chips in the theme accent so they stand out from
+     normal text and clearly mark "this is a key you press". */
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 40%, var(--border));
+  color: var(--accent, var(--red));
+  border-radius: 3px;
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--accent, var(--red)) 25%, transparent);
+  line-height: 1.4;
+  font-weight: 600;
+}
+.shortcut-key.listening {
+  background: color-mix(in srgb, var(--accent, #cc6a3a) 10%, transparent);
+  animation: shortcut-pulse 1s infinite;
+}
+.shortcut-key.listening kbd { border-color: var(--accent, #cc6a3a); }
+.shortcut-action-btn {
+  width: 24px; height: 24px; border-radius: 4px; border: 1px solid var(--border);
+  background: transparent; color: var(--fg); cursor: pointer; font-size: 13px;
+  display: flex; align-items: center; justify-content: center; transition: all 0.15s;
+}
+.shortcut-action-btn:not(.is-reset):hover { border-color: var(--accent, #cc6a3a); background: color-mix(in srgb, var(--accent, #cc6a3a) 10%, var(--bg)); }
+.shortcut-action-btn.is-reset { opacity: 0.55; border-color: transparent; background: transparent; }
+.shortcut-action-btn.is-reset:hover,
+.shortcut-action-btn.is-reset:focus,
+.shortcut-action-btn.is-reset:active { opacity: 0.55; background: transparent; border-color: transparent; }
+@keyframes shortcut-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.settings-panels {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  min-width: 0;
+}
+.settings-appearance-panel:not(.hidden) {
+  display: flex;
+}
+.settings-appearance-panel > .admin-card:nth-of-type(1) { order: 3; }
+.settings-appearance-panel > .admin-card:nth-of-type(2) { order: 1; }
+.settings-appearance-panel > .admin-card:nth-of-type(3) { order: 2; }
+.settings-appearance-panel > .admin-card:nth-of-type(n+4) { order: 4; }
+
+/* Mobile: stack tabs on top */
+@media (max-width: 600px) {
+  .settings-layout {
+    flex-direction: column;
+  }
+  .settings-sidebar {
+    width: auto;
+    flex-direction: row;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    padding: 6px;
+  }
+  .settings-nav-item {
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+}
+
+/* Snapped/narrow Settings window: move the tab rail to the top. Viewport media
+   alone misses desktop right-half snapping, where the modal is narrow but the
+   browser window is not. */
+@container settings-modal (max-width: 620px) {
+  .settings-layout {
+    flex-direction: column;
+  }
+  .settings-sidebar {
+    width: auto;
+    max-height: none;
+    flex-direction: row;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 6px;
+    scrollbar-width: none;
+  }
+  .settings-sidebar::-webkit-scrollbar {
+    display: none;
+  }
+  .settings-sidebar-divider,
+  .settings-sidebar-label {
+    display: none;
+  }
+  .settings-nav-item {
+    flex: 0 0 auto;
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+  .settings-panels {
+    padding: 12px 14px;
+  }
+}
+
+/* ── Entrance Animations ── */
+
+/* Welcome name — left-to-right wipe with a touch of horizontal stretch.
+   Fires on initial render via the .welcome-name rule; restarts on Nobody⇄
+   Odysseus toggle via JS reflow trick. */
+.welcome-name {
+  transform-origin: left center;
+  animation: welcome-name-reveal 0.55s cubic-bezier(0.34, 1.32, 0.55, 1) both;
+}
+/* Hold the welcome-screen entrance animations until the app has finished its
+   initial load (fonts loaded + layout settled). Running them mid-load made the
+   splash jump/flicker as the page reflowed ("haywire"). Until body.welcome-ready
+   is set by JS, the splash sits in its final, static state (no flash, since the
+   non-animated state IS the resting state); adding the class then plays the
+   entrance once, cleanly. */
+body:not(.welcome-ready) #welcome-screen,
+body:not(.welcome-ready) .welcome-name {
+  animation: none !important;
+}
+/* Hold the splash invisible (the entrance's start state) until ready, so when
+   the animation is released it fades/wipes in smoothly instead of flashing
+   from fully-visible to the animation's hidden first frame. */
+body:not(.welcome-ready) #welcome-screen {
+  opacity: 0;
+}
+@keyframes welcome-name-reveal {
+  from {
+    clip-path: inset(0 100% 0 0);
+    transform: scaleX(0.96);
+    opacity: 0.5;
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
+@keyframes welcome-enter {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -45%);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
+}
+
+@keyframes msg-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes picker-roll-up {
+  from {
+    opacity: 0;
+    transform: scaleY(0.4) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scaleY(1) translateY(0);
+  }
+}
+@keyframes picker-roll-down {
+  from {
+    opacity: 1;
+    transform: scaleY(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scaleY(0.4) translateY(8px);
+  }
+}
+@keyframes model-picker-refresh-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes modal-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+@keyframes modal-exit {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.97) translateY(6px);
+  }
+}
+.modal-content.modal-closing {
+  animation: modal-exit 0.18s ease-in both;
+}
+
+#cookbook-modal .modal-content.cookbook-modal-entering {
+  animation: cookbook-modal-enter 0.28s cubic-bezier(0.22, 1.35, 0.36, 1) both;
+}
+/* Mobile: real bottom-sheet slide-up — the existing 12px translate is
+   too subtle on a phone, the modal effectively just appeared. */
+@media (max-width: 768px) {
+  #cookbook-modal .modal-content.cookbook-modal-entering {
+    animation: cookbook-modal-enter-mobile 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+}
+#cookbook-modal .modal-content:not(.cookbook-modal-entering):not(.modal-closing) {
+  animation: none;
+}
+#cookbook-modal .modal-content.modal-closing {
+  animation: modal-exit 0.18s cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+/* Per-token streaming fade — new words materialize */
+.token-new {
+  animation: token-fade 0.4s ease-out both;
+}
+
+@keyframes token-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Disable entrance animations when loading chat history (bulk render) */
+.chat-history.no-animate .msg {
+  animation: none;
+}
+
+/* Prefer reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .msg,
+  .modal-content,
+  #welcome-screen,
+  .toast,
+  .token-new {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@media (min-width: 769px) {
+  #tool-tasks-btn #assistant-notif-dot.sidebar-notif-dot,
+  #tool-tasks-btn.task-failure-pending::after,
+  #tool-tasks-btn.task-completion-pending::after {
+    transform: translateX(-2px);
+  }
+}
+.tasks-modal-content { max-width: 600px; width: min(600px, 92vw); background: var(--bg); font-size: 12px; }
+.task-completed-preview-row {
+  cursor: default;
+  margin-bottom: 6px;
+  padding: 8px 10px 10px;
+  max-height: none;
+  overflow: visible;
+}
+.task-completed-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 20px;
+  font-size: 11px;
+}
+.task-completed-chat-preview {
+  padding: 0 0 4px;
+}
+.task-completed-chat-preview .doclib-chat-preview-messages {
+  max-height: 220px;
+  margin-top: 7px;
+}
+.task-completed-chat-preview .doclib-chat-bubble {
+  max-width: 92%;
+}
+.task-completed-chat-preview .doclib-chat-preview-actions {
+  top: 2px;
+  margin-top: 4px;
+}
+.task-completed-preview-row .task-log-time {
+  margin-left: 8px;
+}
+
+/* Tasks tabs reuse the .memory-tab look. The Brain window's tab bar is
+   full-bleed (its underline spans the whole modal width). The Tasks bar is a
+   direct child of .modal-content (padding:10px), so cancel that padding with
+   negative side margins to span edge-to-edge, then re-inset the tabs by 10px
+   so they line up with the rest of the modal content — matching the Brain bar. */
+.tasks-modal-content .tasks-tabs {
+  margin: -2px -10px 8px;
+  padding: 0 10px;
+}
+
+/* Activity log — compact by default. Click the row to expand body+actions. */
+.task-log-row {
+  --cat-hue: 220;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 10px;
+  margin-bottom: 3px;
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+  position: relative;
+  cursor: pointer;
+  transition: padding .12s ease;
+}
+.task-log-row:hover {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.task-log-row.task-log-row-error {
+  border-color: color-mix(in srgb, var(--red, #f87171) 35%, var(--border));
+  background: color-mix(in srgb, var(--red, #f87171) 4%, transparent);
+}
+.task-log-row.task-log-row-error:hover {
+  background: color-mix(in srgb, var(--red, #f87171) 7%, transparent);
+}
+.task-log-row.expanded { padding: 8px 10px 6px; }
+.task-log-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  margin-bottom: 0;
+}
+.task-log-row.expanded .task-log-row-head { margin-bottom: 4px; }
+/* Collapsed: body + footer hidden. Expanded: visible. */
+.task-log-row:not(.expanded):not(.is-skipped) .task-log-row-body,
+.task-log-row:not(.expanded):not(.is-skipped) .task-log-row-actions,
+.task-log-row:not(.expanded):not(.is-skipped) .task-log-prompt {
+  display: none;
+}
+.task-log-name {
+  font-weight: 600;
+  /* Pull saturation from the per-row hue but mix with the foreground so the
+     title still reads in dark mode. Lightness stays adaptive. */
+  color: hsl(var(--cat-hue) 60% 60%);
+}
+.task-log-failed-tag {
+  color: var(--red, #f87171);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  margin-left: -2px;
+}
+.task-log-task-icon {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-right: -3px;
+}
+.task-log-row.task-log-row-error .task-log-name,
+.task-log-row.task-log-row-error .task-log-task-icon {
+  color: var(--red, #f87171);
+}
+.task-log-task-icon svg {
+  top: 0 !important;
+  opacity: 0.46 !important;
+}
+.task-log-row-head .task-ai-mark {
+  top: 0;
+  margin-left: -4px;
+}
+.task-log-repeat {
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  color: color-mix(in srgb, var(--fg) 62%, transparent);
+  border-radius: 999px;
+  padding: 1px 0;
+  white-space: nowrap;
+}
+@media (prefers-color-scheme: light) {
+  .task-log-name { color: hsl(var(--cat-hue) 65% 38%); }
+}
+/* Per-account prefix in fan-out results — e.g. "[Default] No recent emails"
+   becomes a compact accent chip + plain message. Makes multi-account activity
+   rows readable instead of a bracket soup. */
+/* Running / queued status line in the Activity tab — whirlpool + label. */
+.task-log-running {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  font-size: 11px;
+  opacity: 0.75;
+}
+.task-log-running-label { font-style: normal; }
+
+/* New right-side placement: "Running <whirlpool>" sits where the timestamp
+   normally would, on the head row's right edge. */
+.task-log-running-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  font-size: 11px;
+  opacity: 0.75;
+}
+.task-log-force-run {
+  appearance: none;
+  box-sizing: border-box;
+  border: 0;
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  box-shadow: none;
+  color: inherit;
+  opacity: .82;
+  margin-left: 7px;
+  padding: 1px 6px 1px 4px;
+  height: 18px;
+  min-height: 16px;
+  max-height: 18px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  position: relative;
+  top: -3px;
+}
+.task-log-force-run svg,
+.task-log-stop svg {
+  display: block;
+  flex-shrink: 0;
+  transform: translateY(1px);
+}
+.task-log-force-run:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--green, #50fa7b) 16%, transparent);
+  color: var(--green, #50fa7b);
+}
+.task-log-stop {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  opacity: .72;
+  padding: 0;
+  margin-left: 6px;
+  width: 12px;
+  height: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+  top: -3px;
+}
+.task-log-stop:hover {
+  opacity: 1;
+  color: var(--red, #f87171);
+}
+
+/* Slim single-line row for skipped (noop) runs — body/actions stripped, font
+   shrunk, opacity dropped. Distinguishes "task ran but had nothing to do"
+   from a "real" entry without flooding the feed visually. */
+.task-log-row.is-skipped {
+  padding: 4px 8px;
+  opacity: 0.45;
+  font-size: 11px;
+  background: transparent;
+}
+.task-log-row.is-skipped .task-log-row-head { padding: 0; }
+.task-log-row.is-skipped .task-log-name { font-weight: 500; }
+.task-log-row.is-skipped .task-log-skipped-reason {
+  flex: 1 1 auto;
+  margin-left: 6px;
+  font-style: italic;
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.task-log-row.is-skipped:hover { opacity: 0.7; }
+
+.task-log-account-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 1px 7px;
+  margin-right: 4px;
+  border-radius: 10px;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);
+  vertical-align: 1px;
+}
+.task-log-status {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--fg) 30%, transparent);
+}
+.task-log-status-ok    { background: #4ade80; box-shadow: 0 0 6px #4ade80, 0 0 3px #4ade80; }
+.task-log-status-error { background: var(--red, #f87171); box-shadow: 0 0 6px var(--red, #f87171), 0 0 3px var(--red, #f87171); }
+.task-log-status-info  { background: color-mix(in srgb, var(--fg) 25%, transparent); }
+.task-log-status-queued  { background: #fbbf24; box-shadow: 0 0 0 2px color-mix(in srgb, #fbbf24 30%, transparent); }
+.task-log-status-running { background: #60a5fa; animation: task-log-pulse 1.4s ease-in-out infinite; }
+.task-log-status-skipped { background: color-mix(in srgb, var(--fg) 20%, transparent); }
+.task-log-status-aborted { background: color-mix(in srgb, var(--fg) 30%, transparent); border: 1px dashed color-mix(in srgb, var(--fg) 50%, transparent); }
+.task-log-row-body {
+  font-size: 12px;
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--fg) 85%, transparent);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.task-log-row-body p { margin: 0 0 6px 0; }
+.task-log-row-body p:last-child { margin-bottom: 0; }
+.task-log-row-body pre {
+  margin: 4px 0;
+  padding: 6px 8px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11px;
+  max-height: 180px;
+  overflow: auto;
+}
+.task-log-row-body code {
+  font-size: 11px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.task-log-row-body ul, .task-log-row-body ol {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+/* Markdown headings inside a task result — without these, ## headings
+   render at browser-default huge sizes and blow out the cramped row. */
+.task-log-row-body h1,
+.task-log-row-body h2,
+.task-log-row-body h3,
+.task-log-row-body h4 {
+  margin: 10px 0 4px;
+  line-height: 1.3;
+  font-weight: 650;
+  color: var(--fg);
+}
+.task-log-row-body h1 { font-size: 14px; }
+.task-log-row-body h2 { font-size: 13px; }
+.task-log-row-body h3,
+.task-log-row-body h4 { font-size: 12px; opacity: 0.9; }
+.task-log-row-body h1:first-child,
+.task-log-row-body h2:first-child,
+.task-log-row-body h3:first-child { margin-top: 0; }
+.task-log-row-body blockquote {
+  margin: 4px 0;
+  padding: 2px 0 2px 10px;
+  border-left: 2px solid color-mix(in srgb, var(--fg) 20%, transparent);
+  opacity: 0.85;
+}
+.task-log-row-body a { color: var(--accent, #60a5fa); text-decoration: none; }
+.task-log-row-body a:hover { text-decoration: underline; }
+.task-log-row-body strong { font-weight: 650; color: var(--fg); }
+/* Email-summary tables — render compactly instead of default browser ugliness. */
+.task-log-row-body table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 6px 0;
+  font-size: 11px;
+}
+.task-log-row-body th,
+.task-log-row-body td {
+  border: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+  padding: 3px 6px;
+  text-align: left;
+  vertical-align: top;
+}
+.task-log-row-body th {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  font-weight: 600;
+}
+.task-log-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+}
+.task-log-open-chat,
+.task-log-open-report,
+.task-log-copy,
+.task-log-clear-cache,
+.task-log-run-again,
+.task-log-force-run-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: none;
+  border: 1px solid color-mix(in srgb, var(--fg) 14%, transparent);
+  border-radius: 5px;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  font-family: inherit;
+  font-size: 10px;
+  padding: 1px 6px;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+  line-height: 1.4;
+}
+.task-log-open-chat:hover,
+.task-log-open-report:hover,
+.task-log-copy:hover,
+.task-log-clear-cache:hover,
+.task-log-run-again:hover,
+.task-log-force-run-action:hover {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--fg) 30%, transparent);
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.task-log-row-actions > .task-log-open-chat,
+.task-log-row-actions > .task-log-copy {
+  margin-left: auto;
+}
+.task-log-clear-cache svg {
+  position: relative;
+  top: 0;
+}
+/* Activity filter chips — toggle-out model: ON by default (solid),
+   click to toggle OFF (dimmed + strikethrough) to hide that group. */
+.tasks-af-chip {
+  font-size: 11px;
+  padding: 3px 10px;
+  border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  color: var(--fg);
+  cursor: pointer;
+  font-family: inherit;
+  transition: opacity .12s, background .12s, border-color .12s;
+}
+.tasks-af-chip:hover { border-color: color-mix(in srgb, var(--fg) 32%, transparent); }
+.tasks-af-chip.off {
+  opacity: 0.4;
+  text-decoration: line-through;
+  background: transparent;
+}
+.tasks-af-chip.active {
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+  opacity: 1;
+}
+.tasks-af-chip-error { border-color: color-mix(in srgb, var(--red, #f87171) 45%, transparent); }
+.tasks-af-chip-error:not(.off) { color: var(--red, #f87171); }
+
+/* "Open in Deep Research" is now a regular clickable chat link (a
+   `#research-<id>` markdown anchor in the assistant's message), rendered as
+   an a.chat-link. Nudge it 4px right so it sits slightly inset. */
+a.chat-link[href^="#research-"] {
+  margin-left: 4px;
+}
+.task-log-row.is-long .task-log-row-body {
+  max-height: 8.5em;
+  overflow: hidden;
+  position: relative;
+  mask-image: linear-gradient(to bottom, #000 70%, transparent);
+  -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent);
+}
+.task-log-row.is-long.expanded .task-log-row-body {
+  max-height: none;
+  overflow: visible;
+  mask-image: none;
+  -webkit-mask-image: none;
+}
+.task-log-row-toggle {
+  margin-top: 6px;
+  background: none;
+  border: none;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 0;
+  color: transparent;          /* hide raw "Show more" text */
+}
+.task-log-row:not(.expanded) .task-log-row-toggle::before { content: 'Show more'; }
+.task-log-row.expanded .task-log-row-toggle::before { content: 'Show less'; }
+.task-log-prompt {
+  margin-top: 6px;
+  font-size: 11px;
+}
+.task-log-prompt summary {
+  cursor: pointer;
+  opacity: 0.5;
+  user-select: none;
+}
+.task-log-prompt summary:hover { opacity: 0.8; }
+.task-log-prompt pre {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11px;
+  opacity: 0.75;
+  max-height: 200px;
+  overflow: auto;
+}
+
+/* Tasks is the shared theme reference for procedural cards. Keep the tint
+   together so Skills cannot drift when theme colors change. Hover and
+   selection remain owned by the shared card state rules above. */
+.task-card,
+.skill-card {
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+}
+.task-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 8px;
+  margin-bottom: 0;
+  min-height: 46px;
+  box-sizing: border-box;
+  align-items: center;
+}
+/* When expanded, height grows to fit the detail panel. */
+.task-card.expanded { align-items: flex-start; }
+.task-card .memory-item-title {
+  position: relative;
+  top: -2px;
+}
+/* Always show the per-card ⋮ kebab on task cards (the default opacity:0 +
+   hover-reveal is unreliable on touch and easy to miss on desktop).
+   pointer-events / z-index belt-and-braces against any sibling overlay,
+   margin reset undoes the global `.modal-body button { margin-top:6px }`
+   that was punting the hit-target down. */
+.task-card .memory-item-actions {
+  opacity: 0.55;
+  pointer-events: auto;
+  position: relative;
+  z-index: 5;
+}
+.task-card:hover .memory-item-actions,
+.task-card .memory-item-actions:hover { opacity: 1; }
+.task-card .memory-item-actions .memory-item-btn {
+  margin: 0 !important;
+  pointer-events: auto;
+  position: relative;
+  z-index: 5;
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+/* Make the SVG inside the kebab transparent to pointer events so the click
+   always lands on the BUTTON itself (some browsers / nested SVG events lose
+   the click when hitting the inner glyph). */
+.task-card .memory-item-actions .memory-item-btn svg { pointer-events: none; }
+.task-ai-mark {
+  flex: 0 0 auto;
+  color: var(--accent, var(--red));
+  opacity: 0.78;
+}
+/* Per-card select checkbox rides up to the title line. The "All" checkbox is
+   #tasks-select-all (not .memory-select-cb), so it stays put. */
+.task-card .memory-select-cb { position: relative; }
+.task-card.task-card-deleting {
+  opacity: 0.68;
+  pointer-events: none;
+  position: relative;
+}
+.task-card-delete-busy {
+  position: absolute;
+  right: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 12%, var(--panel, #111));
+  border: 1px solid color-mix(in srgb, var(--red) 24%, transparent);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  z-index: 7;
+}
+.task-card-delete-busy-spin {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 1.5px solid color-mix(in srgb, currentColor 28%, transparent);
+  border-top-color: currentColor;
+  animation: spin 0.8s linear infinite;
+}
+#tasks-pause-all-btn { position: relative; top: -2px; }
+#tasks-pause-all-btn:has(input:disabled) { opacity: 0.4; }
+/* Bigger ⋮ dropdown on mobile (its buttons carry inline styles → !important). */
+@media (max-width: 768px) {
+  .task-card .task-status-badge {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .task-card .task-state-badge svg,
+  .task-card .task-card-run-btn svg {
+    width: 10px;
+    height: 10px;
+  }
+}
+
+.task-card-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.task-card-name {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.task-card-schedule {
+  font-size: 10.5px;
+  opacity: 0.5;
+  margin-left: auto;
+}
+
+.task-card-output {
+  font-size: 10px;
+  opacity: 0.45;
+}
+
+.task-card-prompt {
+  font-size: 11px;
+  opacity: 0.55;
+  margin: 4px 0;
+  line-height: 1.4;
+}
+
+.task-card-meta {
+  font-size: 10.5px;
+  opacity: 0.45;
+  margin-bottom: 6px;
+}
+
+.task-card-actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.task-btn {
+  font-family: inherit;
+  font-size: 11px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.15s, background 0.15s;
+}
+.task-btn:hover { opacity: 1; }
+.task-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.task-btn-primary {
+  background: var(--red);
+  color: #fff;
+  border-color: transparent;
+  opacity: 1;
+}
+.task-btn-primary:hover { opacity: 0.85; }
+
+.task-btn-danger { color: var(--red); border-color: color-mix(in srgb, var(--red) 30%, transparent); }
+.task-btn-danger:hover { opacity: 1; border-color: var(--red); }
+
+.tasks-clock {
+  font-size: 10px;
+  opacity: 0.35;
+  text-align: center;
+  padding: 6px 0 8px;
+}
+
+.task-preset-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;
+}
+.task-preset-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  padding: 12px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg); cursor: pointer; transition: all 0.15s; text-align: left;
+  color: var(--fg);
+}
+.task-preset-card:hover {
+  border-color: var(--accent, #cc6a3a); background: color-mix(in srgb, var(--accent, #cc6a3a) 8%, var(--bg));
+}
+.task-preset-icon { font-size: 20px; margin-bottom: 2px; }
+.task-preset-label { font-size: 12px; font-weight: 600; }
+.task-preset-desc { font-size: 10px; opacity: 0.5; line-height: 1.3; }
+
+.task-form { display: flex; flex-direction: column; gap: 4px; }
+.task-form-label {
+  font-size: 11px;
+  opacity: 0.55;
+  font-weight: 500;
+  display: block;
+  /* Consistent rhythm: 8px above each label (section gap), 4px below to the
+     field — same spacing for Name/Prompt/Trigger/Output/Model/Chain. */
+  margin: 8px 0 4px;
+}
+.task-form-input {
+  font-family: inherit;
+  font-size: 11px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+.task-form-input:focus {
+  outline: none;
+  border-color: var(--red);
+}
+.task-form-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 8px; }
+
+.task-form-notif-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 9px 0 3px;
+  cursor: pointer;
+  color: var(--fg);
+}
+.task-form-notif-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.task-form-notif-switch {
+  width: 30px;
+  height: 16px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  position: relative;
+  flex: 0 0 auto;
+  transition: background 0.15s, border-color 0.15s;
+}
+.task-form-notif-toggle input:checked + .task-form-notif-switch {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 58%, transparent);
+  background: color-mix(in srgb, var(--accent, var(--red)) 20%, transparent);
+}
+.task-form-notif-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.task-form-notif-copy span:last-child {
+  font-size: 10px;
+  font-weight: 400;
+  opacity: 0.52;
+}
+
+.task-form-toggle {
+  display: flex; gap: 4px;
+}
+.task-toggle-btn {
+  flex: 1; padding: 4px 8px; font-size: 10px; font-family: inherit;
+  border: 1px solid var(--border); border-radius: 6px; background: transparent;
+  color: var(--fg); opacity: 0.4; cursor: pointer; transition: all 0.15s;
+}
+.task-toggle-btn:hover { opacity: 0.7; border-color: var(--fg); }
+.task-toggle-btn.active {
+  opacity: 1; border-color: var(--red); color: var(--red);
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+}
+
+.task-time-picker, .task-date-picker {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.task-time-select, .task-date-select {
+  width: auto;
+  min-width: 48px;
+  font-size: 11px;
+}
+.task-time-sep { opacity: 0.4; font-size: 11px; }
+
+.task-history-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.task-runs-list { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; }
+.task-run-item {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.task-run-item-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+.task-run-time { margin-left: auto; font-size: 10px; opacity: 0.45; }
+.task-run-result {
+  font-size: 11px;
+  opacity: 0.6;
+  margin-top: 4px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── Settings Form Utilities ── */
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.settings-label {
+  font-size: 12px;
+  min-width: 70px;
+}
+.settings-select {
+  flex: 1;
+  /* Allow the select to shrink below its longest option's width inside a flex
+     row — without this a long model name (e.g. the Vision picker) overflowed
+     the card off-screen on mobile. */
+  min-width: 0;
+  max-width: 100%;
+  padding: 5px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  transition: border-color 0.15s;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: textfield;
+  outline: none;
+}
+input.settings-select::-webkit-outer-spin-button,
+input.settings-select::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input.settings-select::placeholder { color: color-mix(in srgb, var(--fg) 35%, transparent); }
+.settings-select:focus {
+  outline: none;
+  border-color: var(--red);
+}
+
+/* Deep Research uses long labels and previously fixed-width fields. Keep
+   every control constrained by the card at intermediate desktop widths too. */
+.admin-card:has(#set-researchSearch) .settings-row { min-width: 0; }
+.admin-card:has(#set-researchSearch) .settings-row > .settings-label { flex: 0 0 112px; min-width: 0; }
+#set-researchSearch,
+#set-researchMaxTokens,
+#set-researchRunTimeout,
+.settings-row div:has(> #set-researchExtractTimeout),
+.settings-row div:has(> #set-researchExtractConcurrency) {
+  width: auto !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  flex: 1 1 0 !important;
+}
+
+@media (max-width: 768px) {
+  /* Deep Research settings contain desktop-sized inline widths. On mobile,
+     let each control claim the card width instead of escaping the admin block. */
+  .settings-row:has(#set-researchSearch),
+  .settings-row:has(#set-researchMaxTokens),
+  .settings-row:has(#set-researchExtractTimeout),
+  .settings-row:has(#set-researchExtractConcurrency),
+  .settings-row:has(#set-researchRunTimeout) {
+    flex-wrap: wrap;
+    align-items: stretch;
+  }
+  .settings-row:has(#set-researchSearch) .settings-label,
+  .settings-row:has(#set-researchMaxTokens) .settings-label,
+  .settings-row:has(#set-researchExtractTimeout) .settings-label,
+  .settings-row:has(#set-researchExtractConcurrency) .settings-label,
+  .settings-row:has(#set-researchRunTimeout) .settings-label {
+    flex: 1 1 auto;
+  }
+  #set-researchSearch,
+  #set-researchMaxTokens,
+  #set-researchRunTimeout,
+  .settings-row div:has(> #set-researchExtractTimeout),
+  .settings-row div:has(> #set-researchExtractConcurrency) {
+    width: 100% !important;
+    max-width: 100% !important;
+    flex: 1 1 100% !important;
+    margin-left: 0 !important;
+  }
+}
+
+/* Default-chat fallback chain editor. Each row mirrors the primary
+   endpoint/model selectors, indented under them to read as a chain. */
+.settings-fallbacks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.settings-fallbacks:not(:empty) { margin-top: 2px; }
+.settings-fallback-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 12px;
+  border-left: 2px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.settings-fallback-num {
+  font-size: 11px;
+  opacity: 0.4;
+  min-width: 14px;
+  text-align: right;
+}
+.settings-fallback-row .settings-select {
+  width: 0;
+  min-width: 0;
+  min-inline-size: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.settings-fallback-row .settings-select:first-of-type {
+  flex: 0 1 128px;
+  width: 128px;
+  max-width: 34%;
+}
+.settings-fallback-row .settings-select:nth-of-type(2) {
+  flex: 1 1 0;
+  width: 0;
+  max-width: 100%;
+}
+details.hwfit-serve-advanced > .hwfit-serve-row,
+details.hwfit-serve-advanced > .hwfit-serve-checks,
+details.hwfit-serve-advanced > .hwfit-serve-cmd-wrap,
+details.hwfit-serve-advanced > .hwfit-serve-extra {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+/* Inside Advanced, tighten the per-row grid gap and the label →
+   select gap so rows of single-line dropdowns don't visually sit
+   on top of half a row of empty space. Outside Advanced (Core,
+   etc.) the original ~6px breathing room stays. */
+details.hwfit-serve-advanced > .hwfit-serve-row {
+  gap: 4px;
+  row-gap: 4px;
+}
+details.hwfit-serve-advanced > .hwfit-serve-row.hwfit-backend-llamacpp,
+details.hwfit-serve-advanced > .hwfit-serve-checks.hwfit-backend-llamacpp {
+  margin-top: -20px;
+  position: relative;
+  left: 4px;
+}
+details.hwfit-serve-advanced > .hwfit-serve-row.hwfit-backend-llamacpp {
+  column-gap: 8px;
+  row-gap: 2px;
+}
+details.hwfit-serve-advanced > .hwfit-llama-placement-row {
+  margin-top: -6px !important;
+}
+details.hwfit-serve-advanced > .hwfit-llama-memory-row {
+  margin-top: -20px !important;
+}
+.cookbook-llama-cpu-mode details.hwfit-serve-advanced > .hwfit-llama-memory-row {
+  margin-top: -8px !important;
+}
+details.hwfit-serve-advanced > .hwfit-llama-batch-row,
+details.hwfit-serve-advanced > .hwfit-llama-monitor-row,
+details.hwfit-serve-advanced > .hwfit-llama-checks-row {
+  margin-top: -18px !important;
+}
+details.hwfit-serve-advanced > .hwfit-diff-settings-row {
+  row-gap: 2px;
+}
+details.hwfit-serve-advanced > .hwfit-diff-checks-row,
+details.hwfit-serve-advanced > .hwfit-diff-harmonize-row {
+  margin-top: -10px !important;
+}
+details.hwfit-serve-advanced > .hwfit-diff-checks-row {
+  row-gap: 2px;
+}
+details.hwfit-serve-advanced > .hwfit-serve-row.hwfit-vram-monitor {
+  gap: 4px !important;
+  grid-template-columns: max-content minmax(0, 1fr);
+  white-space: nowrap;
+}
+details.hwfit-serve-advanced .hwfit-sf[data-field="vllm_block_size"] {
+  width: calc(100% - 6px);
+}
+details.hwfit-serve-advanced .hwfit-sf[data-field="vllm_kv_cache_dtype"] {
+  width: 60px;
+  min-width: 60px;
+}
+details.hwfit-serve-advanced > .hwfit-serve-checks {
+  gap: 4px;
+  row-gap: 4px;
+}
+/* Pull the vLLM/SGLang checks row, Extra args, and the trailing
+   model-specific (Speculative) checks row up tight against the row
+   above — the previous 4px gap plus per-row baseline padding left a
+   ~8px gap that read as too airy in the Advanced fold. */
+details.hwfit-serve-advanced > .hwfit-serve-checks.hwfit-backend-vllm,
+details.hwfit-serve-advanced > .hwfit-serve-checks.hwfit-backend-sglang,
+details.hwfit-serve-advanced > .hwfit-serve-extra {
+  margin-top: -8px;
+}
+details.hwfit-serve-advanced > .hwfit-serve-extra {
+  margin-top: -18px;
+}
+details.hwfit-serve-advanced > .hwfit-serve-row:last-of-type,
+details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
+  margin-bottom: 0;
+}
+
+.settings-fallback-remove {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+.settings-fallback-remove:hover {
+  border-color: var(--red);
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+}
+.settings-fallback-add {
+  align-self: flex-start;
+  margin-top: 2px;
+  font-size: 11px;
+  padding: 3px 9px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: color-mix(in srgb, var(--fg) 65%, transparent);
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+}
+.settings-fallback-add:hover {
+  border-color: var(--red);
+  color: var(--red);
+}
+.settings-input {
+  flex: 1;
+  padding: 5px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+  transition: border-color 0.15s;
+}
+.settings-input:focus {
+  outline: none;
+  border-color: var(--red);
+}
+/* ── Contacts manager (Settings → Integrations → CardDAV) ── */
+.contacts-add-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+  align-items: center;
+}
+.contacts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+.contact-row {
+  padding: 6px 4px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 35%, transparent);
+}
+.contact-row:last-child { border-bottom: none; }
+.contact-row-edit { margin-top: 4px; }
+
+/* ── Sort Dropdown ── */
+
+.sort-dropdown {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 1000;
+  min-width: 120px !important;
+  width: max-content;
+  padding: 4px !important;
+  margin-top: 4px;
+  background: var(--panel) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4) !important;
+  backdrop-filter: none !important;
+}
+.sort-dropdown-item {
+  cursor: pointer;
+  padding: 6px 8px 6px 6px !important;
+  font-size: 11px !important;
+  border-radius: 6px !important;
+  border-bottom: none !important;
+  white-space: nowrap;
+  transition: background 0.1s;
+}
+.sort-dropdown-item:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent) !important;
+}
+.sort-dropdown-item.ai-sort-option {
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 8%, transparent);
+}
+.sort-dropdown-item.ai-sort-option .auto-sort-icon {
+  color: var(--accent, var(--red));
+  display: inline-flex;
+  align-items: center;
+}
+#auto-sort-sessions-btn {
+  transform: translateX(-4px);
+}
+.sort-dropdown-item.ai-sort-option:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 15%, transparent) !important;
+}
+.sort-dropdown-sep {
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+  padding-top: 6px;
+}
+
+/* Mobile: bigger taps for the chats sort/funnel menu and the select-mode
+   bulk-action bar. Also drop the "Rearrange" item — it's a touch-finicky
+   feature better left to desktop. */
+@media (max-width: 768px) {
+  /* Nudge the funnel/sort button right on mobile so it doesn't hug the
+     chevron next to it. */
+  #session-sort-btn { transform: translateX(13px); }
+  #session-sort-dropdown.sort-dropdown {
+    min-width: 200px !important;
+    padding: 6px !important;
+  }
+  #session-sort-dropdown .sort-dropdown-item {
+    padding: 12px 14px !important;
+    font-size: 14px !important;
+  }
+  #session-rearrange-toggle { display: none !important; }
+
+  /* Select-mode bar — make Archive / Delete / Cancel buttons + the
+     Select-all toggle finger-sized. */
+  .session-bulk-bar {
+    padding: 8px 10px;
+    font-size: 14px;
+    gap: 10px;
+  }
+  .session-bulk-btn {
+    padding: 10px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .session-bulk-btn svg { width: 20px; height: 20px; }
+  #session-select-all-dot { font-size: 22px !important; padding: 6px; }
+  #session-select-all-label { font-size: 14px !important; padding: 4px; }
+}
+
+
+/* ── Admin: Built-in tools ── */
+.admin-tool-category {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+.admin-tool-category:hover {
+  border-color: color-mix(in srgb, var(--fg) 20%, var(--border));
+}
+.admin-tool-cat-header {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 8px 10px;
+  transition: background 0.15s;
+}
+.admin-tool-cat-header:hover {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.admin-tool-cat-body {
+  border-top: 1px solid var(--border);
+  padding: 4px 0;
+}
+.admin-tool-cat-body.hidden {
+  display: none;
+}
+.admin-tool-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  padding-right: 28px; /* align toggles with header toggle (chevron 12px + gap 6px + padding) */
+  transition: background 0.08s;
+}
+.admin-tool-row:hover {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.admin-tool-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.admin-tool-name {
+  font-size: 11px;
+  font-weight: 500;
+}
+.admin-tool-desc {
+  font-size: 10px;
+  opacity: 0.4;
+}
+.admin-tool-ctx {
+  font-size: 9px;
+  opacity: 0.3;
+  flex-shrink: 0;
+  min-width: 35px;
+  text-align: right;
+  font-family: 'Berkeley Mono', 'SF Mono', 'Fira Code', monospace;
+}
+
+/* Cookbook serve param hints */
+.hwfit-hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--fg);
+  font-size: 8px;
+  font-weight: 600;
+  opacity: 0.35;
+  cursor: help;
+  margin-left: 2px;
+  vertical-align: middle;
+  transition: opacity 0.1s;
+}
+.hwfit-hint:hover {
+  opacity: 0.8;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.hwfit-dl-dot {
+  color: var(--green);
+  font-size: 8px;
+  margin-left: 4px;
+  opacity: 0.7;
+}
+.hwfit-parser-tag {
+  font-size: 9px;
+  opacity: 0.4;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-left: 4px;
+  font-family: 'Berkeley Mono', 'SF Mono', 'Fira Code', monospace;
+}
+
+/* Cookbook output copy — show only on hover */
+.cookbook-output-wrap .cookbook-output-copy {
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+/* Cached model menu button */
+.hwfit-cached-menu-btn {
+  background: none;
+  border: none;
+  color: var(--fg);
+  font-size: 16px;
+  cursor: pointer;
+  opacity: 0;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: opacity 0.1s;
+  flex-shrink: 0;
+  position: relative;
+  top: -2px;
+}
+.memory-item:hover .hwfit-cached-menu-btn,
+.hwfit-cached-item:hover .hwfit-cached-menu-btn { opacity: 0.4; }
+.hwfit-cached-menu-btn:hover { opacity: 1 !important; }
+.hwfit-cached-menu-btn svg { pointer-events: none; }
+@media (max-width: 768px) {
+  #cookbook-modal .hwfit-cached-menu-btn {
+    opacity: 0.72 !important;
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    padding: 0;
+    justify-content: center;
+    top: -4px;
+  }
+  #cookbook-modal .hwfit-cached-menu-btn:active {
+    opacity: 1 !important;
+    background: color-mix(in srgb, var(--fg) 9%, transparent);
+  }
+}
+
+/* Quick run button */
+.cookbook-run-btn {
+  background: var(--accent, var(--red)) !important;
+  color: var(--panel) !important;
+  border-color: var(--accent, var(--red)) !important;
+  font-weight: 600;
+}
+.cookbook-run-btn:hover {
+  opacity: 0.9;
+}
+#hwfit-cache-scan {
+  position: relative;
+  top: 1px;
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+#hwfit-cache-scan.spinning svg {
+  animation: modelPickerRefreshSpin 0.75s linear infinite;
+}
+#serve-search {
+  height: 28px;
+  min-height: 28px;
+  font-family: inherit;
+  font-size: 11px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23e06c75' stroke-opacity='0.85' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='8'/><line x1='21' y1='21' x2='16.65' y2='16.65'/></svg>");
+  background-repeat: no-repeat;
+  background-position: 9px center;
+  padding-left: 28px;
+}
+.cookbook-sort-select-wrap {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+}
+.cookbook-sort-select-wrap > svg {
+  position: absolute;
+  left: 9px;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.65;
+  transform: translateY(4px);
+}
+
+/* Cookbook model directory tags */
+.cookbook-modeldir-tag {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--fg);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: 'Berkeley Mono', 'SF Mono', monospace;
+}
+.cookbook-modeldir-default {
+  opacity: 0.5;
+}
+.cookbook-server-bottom-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
+  margin-top: 5px;
+}
+.cookbook-server-bottom-actions > button {
+  height: 22px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+}
+/* Default-server radio-check in a Settings server title (same look as the
+   model-dir download target). Active = accent-tinted. */
+.cookbook-srv-default {
+  cursor: pointer;
+  opacity: 0.35;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  line-height: 1;
+  transition: opacity 0.12s, color 0.12s;
+}
+.cookbook-srv-default:hover { opacity: 0.8; }
+.cookbook-srv-default.active { opacity: 1; color: var(--accent, var(--red)); }
+.cookbook-srv-default-label { font-size: 10px; font-weight: 600; letter-spacing: 0.02em; }
+.cookbook-srv-default-icon {
+  display: inline-flex;
+  align-items: center;
+  line-height: 0;
+}
+.cookbook-srv-default-icon svg {
+  width: 13px;
+  height: 13px;
+}
+.cookbook-srv-default-icon,
+.cookbook-srv-default-label {
+  position: relative;
+  top: 2px;
+}
+.email-settings-default,
+.email-settings-default .cookbook-srv-default-icon,
+.email-settings-default .cookbook-srv-default-label {
+  position: relative;
+  top: -2px;
+}
+/* Download-target toggle inside a model-dir tag */
+.cookbook-modeldir-dl {
+  cursor: pointer;
+  opacity: 0.35;
+  display: inline-flex;
+  align-items: center;
+  line-height: 0;
+  transition: opacity 0.12s, color 0.12s;
+}
+.cookbook-modeldir-dl:hover { opacity: 0.8; }
+.cookbook-modeldir-dl.active { opacity: 1; color: var(--accent, var(--red)); }
+/* The tag currently flagged as the download target — clearly highlighted so
+   it's obvious where downloads land. */
+.cookbook-modeldir-target {
+  opacity: 1;
+  color: var(--accent, var(--red));
+  font-weight: 600;
+  background: color-mix(in srgb, var(--accent, var(--red)) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent, var(--red)) 60%, transparent);
+}
+.cookbook-modeldir-rm {
+  cursor: pointer;
+  opacity: 0.4;
+  font-size: 10px;
+}
+.cookbook-modeldir-rm:hover {
+  opacity: 1;
+}
+.cookbook-modeldir-add {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  font-size: 10px;
+  font-weight: 500;
+  height: 19.5px;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  position: relative;
+  top: -3px;
+  padding: 0 9px;
+  transition: border-color 0.12s, background 0.12s;
+}
+.cookbook-modeldir-add:hover { border-color: var(--accent, var(--red)); background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent); }
+
+/* Cookbook serve optimizations */
+.hwfit-serve-opts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+}
+.hwfit-apply-opts {
+  font-size: 11px !important;
+  min-width: auto !important;
+  white-space: nowrap;
+}
+.hwfit-opts-desc {
+  font-size: 9px;
+  opacity: 0.4;
+  font-style: italic;
+}
+
+/* Library modal tabs */
+.lib-tabs,
+.admin-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.lib-tab,
+.admin-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--fg-muted);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 6px 14px;
+  cursor: pointer;
+  transition: color 0.1s, border-color 0.1s;
+}
+.lib-tab:hover,
+.admin-tab:hover { color: var(--fg); }
+.lib-tab.active,
+.admin-tab.active {
+  color: var(--accent, var(--red));
+  border-bottom-color: var(--accent, var(--red));
+}
+
+/* Cookbook tab count badge */
+.cookbook-tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 20%, transparent);
+  color: var(--accent, var(--red));
+  font-size: 9px;
+  font-weight: 700;
+  margin-left: 4px;
+  line-height: 1;
+}
+
+/* ── Generate Visual Report button (deep research) ── */
+.view-report-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 8px 16px;
+  border: 1px solid color-mix(in srgb, var(--red) 30%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 0.88em;
+  font-weight: 500;
+  transition: background 0.15s ease;
+  cursor: pointer;
+}
+.view-report-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--red) 18%, transparent);
+}
+.view-report-btn svg {
+  flex-shrink: 0;
+}
+.report-btn-wrap {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.view-report-btn.chat-about-btn {
+  border-color: color-mix(in srgb, var(--fg) 22%, transparent);
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.view-report-btn.chat-about-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.view-report-btn:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.report-spinner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.88em;
+  color: var(--fg);
+  opacity: 0.7;
+}
+.report-spinner-text {
+  font-weight: 500;
+}
+.report-spinner-dots::after {
+  content: '';
+  animation: report-dots 1.4s steps(4, end) infinite;
+}
+@keyframes report-dots {
+  0%   { content: ''; }
+  25%  { content: '.'; }
+  50%  { content: '..'; }
+  75%  { content: '...'; }
+  100% { content: ''; }
+}
+
+/* ── Continue research hint ────────────────────────── */
+.continue-research-wrap {
+  margin-top: 8px;
+}
+.continue-research-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78em;
+  color: var(--fg-dim, var(--fg));
+  opacity: 0.5;
+  padding: 4px 0;
+}
+.continue-research-hint svg {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+/* ── Research reconnect & timer ────────────────────── */
+.msg.research-reconnect {
+  border-left: 3px solid var(--red);
+  background: color-mix(in srgb, var(--red) 5%, transparent);
+}
+.research-timer {
+  font-size: 0.8em;
+  opacity: 0.6;
+  margin-top: 4px;
+  font-family: monospace;
+  color: var(--fg-dim, var(--fg));
+}
+
+/* ── Research synapse visualization ───────────────────────────────
+   Live SVG graph of an in-flight deep-research run. The query is the
+   central node; sub-questions branch off per round; sources are leaf
+   nodes that pop in as they're captured. Pulses indicate activity. */
+.research-synapse {
+  margin: 6px 0 4px;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 24%, var(--border));
+  border-radius: 7px;
+  background:
+    linear-gradient(color-mix(in srgb, var(--fg) 3%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--fg) 3%, transparent) 1px, transparent 1px),
+    radial-gradient(ellipse at 50% 48%, color-mix(in srgb, var(--accent, var(--red)) 13%, transparent) 0%, transparent 62%),
+    color-mix(in srgb, var(--panel) 68%, var(--bg));
+  background-size: 18px 18px, 18px 18px, auto, auto;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg) 5%, transparent);
+  overflow: hidden;
+}
+.research-synapse .rs-stage {
+  height: 400px;
+  position: relative;
+}
+.research-synapse .rs-meta-header {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  left: 0;
+  right: 0;
+  border-top: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  padding: 5px 8px 6px;
+  background: color-mix(in srgb, var(--panel) 76%, transparent);
+}
+.research-synapse-ascii-filter > .rs-stage > svg {
+  display: none;
+}
+.research-synapse-ascii-filter .rs-ascii-overlay {
+  position: absolute;
+  z-index: 3;
+  inset: 28px 10px 10px;
+  margin: 0;
+  overflow: hidden;
+  pointer-events: none;
+  color: color-mix(in srgb, var(--accent, var(--red)) 76%, var(--fg));
+  font: 600 10px/1.35 ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: pre;
+  text-align: center;
+  opacity: 1;
+  text-shadow: 0 0 7px color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
+  mix-blend-mode: screen;
+}
+.research-synapse-compact .rs-meta { padding: 5px 8px 6px; font-size: 10px; }
+.research-synapse-compact .rs-label-sub { font-size: 8px; }
+.research-synapse .rs-stage-head {
+  position: absolute;
+  z-index: 2;
+  top: 7px;
+  left: 9px;
+  right: 9px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--fg-dim, var(--fg));
+  font: 600 8px/1 ui-monospace, "JetBrains Mono", monospace;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+.research-synapse .rs-live-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent, var(--red));
+  box-shadow: 0 0 6px color-mix(in srgb, var(--accent, var(--red)) 75%, transparent);
+  animation: rs-live 1.8s ease-in-out infinite;
+}
+.research-synapse .rs-phase-chip {
+  margin-left: auto;
+  padding: 3px 5px;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 25%, var(--border));
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 8%, var(--bg));
+  color: var(--accent, var(--red));
+}
+.research-synapse svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.research-synapse .rs-edge {
+  stroke: color-mix(in srgb, var(--accent, var(--red)) 32%, var(--border));
+  stroke-width: 1.35;
+  fill: none;
+  opacity: 0.72;
+}
+.research-synapse .rs-node {
+  fill: var(--bg);
+  stroke: var(--accent, var(--red));
+  stroke-width: 1.5;
+  transition: all 0.3s ease;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.research-synapse .rs-source-index {
+  fill: var(--fg);
+  font: 650 4.5px/1 ui-monospace, "JetBrains Mono", monospace;
+  pointer-events: none;
+  opacity: 0.88;
+}
+.research-synapse .rs-node-expanded { animation: rs-hub-expand 0.75s ease-out; }
+.research-synapse .rs-node-new {
+  animation: rs-pop 0.6s ease-out;
+}
+.research-synapse .rs-pulse {
+  fill: var(--accent, var(--red));
+  opacity: 0;
+  animation: rs-pulse 2.6s ease-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.research-synapse .rs-label {
+  fill: var(--fg);
+  font-size: 10px;
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  pointer-events: none;
+  opacity: 0.85;
+}
+.research-synapse .rs-label-sub {
+  font-size: 9px;
+  opacity: 0.7;
+}
+.research-synapse .rs-meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px 8px;
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--fg-dim, var(--fg));
+  opacity: 0.92;
+  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  background: color-mix(in srgb, var(--panel) 76%, transparent);
+}
+.research-synapse .rs-meta .rs-status {
+  display: none;
+  color: var(--accent, var(--red));
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.research-synapse .rs-meta b {
+  color: var(--fg);
+  font-weight: 600;
+}
+.research-synapse.rs-complete .rs-meta .rs-status { color: var(--color-success, #4caf50); }
+.research-synapse.rs-error .rs-meta .rs-status { color: var(--red); }
+.research-synapse.rs-phase-reading .rs-phase-chip,
+.research-synapse.rs-phase-analyzing .rs-phase-chip { color: var(--gold, #d4a72c); }
+.research-synapse.rs-phase-writing .rs-phase-chip { color: var(--color-success, #4caf50); }
+
+@media (prefers-reduced-motion: reduce) {
+  .research-synapse .rs-live-dot,
+  .research-synapse .rs-pulse,
+  .research-synapse .rs-node-new,
+  .research-synapse .rs-node-expanded,
+  .research-synapse .rs-edge-firing { animation: none !important; }
+}
+
+/* ── Raw findings items (inside sources-style box) ── */
+.finding-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.finding-item .source-link {
+  border-radius: 6px 6px 0 0;
+}
+.finding-summary {
+  padding: 6px 8px 8px;
+  font-size: 0.82em;
+  line-height: 1.5;
+  color: var(--fg-dim, var(--fg));
+  opacity: 0.85;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 6%, transparent);
+  margin-bottom: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.finding-item:last-child .finding-summary {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Gallery Editor
+   ═══════════════════════════════════════════════════════════ */
+
+/* Tab bar */
+.gallery-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  padding: 0 16px;
+  background: var(--panel);
+}
+.gallery-tab {
+  padding: 8px 18px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--fg);
+  opacity: 0.6;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: opacity 0.15s, border-color 0.15s;
+}
+.gallery-tab:hover { opacity: 0.85; }
+.gallery-tab.active {
+  opacity: 1;
+  border-bottom-color: var(--red);
+}
+
+/* Narrow modal tab strips should stay on one row. Resized docked windows can
+   be much narrower than the viewport, so this cannot live only in mobile media
+   queries. */
+.cookbook-tabs,
+.memory-tabs,
+.admin-tabs,
+.lib-tabs,
+.gallery-tabs,
+.preset-tabs {
+  flex-wrap: nowrap !important;
+  overflow-x: auto !important;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.cookbook-tabs::-webkit-scrollbar,
+.memory-tabs::-webkit-scrollbar,
+.admin-tabs::-webkit-scrollbar,
+.lib-tabs::-webkit-scrollbar,
+.gallery-tabs::-webkit-scrollbar,
+.preset-tabs::-webkit-scrollbar {
+  display: none;
+}
+.cookbook-tabs > *,
+.memory-tabs > *,
+.admin-tabs > *,
+.lib-tabs > *,
+.gallery-tabs > *,
+.preset-tabs > * {
+  flex: 0 0 auto;
+}
+.cookbook-tab,
+.memory-tab,
+.admin-tab,
+.lib-tab,
+.gallery-tab,
+.preset-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  line-height: 1;
+}
+.gallery-tab {
+  gap: 6px;
+}
+
+@container (max-width: 360px) {
+  .cookbook-tab:has(svg),
+  .memory-tab:has(svg),
+  .admin-tab:has(svg),
+  .lib-tab:has(svg),
+  .gallery-tab:has(svg),
+  .preset-tab:has(svg) {
+    width: 34px;
+    min-width: 34px;
+    padding-left: 0;
+    padding-right: 0;
+    font-size: 0;
+  }
+
+  .cookbook-tab:has(svg) svg,
+  .memory-tab:has(svg) svg,
+  .admin-tab:has(svg) svg,
+  .lib-tab:has(svg) svg,
+  .gallery-tab:has(svg) svg,
+  .preset-tab:has(svg) svg {
+    width: 14px;
+    height: 14px;
+    margin-right: 0 !important;
+    vertical-align: middle !important;
+  }
+
+  .memory-tab:has(svg) .memory-count,
+  .gallery-tab:has(svg) .gallery-tab-label,
+  .gallery-tab:has(svg) .gallery-tab-close,
+  .cookbook-tab:has(svg) .cookbook-tab-count,
+  .preset-tab:has(svg) .preset-count {
+    display: none !important;
+  }
+}
+/* Icon + label layout inside each tab. */
+.gallery-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.gallery-tab-icon {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.85;
+}
+.gallery-tab.active .gallery-tab-icon { opacity: 1; }
+/* Close × on the Edit tab — appears on hover. */
+.gallery-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 2px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s;
+  /* Use a slightly larger glyph at a larger line-height so the × sits
+     visually centered — the U+00D7 character has uneven em-box metrics. */
+  font-size: 16px;
+  line-height: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  padding-bottom: 2px;
+  box-sizing: border-box;
+}
+.gallery-tab:hover .gallery-tab-close,
+.gallery-tab.active .gallery-tab-close { opacity: 0.65; }
+/* Hide the close × entirely on the Edit tab when there's no edit open. */
+.gallery-tab[data-tab="editor"]:not(.has-edit) .gallery-tab-close { display: none !important; }
+.gallery-tab-close:hover { opacity: 1 !important; background: color-mix(in srgb, var(--red) 25%, transparent); color: var(--red); }
+/* Inline rename input shown when the Edit tab is double-clicked. */
+.gallery-tab-rename-input {
+  background: var(--bg);
+  border: 1px solid var(--red);
+  border-radius: 3px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  padding: 1px 4px;
+  width: 140px;
+  outline: none;
+}
+
+/* Albums tab — grid of album cards with cover thumbnails. */
+.gallery-albums-container {
+  padding: 12px 4px;
+  max-height: calc(92vh - 120px);
+  overflow-y: auto;
+  border: 2px dashed transparent;
+  border-radius: 8px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.gallery-settings-container {
+  padding: 8px 4px;
+  max-height: calc(92vh - 120px);
+  overflow-y: auto;
+}
+.gallery-albums-container.gallery-dragover {
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 5%, transparent);
+}
+.gallery-albums-empty {
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  padding: 48px 16px;
+  opacity: 0.7;
+  font-size: 13px;
+}
+.gallery-albums-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+.gallery-album-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.12s, border-color 0.12s, box-shadow 0.12s;
+}
+.gallery-album-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--red);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.gallery-album-menu-btn {
+  position: absolute;
+  top: 6px; right: 6px;
+  width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  color: var(--fg);
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s;
+  z-index: 2;
+  backdrop-filter: blur(4px);
+  /* Plain "…" text — the previous SVG was rendering as a flat black
+     block on some themes when its currentColor didn't contrast. */
+  font-size: 16px;
+  line-height: 1;
+  font-weight: 600;
+  padding: 0 0 4px;
+}
+.gallery-album-card:hover .gallery-album-menu-btn,
+.gallery-album-menu-btn:focus-visible { opacity: 1; }
+.gallery-album-menu-btn:hover { background: var(--bg); }
+.gallery-album-menu-pop {
+  position: absolute;
+  top: 34px; right: 6px;
+  min-width: 140px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--fg) 18%, transparent);
+  display: flex; flex-direction: column;
+  padding: 4px;
+  z-index: 3;
+}
+.gallery-album-menu-pop[hidden] { display: none; }
+.gallery-album-cover {
+  aspect-ratio: 4 / 3;
+  background: color-mix(in srgb, var(--fg) 5%, var(--bg));
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+.gallery-album-placeholder {
+  opacity: 0.4;
+  font-size: 40px;
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; height: 100%;
+}
+.gallery-album-info {
+  padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.gallery-album-name {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.gallery-album-count {
+  font-size: 11px;
+  opacity: 0.55;
+}
+.gallery-album-card-add {
+  border-style: dashed;
+  opacity: 0.7;
+}
+.gallery-album-card-add:hover { opacity: 1; }
+.gallery-album-action-tile {
+  background: color-mix(in srgb, var(--fg) 3%, var(--bg));
+}
+
+/* Edit-tab empty state — shown before any image is loaded. */
+.gallery-editor-landing {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px;
+  padding: 28px 16px;
+  flex: 1;
+  text-align: center;
+  color: var(--fg);
+}
+.gallery-editor-landing h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.gallery-editor-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.gallery-editor-heading > svg { opacity: 0.6; flex: 0 0 auto; }
+/* "vision model" link in the AI-tagging description → opens Settings. */
+.ge-vision-link {
+  color: var(--accent, var(--red));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.ge-vision-link:hover { opacity: 0.8; }
+.ge-alpha-tag {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  vertical-align: middle;
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 15%, transparent);
+  position: relative;
+  top: -1px;
+}
+.gallery-editor-landing-actions {
+  display: flex; gap: 10px;
+  margin-top: 8px;
+}
+/* Bigger primary action buttons specifically inside the editor landing —
+   the gallery-wide .gallery-select-btn is a compact toolbar style which is
+   too small for the empty-state hero. */
+.gallery-editor-landing-actions .gallery-select-btn {
+  padding: 7px 22px 17px;
+  font-size: 13px;
+  opacity: 0.85;
+}
+/* Visible template picker: every canvas ratio is inspectable without opening
+   a native menu, and its SVG outline previews the resulting canvas shape. */
+.gallery-editor-template-picker {
+  width: min(760px, 96%);
+  margin-top: 10px;
+}
+.gallery-editor-template-picker h4 {
+  margin: 0 0 7px;
+  font-size: 11px;
+  opacity: 0.55;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.gallery-editor-template-options {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(105px, 1fr));
+  gap: 6px;
+}
+.gallery-editor-template-option {
+  height: 72px;
+  min-width: 0;
+  padding: 6px 7px;
+  display: grid;
+  grid-template-rows: 28px auto auto;
+  justify-items: center;
+  align-items: center;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  overflow: hidden;
+}
+.gallery-editor-template-option svg { color: var(--accent, var(--red)); }
+.gallery-editor-template-option:hover,
+.gallery-editor-template-option:focus-visible {
+  outline: none;
+  border-color: var(--accent, var(--red));
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 7%, var(--panel));
+}
+.gallery-editor-template-option span {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.gallery-editor-template-option small {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 9px;
+  opacity: 0.52;
+}
+@media (max-width: 620px) {
+  .gallery-editor-landing {
+    justify-content: flex-start;
+    gap: 7px;
+    padding: 18px 12px;
+    overflow-y: auto;
+  }
+  .gallery-editor-landing-actions {
+    width: 100%;
+    gap: 6px;
+    justify-content: center;
+  }
+  .gallery-editor-landing-actions .gallery-select-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: 180px;
+    padding: 6px 8px 10px;
+    font-size: 11px;
+  }
+  .gallery-editor-template-picker {
+    width: 100%;
+    margin-top: 4px;
+  }
+  .gallery-editor-template-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  /* The common square, widescreen, portrait, and Instagram presets are
+     enough to start on a phone. Keep the print and 4K presets on desktop. */
+  .gallery-editor-template-option:nth-child(n + 5) {
+    display: none;
+  }
+}
+/* Saved-drafts grid on the editor landing. Surfaces every persisted
+   in-progress project so the user can resume without re-opening the
+   original photo. Each card: thumbnail + name + last-saved hint + ×. */
+.gallery-editor-drafts {
+  width: min(720px, 92%);
+  margin: 28px auto 0;   /* centered */
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.gallery-editor-drafts {
+  position: relative;
+}
+.gallery-editor-drafts-loading {
+  position: absolute;
+  inset: 30px 0 0 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel);
+  border-radius: 6px;
+  min-height: 80px;
+}
+.gallery-editor-drafts-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;   /* center the title / search / select */
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.gallery-editor-drafts-title {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.55;
+  font-weight: 600;
+  text-align: left;
+  flex-shrink: 0;
+}
+.gallery-editor-drafts-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  height: 26px;          /* same thickness as the Select button */
+  box-sizing: border-box;
+  padding: 0 8px;
+  font-size: 12px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.gallery-editor-drafts-search:focus { outline: none; border-color: var(--red); }
+/* The shared .gallery-select-btn has a -4px top margin + tall asymmetric padding
+   meant for the main gallery toolbar; in this header it makes the button a
+   different height / offset from the search box. Normalize so it lines up. */
+.gallery-editor-drafts-header .gallery-select-btn {
+  margin-top: 0 !important;
+  height: 26px;          /* match the search bar */
+  box-sizing: border-box;
+  padding: 0 10px;
+  font-size: 12px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.cookbook-official-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--fg);
+  font-size: 10px;
+  opacity: 0.72;
+  white-space: nowrap;
+  position: relative;
+  top: 1px;
+}
+.cookbook-official-filter > span:first-child {
+  position: relative;
+  top: 1px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 9px;
+}
+.cookbook-official-filter .toggle {
+  width: 26px;
+  height: 14px;
+}
+.cookbook-official-filter .toggle .slider:before {
+  width: 10px;
+  height: 10px;
+  left: 2px;
+  bottom: 2px;
+}
+.cookbook-official-filter .toggle input:checked + .slider:before {
+  transform: translateX(12px);
+}
+#gallery-editor-drafts-select { margin-left: auto; flex-shrink: 0; }
+#gallery-editor-drafts-select.active {
+  background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+  border-color: var(--accent, var(--red));
+  color: var(--accent, var(--red));
+}
+/* Graceful exit when a project card is deleted — fade + shrink before re-render. */
+.gallery-editor-draft-card.gallery-draft-removing {
+  opacity: 0;
+  transform: scale(0.92);
+  transition: opacity 0.24s ease, transform 0.24s ease;
+  pointer-events: none;
+}
+/* Draft select dot uses the standard small .gallery-select-dot look (same as the
+   photo grid) — no oversized white-ring checkbox. */
+.gallery-editor-drafts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px;
+}
+.gallery-drafts-just-opened > .gallery-editor-draft-card {
+  animation: section-domino-in 0.36s cubic-bezier(0.22, 1.61, 0.36, 1) backwards;
+}
+.gallery-drafts-just-opened > :nth-child(1)  { animation-delay: 0.02s; }
+.gallery-drafts-just-opened > :nth-child(2)  { animation-delay: 0.04s; }
+.gallery-drafts-just-opened > :nth-child(3)  { animation-delay: 0.06s; }
+.gallery-drafts-just-opened > :nth-child(4)  { animation-delay: 0.08s; }
+.gallery-drafts-just-opened > :nth-child(5)  { animation-delay: 0.10s; }
+.gallery-drafts-just-opened > :nth-child(6)  { animation-delay: 0.12s; }
+.gallery-drafts-just-opened > :nth-child(7)  { animation-delay: 0.14s; }
+.gallery-drafts-just-opened > :nth-child(8)  { animation-delay: 0.16s; }
+.gallery-drafts-just-opened > :nth-child(9)  { animation-delay: 0.18s; }
+.gallery-drafts-just-opened > :nth-child(10) { animation-delay: 0.20s; }
+.gallery-drafts-just-opened > :nth-child(11) { animation-delay: 0.22s; }
+.gallery-drafts-just-opened > :nth-child(12) { animation-delay: 0.24s; }
+.gallery-drafts-just-opened > :nth-child(13) { animation-delay: 0.26s; }
+.gallery-drafts-just-opened > :nth-child(14) { animation-delay: 0.28s; }
+.gallery-drafts-just-opened > :nth-child(15) { animation-delay: 0.30s; }
+.gallery-drafts-just-opened > :nth-child(16) { animation-delay: 0.32s; }
+.gallery-drafts-just-opened > :nth-child(17) { animation-delay: 0.34s; }
+.gallery-drafts-just-opened > :nth-child(18) { animation-delay: 0.36s; }
+.gallery-drafts-just-opened > :nth-child(19) { animation-delay: 0.38s; }
+.gallery-drafts-just-opened > :nth-child(20) { animation-delay: 0.40s; }
+.gallery-drafts-just-opened > :nth-child(n+21) { animation-delay: 0.42s; }
+.gallery-drafts-view-toggle {
+  display: inline-flex;
+  position: relative;
+  top: 0;
+  height: 24px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+}
+.gallery-drafts-view-toggle button {
+  width: 25px;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+  cursor: pointer;
+  line-height: 0;
+}
+.gallery-drafts-view-toggle button:last-child { border-right: 0; }
+.gallery-drafts-view-toggle button:hover { color: var(--fg); }
+.gallery-drafts-view-toggle button.active {
+  height: 22px;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+}
+.gallery-editor-drafts-grid.list-view .gallery-editor-draft-thumb {
+  width: 44px;
+  height: 44px;
+  aspect-ratio: auto;
+}
+.gallery-editor-drafts-grid.list-view .gallery-editor-draft-delete {
+  position: static;
+  opacity: 0.55;
+  background: transparent;
+  color: var(--fg);
+}
+.gallery-editor-draft-delete-trash { display: none; }
+.gallery-editor-drafts-grid.list-view .gallery-editor-draft-delete-trash {
+  display: block;
+  width: 18px;
+  height: 18px;
+  position: relative;
+  top: -2px;
+}
+.gallery-editor-drafts-grid.list-view .gallery-editor-draft-delete:hover {
+  opacity: 1;
+  color: var(--color-error, #f44);
+  background: color-mix(in srgb, var(--color-error, #f44) 10%, transparent);
+}
+.gallery-editor-draft-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, transform 0.15s;
+  text-align: left;
+}
+.gallery-editor-draft-card:hover {
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+}
+.gallery-editor-draft-thumb {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 4px;
+  background: var(--bg);
+  display: block;
+}
+.gallery-editor-draft-thumb-empty {
+  background: repeating-linear-gradient(
+    45deg,
+    color-mix(in srgb, var(--fg) 4%, transparent),
+    color-mix(in srgb, var(--fg) 4%, transparent) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+}
+.gallery-editor-draft-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.gallery-editor-draft-name {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gallery-editor-draft-meta {
+  font-size: 10px;
+  opacity: 0.55;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gallery-editor-draft-delete {
+  position: absolute;
+  top: -2px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s;
+}
+.gallery-editor-draft-delete {
+  padding-bottom: 2px;
+}
+.gallery-editor-draft-delete:hover { background: var(--red); }
+/* On very narrow phones, give project search its own row instead of
+   compressing the title and view controls into an overflowing header. */
+@media (max-width: 360px) {
+  .gallery-editor-drafts-header {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 6px;
+  }
+  .gallery-editor-drafts-title {
+    flex: 1 1 auto;
+  }
+  .gallery-editor-drafts-search {
+    order: 10;
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: none;
+  }
+  #gallery-editor-drafts-select {
+    margin-left: 0;
+  }
+}
+/* Editor layout */
+.gallery-editor {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  /* Prevent the editor's own scroll/touch from chaining out to the
+     gallery modal or the page body — critical on mobile so touching
+     the canvas doesn't slide the whole page. */
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+/* Pin the topbar to the top of the editor so its action buttons remain
+   visible if the gallery modal body itself ends up scrolling. */
+.ge-topbar { position: sticky; top: 0; z-index: 5; }
+
+/* Top bar */
+.ge-topbar {
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  gap: 8px;
+}
+.ge-topbar-left, .ge-topbar-right {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+.ge-topbar-right > * {
+  flex-shrink: 0;
+}
+.ge-topbar .dropdown[popover] {
+  position: fixed;
+  margin: 0;
+  bottom: auto;
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+}
+.ge-draft-status {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 92px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--fg) 52%, transparent);
+  font-size: 10px;
+  line-height: 1;
+  transition: color 0.15s, opacity 0.15s;
+}
+.ge-draft-status[data-state="pending"],
+.ge-draft-status[data-state="saving"] { color: color-mix(in srgb, var(--accent, var(--red)) 75%, var(--fg)); }
+.ge-draft-status[data-state="saved"] { color: color-mix(in srgb, var(--color-success, #4ade80) 78%, var(--fg)); }
+.ge-draft-status[data-state="error"] { color: var(--color-error, #ef4444); }
+/* "ALPHA" badge — flags the editor as in-development. */
+.ge-alpha-badge {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  line-height: 1;
+  padding: 3px 6px;
+  margin-right: 4px;
+  border-radius: 4px;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 40%, transparent);
+  text-transform: uppercase;
+  user-select: none;
+  cursor: default;
+}
+@media (max-width: 768px) {
+  /* Keep the toolbar tight on mobile — badge stays but shrinks. */
+  .ge-alpha-badge { font-size: 8px; padding: 2px 5px; margin-right: 2px; }
+}
+.ge-diffusion-status {
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.ge-diffusion-status.online {
+  color: var(--color-success, #4ade80);
+}
+.ge-diffusion-status.offline {
+  color: var(--color-error, #ef4444);
+  opacity: 0.7;
+}
+.ge-diffusion-status.offline:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+}
+.ge-topbar-fill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent, var(--red));
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 50%, var(--border));
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+}
+.ge-topbar-fill:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 22%, transparent);
+  border-color: var(--accent, var(--red));
+}
+/* Mask-color swatch in the topbar — small label + circular swatch so
+   the user can pick a contrasting overlay colour from anywhere. */
+.ge-topbar-mask-color-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.ge-topbar-mask-color-label {
+  font-size: 10px;
+  opacity: 0.6;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.ge-topbar-mask-color {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+}
+.ge-topbar-mask-color.cp-swatch-input {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border-radius: 50%;
+  padding: 0;
+}
+.ge-topbar-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  margin: 0 4px;
+}
+
+/* Editor body (toolbar + canvas + panel) */
+.ge-editor-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+.gallery-editor-container {
+  flex: 1;
+  min-height: 0;
+  display: none;
+}
+
+.ge-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Asymmetric horizontal padding shifts the whole column 4 px left —
+     buttons, hover backgrounds, active highlight pills, and section
+     separators all move together. */
+  padding: 8px 8px 8px 0;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  width: 64px;
+  flex-shrink: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.ge-toolbar::-webkit-scrollbar { display: none; }
+.ge-tool-sep {
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-muted);
+  text-align: center;
+  padding: 8px 0 4px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+/* All tool buttons share a fixed height so the column reads as a clean
+   grid. Long labels (e.g. "Remove BG") truncate with ellipsis instead of
+   wrapping to two lines and making one button taller than the others. */
+.ge-tool-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 2px;
+  height: 42px;
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  color: var(--fg);
+  opacity: 0.6;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.15s, opacity 0.15s;
+}
+.ge-tool-btn { position: relative; }
+/* Hover background is now a pseudo so we can shift it 2 px left
+   independently from the button's own bounds (which contain the icon
+   and label at their already-shifted positions). */
+.ge-tool-btn:hover { opacity: 0.85; }
+.ge-tool-btn.active {
+  opacity: 1;
+  color: var(--red);
+  background: none;
+  /* Padding stays the same as inactive buttons so the icon stays
+     horizontally aligned with its neighbors. The taller highlight is
+     drawn by ::before so it can extend up/down without pushing the
+     button or shifting the icon. */
+}
+/* Tool button contents stay above the active highlight pseudo. Also
+   shifted an additional 2 px left so the icon + label sit further inside
+   the highlight pill (which still anchors to the button bounds). */
+.ge-tool-btn > * { position: relative; z-index: 1; left: -2px; }
+.ge-tool-icon { font-size: 18px; line-height: 1; }
+.ge-tool-label { font-size: 10px; line-height: 1.25; }
+/* AI badge — same ✦ glyph the Enhance tool uses, pinned to the top-
+   left of any tool button marked `ai: true`. Same color as the icon
+   itself (inherits foreground) so it reads as part of the tool, not
+   a flag. */
+.ge-tool-ai {
+  position: absolute !important;
+  top: 1px;
+  z-index: 2;
+  color: inherit;
+  opacity: 0.7;
+  pointer-events: none;
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 700;
+  left: 3px !important;
+}
+.ge-tool-btn.is-ai:hover .ge-tool-ai { opacity: 0.95; }
+.ge-tool-btn.is-ai.active .ge-tool-ai { opacity: 1; }
+/* Inline ✦ marker used on AI action buttons (Generate, Remove, etc.)
+   so they read as AI-backed at a glance — same glyph as .ge-tool-ai
+   in the toolbar, just sitting inline next to the label. */
+.ge-btn-ai-mark {
+  display: inline-block;
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 700;
+  opacity: 0.75;
+  margin-right: 1px;
+}
+
+/* Per-tool clear-selection badge — shows a tiny X in the top-right of
+   the Lasso / Wand button when each holds a selection. Click clears
+   the selection without switching tools (handler stops propagation). */
+.ge-tool-clear {
+  position: absolute !important;
+  top: 3px;
+  right: 3px;
+  width: 14px;
+  height: 14px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--red);
+  cursor: pointer;
+  opacity: 0.95;
+  z-index: 2;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 70%, transparent),
+              0 1px 4px color-mix(in srgb, var(--red) 50%, transparent);
+  transition: opacity 0.12s, transform 0.12s, box-shadow 0.12s;
+  left: auto !important;
+}
+.ge-tool-clear:hover {
+  opacity: 1;
+  transform: scale(1.15);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 80%, transparent),
+              0 2px 6px color-mix(in srgb, var(--red) 60%, transparent);
+}
+
+/* Aspect-ratio placeholder shown while a draft is loading. */
+.ge-canvas-placeholder {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--fg) 20%, transparent);
+  border-radius: 4px;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1;
+}
+/* Canvas area (center) */
+.ge-canvas-area {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  background: var(--bg);
+  position: relative;
+  min-width: 0;
+  /* Stop touch interactions inside the editor from dragging the whole
+     page (or the gallery modal). Touches on the canvas are owned by the
+     editor's drawing logic — no native pan/zoom. */
+  overscroll-behavior: contain;
+}
+.ge-ruler {
+  position: absolute;
+  z-index: 16;
+  touch-action: none;
+  user-select: none;
+}
+.ge-ruler-horizontal {
+  top: 0;
+  left: 18px;
+  right: 0;
+  width: calc(100% - 18px);
+  height: 18px;
+  cursor: row-resize;
+}
+.ge-ruler-vertical {
+  top: 18px;
+  bottom: 0;
+  left: 0;
+  width: 18px;
+  height: calc(100% - 18px);
+  cursor: col-resize;
+}
+.ge-ruler-corner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 17;
+  width: 18px;
+  height: 18px;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  box-sizing: border-box;
+}
+.ge-wand-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg) 30%, transparent);
+  pointer-events: none;
+}
+.ge-ai-command {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  z-index: 18;
+  width: min(430px, calc(100% - 28px));
+  transform: translateX(-50%);
+  padding: 7px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 42%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel, var(--bg)) 94%, transparent);
+  box-shadow: 0 8px 22px color-mix(in srgb, #000 26%, transparent);
+  backdrop-filter: blur(8px);
+  transition: bottom 0.16s ease, opacity 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+}
+.ge-ai-command-toggle {
+  width: 100%;
+  height: 28px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent, var(--red));
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ge-ai-command-toggle-caret {
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+.ge-ai-command-head {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 2px 5px;
+  color: var(--fg);
+}
+.ge-ai-command-title {
+  margin-left: 5px;
+  font-size: 11px;
+  font-weight: 650;
+}
+.ge-ai-command-scope {
+  margin-left: 7px;
+  padding-left: 7px;
+  border-left: 1px solid var(--border);
+  color: var(--fg-muted);
+  font-size: 9px;
+  line-height: 1;
+  text-transform: uppercase;
+}
+.ge-ai-command-collapsed {
+  bottom: -16px;
+  width: auto;
+  min-width: 102px;
+  padding: 2px 9px;
+  opacity: 0.32;
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 18%, var(--border));
+  box-shadow: 0 3px 10px color-mix(in srgb, #000 16%, transparent);
+}
+.ge-canvas-area:hover .ge-ai-command-collapsed,
+.ge-ai-command-collapsed:hover,
+.ge-ai-command-collapsed:focus-within {
+  bottom: 10px;
+  opacity: 0.94;
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 42%, var(--border));
+  box-shadow: 0 8px 22px color-mix(in srgb, #000 24%, transparent);
+}
+.ge-ai-command-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ge-ai-command-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  box-sizing: border-box;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 76%, #000 24%);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+}
+.ge-ai-command-input:focus {
+  outline: none;
+  border-color: var(--accent, var(--red));
+}
+.ge-ai-command-clear {
+  position: relative;
+  top: -2px;
+  width: 26px;
+  height: 32px;
+  flex: 0 0 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: -38px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 0;
+  z-index: 1;
+}
+.ge-ai-command-clear:hover {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.ge-ai-command-run {
+  position: relative;
+  top: -2px;
+  background: var(--send-btn-bg, var(--red));
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  min-width: 32px;
+  width: 32px;
+  height: 32px !important;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  transition: background 0.25s, opacity 0.12s;
+  overflow: hidden;
+}
+.ge-ai-command-run:hover {
+  background: var(--send-btn-hover, color-mix(in srgb, var(--red) 80%, white));
+}
+.ge-ai-command-busy .ge-ai-command-run {
+  opacity: 0.58;
+  cursor: wait;
+}
+.ge-ai-command-busy .ge-ai-command-run svg {
+  display: none;
+}
+.ge-ai-command-close {
+  width: 28px;
+  height: 32px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg);
+  opacity: 0.52;
+  cursor: pointer;
+  padding: 0;
+  margin-left: auto;
+}
+.ge-ai-command-close:hover {
+  opacity: 0.9;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.ge-ai-command-suggestions {
+  position: absolute;
+  left: 7px;
+  right: 7px;
+  bottom: calc(100% - 2px);
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 236px;
+  overflow: auto;
+  padding: 5px;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 34%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel, var(--bg)) 97%, #000 3%);
+  box-shadow: 0 10px 28px color-mix(in srgb, #000 28%, transparent);
+}
+.ge-ai-command-suggestion {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 38px minmax(82px, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 4px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.ge-ai-command-suggestion:hover,
+.ge-ai-command-suggestion.active {
+  background: color-mix(in srgb, var(--accent, var(--red)) 16%, transparent);
+}
+.ge-ai-command-suggestion-kind {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--accent, var(--red));
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.ge-ai-command-suggestion-main {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 650;
+}
+.ge-ai-command-suggestion-hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-muted);
+  font-size: 10px;
+}

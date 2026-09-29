@@ -55,7 +55,10 @@ function swapRuleOccurrences(css, selector) {
   }
   const matches = blocks.filter(b => b.selector === selector && b.end !== undefined);
   if (matches.length < 2) {
-    throw new Error(`swap-rule: need two top-level blocks for "${selector}", found ${matches.length}`);
+    // The selector is not in this sheet, or appears once. The stylesheet is
+    // split across several files, so that is expected for most of them: the
+    // caller decides whether any sheet matched at all.
+    return null;
   }
   const [a, b] = matches;
   const textA = css.slice(a.start, a.end);
@@ -186,6 +189,7 @@ async function main() {
   const missing = {};
 
   try {
+    let swapped = 0;
     for (const page of job.pages) {
       snapshot[page.name] = {};
       let shippedStylesheets = null;
@@ -217,9 +221,23 @@ async function main() {
         });
 
         if (job.swapRule) {
+          // The cascade is spread over several files, so find the one that
+          // actually holds two top-level blocks of the selector and rewrite
+          // only that one. Every other sheet passes through untouched.
+          await tab.route('**/static/**/*.css*', async route => {
+            const response = await route.fetch();
+            const original = await response.text();
+            const body = swapRuleOccurrences(original, job.swapRule);
+            if (body === null) return route.fulfill({ response, body: original });
+            swapped += 1;
+            await route.fulfill({ response, body, headers: { ...response.headers(), 'content-type': 'text/css; charset=utf-8' } });
+          });
           await tab.route('**/static/style.css*', async route => {
             const response = await route.fetch();
-            const body = swapRuleOccurrences(await response.text(), job.swapRule);
+            const original = await response.text();
+            const body = swapRuleOccurrences(original, job.swapRule);
+            if (body === null) return route.fulfill({ response, body: original });
+            swapped += 1;
             await route.fulfill({ response, body, headers: { ...response.headers(), 'content-type': 'text/css; charset=utf-8' } });
           });
         }
@@ -252,6 +270,9 @@ async function main() {
         if (result.missing.length) missing[`${page.name}/${variant.name}`] = result.missing;
         await context.close();
       }
+    }
+    if (job.swapRule && swapped === 0) {
+      throw new Error(`swap-rule: no stylesheet had two top-level blocks for "${job.swapRule}"`);
     }
   } finally {
     await browser.close();

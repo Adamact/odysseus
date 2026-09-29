@@ -61,3 +61,25 @@ def stylesheet_link_tags() -> str:
 def app_css() -> str:
     """The whole cascade as one string, in load order."""
     return "\n".join(p.read_text(encoding="utf-8") for p in stylesheet_paths())
+
+
+def stylesheet_cache_version() -> str:
+    """The single ``?v=`` token every app stylesheet link carries.
+
+    The stylesheet is split across several files that must be busted together:
+    shipping one fragment under a stale token serves a browser half of an old
+    cascade and half of a new one. Tests that used to read the version off
+    ``style.css`` ask for it here instead, so they keep checking the invariant
+    rather than a filename.
+    """
+    versions = set()
+    for url in stylesheet_urls():
+        m = re.search(r"\?v=([^&]+)$", url)
+        if not m:
+            raise AssertionError(f"app stylesheet has no cache-bust token: {url}")
+        versions.add(m.group(1))
+    if len(versions) != 1:
+        raise AssertionError(
+            f"app stylesheets disagree on their cache-bust token: {sorted(versions)}"
+        )
+    return versions.pop()
