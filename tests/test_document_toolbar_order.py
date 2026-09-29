@@ -3,6 +3,7 @@
 import json
 import subprocess
 from pathlib import Path
+from tests.helpers.stylesheets import stylesheet_link_tags
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,7 +39,7 @@ def test_rich_toolbar_rendered_order_is_stable_on_desktop_and_mobile():
       async function inspect(viewport, suffix) {
         const page = await browser.newPage({ viewport });
         await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentStats.js`);
-        await page.setContent('<link rel="stylesheet" href="/static/style.css?v=20260831richtexttools91"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
+        await page.setContent('__ODY_STYLESHEETS__<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
         await page.evaluate(async suffix => {
           const mod = await import(`/static/js/document.js?v=20260831richtexttools91&toolbar-order=${suffix}`);
           mod.init('/api');
@@ -79,6 +80,7 @@ def test_rich_toolbar_rendered_order_is_stable_on_desktop_and_mobile():
       console.log(JSON.stringify({ desktop, mobile }));
       await browser.close();
     """
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=ROOT,

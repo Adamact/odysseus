@@ -1,4 +1,5 @@
 from pathlib import Path
+from tests.helpers.stylesheets import app_css
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -6,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_selection_overlays_have_individual_clear_controls():
     js = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
-    css = (ROOT / "static/style.css").read_text(encoding="utf-8")
+    css = app_css()
 
     assert "function clearSelectionAt(index)" in js
     assert "className = 'doc-selection-overlay-clear'" in js

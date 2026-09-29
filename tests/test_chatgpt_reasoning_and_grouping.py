@@ -12,6 +12,7 @@ import subprocess
 import pytest
 
 from src import chatgpt_subscription, llm_core
+from tests.helpers.stylesheets import app_css
 
 ROOT = Path(__file__).parents[1]
 
@@ -101,7 +102,7 @@ def test_model_picker_source_invariants():
 def test_composer_reasoning_effort_ui_markup():
     """Verify static/index.html and static/style.css include reasoning effort controls."""
     html = (ROOT / "static/index.html").read_text(encoding="utf-8")
-    css = (ROOT / "static/style.css").read_text(encoding="utf-8")
+    css = app_css()
     # HTML elements
     assert 'id="reasoning-effort-wrap"' in html
     assert 'id="reasoning-effort-btn"' in html

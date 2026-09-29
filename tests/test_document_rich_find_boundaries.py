@@ -3,6 +3,7 @@
 import json
 import subprocess
 from pathlib import Path
+from tests.helpers.stylesheets import stylesheet_link_tags
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,7 +26,7 @@ def test_find_rejects_cross_block_matches_but_supports_inline_matches_and_replac
       const browser = await chromium.launch({ headless: true });
       const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
       await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentOutline.js`);
-      await page.setContent('<link rel="stylesheet" href="/static/style.css?v=20260831richtexttools91"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
+      await page.setContent('__ODY_STYLESHEETS__<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
       await page.evaluate(async () => {
         const mod = await import('/static/js/document.js?v=20260831richtexttools91&find-boundaries-test=1');
         mod.init('/api');
@@ -73,6 +74,7 @@ def test_find_rejects_cross_block_matches_but_supports_inline_matches_and_replac
       console.log(JSON.stringify({ crossParagraph, crossBreak, crossInline, ...data }));
       await browser.close();
     """
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=ROOT,

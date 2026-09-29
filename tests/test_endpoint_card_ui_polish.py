@@ -5,11 +5,12 @@ import shutil
 import subprocess
 from pathlib import Path
 import pytest
+from tests.helpers.stylesheets import app_css
 
 _REPO = Path(__file__).resolve().parent.parent
 _ADMIN_JS = _REPO / "static" / "js" / "admin.js"
 _ADMIN = _ADMIN_JS.read_text(encoding="utf-8")
-_STYLE = (_REPO / "static" / "style.css").read_text(encoding="utf-8")
+_STYLE = app_css()
 pytestmark = pytest.mark.skipif(not shutil.which("node"), reason="node not on PATH")
 
 

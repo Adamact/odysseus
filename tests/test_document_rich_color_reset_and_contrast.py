@@ -3,11 +3,13 @@
 import json
 import subprocess
 from pathlib import Path
+from tests.helpers.stylesheets import app_css
+from tests.helpers.stylesheets import stylesheet_link_tags
 
 
 ROOT = Path(__file__).resolve().parents[1]
 DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
-STYLE = (ROOT / "static/style.css").read_text(encoding="utf-8")
+STYLE = app_css()
 
 
 def test_color_controls_have_theme_reset_and_split_palettes():
@@ -27,7 +29,7 @@ def test_rich_colors_follow_theme_and_undo_as_one_edit():
       await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentStats.js`);
       await page.setContent(`<style>
         :root { --fg:#d8dee9; --bg:#17191f; --panel:#20232b; --border:#444; --red:#e45b6c; --accent-primary:#e45b6c; }
-      </style><link rel="stylesheet" href="/static/style.css?rich-color-test=1">
+      </style>__ODY_STYLESHEETS__
       <div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>`);
       await page.evaluate(async () => {
         const mod = await import('/static/js/document.js?rich-color-test=' + Date.now());
@@ -80,6 +82,7 @@ def test_rich_colors_follow_theme_and_undo_as_one_edit():
       console.log(JSON.stringify({ palette, highlighted, highlightUndone, defaultColor, changedThemeColor, colorUndone }));
       await browser.close();
     """
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=ROOT,
