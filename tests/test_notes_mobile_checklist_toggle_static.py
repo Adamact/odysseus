@@ -1,12 +1,14 @@
 from pathlib import Path
 import re
 
+from tests.helpers.stylesheets import app_css
+
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_mobile_notes_checklist_rows_remain_tappable():
-    css = (ROOT / "static" / "style.css").read_text(encoding="utf-8")
+    css = app_css()
     notes = (ROOT / "static" / "js" / "notes.js").read_text(encoding="utf-8")
 
     assert "body.notes-mobile-mode .note-card .note-checkbox {" in css
@@ -39,7 +41,7 @@ def test_mobile_long_press_enters_select_mode_for_that_note():
 
 
 def test_mobile_select_mode_has_subtle_jiggle_feedback():
-    css = (ROOT / "static" / "style.css").read_text(encoding="utf-8")
+    css = app_css()
 
     assert "@keyframes notes-select-jiggle" in css
     assert "body.notes-mobile-mode .note-card-selectmode" in css
@@ -81,7 +83,7 @@ def test_calendar_email_attachments_have_a_calendar_import_action():
 
 def test_mobile_bulk_select_long_press_is_shared_across_card_types():
     helper = (ROOT / "static" / "js" / "mobileBulkSelect.js").read_text(encoding="utf-8")
-    css = (ROOT / "static" / "style.css").read_text(encoding="utf-8")
+    css = app_css()
 
     assert ".memory-item[data-memory-id]" in helper
     assert ".skill-card[data-skill-name]" in helper

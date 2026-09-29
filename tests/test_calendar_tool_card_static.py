@@ -1,6 +1,8 @@
 from pathlib import Path
 import re
 
+from tests.helpers.stylesheets import app_css
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -25,7 +27,7 @@ def test_successful_calendar_tool_output_is_suppressed_in_live_and_saved_rendere
 
 def test_calendar_chat_event_links_fetch_uid_and_show_title_time():
     calendar_src = (ROOT / "static/js/calendar.js").read_text()
-    style_src = (ROOT / "static/style.css").read_text()
+    style_src = app_css()
     routes_src = (ROOT / "routes/calendar_routes.py").read_text()
     app_src = (ROOT / "static/app.js").read_text()
     renderer_src = (ROOT / "static/js/chatRenderer.js").read_text()

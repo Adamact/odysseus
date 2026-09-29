@@ -2,11 +2,13 @@ import re
 import subprocess
 from pathlib import Path
 
+from tests.helpers.stylesheets import app_css
+
 
 ROOT = Path(__file__).resolve().parent.parent
 SKILLS_JS = (ROOT / "static/js/skills.js").read_text(encoding="utf-8")
 METRICS_JS = (ROOT / "static/js/skillsMetrics.js").read_text(encoding="utf-8")
-STYLE = (ROOT / "static/style.css").read_text(encoding="utf-8")
+STYLE = app_css()
 INDEX = (ROOT / "static/index.html").read_text(encoding="utf-8")
 
 

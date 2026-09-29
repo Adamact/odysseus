@@ -1,6 +1,8 @@
 from pathlib import Path
 import subprocess
 
+from tests.helpers.stylesheets import app_css
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -80,7 +82,7 @@ def test_email_filter_menu_has_context_title() -> None:
 
 def test_email_setting_toggles_render_neutral_disabled_state() -> None:
     source = (ROOT / "static/js/emailLibrary.js").read_text(encoding="utf-8")
-    style = (ROOT / "static/style.css").read_text(encoding="utf-8")
+    style = app_css()
     assert 'email-settings-auto-reply-section' in source
     assert 'email-settings-display-enabled-state' in source
     assert 'stateLabel = section?.querySelector' in source
@@ -100,7 +102,7 @@ def test_email_date_headers_mark_unexpected_timeline_gaps() -> None:
     assert "email-date-gap-break" in source
     assert "gapDays > 90 && gapDays > timelineGapThreshold" in source
 
-    style = (ROOT / "static/style.css").read_text(encoding="utf-8")
+    style = app_css()
     assert ".date-section-header.email-date-gap-break" in style
 
 
@@ -122,7 +124,7 @@ def test_email_filters_and_card_favorite_toggle_are_wired() -> None:
     assert "const typedFilter = _exactTypedFilterSuggestion(v);" in source
     assert "_acceptSuggestion(typedFilter);" in source
 
-    style = (ROOT / "static/style.css").read_text(encoding="utf-8")
+    style = app_css()
     favorite_start = style.index(".email-card-favorite {")
     favorite_end = style.index("}", favorite_start) + 1
     assert "top: -3px;" in style[favorite_start:favorite_end]
@@ -154,7 +156,7 @@ def test_email_auto_reply_syncs_one_calendar_event_per_account() -> None:
 
 def test_email_settings_show_away_account_and_compact_display_controls() -> None:
     source = (ROOT / "static/js/emailLibrary.js").read_text(encoding="utf-8")
-    style = (ROOT / "static/style.css").read_text(encoding="utf-8")
+    style = app_css()
     assert 'email-account-away-label">(AWAY)</span>' in source
     assert 'id="email-lib-auto-reply-badge"' in source
     assert ">Show Email Tags</span>" in source
@@ -227,7 +229,7 @@ def test_email_clean_always_forces_a_fresh_unsubscribe_scan() -> None:
 
 def test_unsubscribe_duplicate_badge_is_lowered() -> None:
     frontend = (ROOT / "static/js/emailLibrary.js").read_text(encoding="utf-8")
-    stylesheet = (ROOT / "static/style.css").read_text(encoding="utf-8")
+    stylesheet = app_css()
     assert "email-unsub-duplicate-badge" in frontend
     start = stylesheet.index(".email-unsub-duplicate-badge {")
     assert "top: 2px;" in stylesheet[start:stylesheet.index("}", start) + 1]
@@ -235,7 +237,7 @@ def test_unsubscribe_duplicate_badge_is_lowered() -> None:
 
 def test_unsubscribe_scan_status_sits_before_clean_action() -> None:
     frontend = (ROOT / "static/js/emailLibrary.js").read_text(encoding="utf-8")
-    stylesheet = (ROOT / "static/style.css").read_text(encoding="utf-8")
+    stylesheet = app_css()
     start = frontend.index("function _emailCleanupSettingsHtml")
     end = frontend.index("function _emailDisplaySettingsHtml", start)
     cleanup = frontend[start:end]
@@ -291,7 +293,7 @@ def test_browser_agent_unsubscribe_cleans_sender_after_positive_confirmation() -
 
 
 def test_auto_unsubscribe_all_is_visibly_taller_than_toolbar_buttons() -> None:
-    source = (ROOT / "static/style.css").read_text(encoding="utf-8")
+    source = app_css()
     start = source.index(".email-unsub-auto-safe-btn {")
     assert "height: 29px;" in source[start:source.index("}", start) + 1]
 
@@ -330,7 +332,7 @@ def test_unsubscribe_review_marks_handled_cards_and_offers_scan_further() -> Non
 
 def test_unsubscribe_review_can_ignore_a_candidate_without_deleting_it() -> None:
     source = (ROOT / "static" / "js" / "emailLibrary.js").read_text()
-    styles = (ROOT / "static" / "style.css").read_text()
+    styles = app_css()
     assert "email-unsub-ignore-btn" in source
     assert "_rememberUnsubscribeIgnored(c)" in source
     assert "Ignore this unsubscribe candidate" in source
@@ -339,7 +341,7 @@ def test_unsubscribe_review_can_ignore_a_candidate_without_deleting_it() -> None
 
 def test_email_settings_sections_use_static_headers() -> None:
     source = (ROOT / "static" / "js" / "emailLibrary.js").read_text()
-    styles = (ROOT / "static" / "style.css").read_text()
+    styles = app_css()
     assert 'class="email-unsub-accent-icon"' in source
     assert 'M12 0L14.59 8.41' in source
     assert 'Scanning ${_esc(scanFolderLabel)} headers…' in source
