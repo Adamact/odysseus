@@ -58,7 +58,7 @@ def test_browser_word_export_contains_native_rich_docx_ooxml():
         viewport: {{ width: 900, height: 700 }},
         acceptDownloads: true,
       }});
-      await page.goto('http://127.0.0.1:7011/static/js/documentStats.js');
+      await page.goto(`${{process.env.ODYSSEUS_TEST_STATIC_ORIGIN}}/static/js/documentStats.js`);
       await page.route('**/api/upload/docx-image-test', route => route.fulfill({{
         status: 200,
         contentType: 'image/png',
@@ -157,7 +157,7 @@ def test_browser_markdown_word_export_keeps_heading_and_inline_formatting():
         viewport: {{ width: 900, height: 700 }},
         acceptDownloads: true,
       }});
-      await page.goto('http://127.0.0.1:7011/static/js/documentStats.js');
+      await page.goto(`${{process.env.ODYSSEUS_TEST_STATIC_ORIGIN}}/static/js/documentStats.js`);
       await page.setContent('<link rel="stylesheet" href="/static/style.css?v=20260831richtexttools91"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
       await page.evaluate(async () => {{
         const mod = await import('/static/js/document.js?v=20260831richtexttools91&markdown-docx-export-test=1');

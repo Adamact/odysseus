@@ -13,7 +13,7 @@ def test_rich_escape_closes_toolbar_then_selection_badge() -> None:
       import { chromium } from 'playwright';
       const browser = await chromium.launch({ headless: true });
       const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
-      await page.goto('http://127.0.0.1:7011/static/js/documentStats.js');
+      await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentStats.js`);
       await page.setContent('<link rel="stylesheet" href="/static/style.css"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
       await page.evaluate(async () => {
         const mod = await import('/static/js/document.js?v=escape-regression-1');
@@ -75,7 +75,7 @@ def test_email_escape_closes_inner_states_without_closing_library() -> None:
       import { chromium } from 'playwright';
       const browser = await chromium.launch({ headless: true });
       const page = await browser.newPage();
-      await page.goto('http://127.0.0.1:7011/static/js/documentStats.js');
+      await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentStats.js`);
       await page.setContent('<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
       await page.evaluate(async () => {
         window.fetch = async () => new Response(JSON.stringify({
