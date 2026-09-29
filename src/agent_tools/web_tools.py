@@ -119,6 +119,12 @@ def _browser_pid_file_candidates(
         )
     return list(dict.fromkeys(candidates))
 
+
+# Linux exposes one command line per pid under /proc; macOS and Windows do not.
+# Kept as a module attribute so the procfs-dependent paths stay testable on a
+# host that has no procfs, and on one that does.
+_PROC_ROOT = Path("/proc")
+
 _SCHOLARLY_METADATA_CUE_RE = re.compile(
     r"\b(?:accept(?:ed|ance)?|publish(?:ed|ing|cation)?|venue|conference|"
     r"journal|proceedings|doi)\b",
@@ -2316,8 +2322,14 @@ class PrivateBrowserTool:
         except OSError:
             return
         profile_prefix = str(tmpdir / "agent-browser-chrome-")
+        if not _PROC_ROOT.is_dir():
+            # Without procfs there is no way to match a reparented Chrome by
+            # its command line, and the sweep is an optimisation rather than a
+            # correctness requirement.  Leave those trees to the daemon's own
+            # lifecycle instead of failing the whole shutdown path.
+            return
         pids: list[int] = []
-        for entry in Path("/proc").iterdir():
+        for entry in _PROC_ROOT.iterdir():
             if not entry.name.isdigit():
                 continue
             try:
