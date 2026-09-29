@@ -145,6 +145,25 @@ The runner propagates pytest's exit code, so it composes with normal local
 workflows; "report-only" means it is not a CI gate, not that failures are
 swallowed.
 
+## CSS computed-style snapshot
+
+`tests/test_css_computed_style_snapshot.py` pins the rendered result of
+`static/style.css` - one 51k-line file whose behavior depends on source order -
+by hashing `getComputedStyle` over a fixed element inventory across pages,
+viewports, themes and density modes. Any PR that moves CSS has to produce an
+identical digest or explain why it did not.
+
+```bash
+./venv/bin/python -m pytest tests/test_css_computed_style_snapshot.py
+./venv/bin/python scripts/css_snapshot.py --check            # standalone, no pytest
+./venv/bin/python scripts/css_snapshot.py --write-baseline   # re-record, deliberately
+```
+
+The inventory, the baseline and the capture live in `tests/css_snapshot/`;
+`tests/css_snapshot/README.md` documents what is covered, what is deliberately
+not, and how to find the property that moved when it fails. The run takes about
+21 seconds and skips when `npm ci` has not been run.
+
 ## Core principles
 
 - Keep PRs small and homogeneous: one kind of change per PR.
@@ -160,6 +179,23 @@ swallowed.
 The helpers below live under `tests/helpers/`. They exist to remove repeated
 boilerplate that already appeared across multiple tests. Reach for one only when
 your test matches its intended use; do not stretch a helper to cover a new case.
+
+### `tests.helpers.stylesheets.app_css`
+
+Use when a test asserts on a CSS rule.
+
+- Returns every app stylesheet concatenated in the order `static/index.html`
+  loads them, which is the order the cascade actually has.
+- Panel styles no longer all live in `static/style.css`; reading that file
+  alone ties the test to whichever file a rule sits in today, so it goes red
+  when a rule moves without the rendered page changing.
+- `stylesheet_paths()` and `stylesheet_urls()` are there when a test needs the
+  files or the request URLs rather than their contents.
+  `stylesheet_link_tags()` returns the `<link>` markup for a synthetic page
+  driven through Playwright, so it gets the whole cascade instead of only
+  `style.css`.
+- All of them fail loudly if `index.html` links a stylesheet that is missing.
+- Not for vendored CSS under `static/lib/`, which they deliberately skip.
 
 ### `tests.helpers.cli_loader.load_script`
 

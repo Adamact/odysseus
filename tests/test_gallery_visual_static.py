@@ -1,6 +1,8 @@
 from pathlib import Path
 import re
 
+from tests.helpers.stylesheets import app_css
+
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -20,7 +22,7 @@ def test_gallery_exposes_active_filter_organization():
 
 def test_gallery_cards_keep_badges_without_hover_inspect_label():
     js = _read("static/js/gallery.js")
-    css = _read("static/style.css")
+    css = app_css()
 
     assert "gallery-card-overlay" in js
     assert "gallery-card-inspect" not in js
@@ -31,7 +33,7 @@ def test_gallery_cards_keep_badges_without_hover_inspect_label():
 
 def test_gallery_detail_has_richer_inspector_actions():
     js = _read("static/js/gallery.js")
-    css = _read("static/style.css")
+    css = app_css()
 
     assert "gallery-detail-inspector-head" in js
     assert "gallery-detail-meta-grid" in js
@@ -57,7 +59,7 @@ def test_gallery_static_cache_key_bumped():
 
 def test_gallery_bulk_select_button_keeps_toolbar_alignment():
     js = _read("static/js/gallery.js")
-    css = _read("static/style.css")
+    css = app_css()
 
     assert 'id="gallery-select-btn"' in js
     assert 'id="gallery-select-btn" title="Select for bulk actions" style="position:relative;top:0;"' in js
@@ -74,7 +76,7 @@ def test_gallery_bulk_select_button_keeps_toolbar_alignment():
 def test_gallery_selection_bars_share_style_and_escape_priority():
     gallery = _read("static/js/gallery.js")
     ui = _read("static/js/ui.js")
-    css = _read("static/style.css")
+    css = app_css()
 
     assert gallery.count("memory-bulk-bar gallery-selection-bar hidden") == 3
     assert "window.__galleryCancelSelection = () =>" in gallery
@@ -93,7 +95,7 @@ def test_gallery_selection_bars_share_style_and_escape_priority():
 
 def test_editor_saved_projects_support_grid_and_list_views():
     gallery = _read("static/js/gallery.js")
-    css = _read("static/style.css")
+    css = app_css()
 
     assert 'id="gallery-editor-drafts-view" role="group"' in gallery
     assert 'data-view="grid"' in gallery
@@ -136,7 +138,7 @@ def test_editor_saved_projects_support_grid_and_list_views():
 
 def test_empty_albums_show_action_tiles_instead_of_no_albums_message():
     gallery = _read("static/js/gallery.js")
-    css = _read("static/style.css")
+    css = app_css()
 
     assert "function _albumActionTiles()" in gallery
     assert 'id="gallery-albums-new"' in gallery
@@ -149,7 +151,7 @@ def test_empty_albums_show_action_tiles_instead_of_no_albums_message():
 
 
 def test_gallery_body_uses_available_window_height_without_grid_crop():
-    css = _read("static/style.css")
+    css = app_css()
 
     gallery_section = css.index("/* ── Gallery (image library) ── */")
     modal_start = css.index(".gallery-modal-content {", gallery_section)
@@ -161,7 +163,7 @@ def test_gallery_body_uses_available_window_height_without_grid_crop():
 
 
 def test_gallery_photo_search_is_not_vertically_offset():
-    css = _read("static/style.css")
+    css = app_css()
 
     search_idx = css.index(".gallery-search-wrap {")
     assert "top: 0;" in css[search_idx:search_idx + 180]

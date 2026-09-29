@@ -1,11 +1,13 @@
 from pathlib import Path
 
+from tests.helpers.stylesheets import app_css
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_gallery_selection_dot_has_rendered_dimensions():
-    css = (ROOT / "static/style.css").read_text(encoding="utf-8")
+    css = app_css()
     rule = css[css.index(".gallery-select-dot {"):]
     rule = rule[:rule.index("}")]
 
@@ -15,7 +17,7 @@ def test_gallery_selection_dot_has_rendered_dimensions():
 
 
 def test_gallery_selection_highlight_is_painted_above_thumbnail():
-    css = (ROOT / "static/style.css").read_text(encoding="utf-8")
+    css = app_css()
     selector = ".gallery-card:has(.gallery-select-dot.selected)::after"
     rule = css[css.index(selector):]
     rule = rule[:rule.index("}")]

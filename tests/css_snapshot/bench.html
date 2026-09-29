@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>CSS snapshot bench</title>
+  <!-- Replaced at capture time by whatever <link rel="stylesheet"> tags
+       static/index.html ships, in shell order, so the bench keeps measuring
+       the real stylesheet set after style.css is split. This fallback is only
+       for opening the page by hand; it is deliberately unversioned so the
+       cache-bust string has one home (tests/test_static_stylesheet_manifest.py
+       pins the shipped ones). -->
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <!-- Intentionally empty. tests/css_snapshot/capture.mjs mounts one subtree
+       per bench selector from tests/css_snapshot/inventory.json, measures the
+       leaf, and removes it again - so adding coverage is a one-line inventory
+       change and this file never drifts from the selector list. -->
+</body>
+</html>

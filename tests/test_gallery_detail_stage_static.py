@@ -1,11 +1,13 @@
 from pathlib import Path
 
+from tests.helpers.stylesheets import app_css
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_gallery_detail_uses_fixed_media_stage_and_arrow_lanes():
-    css = (ROOT / "static/style.css").read_text(encoding="utf-8")
+    css = app_css()
     image_rule = css[css.index(".gallery-detail-image {"):]
     image_rule = image_rule[:image_rule.index("}")]
 
@@ -17,7 +19,7 @@ def test_gallery_detail_uses_fixed_media_stage_and_arrow_lanes():
 
 
 def test_gallery_media_maximizes_inside_stage_without_resizing_it():
-    css = (ROOT / "static/style.css").read_text(encoding="utf-8")
+    css = app_css()
 
     assert css.count("max-height: 100%") >= 2
     assert "object-fit: contain" in css

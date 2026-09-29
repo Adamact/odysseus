@@ -136,6 +136,8 @@ The Settings finder and navigation are registry-backed, hide admin-only destinat
 
 Existing frontend coverage is a mix of Node-executed helper tests, `.mjs` tests, static DOM/CSS/source-shape tests, browser exploration specs, and app/static tests. Many tests are useful source-shape regressions but do not replace browser/module-graph execution.
 
+`tests/test_css_computed_style_snapshot.py` pins `getComputedStyle` for a fixed element inventory across pages, viewports, themes and density modes, so a `static/style.css` restructuring that changes which declaration wins fails a test instead of shipping; see `tests/css_snapshot/README.md` for what it does and does not cover.
+
 Recent focused coverage includes model-key matching under Node, document-library counters, chat resend/delete/mobile Enter/ArrowUp, scoped approval continuation and compare routing, route provenance, live-thinking throttling, startup shell/history hydration, shared app-config caching/invalidation, settings registry/navigation/finder/lifecycle, lazy panel loading/offline editor precache, vendored lazy KaTeX/Mermaid rendering, email read dedup/prewarm, Markdown restoration, malformed keybinds, currency-safe inline math, notes/calendar/modal/manifest/admin-log behavior, Markdown XSS helpers, and CardDAV unchanged-password handling.
 
 Missing coverage includes:
@@ -143,7 +145,7 @@ Missing coverage includes:
 - SPA route/static auth and no-cache headers;
 - CSP header contents and nonce injection for `/` and `/login`;
 - service-worker API/non-GET bypass and cache strategy;
-- service-worker precache versus `index.html` script/module tags, including query strings;
+- service-worker precache versus `index.html` script/module tags, including query strings (stylesheet links and their `?v=` strings are covered by `tests/test_static_stylesheet_manifest.py`; script and module tags are not);
 - ongoing manifest/icon reference drift;
 - module graph/load-order validation;
 - degraded vendor-library/browser API behavior, including Pyodide's remaining CDN path.
@@ -151,8 +153,8 @@ Missing coverage includes:
 ## Current Gaps
 
 - `static/style.css` and large coordinators remain high-risk owners: `static/js/document.js`, `static/js/settings.js`, `static/js/chat.js`, and `static/app.js`.
-- There is no build-time type checking, module graph validation, script-order validation, or service-worker precache validation.
+- There is no build-time type checking, module graph validation, or script-order validation. Service-worker precache validation exists for stylesheets only.
 - Frontend state is mostly module/global/localStorage driven, so cross-session and cross-user behavior needs explicit care.
 - `window.*` compatibility bridges remain widespread.
 - PWA/static-serving behavior may deserve a separate spec if service worker, manifests, route-specific icons, and cache policy keep growing.
-- A static asset/route manifest regression should verify files referenced by `index.html`, `manifest.json`, `sw.js`, and app-owned HTML routes actually exist.
+- The static asset/route manifest regression covers stylesheets referenced by app-owned HTML and `sw.js`; scripts, modules and `manifest.json` icon references are still unverified.

@@ -24,7 +24,7 @@ def test_rich_colors_follow_theme_and_undo_as_one_edit():
       import { chromium } from 'playwright';
       const browser = await chromium.launch({ headless: true });
       const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
-      await page.goto('http://127.0.0.1:7011/static/js/documentStats.js');
+      await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentStats.js`);
       await page.setContent(`<style>
         :root { --fg:#d8dee9; --bg:#17191f; --panel:#20232b; --border:#444; --red:#e45b6c; --accent-primary:#e45b6c; }
       </style><link rel="stylesheet" href="/static/style.css?rich-color-test=1">
