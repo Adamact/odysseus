@@ -3,7 +3,7 @@ from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[1]
 _EMAIL_LIBRARY = _REPO / "static" / "js" / "emailLibrary.js"
-_EMAIL_ROUTES = _REPO / "routes" / "email_routes.py"
+_EMAIL_ROUTES = _REPO / "routes" / "email" / "email_routes.py"
 _EMAIL_MCP_SERVER = _REPO / "mcp_servers" / "email_server.py"
 _EMAIL_FIXTURE_HELPER = _REPO / "scripts" / "ody_eval_email_fixture.py"
 
