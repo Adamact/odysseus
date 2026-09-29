@@ -24,10 +24,17 @@ _requires_browser = pytest.mark.skipif(
     reason="node with the playwright package is required (npm ci)",
 )
 
-# The session static server publishes its ephemeral origin here. The literal
-# fallback is the fixed port the fixture used before it moved to an ephemeral
-# one, so this module works on either revision.
-STATIC_ORIGIN = os.environ.get("ODYSSEUS_TEST_STATIC_ORIGIN", "http://127.0.0.1:7011")
+def static_origin() -> str:
+    """Origin of the session static server, read at call time.
+
+    The session fixture binds an ephemeral port and publishes it through the
+    environment, which happens after this module is imported at collection.
+    Reading it into a module constant therefore captured the fallback and the
+    capture then connected to a port nothing was listening on. The literal
+    fallback is the fixed port the fixture used before it moved to an ephemeral
+    one, so this still works on a revision that predates that change.
+    """
+    return os.environ.get("ODYSSEUS_TEST_STATIC_ORIGIN", "http://127.0.0.1:7011")
 
 # One conflicting selector used to prove the harness is actually sensitive to
 # source order. `.attach-strip` is declared three times at the top level of
@@ -62,7 +69,7 @@ def test_baseline_covers_every_inventory_entry():
 
 @_requires_browser
 def test_computed_styles_match_the_committed_baseline():
-    captured = snapshot.capture(STATIC_ORIGIN)
+    captured = snapshot.capture(static_origin())
 
     assert captured["missing"] == {}, (
         "inventory entries matched no element - the markup moved under the "
@@ -91,10 +98,10 @@ def test_reordering_two_conflicting_declarations_moves_the_digest():
     """
     variants = ["desktop-dark-comfortable"]
     unchanged = snapshot.summarize(
-        snapshot.capture(STATIC_ORIGIN, variants=variants)["snapshot"]
+        snapshot.capture(static_origin(), variants=variants)["snapshot"]
     )
     reordered = snapshot.summarize(
-        snapshot.capture(STATIC_ORIGIN, variants=variants,
+        snapshot.capture(static_origin(), variants=variants,
                          swap_rule=CONFLICTING_SELECTOR)["snapshot"]
     )
 
