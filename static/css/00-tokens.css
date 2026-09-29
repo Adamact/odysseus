@@ -1,13 +1,18 @@
-/* Fragment 1/9 of the former static/style.css.
+/* 00-tokens - part of the former static/style.css.
  *
- * This is a mechanical, order-preserving slice: rules were moved verbatim
- * and this file's position in the <link> order of static/index.html is what
- * keeps the cascade identical. Reordering the links, or moving a rule between
- * fragments, can change which of two competing declarations wins.
+ * The stylesheet is split by area, but the split is mechanical: rules were
+ * moved verbatim and NOT regrouped. The numeric prefix is the load order, and
+ * that order is what preserves the cascade. A rule sits in the file its
+ * original position fell into, so an area's rules are not all in its file and
+ * a file is not only that area's rules.
  *
- * static/index.html and the PRECACHE list in static/sw.js must list every
- * fragment in the same order. tests/test_static_stylesheet_manifest.py and
- * tests/test_css_computed_style_snapshot.py both fail if that drifts.
+ * Do not reorder the <link> tags in static/index.html, and do not move a rule
+ * between files: with 1,151 redeclarations and 1,886 !important in this
+ * cascade, either can change which declaration wins.
+ *
+ * static/index.html and the PRECACHE list in static/sw.js must agree on this
+ * order. tests/test_static_stylesheet_manifest.py and
+ * tests/test_css_computed_style_snapshot.py fail if that drifts.
  */
 /* ============================================ */
 /* Odysseus UI — Consolidated Stylesheet        */
