@@ -15,7 +15,7 @@ def test_rich_document_shortcuts_work_at_desktop_and_mobile_widths():
 
       async function exercise(viewport, suffix) {
         const page = await browser.newPage({ viewport });
-        await page.goto('http://127.0.0.1:7011/static/js/documentStats.js');
+        await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentStats.js`);
         await page.setContent('<link rel="stylesheet" href="/static/style.css?v=20260831richtexttools91"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
         await page.evaluate(async suffix => {
           const mod = await import(`/static/js/document.js?v=20260831richtexttools91&keyboard-shortcuts=${suffix}`);

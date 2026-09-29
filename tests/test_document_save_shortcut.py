@@ -37,7 +37,7 @@ def test_ctrl_s_saves_rich_text_immediately_once_and_updates_status():
           body: JSON.stringify({ version_count: 2 }),
         });
       });
-      await page.goto('http://127.0.0.1:7011/static/js/documentStats.js');
+      await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentStats.js`);
       await page.setContent('<link rel="stylesheet" href="/static/style.css?v=20260831richtexttools91"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
       await page.evaluate(async () => {
         const mod = await import('/static/js/document.js?v=20260831richtexttools91&save-shortcut-test=1');
