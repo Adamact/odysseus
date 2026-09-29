@@ -1801,3 +1801,47 @@ def test_generic_go_to_phrase_is_browser_interaction() -> None:
     assert not _looks_like_explicit_browser_interaction(
         "Find rules for getting rid of garbage in Setagaya-ku."
     )
+
+
+def test_terminate_owned_chrome_skips_the_sweep_without_procfs(
+    monkeypatch, tmp_path
+) -> None:
+    """macOS and Windows have no /proc; shutdown must degrade, not raise."""
+
+    missing = tmp_path / "no-procfs"
+    monkeypatch.setattr(web_tools, "_PROC_ROOT", missing)
+
+    def _unexpected_iterdir(*args, **kwargs):
+        raise AssertionError("the pid sweep must not run without procfs")
+
+    monkeypatch.setattr(Path, "iterdir", _unexpected_iterdir)
+
+    PrivateBrowserTool._terminate_owned_chrome({"TMPDIR": str(tmp_path)})
+
+
+def test_terminate_owned_chrome_kills_only_this_runtimes_profile(
+    monkeypatch, tmp_path
+) -> None:
+    """With procfs present, match on the runtime-owned profile prefix alone."""
+
+    proc = tmp_path / "proc"
+    tmpdir = tmp_path / "runtime-tmp"
+    tmpdir.mkdir()
+    profile_prefix = str(tmpdir.resolve() / "agent-browser-chrome-")
+
+    def _write_pid(pid: str, cmdline: str) -> None:
+        entry = proc / pid
+        entry.mkdir(parents=True)
+        (entry / "cmdline").write_bytes(cmdline.replace(" ", "\0").encode())
+
+    _write_pid("101", f"chrome --user-data-dir={profile_prefix}abc")
+    _write_pid("202", "chrome --user-data-dir=/Users/someone/Library/Chrome")
+    (proc / "self").mkdir()
+
+    monkeypatch.setattr(web_tools, "_PROC_ROOT", proc)
+    killed: list[int] = []
+    monkeypatch.setattr(web_tools.os, "kill", lambda pid, sig: killed.append(pid))
+
+    PrivateBrowserTool._terminate_owned_chrome({"TMPDIR": str(tmpdir)})
+
+    assert killed == [101]
