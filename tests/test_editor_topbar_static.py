@@ -1,11 +1,12 @@
 from pathlib import Path
 import re
+from tests.helpers.stylesheets import app_css
 
 
 ROOT = Path(__file__).resolve().parents[1]
 TOPBAR = (ROOT / "static/js/editor/build/topbar.js").read_text(encoding="utf-8")
 OVERFLOW = (ROOT / "static/js/editor/wire-topbar-overflow.js").read_text(encoding="utf-8")
-STYLE = (ROOT / "static/style.css").read_text(encoding="utf-8")
+STYLE = app_css()
 
 
 def test_primary_editor_text_actions_use_stacked_toolbar_contract():
