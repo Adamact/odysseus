@@ -1,8 +1,9 @@
 from pathlib import Path
+from tests.helpers.stylesheets import app_css
 
 
 ROOT = Path(__file__).resolve().parents[1]
-STYLE = (ROOT / "static/style.css").read_text(encoding="utf-8")
+STYLE = app_css()
 LIBRARY = (ROOT / "static/js/documentLibrary.js").read_text(encoding="utf-8")
 
 

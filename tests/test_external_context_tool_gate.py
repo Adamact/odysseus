@@ -19,6 +19,7 @@ from src.tool_capabilities import (
     messages_contain_external_untrusted_context,
     tool_result_should_arm_gate,
 )
+from tests.helpers.document_source import document_source
 
 
 ToolBlock = namedtuple("ToolBlock", ["tool_type", "content"])
@@ -1403,13 +1404,15 @@ def test_frontend_tool_approval_uses_opaque_id_and_fixed_decisions():
             "static/js/chat.js",
             "static/js/chatRenderer.js",
             "static/js/chatStream.js",
-            "static/js/document.js",
             "static/js/emailInbox.js",
             "static/js/emailLibrary.js",
             "static/js/settings.js",
             "static/js/slashCommands.js",
         )
     ]
+    # The document editor is a module set, not one file: a stale version string
+    # must not be able to hide in a module extracted out of document.js.
+    approval_module_sources.append(document_source())
     assert all(
         "20260722emailfastindex1" not in source
         for source in approval_module_sources

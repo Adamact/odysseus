@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from routes.history.history_routes import _keep_count_before_message
+from tests.helpers.stylesheets import app_css
 
 
 _REPO = Path(__file__).resolve().parent.parent
@@ -76,7 +77,7 @@ def test_footer_resend_uses_default_replacement_behavior():
 
 def test_footer_resend_uses_round_svg_icon_not_text_glyph():
     renderer = _CHAT_RENDERER_JS.read_text(encoding="utf-8")
-    style = (_REPO / "static" / "style.css").read_text(encoding="utf-8")
+    style = app_css()
 
     assert "const RESEND_ICON =" in renderer
     assert "resend-message-icon" in renderer

@@ -41,6 +41,8 @@ the sub-area. The `area_*` names are registered in `pyproject.toml`; the dynamic
 `sub_*` names are registered before collection by `pytest_configure` in
 `tests/conftest.py`, so unknown-mark warnings still flag genuine typos.
 
+The full suite does not come back clean on every machine. [KNOWN_FAILURES.md](KNOWN_FAILURES.md) lists which failures are expected, which are test bugs worth fixing, and the prerequisites a clean run needs; anything not on that list is a regression until shown otherwise.
+
 For common focused runs, use `tests/run_focus.py`. It validates area and
 sub-area names, accepts sub-areas with or without the `sub_` prefix, and passes
 extra pytest arguments after `--`:
