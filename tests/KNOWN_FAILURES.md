@@ -9,10 +9,10 @@ This is that list. It is a record of observation, not a permission slip: a test
 here is still a test that does not pass, and three of the six below are
 defects someone should fix.
 
-Last measured: `lab @ c499c01b`, macOS 15 on Apple Silicon, Python 3.11.
+Last measured: `lab @ c499c01b` plus the fixes in this change, macOS 15 on Apple Silicon, Python 3.11.
 
 ```
-6 failed, 10658 passed, 6 skipped
+3 failed, 10658 passed, 6 skipped
 ```
 
 ## Get the prerequisites right first
@@ -38,26 +38,24 @@ including one holding real data.
 Miss `npm ci` and roughly 36 browser tests fail on `Cannot find package
 'playwright'`. That is not a regression, it is the missing install.
 
-## The six
+## The three
 
-### Test bugs: comparing an unresolved path against a resolved one
+### Test bugs: fixed
 
-- `tests/test_code_nav_tools.py::test_read_file_extracts_structured_documents`
-- `tests/test_code_nav_tools.py::test_read_file_extracts_legacy_word_documents`
-- `tests/test_workspace_confine.py::test_glob_confined_e2e`
+Three failures compared an unresolved `/tmp` path against a resolved
+`/private/tmp` one, and are fixed rather than listed:
 
-```
-assert [('/private/tmp/codenav_.../report.docx', ...)]
-    == [('/tmp/codenav_.../report.docx', ...)]
-```
+- `tests/test_code_nav_tools.py` (two tests) built a fixture under
+  `tempfile.mkdtemp(dir="/tmp")` and compared it against the path the code
+  reports, which it resolves.
+- `tests/test_workspace_confine.py::test_glob_confined_e2e` mixed
+  `os.path.realpath(ws)` with an unresolved secret directory, so `relpath`
+  produced `../../../../tmp/<absolute path>` and the assertion that the
+  absolute path was absent matched it as a substring.
 
-On macOS `/tmp` is a symlink to `/private/tmp`. The code under test resolves
-the path and the assertion does not, so the two disagree about a file they both
-found. Nothing is wrong with the behaviour.
-
-**These are fixable and should be fixed**: resolve both sides before comparing.
-They are listed as known rather than environmental because the platform is only
-what exposes them.
+Both now resolve consistently. They are recorded here because the shape recurs:
+on macOS, mixing a resolved and an unresolved temp path is a test bug that
+looks like a platform failure.
 
 ### Optional dependency: ffmpeg without a WebP encoder
 
