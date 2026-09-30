@@ -126,7 +126,7 @@ def with_completion_gate(func):
         done = False
         awaiting = False
         exhausted = False
-        provider_error = False
+        provider_error: str | None = None
         with bind_journal(journal):
             async with aclosing(func(*args, **kwargs)) as stream:
                 async for chunk in stream:
@@ -139,7 +139,11 @@ def with_completion_gate(func):
                         data = None
                     if not isinstance(data, dict):
                         if chunk.startswith('event: error'):
-                            provider_error = True
+                            # The inner stream may still emit failed-terminal
+                            # diagnostics. Hold the original error until those
+                            # and the buffered answer have been released.
+                            provider_error = provider_error or chunk
+                            continue
                         yield chunk
                         continue
                     kind = data.get('type')
@@ -196,12 +200,16 @@ def with_completion_gate(func):
                         continue
                     yield chunk
             if provider_error and not answer_events and not metrics_events:
+                yield provider_error
                 return
             ledger = EvidenceLedger.from_tool_events(journal.evidence_events(), requirements)
             decision = ledger.evaluate(exhausted=exhausted, awaiting_user=awaiting)
+            if provider_error:
+                decision = replace(decision, status=CompletionStatus.FAILED,
+                                   can_complete=False, reason='Model request failed')
             # Exhaustion limits execution; factual source synthesis can remain
             # useful and must not be replaced merely because the budget ended.
-            presentation_decision = ledger.evaluate(awaiting_user=awaiting) if exhausted else decision
+            presentation_decision = ledger.evaluate(awaiting_user=awaiting) if exhausted and not provider_error else decision
             safe_answer, reason = completion_answer(answer, ledger, presentation_decision)
             # Evaluate each earlier draft as well as the final replacement.
             # Never replay an unsupported intermediate success claim.
@@ -216,7 +224,8 @@ def with_completion_gate(func):
                 decision = CompletionDecision(CompletionStatus.UNVERIFIED, False, reason,
                                               decision.evidence_ids, decision.missing_artifacts)
             released_at = perf_counter()
-            yield _event({'type': 'completion_decision', 'data': decision.to_dict()})
+            if not provider_error:
+                yield _event({'type': 'completion_decision', 'data': decision.to_dict()})
             replaced_answer = bool(reason or unsafe_draft or safe_answer != answer)
             if replaced_answer:
                 reasoning = [event for event in answer_events if event.get('thinking') is True]
@@ -230,6 +239,8 @@ def with_completion_gate(func):
             else:
                 for event in answer_events:
                     yield _event(event)
+            if provider_error:
+                yield _event({'type': 'completion_decision', 'data': decision.to_dict()})
             for event in metrics_events:
                 metadata = event.setdefault('data', {})
                 metadata.update(completion_decision=decision.to_dict(), evidence_events=ledger.to_list(),
@@ -241,7 +252,8 @@ def with_completion_gate(func):
                     'answer_replaced': replaced_answer,
                 }
                 if replaced_answer:
-                    metadata['round_texts'] = [safe_answer]
+                    if not provider_error:
+                        metadata['round_texts'] = [safe_answer]
                     metadata['completion_gate_reason'] = reason or unsafe_draft or 'receipt_summary'
                 if isinstance(metadata.get('thinking'), str):
                     _, unsafe_thinking = completion_answer(metadata['thinking'], ledger,
@@ -249,6 +261,9 @@ def with_completion_gate(func):
                     if unsafe_thinking:
                         metadata.pop('thinking')
                 yield _event(event)
+            if provider_error:
+                yield provider_error
+                return
             if done:
                 yield 'data: [DONE]\n\n'
 

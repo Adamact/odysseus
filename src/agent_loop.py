@@ -26258,6 +26258,9 @@ async def stream_agent_loop(
                     # next model request. Do not expose a transient provider
                     # error or terminate the turn before that retry.
                     break
+                # Let the completion gate retain the original failure even
+                # when earlier tool evidence supplies useful fallback prose.
+                yield chunk
                 terminal_status = None
                 try:
                     error_line = next(
@@ -26547,7 +26550,6 @@ async def stream_agent_loop(
                             else "The model provider returned no usable output. No workspace change was made."
                         )
                     yield f'data: {json.dumps({"type": "final_response", "content": _failure_text})}\n\n'
-                yield chunk
                 # A terminal provider/request failure is not a completed Agent
                 # round.  Stop before empty-response synthesis, metrics,
                 # teacher escalation, post-processing, or a success [DONE].

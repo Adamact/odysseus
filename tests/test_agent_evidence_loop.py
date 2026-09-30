@@ -89,7 +89,7 @@ def _patch_loop(monkeypatch, responses, captured_kwargs=None):
     return lambda: call_index
 
 
-def _run(instruction, *, max_rounds=4, relevant_tools=None, runtime_context=None):
+def _run_chunks(instruction, *, max_rounds=4, relevant_tools=None, runtime_context=None):
     async def collect():
         return [
             chunk
@@ -104,7 +104,11 @@ def _run(instruction, *, max_rounds=4, relevant_tools=None, runtime_context=None
             )
         ]
 
-    return _events(asyncio.run(collect()))
+    return asyncio.run(collect())
+
+
+def _run(instruction, **kwargs):
+    return _events(_run_chunks(instruction, **kwargs))
 
 
 def test_failed_workspace_mutation_attempts_are_not_hidden_by_successful_probe():
@@ -497,7 +501,7 @@ def test_verified_artifact_survives_provider_error_during_finish_round(monkeypat
 
     monkeypatch.setattr(agent_loop, "stream_llm_with_fallback", stream)
 
-    events = _run(
+    chunks = _run_chunks(
         "Create /workspace/output.html",
         max_rounds=5,
         relevant_tools={"write_file", "private_browser"},
@@ -510,12 +514,17 @@ def test_verified_artifact_survives_provider_error_during_finish_round(monkeypat
         },
     )
 
+    events = _events(chunks)
     assert calls == 2
+    assert chunks[-1] == 'event: error\ndata: {"status": 504, "error": "stream timeout"}\n\n'
+    assert not any(chunk.strip() == 'data: [DONE]' for chunk in chunks)
+    decision = next(event['data'] for event in events if event.get('type') == 'completion_decision')
+    assert decision['can_complete'] is False
+    assert decision['status'] == 'failed'
     assert not any(event.get("type") == "agent_terminal" for event in events)
     final = next(event for event in events if event.get("type") == "final_response")
     assert "output.html" in final["content"]
-    assert "Output available" in final["content"]
-    assert "No passing executable test result" in final["content"]
+    assert final['content'].startswith('The task is incomplete:')
 
 
 def test_uninspected_artifact_still_fails_on_provider_error(monkeypatch):
@@ -540,7 +549,7 @@ def test_uninspected_artifact_still_fails_on_provider_error(monkeypatch):
 
     monkeypatch.setattr(agent_loop, "stream_llm_with_fallback", stream)
 
-    events = _run(
+    chunks = _run_chunks(
         "Create /workspace/answer.json",
         max_rounds=4,
         relevant_tools={"write_file"},
@@ -553,7 +562,13 @@ def test_uninspected_artifact_still_fails_on_provider_error(monkeypatch):
         },
     )
 
+    events = _events(chunks)
     assert calls == 2
+    assert chunks[-1] == 'event: error\ndata: {"status": 504, "error": "stream timeout"}\n\n'
+    assert not any(chunk.strip() == 'data: [DONE]' for chunk in chunks)
+    decision = next(event['data'] for event in events if event.get('type') == 'completion_decision')
+    assert decision['can_complete'] is False
+    assert decision['status'] == 'failed'
     terminal = next(
         (event for event in events if event.get("type") == "agent_terminal"),
         None,
@@ -561,6 +576,7 @@ def test_uninspected_artifact_still_fails_on_provider_error(monkeypatch):
     assert terminal is not None, events
     assert terminal["data"]["failed"] is True
     assert terminal["data"]["failure"]["status"] == 504
+    assert '[Agent stopped: Model request failed (HTTP 504)]' in terminal['data']['round_texts'][-1]
 
 
 def test_verified_artifact_gets_only_one_finish_nudge(monkeypatch):
