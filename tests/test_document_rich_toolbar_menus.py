@@ -3,12 +3,13 @@
 import json
 import subprocess
 from pathlib import Path
+from tests.helpers.stylesheets import app_css
+from tests.helpers.stylesheets import stylesheet_link_tags
 from tests.helpers.document_source import document_source
-
 
 ROOT = Path(__file__).resolve().parents[1]
 DOC_JS = document_source()
-STYLE = (ROOT / "static/style.css").read_text(encoding="utf-8")
+STYLE = app_css()
 
 
 def test_rich_toolbar_menus_expose_keyboard_and_context_state():
@@ -59,7 +60,7 @@ def test_mobile_toolbar_uses_native_momentum_and_distinct_activation_tokens():
       const browser = await chromium.launch({ headless: true });
       const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
       await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentStats.js`);
-      await page.setContent('<link rel="stylesheet" href="/static/style.css?v=20260831richtexttools91"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
+      await page.setContent('__ODY_STYLESHEETS__<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
       await page.evaluate(async () => {
         const mod = await import('/static/js/document.js?v=20260831richtexttools91&toggle-test=1');
         mod.init('/api');
@@ -102,6 +103,7 @@ def test_mobile_toolbar_uses_native_momentum_and_distinct_activation_tokens():
       console.log(JSON.stringify({ opened, closed, sliderOpened, sliderClosed, pickerOpened, colorClosed, before, scroll }));
       await browser.close();
     """
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=ROOT,
@@ -128,7 +130,7 @@ def test_mobile_toolbar_menu_preserves_selection_and_restores_focus():
       const browser = await chromium.launch({ headless: true });
       const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
       await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentStats.js`);
-      await page.setContent('<link rel="stylesheet" href="/static/style.css?v=20260831richtexttools91"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
+      await page.setContent('__ODY_STYLESHEETS__<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
       await page.evaluate(async () => {
         const mod = await import('/static/js/document.js?v=20260831richtexttools91&toolbar-menu-test=1');
         mod.init('/api');
@@ -205,6 +207,7 @@ def test_mobile_toolbar_menu_preserves_selection_and_restores_focus():
       }));
       await browser.close();
     """
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=ROOT,
@@ -243,7 +246,7 @@ def test_rich_toolbar_menus_track_live_formatting_values():
       const browser = await chromium.launch({ headless: true });
       const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
       await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentStats.js`);
-      await page.setContent('<link rel="stylesheet" href="/static/style.css?v=20260831richtexttools91"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
+      await page.setContent('__ODY_STYLESHEETS__<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
       await page.evaluate(async () => {
         const mod = await import('/static/js/document.js?v=20260831richtexttools91&toolbar-state-test=1');
         mod.init('/api');
@@ -323,6 +326,7 @@ def test_rich_toolbar_menus_track_live_formatting_values():
       }));
       await browser.close();
     """
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=ROOT,

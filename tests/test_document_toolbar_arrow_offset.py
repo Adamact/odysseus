@@ -1,4 +1,5 @@
 from pathlib import Path
+from tests.helpers.stylesheets import app_css
 from tests.helpers.document_source import document_source
 
 
@@ -7,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_toolbar_arrows_have_real_flex_slots_outside_icon_scroller():
     script = document_source()
-    styles = (ROOT / "static/style.css").read_text()
+    styles = app_css()
 
     leading = script.index('class="md-toolbar-leading-controls"')
     left_arrow = script.index('id="md-scroll-left"')

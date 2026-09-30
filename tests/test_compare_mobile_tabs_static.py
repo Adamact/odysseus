@@ -1,4 +1,5 @@
 from pathlib import Path
+from tests.helpers.stylesheets import app_css
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -32,7 +33,7 @@ def test_mobile_compare_reconciles_tabs_after_pane_lifecycle_changes():
 
 
 def test_mobile_compare_css_shows_only_the_active_card():
-    css = _read("static/style.css")
+    css = app_css()
     mobile = css[css.index("/* Compare uses one full-width response card on phones."):]
 
     assert ".compare-mobile-tabs" in mobile
@@ -44,7 +45,7 @@ def test_mobile_compare_css_shows_only_the_active_card():
 
 def test_probe_feedback_and_actions_use_the_shared_card_layout():
     selector = _read("static/js/compare/selector.js")
-    css = _read("static/style.css")
+    css = app_css()
 
     assert "probeFeedback.className = 'compare-probe-feedback'" in selector
     assert "probeFeedback.appendChild(detail)" in selector
@@ -66,7 +67,7 @@ def test_probe_feedback_and_actions_use_the_shared_card_layout():
 
 def test_probe_swap_reopens_and_highlights_the_failed_model_slot():
     selector = _read("static/js/compare/selector.js")
-    css = _read("static/style.css")
+    css = app_css()
 
     assert "function _expandModelSlot(slotIdx)" in selector
     assert "row.dataset.slotIndex = String(idx);" in selector

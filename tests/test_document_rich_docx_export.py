@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import zipfile
 from pathlib import Path
+from tests.helpers.stylesheets import stylesheet_link_tags
 from tests.helpers.document_source import document_source
 
 
@@ -65,7 +66,7 @@ def test_browser_word_export_contains_native_rich_docx_ooxml():
         contentType: 'image/png',
         body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'),
       }}));
-      await page.setContent('<link rel="stylesheet" href="/static/style.css?v=20260831richtexttools91"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
+      await page.setContent('__ODY_STYLESHEETS__<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
       await page.evaluate(async () => {{
         const mod = await import('/static/js/document.js?v=20260831richtexttools91&docx-export-test=1');
         mod.init('/api');
@@ -90,6 +91,7 @@ def test_browser_word_export_contains_native_rich_docx_ooxml():
       }}));
       await browser.close();
     """
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=ROOT,
@@ -159,7 +161,7 @@ def test_browser_markdown_word_export_keeps_heading_and_inline_formatting():
         acceptDownloads: true,
       }});
       await page.goto(`${{process.env.ODYSSEUS_TEST_STATIC_ORIGIN}}/static/js/documentStats.js`);
-      await page.setContent('<link rel="stylesheet" href="/static/style.css?v=20260831richtexttools91"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
+      await page.setContent('__ODY_STYLESHEETS__<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
       await page.evaluate(async () => {{
         const mod = await import('/static/js/document.js?v=20260831richtexttools91&markdown-docx-export-test=1');
         mod.init('/api');
@@ -181,6 +183,7 @@ def test_browser_markdown_word_export_keeps_heading_and_inline_formatting():
       console.log(JSON.stringify({{ failure: await download.failure() }}));
       await browser.close();
     """
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=ROOT,
