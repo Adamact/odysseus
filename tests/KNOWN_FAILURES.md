@@ -6,10 +6,12 @@ uninterpretable: you cannot tell "you broke something" from "you are on a Mac",
 so the usual result is either chasing a non-bug or ignoring a real one.
 
 This is that list. It is a record of observation, not a permission slip: a test
-here is still a test that does not pass, and three of the six below are
-defects someone should fix.
+here is still a test that does not pass, and the three that remain below are
+all still worth someone's time.
 
-Last measured: `lab @ c499c01b` plus the fixes in this change, macOS 15 on Apple Silicon, Python 3.11.
+Last measured: `lab @ c499c01b` plus the fixes in this change, macOS 15 on
+Apple Silicon, Python 3.11, with the **default** `$TMPDIR` — see the socket
+entry below for why that qualifier is load-bearing.
 
 ```
 3 failed, 10658 passed, 6 skipped
@@ -38,9 +40,9 @@ including one holding real data.
 Miss `npm ci` and roughly 36 browser tests fail on `Cannot find package
 'playwright'`. That is not a regression, it is the missing install.
 
-## The three
+## The three that remain, and the seven that no longer do
 
-### Test bugs: fixed
+### Test bugs: comparing an unresolved path against a resolved one
 
 Three failures compared an unresolved `/tmp` path against a resolved
 `/private/tmp` one, and are fixed rather than listed:
@@ -56,6 +58,33 @@ Three failures compared an unresolved `/tmp` path against a resolved
 Both now resolve consistently. They are recorded here because the shape recurs:
 on macOS, mixing a resolved and an unresolved temp path is a test bug that
 looks like a platform failure.
+
+### Test bugs: a temp path too long to bind a socket to
+
+Four more, same family, invisible unless `$TMPDIR` is long enough:
+
+- `tests/test_shell_routes.py::TestHostDockerAccess` (three tests)
+- `tests/test_cookbook_docker_access.py::test_container_opt_in_with_unix_socket_is_allowed`
+
+```
+OSError: AF_UNIX path too long
+```
+
+Each bound an `AF_UNIX` socket at `tmp_path / "docker.sock"`. macOS gives
+`sun_path` 104 bytes including the terminator, and pytest's `tmp_path` is
+rooted at `$TMPDIR`, which on a stock Mac is a 49-character
+`/var/folders/<2>/<30>/T/`. Add `pytest-of-<user>/pytest-<n>/` and the test's
+own name and the bind path is 115 bytes before the filename.
+
+This is why the counts above depend on where you run from: under a shortened
+`$TMPDIR` the path lands at 103 and the tests pass, and it tips over the moment
+pytest's run counter reaches two digits. Linux allows 108 bytes and roots
+`$TMPDIR` at `/tmp`, so it never bites there and CI stays green.
+
+They now bind through `tests/helpers/unix_sockets.bound_unix_socket`, which
+puts the socket under a short directory. **Measure with the default `$TMPDIR`**
+— `env -u TMPDIR` or an explicit `/var/folders/...` — or this whole file
+records a run nobody else has.
 
 ### Optional dependency: ffmpeg without a WebP encoder
 
