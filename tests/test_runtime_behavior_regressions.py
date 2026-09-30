@@ -17,6 +17,7 @@ import json
 import pytest
 
 import src.agent_loop as al
+import src.agent_tools.web_tools as al_web
 
 
 def _collect(gen):
@@ -67,6 +68,30 @@ def _run_turn(monkeypatch, messages, **kwargs):
         )
     )
     return offered
+
+
+
+def _contract(offered=("ask_user", "update_plan", "manage_notes"),
+              required=("manage_notes",)):
+    """A minimal valid TurnContract.
+
+    The dataclass validates required <= offered <= executable and that the
+    schema inventory matches offered exactly, so the schemas are built from
+    the same names rather than hand-written.
+    """
+    from src.turn_contract import TurnContract
+
+    return TurnContract(
+        capabilities=frozenset({"notes"}),
+        required=frozenset(required),
+        offered=frozenset(offered),
+        executable=frozenset(offered),
+        unavailable=frozenset(),
+        schema_json=tuple(
+            json.dumps({"type": "function", "function": {"name": n, "parameters": {}}})
+            for n in offered
+        ),
+    )
 
 
 # ── negative capability wording ─────────────────────────────────────────────
@@ -129,3 +154,115 @@ def test_plain_web_request_still_offers_search(monkeypatch):
     )
 
     assert "web_search" in _schema_names(offered[0])
+
+
+# ── supplied workspace context must not produce a clarification ─────────────
+# When the turn already carries what it needs, an answer that hands the next
+# decision back to the user is a failed turn, not a polite one. The runtime
+# detects that shape; these pin the detector so a reworded prompt cannot slip
+# past it silently.
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "Could you please share the file you want me to edit?",
+        "Would you like me to go ahead and refactor it?",
+        "Shall I start with the parser?",
+        "Please let me know which approach you prefer.",
+    ],
+)
+def test_handing_the_decision_back_is_recognised_as_clarification(answer):
+    assert al._looks_like_unattended_clarification(answer) is True
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "I read config.py and the timeout is set to 30 seconds.",
+        "The parser fails on empty input because it indexes before checking length.",
+        "Done. The workspace now has three files.",
+    ],
+)
+def test_ordinary_answers_are_not_clarifications(answer):
+    assert al._looks_like_unattended_clarification(answer) is False
+
+
+# ── repeated update_plan is not the turn's actionable work ─────────────────
+# update_plan and ask_user are permitted on almost every turn, so if they
+# counted as execution a model could loop on them forever and look busy. The
+# runtime must not advertise them as the tools that satisfy the request.
+
+def test_plan_and_ask_are_not_advertised_as_the_turns_available_tools():
+    contract = _contract()
+
+    reason = al._tool_rejection_reason("web_search", set(), None, contract=contract)
+
+    assert "manage_notes" in reason
+    assert "update_plan" not in reason, "update_plan advertised as actionable work"
+    assert "ask_user" not in reason, "ask_user advertised as actionable work"
+
+
+def test_update_plan_is_permitted_but_never_the_requirement():
+    contract = _contract()
+
+    assert contract.permits("update_plan") is True
+    assert "update_plan" not in contract.required
+
+
+# ── request-scoped tool authority ──────────────────────────────────────────
+# An external contract names what the request may do. A tool the caller never
+# declared must not become executable just because the runtime knows it.
+
+def test_request_scope_excludes_tools_the_caller_never_declared():
+    declared = [{"function": {"name": "write_file"}}]
+    offered = [{"function": {"name": "write_file"}}, {"function": {"name": "bash"}}]
+
+    allowed = al._request_scoped_allowed_tool_names(
+        declared, offered, native_terminal_runtime=False
+    )
+
+    assert allowed == {"write_file"}
+    assert "bash" not in allowed, "an undeclared tool became executable"
+
+
+def test_native_terminal_runtime_adds_offered_tools_deliberately():
+    """The widening exists, so pin it: it is opt-in, not the default."""
+    declared = [{"function": {"name": "write_file"}}]
+    offered = [{"function": {"name": "write_file"}}, {"function": {"name": "bash"}}]
+
+    allowed = al._request_scoped_allowed_tool_names(
+        declared, offered, native_terminal_runtime=True
+    )
+
+    assert allowed == {"write_file", "bash"}
+
+
+# ── owned process cleanup, foreign-process safety ──────────────────────────
+# The Chrome sweep matches on this runtime's own profile prefix. A browser
+# belonging to the user, or to another worktree, must survive it.
+
+def test_chrome_sweep_kills_only_this_runtimes_profile(monkeypatch, tmp_path):
+    from src.agent_tools.web_tools import PrivateBrowserTool
+
+    proc = tmp_path / "proc"
+    tmpdir = tmp_path / "runtime-tmp"
+    tmpdir.mkdir()
+    ours = str(tmpdir.resolve() / "agent-browser-chrome-")
+
+    def _pid(pid, cmdline):
+        entry = proc / pid
+        entry.mkdir(parents=True)
+        (entry / "cmdline").write_bytes(cmdline.replace(" ", "\0").encode())
+
+    _pid("101", f"chrome --user-data-dir={ours}session-a")
+    _pid("202", "chrome --user-data-dir=/Users/someone/Library/Chrome")
+    _pid("303", "chrome --user-data-dir=/tmp/other-worktree/agent-browser-chrome-x")
+    (proc / "self").mkdir()
+
+    monkeypatch.setattr(al_web, "_PROC_ROOT", proc)
+    killed = []
+    monkeypatch.setattr(al_web.os, "kill", lambda pid, sig: killed.append(pid))
+
+    PrivateBrowserTool._terminate_owned_chrome({"TMPDIR": str(tmpdir)})
+
+    assert killed == [101], f"swept a process that was not ours: {killed}"
