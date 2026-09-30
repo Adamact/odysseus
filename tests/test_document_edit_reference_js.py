@@ -2,11 +2,12 @@
 
 from pathlib import Path
 from tests.helpers.stylesheets import app_css
+from tests.helpers.document_source import document_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
 RENDERER = (ROOT / "static/js/chatRenderer.js").read_text(encoding="utf-8")
-DOCUMENT = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+DOCUMENT = document_source()
 STYLE = app_css()
 INDEX = (ROOT / "static/index.html").read_text(encoding="utf-8")
 APP = (ROOT / "static/app.js").read_text(encoding="utf-8")

@@ -4,16 +4,15 @@ import json
 import subprocess
 from pathlib import Path
 from tests.helpers.stylesheets import stylesheet_link_tags
+from tests.helpers.document_source import document_source, function_body
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+DOC_JS = document_source()
 
 
 def test_heading_enter_uses_single_native_history_commands():
-    helper = DOC_JS.split("function _handleRichHeadingEnter", 1)[1].split(
-        "let _richInlineCodeTypingArmed", 1
-    )[0]
+    helper = function_body("_handleRichHeadingEnter")
 
     assert "selection.isCollapsed" in helper
     assert "h1, h2, h3, h4, h5, h6" in helper

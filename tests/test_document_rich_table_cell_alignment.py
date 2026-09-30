@@ -4,19 +4,16 @@ import json
 import subprocess
 from pathlib import Path
 from tests.helpers.stylesheets import stylesheet_link_tags
+from tests.helpers.document_source import document_source, function_body
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+DOC_JS = document_source()
 
 
 def test_table_cell_alignment_uses_contextual_undoable_table_path():
-    actions = DOC_JS.split("function _applyRichTableAction", 1)[1].split(
-        "function _insertRichPageBreak", 1
-    )[0]
-    state = DOC_JS.split("function _richDropdownCurrentActions", 1)[1].split(
-        "function _showMdDropdown", 1
-    )[0]
+    actions = function_body("_applyRichTableAction")
+    state = function_body("_richDropdownCurrentActions")
 
     for alignment in ("top", "middle", "bottom"):
         assert f"table:cell-align:{alignment}" in DOC_JS

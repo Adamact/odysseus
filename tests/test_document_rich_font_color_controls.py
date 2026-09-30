@@ -7,10 +7,11 @@ from pathlib import Path
 
 from tests.helpers.stylesheets import app_css
 from tests.helpers.stylesheets import stylesheet_link_tags
+from tests.helpers.document_source import document_source, function_body
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+DOC_JS = document_source()
 STYLE = app_css()
 
 
@@ -48,8 +49,8 @@ def test_horizontal_rule_is_ordered_after_clear_formatting():
 
 
 def test_image_options_are_hidden_until_a_rich_image_is_selected():
-    clear_fn = DOC_JS.split("function _clearRichImageSelection()", 1)[1].split("function _selectRichImage", 1)[0]
-    select_fn = DOC_JS.split("function _selectRichImage", 1)[1].split("function _selectedRichImage", 1)[0]
+    clear_fn = function_body("_clearRichImageSelection")
+    select_fn = function_body("_selectRichImage")
     assert "imageButton.style.display = 'none';" in clear_fn
     assert "imageButton.style.display = '';" in select_fn
 
