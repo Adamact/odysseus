@@ -3,10 +3,11 @@
 import json
 import subprocess
 from pathlib import Path
+from tests.helpers.document_source import document_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+DOC_JS = document_source()
 
 
 def test_checklist_enter_uses_native_edit_commands_and_resets_state():

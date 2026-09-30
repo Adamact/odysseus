@@ -3,19 +3,18 @@
 import json
 import subprocess
 from pathlib import Path
+from tests.helpers.document_source import document_source, function_body
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+DOC_JS = document_source()
 
 
 def test_table_header_controls_use_tag_replacement_and_native_history():
     table_actions = DOC_JS.split("function _applyRichTableAction", 1)[1].split(
         "function applyMdFormat", 1
     )[0]
-    menu_state = DOC_JS.split("function _richDropdownCurrentActions", 1)[1].split(
-        "function _showMdDropdown", 1
-    )[0]
+    menu_state = function_body("_richDropdownCurrentActions")
 
     assert "function _replaceRichTableCellTag" in DOC_JS
     assert "table:toggle-header-row" in table_actions
@@ -24,9 +23,7 @@ def test_table_header_controls_use_tag_replacement_and_native_history():
     assert "headerModes.headerRow = !headerModes.headerRow" in table_actions
     assert "headerModes.headerColumn = !headerModes.headerColumn" in table_actions
     assert "_applyRichTableHeaderModes(clone, headerModes)" in table_actions
-    header_normalizer = DOC_JS.split("function _applyRichTableHeaderModes", 1)[1].split(
-        "function _replaceRichTable", 1
-    )[0]
+    header_normalizer = function_body("_applyRichTableHeaderModes")
     assert "_replaceRichTableCellTag" in header_normalizer
     assert "_replaceRichTable(rich, original, clone" in table_actions
     assert "current.add('table:toggle-header-row')" in menu_state

@@ -3,19 +3,18 @@
 import json
 import subprocess
 from pathlib import Path
+from tests.helpers.document_source import document_source, function_body
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+DOC_JS = document_source()
 
 
 def test_table_structure_uses_central_header_mode_normalization():
     helpers = DOC_JS.split("function _richTableHeaderModes", 1)[1].split(
         "function _replaceRichTable", 1
     )[0]
-    append = DOC_JS.split("function _appendRichTableRow", 1)[1].split(
-        "function _insertRichTable", 1
-    )[0]
+    append = function_body("_appendRichTableRow")
     actions = DOC_JS.split("function _applyRichTableAction", 1)[1].split(
         "function applyMdFormat", 1
     )[0]

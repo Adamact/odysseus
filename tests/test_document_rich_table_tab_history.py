@@ -3,16 +3,15 @@
 import json
 import subprocess
 from pathlib import Path
+from tests.helpers.document_source import document_source, function_body
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+DOC_JS = document_source()
 
 
 def test_last_cell_tab_uses_the_undoable_table_replacement_path():
-    helper = DOC_JS.split("function _appendRichTableRow", 1)[1].split(
-        "function _insertRichTable", 1
-    )[0]
+    helper = function_body("_appendRichTableRow")
     key_handler = DOC_JS.split("if (e.key === 'Tab')", 1)[1].split(
         "let inList = false", 1
     )[0]

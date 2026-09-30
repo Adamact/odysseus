@@ -1,11 +1,12 @@
 from pathlib import Path
+from tests.helpers.document_source import document_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_selection_overlays_have_individual_clear_controls():
-    js = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+    js = document_source()
     css = (ROOT / "static/style.css").read_text(encoding="utf-8")
 
     assert "function clearSelectionAt(index)" in js

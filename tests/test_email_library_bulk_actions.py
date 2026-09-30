@@ -1,4 +1,5 @@
 from pathlib import Path
+from tests.helpers.document_source import document_source
 
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -164,8 +165,7 @@ def test_email_client_cache_drops_fixture_rows():
 
 def test_email_compose_can_attach_gallery_images():
     """Compose attachments should support local files, documents, and Gallery images."""
-    frontend = _REPO / "static" / "js" / "document.js"
-    frontend_text = frontend.read_text(encoding="utf-8")
+    frontend_text = document_source()
     backend = _EMAIL_ROUTES.read_text(encoding="utf-8")
 
     assert "Upload from computer" in frontend_text

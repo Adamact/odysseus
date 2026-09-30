@@ -1,10 +1,11 @@
 """Regression guards for the Markdown preview hover-to-edit control."""
 
 from pathlib import Path
+from tests.helpers.document_source import document_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+DOC_JS = document_source()
 STYLE_CSS = (ROOT / "static/style.css").read_text(encoding="utf-8")
 
 

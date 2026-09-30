@@ -3,16 +3,15 @@
 import json
 import subprocess
 from pathlib import Path
+from tests.helpers.document_source import document_source, function_body
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+DOC_JS = document_source()
 
 
 def test_merge_split_commands_use_contextual_undoable_table_path():
-    actions = DOC_JS.split("function _applyRichTableAction", 1)[1].split(
-        "function _insertRichPageBreak", 1
-    )[0]
+    actions = function_body("_applyRichTableAction")
     menu = DOC_JS.split("function _showMdDropdown", 1)[1].split(
         "function initMdToolbar", 1
     )[0]

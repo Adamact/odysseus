@@ -5,10 +5,11 @@ import subprocess
 import tempfile
 import zipfile
 from pathlib import Path
+from tests.helpers.document_source import document_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+DOC_JS = document_source()
 
 
 def test_rich_docx_converter_maps_editor_structure_instead_of_raw_html():
