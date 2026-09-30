@@ -18,6 +18,7 @@ import urllib.request
 from pathlib import Path
 from typing import Dict, Any
 
+from core.platform_compat import pid_alive
 from src.constants import MAX_OUTPUT_CHARS
 
 PDF_EXTRACT_MAX_BYTES = 80_000_000
@@ -143,18 +144,23 @@ def _process_command_line(pid: int) -> str | None:
 
 
 def _process_is_alive(pid: int) -> bool:
-    """Whether a pid currently exists. Signal 0 checks without delivering."""
+    """Whether a pid currently exists.
 
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        # Alive, owned by somebody else.
-        return True
-    except OSError:
-        return False
-    return True
+    Delegates to ``core.platform_compat.pid_alive`` rather than probing with
+    ``os.kill(pid, 0)`` directly. That probe is POSIX-only: CPython's Windows
+    ``os.kill`` calls ``TerminateProcess(handle, sig)`` for any signal other
+    than CTRL_C / CTRL_BREAK, so it would *kill* the daemon it is asked about.
+    Windows is also where there is no procfs, which is precisely when this
+    function gets called at all.
+
+    ``pid_alive`` reads False for a pid that ``os.kill`` reports with
+    ``PermissionError`` — a live process owned by another user. Neither caller
+    here wants a different answer: the sweep only unlinks a pid file it wrote
+    itself, and treating somebody else's pid as "not our daemon" is the safe
+    reading in both.
+    """
+
+    return pid_alive(pid)
 
 _SCHOLARLY_METADATA_CUE_RE = re.compile(
     r"\b(?:accept(?:ed|ance)?|publish(?:ed|ing|cation)?|venue|conference|"

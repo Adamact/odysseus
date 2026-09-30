@@ -1923,3 +1923,27 @@ def test_procfs_host_still_matches_on_the_command_line(monkeypatch, tmp_path) ->
 
     _pid_file_for(tmp_path, monkeypatch, "clawmm-test", "session-6", 6666)
     assert PrivateBrowserTool._owned_daemon_exists({}, "session-6") is False
+
+
+def test_liveness_probe_goes_through_the_platform_safe_helper(monkeypatch) -> None:
+    """The no-procfs path must not reach a bare ``os.kill(pid, 0)``.
+
+    CPython's Windows ``os.kill`` calls ``TerminateProcess(handle, sig)`` for
+    any signal other than CTRL_C / CTRL_BREAK, so probing liveness with signal
+    0 terminates the process it asks about — and the only hosts that reach this
+    probe are the ones with no procfs, Windows among them.
+    ``core.platform_compat.pid_alive`` is the tree's platform-safe answer.
+    """
+
+    asked: list[int] = []
+    monkeypatch.setattr(
+        web_tools, "pid_alive", lambda pid: asked.append(pid) or True
+    )
+    monkeypatch.setattr(
+        web_tools.os,
+        "kill",
+        lambda *a, **kw: pytest.fail("os.kill must not be used to probe liveness"),
+    )
+
+    assert web_tools._process_is_alive(4242) is True
+    assert asked == [4242]
