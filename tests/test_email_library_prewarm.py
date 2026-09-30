@@ -4,14 +4,13 @@ import shutil
 import subprocess
 
 import pytest
+from tests.helpers.js_modules import email_library_source
 
 
 _REPO = Path(__file__).resolve().parents[1]
-_EMAIL_LIBRARY = _REPO / "static" / "js" / "emailLibrary.js"
-
 
 def _source() -> str:
-    return _EMAIL_LIBRARY.read_text(encoding="utf-8")
+    return email_library_source()
 
 
 def _function_source(name: str) -> str:

@@ -1,11 +1,12 @@
 from pathlib import Path
+from tests.helpers.js_modules import email_library_source
 
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_email_ai_reply_context_is_saved_and_restored_per_message():
-    source = (ROOT / "static/js/emailLibrary.js").read_text(encoding="utf-8")
+    source = email_library_source()
 
     assert "_AI_REPLY_CONTEXT_DRAFT_PREFIX" in source
     assert "data?.account_id || em?.account_id || state._libAccountId" in source
@@ -17,7 +18,7 @@ def test_email_ai_reply_context_is_saved_and_restored_per_message():
 
 
 def test_email_ai_reply_context_only_clears_after_draft_opens():
-    library = (ROOT / "static/js/emailLibrary.js").read_text(encoding="utf-8")
+    library = email_library_source()
     inbox = (ROOT / "static/js/emailInbox.js").read_text(encoding="utf-8")
 
     assert "const draftOpened = await _runAiReplyFromButton" in library

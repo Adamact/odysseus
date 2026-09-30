@@ -1,5 +1,6 @@
 from pathlib import Path
 import re
+from tests.helpers.js_modules import email_library_paths
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,8 +43,8 @@ def test_all_runtime_document_imports_share_one_module_url():
         ROOT / "static/js/chat.js",
         ROOT / "static/js/chatStream.js",
         ROOT / "static/js/chatRenderer.js",
-        ROOT / "static/js/emailLibrary.js",
         ROOT / "static/js/slashCommands.js",
+        *email_library_paths(include_wrapper=True),
     ]
     versions = {
         match

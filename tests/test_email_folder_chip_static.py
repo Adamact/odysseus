@@ -1,11 +1,12 @@
 from pathlib import Path
+from tests.helpers.js_modules import email_library_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_folder_chip_stays_with_date_and_moves_down():
-    source = (ROOT / "static" / "js" / "emailLibrary.js").read_text()
+    source = email_library_source()
     css = (ROOT / "static" / "style.css").read_text()
 
     assert 'class="email-meta-date-group"' in source

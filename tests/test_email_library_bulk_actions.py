@@ -1,22 +1,22 @@
 from pathlib import Path
+from tests.helpers.js_modules import email_library_source
 
 
 _REPO = Path(__file__).resolve().parents[1]
-_EMAIL_LIBRARY = _REPO / "static" / "js" / "emailLibrary.js"
 _EMAIL_ROUTES = _REPO / "routes" / "email_routes.py"
 _EMAIL_MCP_SERVER = _REPO / "mcp_servers" / "email_server.py"
 _EMAIL_FIXTURE_HELPER = _REPO / "scripts" / "ody_eval_email_fixture.py"
 
 
 def _bulk_action_source() -> str:
-    text = _EMAIL_LIBRARY.read_text(encoding="utf-8")
+    text = email_library_source()
     start = text.index("async function _bulkAction(action)")
     end = text.index("\n}\n\n// _extractName", start) + 3
     return text[start:end]
 
 
 def _function_source(name: str) -> str:
-    text = _EMAIL_LIBRARY.read_text(encoding="utf-8")
+    text = email_library_source()
     start = text.index(f"function {name}")
     next_function = text.find("\nfunction ", start + 1)
     next_async = text.find("\nasync function ", start + 1)
@@ -50,7 +50,7 @@ def test_email_bulk_read_unread_checks_backend_success_before_syncing_cache():
 
 
 def test_email_bulk_export_attachments_is_ui_only_selected_context():
-    frontend = _EMAIL_LIBRARY.read_text(encoding="utf-8")
+    frontend = email_library_source()
     backend = _EMAIL_ROUTES.read_text(encoding="utf-8")
     export_src = frontend[
         frontend.index("async function _exportSelectedAttachments()"):
@@ -86,7 +86,7 @@ def test_email_context_changes_clear_bulk_selection_state():
     Folder, account, filter, quick-filter, attachment, and search basis changes
     must exit select mode before the next list/search view can run bulk actions.
     """
-    text = _EMAIL_LIBRARY.read_text(encoding="utf-8")
+    text = email_library_source()
     reset_src = _function_source("_resetBulkSelectionForContextChange")
     fresh_src = _function_source("_resetEmailListForFreshLoad")
     add_pill_src = _function_source("_addSearchPill")
@@ -118,7 +118,7 @@ def test_email_refresh_uses_explicit_server_refresh_contract():
     refresh button should keep the old rows visible while asking the server to
     evict those fast paths and refetch the visible mailbox slice.
     """
-    frontend = _EMAIL_LIBRARY.read_text(encoding="utf-8")
+    frontend = email_library_source()
     backend = _EMAIL_ROUTES.read_text(encoding="utf-8")
 
     assert "refresh=1&_=${Date.now()}" in frontend
@@ -150,7 +150,7 @@ def test_fixture_email_requires_explicit_eval_flag():
 
 def test_email_client_cache_drops_fixture_rows():
     """Old fixture rows in browser storage must not keep rendering."""
-    frontend = _EMAIL_LIBRARY.read_text(encoding="utf-8")
+    frontend = email_library_source()
 
     assert "function _looksLikeFixtureEmailRow(row)" in frontend
     assert "function _libCacheHasFixtureRows(value)" in frontend
