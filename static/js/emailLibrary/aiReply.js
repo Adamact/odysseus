@@ -8,6 +8,7 @@
 // The context-draft key is versioned (`…:v2:`) and scoped by account, folder
 // and uid, so a draft cannot leak from one message to another.
 
+import spinnerModule from '../spinner.js';
 import { topPortalZ } from '../toolWindowZOrder.js';
 import { showToast } from '../ui.js?v=20260916largetoolscroll1';
 import { state } from './state.js';

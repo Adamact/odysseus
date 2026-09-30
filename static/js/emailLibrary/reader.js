@@ -9,6 +9,7 @@
 // tab 2 until it closes, even if tab 1 closes first. The slot map here is what
 // holds that.
 
+import spinnerModule from '../spinner.js';
 import * as Modals from '../modalManager.js';
 import { showToast } from '../ui.js?v=20260916largetoolscroll1';
 import { state } from './state.js';

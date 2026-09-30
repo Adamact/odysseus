@@ -9,6 +9,7 @@
 // document, task, session and memory menus. `tests/test_action_menu_order.py`
 // pins that.
 
+import spinnerModule from '../spinner.js';
 import { SELECT_MENU_ICON, actionMenuRank, orderActionMenuItems } from '../actionMenuOrder.js';
 import { bindMenuDismiss, dismissOrRemove } from '../escMenuStack.js';
 import { topPortalZ } from '../toolWindowZOrder.js';

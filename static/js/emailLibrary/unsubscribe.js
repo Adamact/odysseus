@@ -10,6 +10,7 @@
 // agent-browser run finish. Nothing else in the package reads any of that,
 // which is why this is the one module with a single exported entry point.
 
+import spinnerModule from '../spinner.js';
 import { emailApiUrl } from '../emailShared.js';
 import { showToast, styledConfirm } from '../ui.js?v=20260916largetoolscroll1';
 import { state } from './state.js';

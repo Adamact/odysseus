@@ -10,6 +10,7 @@
 // delete sync against /api/calendar. And the inline-image preference is read by
 // ./bodyRender.js while rendering a message, not only by the settings form.
 
+import spinnerModule from '../spinner.js';
 import { emailApiUrl } from '../emailShared.js';
 import { showToast } from '../ui.js?v=20260916largetoolscroll1';
 import { state } from './state.js';

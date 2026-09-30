@@ -8,6 +8,7 @@
 // metadata: a card can know it *has* attachments without knowing what they
 // are, so the chips are rendered late and the card icon repaired afterwards.
 
+import spinnerModule from '../spinner.js';
 import * as Modals from '../modalManager.js';
 import { state } from './state.js';
 import { _esc } from './utils.js';

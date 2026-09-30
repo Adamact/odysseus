@@ -127,6 +127,84 @@ def test_wrapper_exposes_every_statically_imported_name():
     assert checked, "no module imports names from static/js/emailLibrary.js"
 
 
+_IMPORT_STATEMENT = re.compile(
+    r"^import\s+(\{[^}]*\}|\*\s+as\s+[\w$]+|[\w$]+)\s+from\s+'[^']+';", re.M | re.S
+)
+_TOP_LEVEL_DECL = re.compile(
+    r"^(?:export\s+)?(?:async\s+)?(?:function|const|let|var)\s+([A-Za-z_$][\w$]*)", re.M
+)
+
+
+def _bound_names(source: str) -> set[str]:
+    """Local names a module binds: imports plus top-level declarations."""
+    names = set(_TOP_LEVEL_DECL.findall(source))
+    for clause in _IMPORT_STATEMENT.findall(source):
+        clause = clause.strip()
+        if clause.startswith("{"):
+            names |= {
+                part.strip().split(" as ")[-1].strip()
+                for part in clause.strip("{}").split(",")
+                if part.strip()
+            }
+        else:
+            names.add(clause.split(" as ")[-1].strip())
+    return names
+
+
+_REEXPORT = re.compile(r"^export\s*\{[^}]*\}\s*from\s*'[^']+';", re.M | re.S)
+_WHOLE_LINE_COMMENT = re.compile(r"^\s*(?://|/\*|\*/|\*(?!/)).*$", re.M)
+
+
+def _executable_body(source: str) -> str:
+    """The part of a module that actually runs a name.
+
+    Imports are dropped because a name in an import clause is the binding, not a
+    use. Re-export lists go for the same reason. Whole-line comments go because
+    prose says things like "no shared state" and `state` is a real binding here;
+    only full lines are stripped, so a `//` inside a URL literal is left alone.
+    """
+    ends = [m.end() for m in _IMPORT_STATEMENT.finditer(source)]
+    body = source[max(ends):] if ends else source
+    body = _REEXPORT.sub("", body)
+    return _WHOLE_LINE_COMMENT.sub("", body)
+
+
+def test_no_module_uses_a_package_name_it_never_bound():
+    """A name used but never imported is a runtime ReferenceError, nothing less.
+
+    It is invisible to `node --check`, which parses without resolving scope, and
+    invisible to loading the module, because the throw happens inside a function
+    body the loader never calls. It is also the single most likely mistake when
+    code moves between modules — the declaration stays behind and the use comes
+    along.
+
+    The vocabulary checked is the package's own: every name any module here
+    binds. That is narrow on purpose. It is not a general no-undef pass, so it
+    never has to model the browser's globals and never produces a false
+    positive; it catches exactly the shape a split produces.
+    """
+    sources = {p.name: p.read_text(encoding="utf-8") for p in email_library_paths(True)}
+    vocabulary: set[str] = set()
+    for source in sources.values():
+        vocabulary |= _bound_names(source)
+
+    unbound: dict[str, list[str]] = {}
+    for name, source in sources.items():
+        bound = _bound_names(source)
+        body = _executable_body(source)
+        missing = sorted(
+            word
+            for word in vocabulary - bound
+            if re.search(r"(?<![\w$.])" + re.escape(word) + r"(?![\w$])", body)
+        )
+        if missing:
+            unbound[name] = missing
+    assert not unbound, (
+        "modules use names they neither declare nor import, which throws at call "
+        f"time and nowhere earlier: {unbound}"
+    )
+
+
 def test_every_package_module_is_precached():
     sw = _SW.read_text(encoding="utf-8")
     for path in email_library_paths():
