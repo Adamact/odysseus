@@ -5,7 +5,6 @@ import importlib
 import importlib.util
 import json
 import os
-import socket
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -28,6 +27,7 @@ from routes.shell_routes import (
     _venv_activate_prefix,
     DOCKER_IN_CONTAINER_HINT,
 )
+from tests.helpers.unix_sockets import bound_unix_socket
 
 
 def test_shell_routes_import_without_posix_pty_modules(monkeypatch):
@@ -294,30 +294,25 @@ class TestHostDockerAccess:
     def test_socket_without_explicit_opt_in_is_disabled(
         self,
         monkeypatch,
-        tmp_path,
         flag,
     ):
-        socket_path = tmp_path / "docker.sock"
-        with socket.socket(socket.AF_UNIX) as unix_socket:
-            unix_socket.bind(str(socket_path))
+        # Not tmp_path: binding under $TMPDIR overruns sun_path on macOS.
+        with bound_unix_socket() as socket_path:
             if flag is None:
                 monkeypatch.delenv("ODYSSEUS_ENABLE_HOST_DOCKER", raising=False)
             else:
                 monkeypatch.setenv("ODYSSEUS_ENABLE_HOST_DOCKER", flag)
 
-            assert _host_docker_access_enabled(str(socket_path)) is False
+            assert _host_docker_access_enabled(socket_path) is False
 
     def test_explicit_opt_in_with_unix_socket_is_enabled(
         self,
         monkeypatch,
-        tmp_path,
     ):
-        socket_path = tmp_path / "docker.sock"
-        with socket.socket(socket.AF_UNIX) as unix_socket:
-            unix_socket.bind(str(socket_path))
+        with bound_unix_socket() as socket_path:
             monkeypatch.setenv("ODYSSEUS_ENABLE_HOST_DOCKER", "true")
 
-            assert _host_docker_access_enabled(str(socket_path)) is True
+            assert _host_docker_access_enabled(socket_path) is True
 
 
 class TestPackageProbeStatus:
