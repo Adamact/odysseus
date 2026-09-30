@@ -6,7 +6,12 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCUMENT_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
 CHAT_JS = (ROOT / "static/js/chat.js").read_text(encoding="utf-8")
 APP_JS = (ROOT / "static/app.js").read_text(encoding="utf-8")
-SETTINGS_JS = (ROOT / "static/js/settings.js").read_text(encoding="utf-8")
+# The writing-style panel moved into static/js/settings/writingStyle.js; read
+# the whole settings surface so this pins behaviour rather than a filename.
+SETTINGS_JS = "\n".join(
+    p.read_text(encoding="utf-8")
+    for p in [ROOT / "static/js/settings.js", *sorted((ROOT / "static/js/settings").glob("*.js"))]
+)
 INDEX_HTML = (ROOT / "static/index.html").read_text(encoding="utf-8")
 CHAT_ROUTE = (ROOT / "routes/chat_routes.py").read_text(encoding="utf-8")
 
