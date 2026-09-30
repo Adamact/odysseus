@@ -37,7 +37,7 @@ def _ffmpeg_has_encoder(name: str) -> bool:
         check=False, capture_output=True, text=True,
     )
     return any(
-        line.split()[1:2] == [name]
+        line.split()[1:2] == [name] or f"(codec {name})" in line
         for line in listed.stdout.splitlines()
         if line.strip()
     )
