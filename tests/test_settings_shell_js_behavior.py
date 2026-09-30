@@ -114,4 +114,7 @@ def test_settings_shell_real_esm_coordinator():
         "navigationCallback": True,
         "directOpen": True,
         "directClose": True,
+        "peekChrome": True,
+        "adminVisibility": True,
+        "adminTabHandoff": True,
     }
