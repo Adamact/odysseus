@@ -156,6 +156,31 @@ The inventory, the baseline and the capture live in `tests/css_snapshot/`;
 not, and how to find the property that moved when it fails. The run takes about
 21 seconds and skips when `npm ci` has not been run.
 
+## Release smoke suite
+
+`tests/smoke/` drives every advertised feature area once, end to end,
+against a real instance - the safety net the unit suite does not provide
+for a route move or a module split. One command boots the worktree and
+runs it:
+
+```bash
+scripts/odysseus-smoke              # boot, run every area, stop again
+scripts/odysseus-smoke --keep-up    # leave the instance running
+scripts/odysseus-smoke --areas      # the coverage table, without booting
+```
+
+It reads its target instance out of the environment (`APP_PORT` through
+`internal_api_base()`, plus the dev admin account), so under a plain
+`pytest` with nothing booted every scenario skips with the reason and
+the full suite stays green. Models are served by a deterministic
+loopback stub, never a live endpoint; email uses the repo's existing
+`ODYSSEUS_EMAIL_FIXTURE` path.
+
+The report is a per-area table that also prints the areas the suite
+deliberately does not cover, so it cannot be read as coverage of
+everything it omits. `tests/smoke/README.md` documents what is in each
+list and why.
+
 ## Core principles
 
 - Keep PRs small and homogeneous: one kind of change per PR.
