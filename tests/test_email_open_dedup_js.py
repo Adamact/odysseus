@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from tests.helpers.js_modules import email_library_source
+from tests.helpers.js_modules import email_library_source, js_function_source
 
 
 _REPO = Path(__file__).resolve().parent.parent
@@ -22,7 +22,7 @@ def _extract_between(source: str, signature: str, next_marker: str) -> str:
 
 def test_library_unread_preview_has_one_authoritative_request_and_rollback():
     source = email_library_source()
-    function = _extract_between(source, "async function _toggleCardPreview", "\n/**\n * Wrap a probable signature block")
+    function = js_function_source("_toggleCardPreview", source)
 
     assert function.count("/api/email/read/") == 1
     assert "/api/email/mark-read/" not in function
@@ -39,7 +39,7 @@ def test_library_unread_preview_has_one_authoritative_request_and_rollback():
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_library_authoritative_success_defeats_newer_rollback_in_either_order():
     source = email_library_source()
-    function = _extract_between(source, "async function _toggleCardPreview", "\n/**\n * Wrap a probable signature block")
+    function = js_function_source("_toggleCardPreview", source)
     settlements = _extract_between(
         function,
         "  const restoreUnreadState = () => {",

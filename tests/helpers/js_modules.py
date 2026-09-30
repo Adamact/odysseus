@@ -16,6 +16,7 @@ not about the package, so the concatenation order only has to be stable.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 _STATIC_JS = Path(__file__).resolve().parents[2] / "static" / "js"
@@ -48,3 +49,35 @@ def email_library_source(include_wrapper: bool = False) -> str:
     return "\n".join(
         p.read_text(encoding="utf-8") for p in email_library_paths(include_wrapper)
     )
+
+
+def js_function_source(name: str, source: str | None = None) -> str:
+    """One top-level JS function, from its signature to its closing brace.
+
+    Two things this does not do, on purpose.
+
+    It does not slice between a signature and a marker further down ("from
+    ``_toggleCardPreview`` to the ``Wrap a probable signature`` comment"). That
+    is what a split breaks: the marker ends up in another module, the slice runs
+    past the end of the function without failing, and the assertions keep
+    passing against the wrong text.
+
+    It does not balance braces by walking characters either. The obvious version
+    of that walker treats the apostrophe in a ``// that's a scroll`` comment as
+    an open quote and swallows every brace until the next one, which ends the
+    function early — silently, again.
+
+    Instead it uses the invariant the file actually holds: a top-level
+    declaration starts at column 0, so its closing brace is the next lone ``}``
+    at column 0.
+    """
+    text = email_library_source() if source is None else source
+    signature = re.compile(
+        r"^(?:export\s+)?(?:async\s+)?function\s+" + re.escape(name) + r"\s*\(",
+        re.M,
+    )
+    match = signature.search(text)
+    assert match, f"no top-level declaration of {name}"
+    closing = re.compile(r"^\}", re.M).search(text, match.end())
+    assert closing, f"unterminated function {name}"
+    return text[match.start():closing.end()]

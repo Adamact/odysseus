@@ -1,5 +1,5 @@
 from pathlib import Path
-from tests.helpers.js_modules import email_library_source
+from tests.helpers.js_modules import email_library_source, js_function_source
 
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -9,20 +9,11 @@ _EMAIL_FIXTURE_HELPER = _REPO / "scripts" / "ody_eval_email_fixture.py"
 
 
 def _bulk_action_source() -> str:
-    text = email_library_source()
-    start = text.index("async function _bulkAction(action)")
-    end = text.index("\n}\n\n// _extractName", start) + 3
-    return text[start:end]
+    return js_function_source("_bulkAction")
 
 
 def _function_source(name: str) -> str:
-    text = email_library_source()
-    start = text.index(f"function {name}")
-    next_function = text.find("\nfunction ", start + 1)
-    next_async = text.find("\nasync function ", start + 1)
-    candidates = [idx for idx in (next_function, next_async) if idx != -1]
-    end = min(candidates) if candidates else len(text)
-    return text[start:end]
+    return js_function_source(name)
 
 
 def test_email_bulk_read_unread_calls_provider_write_routes():

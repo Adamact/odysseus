@@ -31,6 +31,7 @@ from pathlib import Path
 
 from tests.helpers.js_modules import (
     EMAIL_LIBRARY_ENTRY,
+    EMAIL_LIBRARY_PACKAGE,
     EMAIL_LIBRARY_WRAPPER,
     email_library_paths,
 )
@@ -61,20 +62,69 @@ def _listed_exports(path: Path) -> set[str]:
     return names
 
 
-def test_wrapper_re_exports_the_entry_module_surface_exactly():
-    """The old path must expose the same names as the package entry module.
+# The email library's public surface. The entry module exports more than this —
+# siblings in the package import helpers back out of it — so the wrapper is what
+# declares which names are API and which are package-internal.
+#
+# Written out rather than derived because three of the five callers reach these
+# through a dynamic import and a property read (`mod.openEmailLibrary` in
+# chatStream.js and chatRenderer.js, `mod.refreshEmailLibrary` and
+# `mod.openEmailLibrary` in document.js, `mod.mountEmailSettings` in
+# settings.js), which no import scan can see. Only emailInbox.js imports names
+# statically, and `test_wrapper_exposes_every_statically_imported_name` covers
+# that half exactly.
+_PUBLIC_SURFACE = {
+    "closeEmailLibrary",
+    "initEmailLibrary",
+    "isOpen",
+    "mountEmailSettings",
+    "openEmailLibrary",
+    "openEmailLibrarySettings",
+    "prewarmEmailLibrary",
+    "prewarmUnreadEmails",
+    "refreshEmailLibrary",
+}
 
-    Not a subset and not a superset: a missing name breaks a caller silently,
-    and a name the entry module no longer exports is a load-time error.
-    """
+_STATIC_JS = ROOT / "static" / "js"
+_WRAPPER_IMPORT = re.compile(
+    r"import\s*\{([^}]*)\}\s*from\s*'\./emailLibrary\.js(?:\?[^']*)?'", re.S
+)
+
+
+def test_wrapper_declares_the_public_surface():
+    assert _listed_exports(EMAIL_LIBRARY_WRAPPER) == _PUBLIC_SURFACE
+
+
+def test_wrapper_re_exports_only_names_the_entry_module_has():
+    """A name in the wrapper that the entry module does not export is a
+    SyntaxError at load time, and it takes the whole email panel with it."""
     entry = _declared_exports(EMAIL_LIBRARY_ENTRY) | _listed_exports(EMAIL_LIBRARY_ENTRY)
     wrapper = _listed_exports(EMAIL_LIBRARY_WRAPPER)
     assert wrapper, f"{EMAIL_LIBRARY_WRAPPER} re-exports nothing"
-    assert wrapper == entry, (
-        "static/js/emailLibrary.js and static/js/emailLibrary/index.js disagree "
-        f"on the public surface; only in the wrapper: {sorted(wrapper - entry)}; "
-        f"only in the entry module: {sorted(entry - wrapper)}"
+    assert wrapper <= entry, (
+        "static/js/emailLibrary.js re-exports names static/js/emailLibrary/"
+        f"index.js does not export: {sorted(wrapper - entry)}"
     )
+
+
+def test_wrapper_exposes_every_statically_imported_name():
+    """Whatever a module outside the package imports by name must be there."""
+    wrapper = _listed_exports(EMAIL_LIBRARY_WRAPPER)
+    checked = 0
+    for path in sorted(_STATIC_JS.rglob("*.js")):
+        if path == EMAIL_LIBRARY_WRAPPER or EMAIL_LIBRARY_PACKAGE in path.parents:
+            continue
+        for block in _WRAPPER_IMPORT.findall(path.read_text(encoding="utf-8")):
+            for raw in block.split(","):
+                name = raw.strip().split(" as ")[0].strip()
+                if not name:
+                    continue
+                checked += 1
+                assert name in wrapper, (
+                    f"{path.relative_to(ROOT)} imports {name} from "
+                    "static/js/emailLibrary.js, which does not export it"
+                )
+    assert checked, "no module imports names from static/js/emailLibrary.js"
 
 
 def test_every_package_module_is_precached():
