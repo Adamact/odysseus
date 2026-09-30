@@ -3,7 +3,7 @@
 from pathlib import Path
 import re
 
-from tests.helpers.stylesheets import app_css
+from tests.helpers.stylesheets import app_css, stylesheet_cache_version
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -78,6 +78,5 @@ def test_research_panel_uses_one_versioned_module_instance():
 
     panel_version = re.search(r"research/panel\.js\?v=([^'\"]+)", app)
     asset_version = re.search(r"/static/app\.js\?v=([^'\"]+)", index)
-    style_version = re.search(r"/static/style\.css\?v=([^'\"]+)", index)
     assert panel_version and renderer.count(f"research/panel.js?v={panel_version.group(1)}") == 2
-    assert asset_version and style_version and asset_version.group(1) == style_version.group(1)
+    assert asset_version and asset_version.group(1) == stylesheet_cache_version()

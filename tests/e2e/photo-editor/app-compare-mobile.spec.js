@@ -1,10 +1,17 @@
 const { test, expect } = require('@playwright/test');
 
+async function addAppStyles(page) {
+  const { stylesheetUrls } = await import('../../helpers/stylesheets.mjs');
+  for (const url of await stylesheetUrls()) {
+    await page.addStyleTag({ url });
+  }
+}
+
 
 test('mobile compare uses tabs to show one mounted pane at a time', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/login');
-  await page.addStyleTag({ url: '/static/style.css?v=20260903comparemodeicons1-emailsettingscards1' });
+  await addAppStyles(page);
 
   await page.evaluate(async () => {
     const { default: state } = await import('/static/js/compare/state.js');
@@ -58,7 +65,7 @@ test('mobile compare uses tabs to show one mounted pane at a time', async ({ pag
 test('mobile compare probe keeps feedback below models and actions split', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/login');
-  await page.addStyleTag({ url: '/static/style.css?v=20260903comparemodeicons1-emailsettingscards1' });
+  await addAppStyles(page);
   await page.evaluate(() => {
     document.body.innerHTML = `
       <div class="compare-probe-overlay">

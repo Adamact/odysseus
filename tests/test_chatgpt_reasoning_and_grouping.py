@@ -100,7 +100,7 @@ def test_model_picker_source_invariants():
 
 
 def test_composer_reasoning_effort_ui_markup():
-    """Verify static/index.html and static/style.css include reasoning effort controls."""
+    """Verify static/index.html and the app stylesheet cascade include reasoning effort controls."""
     html = (ROOT / "static/index.html").read_text(encoding="utf-8")
     css = app_css()
     # HTML elements

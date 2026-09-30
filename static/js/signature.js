@@ -316,7 +316,7 @@ class SmoothPad {
 }
 
 function _modal(innerHtml) {
-  // Match the app's standard .modal pattern (defined in static/style.css).
+  // Match the app's standard .modal pattern from the main stylesheet cascade.
   const overlay = document.createElement('div');
   overlay.className = 'modal sig-modal-overlay';
   overlay.style.cssText = 'pointer-events:auto;background:rgba(0,0,0,0.45);z-index:10100;';

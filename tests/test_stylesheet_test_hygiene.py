@@ -1,9 +1,9 @@
 """Tests must reason about the whole cascade, not one file of it.
 
-``static/style.css`` is being decomposed. A test that reads that file alone,
-or builds a synthetic page linking only that file, silently loses every rule
-that has moved: it keeps passing while covering less. Both mistakes existed
-and are cheap to detect, so this fails on either.
+The former ``static/style.css`` has been decomposed into an ordered cascade.
+A test that names the deleted file as a runtime stylesheet silently loses the
+split cascade. Python, JavaScript, MJS and HTML test sources are all scanned
+recursively so nested browser tests cannot escape this guard.
 """
 
 import re
@@ -17,12 +17,20 @@ SELF = Path(__file__).name
 # set itself, so naming the file is the point rather than a mistake.
 ALLOWED = {SELF, "test_static_stylesheet_manifest.py", "test_css_computed_style_snapshot.py"}
 
-_DIRECT_READ = re.compile(r'["\']static/style\.css["\']|"static"\s*/\s*"style\.css"')
-_LONE_LINK = re.compile(r'<link[^>]*href="/static/style\.css')
+_DELETED_STYLE_LITERAL = re.compile(
+    r'''["'][^"'\n]*static/style\.css[^"'\n]*["']'''
+)
+_SUFFIXES = {".py", ".js", ".mjs", ".html"}
 
 
 def _test_sources():
-    return [p for p in sorted((ROOT / "tests").glob("*.py")) if p.name not in ALLOWED]
+    return [
+        p
+        for p in sorted((ROOT / "tests").rglob("*"))
+        if p.is_file()
+        and p.suffix in _SUFFIXES
+        and p.name not in ALLOWED
+    ]
 
 
 def test_sources_are_discoverable() -> None:
@@ -30,25 +38,14 @@ def test_sources_are_discoverable() -> None:
     assert len(_test_sources()) > 100
 
 
-def test_no_test_reads_style_css_as_the_whole_cascade() -> None:
+def test_no_test_names_deleted_style_css_as_a_runtime_asset() -> None:
     offenders = [
-        p.name for p in _test_sources()
-        if _DIRECT_READ.search(p.read_text(encoding="utf-8"))
+        str(p.relative_to(ROOT))
+        for p in _test_sources()
+        if _DELETED_STYLE_LITERAL.search(p.read_text(encoding="utf-8"))
     ]
 
     assert offenders == [], (
-        "read the cascade with tests.helpers.stylesheets.app_css() instead of "
-        f"static/style.css alone: {offenders}"
-    )
-
-
-def test_no_synthetic_page_links_style_css_alone() -> None:
-    offenders = [
-        p.name for p in _test_sources()
-        if _LONE_LINK.search(p.read_text(encoding="utf-8"))
-    ]
-
-    assert offenders == [], (
-        "build synthetic pages with tests.helpers.stylesheets.stylesheet_link_tags() "
-        f"so they get every stylesheet index.html loads: {offenders}"
+        "tests must load the app stylesheet cascade instead of the deleted "
+        f"static/style.css asset: {offenders}"
     )

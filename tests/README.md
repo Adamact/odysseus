@@ -142,7 +142,7 @@ swallowed.
 ## CSS computed-style snapshot
 
 `tests/test_css_computed_style_snapshot.py` pins the rendered result of
-`static/style.css` - one 51k-line file whose behavior depends on source order -
+the shipped ordered stylesheet cascade, whose behavior depends on source order,
 by hashing `getComputedStyle` over a fixed element inventory across pages,
 viewports, themes and density modes. Any PR that moves CSS has to produce an
 identical digest or explain why it did not.
@@ -180,14 +180,13 @@ Use when a test asserts on a CSS rule.
 
 - Returns every app stylesheet concatenated in the order `static/index.html`
   loads them, which is the order the cascade actually has.
-- Panel styles no longer all live in `static/style.css`; reading that file
-  alone ties the test to whichever file a rule sits in today, so it goes red
+- App styles live across an ordered cascade; reading one fragment alone ties
+  the test to whichever file a rule sits in today, so it goes red
   when a rule moves without the rendered page changing.
 - `stylesheet_paths()` and `stylesheet_urls()` are there when a test needs the
   files or the request URLs rather than their contents.
   `stylesheet_link_tags()` returns the `<link>` markup for a synthetic page
-  driven through Playwright, so it gets the whole cascade instead of only
-  `style.css`.
+  driven through Playwright, so it gets the whole shipped cascade.
 - All of them fail loudly if `index.html` links a stylesheet that is missing.
 - Not for vendored CSS under `static/lib/`, which they deliberately skip.
 
