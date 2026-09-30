@@ -74,11 +74,21 @@ def _run_turn(monkeypatch, messages, **kwargs):
 # failure this guards is a model that obeys the wording while the runtime
 # contradicted it by offering the tool anyway.
 #
-# Measured on lab@c499c01b: the detection is partial. "don't search online" is
-# caught; "Do not search the web" and "No web search please" are not, and the
-# web tools are offered for both. The two that do not hold yet are marked
-# xfail(strict=True), so they document the target, run on every suite, and fail
-# loudly the moment the behaviour lands. Delete the marker then.
+# SCOPE, and it matters: these cover the inferred path, where the turn has no
+# explicit web toggle and the runtime decides from intent. Measured on
+# lab@c499c01b, detection there is partial: "don't search online" suppresses
+# the intent and the web tools are withheld; "Do not search the web" and "No
+# web search please" do not, and the tools are offered.
+#
+# When the user explicitly enables web for the turn, wording does not withhold
+# anything: confirmed end to end against a local Qwen3.5-9B Q4_K_M, where all
+# three phrasings were offered web_search, web_fetch and private_browser. That
+# may well be correct, an explicit toggle beating an inferred negative, so it
+# is recorded here rather than asserted either way.
+#
+# The two inferred-path cases that do not hold are xfail(strict=True): they
+# document the target, run on every suite, and fail the moment the behaviour
+# lands. Delete the marker then.
 
 HELD = ["Answer from memory only, don't search online."]
 
