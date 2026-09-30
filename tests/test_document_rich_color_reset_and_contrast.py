@@ -5,10 +5,10 @@ import subprocess
 from pathlib import Path
 from tests.helpers.stylesheets import app_css
 from tests.helpers.stylesheets import stylesheet_link_tags
-
+from tests.helpers.document_source import document_source
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+DOC_JS = document_source()
 STYLE = app_css()
 
 
@@ -22,6 +22,12 @@ def test_color_controls_have_theme_reset_and_split_palettes():
 
 
 def test_rich_colors_follow_theme_and_undo_as_one_edit():
+    # Two input conventions in here are platform-sensitive and must stay that
+    # way. Palette entries are opened with a plain click: on macOS a
+    # Control+click is delivered as `contextmenu`, so the menu item's `click`
+    # handler never runs and nothing is applied. Undo uses Playwright's
+    # `ControlOrMeta` alias because the editor's undo accelerator is Cmd+Z on
+    # macOS and Ctrl+Z everywhere else.
     script = r"""
       import { chromium } from 'playwright';
       const browser = await chromium.launch({ headless: true });
@@ -60,24 +66,24 @@ def test_rich_colors_follow_theme_and_undo_as_one_edit():
         labels: [...document.querySelectorAll('.rich-color-palette-label')].map(item => item.textContent),
         reset: document.querySelector('.rich-color-reset')?.textContent.trim(),
       }));
-      await page.locator('#doc-md-dd-menu .doc-overflow-item').filter({ hasText: 'Lemon' }).click({ modifiers: ['Control'] });
+      await page.locator('#doc-md-dd-menu .doc-overflow-item').filter({ hasText: 'Lemon' }).click();
       const highlighted = await page.locator('#doc-email-richbody p').nth(0).locator('span').evaluate(span => ({
         color: getComputedStyle(span).color,
         background: getComputedStyle(span).backgroundColor,
       }));
-      await page.locator('#doc-email-richbody').press('Control+z');
+      await page.locator('#doc-email-richbody').press('ControlOrMeta+z');
       const highlightUndone = await page.locator('#doc-email-richbody p').nth(0).innerHTML();
 
       await selectParagraph(1);
       await openMenu('color');
-      await page.locator('.rich-color-reset').click({ modifiers: ['Control'] });
+      await page.locator('.rich-color-reset').click();
       const defaultColor = await page.locator('#doc-email-richbody p').nth(1).locator('span').evaluate(span => ({
         style: span.getAttribute('style'),
         color: getComputedStyle(span).color,
       }));
       await page.evaluate(() => document.documentElement.style.setProperty('--fg', '#88cc44'));
       const changedThemeColor = await page.locator('#doc-email-richbody p').nth(1).locator('span').evaluate(span => getComputedStyle(span).color);
-      await page.locator('#doc-email-richbody').press('Control+z');
+      await page.locator('#doc-email-richbody').press('ControlOrMeta+z');
       const colorUndone = await page.locator('#doc-email-richbody p').nth(1).innerHTML();
       console.log(JSON.stringify({ palette, highlighted, highlightUndone, defaultColor, changedThemeColor, colorUndone }));
       await browser.close();

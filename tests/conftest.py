@@ -159,3 +159,43 @@ def _serve_test_static():
             os.environ["ODYSSEUS_TEST_STATIC_ORIGIN"] = previous_origin
         server.shutdown()
         server.server_close()
+
+
+@pytest.fixture(autouse=True)
+def _no_leaked_module_stubs():
+    """Fail the test that leaves a bare ``src.*``/``core.*`` stub behind.
+
+    Several test modules install empty stand-in modules so an import-heavy
+    production module can be loaded under the mocks above. When one of those
+    writes is not undone, the stub stays in ``sys.modules`` for the rest of the
+    session and every later test that imports the real module silently gets an
+    empty one instead. The suite still passes as a whole, because the victims
+    usually run before the leak; it only breaks under a different collection
+    order, which is why this class of bug reaches CI green.
+
+    This fixture is declared in the root conftest, so it is set up before any
+    test-module fixture and torn down after all of them — a stub that a test's
+    own teardown removes is not reported. The leaked entries are dropped here
+    as well as reported, so the failure stays attributed to the test that
+    introduced it instead of cascading into the rest of the run.
+
+    Bare stubs present before the test starts are ignored: this guards against
+    new leaks, it does not police import state the session began with.
+    """
+    from tests.helpers.import_state import bare_module_stubs, clear_module
+
+    before = bare_module_stubs()
+    yield
+    leaked = sorted(bare_module_stubs() - before)
+    if not leaked:
+        return
+    for name in leaked:
+        clear_module(name)
+    pytest.fail(
+        "test left bare module stub(s) in sys.modules: "
+        + ", ".join(leaked)
+        + ". Register the stub through monkeypatch.setitem(sys.modules, ...) "
+        "or tests.helpers.import_state.preserve_import_state so it is undone "
+        "at teardown.",
+        pytrace=False,
+    )

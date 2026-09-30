@@ -232,14 +232,6 @@ async function main() {
             swapped += 1;
             await route.fulfill({ response, body, headers: { ...response.headers(), 'content-type': 'text/css; charset=utf-8' } });
           });
-          await tab.route('**/static/style.css*', async route => {
-            const response = await route.fetch();
-            const original = await response.text();
-            const body = swapRuleOccurrences(original, job.swapRule);
-            if (body === null) return route.fulfill({ response, body: original });
-            swapped += 1;
-            await route.fulfill({ response, body, headers: { ...response.headers(), 'content-type': 'text/css; charset=utf-8' } });
-          });
         }
 
         const documentPath = page.url.split('?')[0];

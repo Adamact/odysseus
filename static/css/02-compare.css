@@ -764,7 +764,7 @@
     }
     .compare-probe-start-anyway svg { color: currentColor; }
     .compare-probe-start-anyway span { font-weight: 700; }
-    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
     @keyframes pane-shake {
       0%, 100% { transform: translateX(0); }
       15% { transform: translateX(-3px) rotate(-0.5deg); }
