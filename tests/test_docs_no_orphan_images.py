@@ -19,6 +19,7 @@ PUBLIC_GUIDES = {
     "agent-migration.md",
     "attachments.md",
     "backup-restore.md",
+    "configuration-reference.md",
     "email-outlook.md",
     "pr-blocker-audit.md",
     "security-ci.md",
