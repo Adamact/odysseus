@@ -17,6 +17,18 @@ from src.runtime_paths import get_app_root
 
 logger = logging.getLogger(__name__)
 
+BROWSER_MCP_SERVER_ID = "builtin_browser"
+
+
+def browser_mcp_call_timeout() -> float:
+    """Upper bound for one Playwright MCP tool call, in seconds."""
+
+    try:
+        value = float(os.environ.get("ODYSSEUS_BROWSER_MCP_CALL_TIMEOUT_S", "90"))
+    except ValueError:
+        return 90.0
+    return value if value > 0 else 90.0
+
 def _format_mcp_connection_error(name: str, command: str = "", args: Optional[List[str]] = None, error: Exception = None) -> str:
     """Return a user-actionable MCP connection error message."""
     args = args or []
@@ -521,6 +533,24 @@ class McpManager:
             return {"error": f"MCP server not connected: {server_id}", "exit_code": 1}
 
         try:
+            if server_id == BROWSER_MCP_SERVER_ID:
+                # The shared Playwright browser must not hold a turn forever.
+                # The call is abandoned, not retried: page state is unknown.
+                limit = browser_mcp_call_timeout()
+                try:
+                    return await asyncio.wait_for(
+                        self._do_call(session, tool_name, arguments), timeout=limit
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning("Browser MCP call %s timed out after %ss", tool_name, limit)
+                    return {
+                        "error": (
+                            f"Browser call {tool_name} timed out after {limit:g}s and was "
+                            "not retried. The current page state is unknown; navigate "
+                            "again before relying on any observation."
+                        ),
+                        "exit_code": 1,
+                    }
             result = await self._do_call(session, tool_name, arguments)
         except Exception as e:
             # Auto-reconnect for builtin servers whose subprocess may have died

@@ -951,12 +951,19 @@ def test_private_browser_reuses_host_npx_cache_when_task_home_is_isolated(
     class _FakeProc:
         returncode = 0
 
+        def __init__(self, stdout):
+            self.stdout = stdout
+
         async def communicate(self, stdin=None):
-            return b"page text", b""
+            self.stdout.write(json.dumps([
+                {"success": True, "result": {"title": "T", "url": "https://example.com/"}},
+                {"success": True, "result": {"text": "page text"}},
+            ]).encode())
+            return None, None
 
     async def _fake_create_subprocess_exec(*command, **kwargs):
         calls["env"] = kwargs["env"]
-        return _FakeProc()
+        return _FakeProc(kwargs["stdout"])
 
     monkeypatch.setattr(
         asyncio, "create_subprocess_exec", _fake_create_subprocess_exec
@@ -1049,7 +1056,7 @@ def test_browser_executable_discovery_supports_chromium_snapshot_cache(
     assert web_tools._browser_executable_candidates() == [chrome]
 
 
-def test_private_browser_shutdown_is_namespace_scoped(monkeypatch) -> None:
+def test_private_browser_shutdown_is_namespace_scoped(monkeypatch, tmp_path) -> None:
     calls = {}
 
     class _FakeProc:
@@ -1058,9 +1065,18 @@ def test_private_browser_shutdown_is_namespace_scoped(monkeypatch) -> None:
 
     monkeypatch.setattr(web_tools.shutil, "which", lambda name: "/bin/agent-browser")
     monkeypatch.setenv("ODYSSEUS_BROWSER_NAMESPACE", "clawmm-test")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.delenv("AGENT_BROWSER_SOCKET_DIR", raising=False)
     web_tools._ACTIVE_BROWSER_SESSIONS.clear()
     session = web_tools._scoped_browser_session("clawmm-test", "session-1")
     web_tools._ACTIVE_BROWSER_SESSIONS.add(session)
+    (tmp_path / "agent-browser").mkdir()
+    (tmp_path / "agent-browser" / f"{session}.pid").write_text("7001")
+    proc = tmp_path / "proc"
+    (proc / "7001").mkdir(parents=True)
+    (proc / "7001" / "cmdline").write_bytes(b"agent-browser-linux-x64\0")
+    monkeypatch.setattr(platform_compat, "PROC_ROOT", proc)
+    monkeypatch.setattr(web_tools.os, "kill", lambda pid, sig: None)
 
     async def _fake_create_subprocess_exec(*command, **kwargs):
         calls["command"] = command
@@ -1073,6 +1089,27 @@ def test_private_browser_shutdown_is_namespace_scoped(monkeypatch) -> None:
     assert calls["command"] == (
         "/bin/agent-browser", "--session", session, "close"
     )
+    assert not web_tools._ACTIVE_BROWSER_SESSIONS
+
+
+def test_private_browser_shutdown_never_bootstraps_a_missing_daemon(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setattr(web_tools.shutil, "which", lambda name: "/bin/agent-browser")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setattr(platform_compat, "PROC_ROOT", tmp_path / "proc")
+    (tmp_path / "proc").mkdir()
+    web_tools._ACTIVE_BROWSER_SESSIONS.clear()
+    web_tools._ACTIVE_BROWSER_SESSIONS.add(
+        web_tools._scoped_browser_session("odysseus-ui", "never-started")
+    )
+
+    async def _no_spawn(*command, **kwargs):
+        pytest.fail(f"close would start a fresh daemon: {command}")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _no_spawn)
+    asyncio.run(shutdown_private_browser_sessions())
+
     assert not web_tools._ACTIVE_BROWSER_SESSIONS
 
 
