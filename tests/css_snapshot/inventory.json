@@ -660,6 +660,7 @@
     {
      "key": "custom-system-prompt",
      "selector": "#custom-system-prompt",
+     "lineRelativeProperties": ["max-height"],
      "unhide": true
     },
     {

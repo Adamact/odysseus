@@ -18,6 +18,14 @@ def node_available():
         pytest.skip("node binary not on PATH")
 
 
+def test_blockquoted_html_codefence_does_not_leak_placeholders(node_available):
+    result = subprocess.run(
+        ["node", "tests/markdown_codefence_placeholder_regression.mjs"],
+        cwd=_REPO, capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+
+
 def _run_markdown_case(markdown: str, render_expr: str = "mod.mdToHtml(input)", with_katex: bool = False):
     script = textwrap.dedent(
         r"""

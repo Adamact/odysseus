@@ -97,7 +97,8 @@ def playwright_available(node="node", cwd=ROOT):
 
 
 def capture(origin, inventory=None, *, swap_rule=None, variants=None,
-            node="node", cwd=ROOT, timeout=CAPTURE_TIMEOUT_SECONDS):
+            measurement_delay_ms=0, node="node", cwd=ROOT,
+            timeout=CAPTURE_TIMEOUT_SECONDS):
     """Drive the browser capture and return ``{"snapshot": ..., "missing": ...}``.
 
     ``swap_rule`` swaps the first two top-level declarations of one selector
@@ -107,6 +108,9 @@ def capture(origin, inventory=None, *, swap_rule=None, variants=None,
 
     ``variants`` restricts the run to the named variants, for a faster
     focused capture.
+
+    ``measurement_delay_ms`` perturbs the capture timing for the determinism
+    self-test; elapsed wall time must not change an idle-state snapshot.
     """
     inventory = inventory or load_inventory()
     selected = inventory["variants"]
@@ -122,6 +126,7 @@ def capture(origin, inventory=None, *, swap_rule=None, variants=None,
         "variants": selected,
         "pages": inventory["pages"],
         "swapRule": swap_rule,
+        "measurementDelayMs": measurement_delay_ms,
     }
     result = subprocess.run(
         [node, str(CAPTURE_SCRIPT)],

@@ -226,7 +226,7 @@ Listed for completeness. Setting one of these on a real install is either a no-o
 | `ODYSSEUS_SFT_TRACE_CAPTURE` | `'1'` | `routes/chat_helpers.py:161` (+1 more) | On by default, but only for owners whose name starts with `sft_`. Set 0, false, no or off to stop writing training traces. |
 | `ODYSSEUS_SFT_TRACE_DIR` | *unset* | `routes/chat_helpers.py:195` (+2 more) | Directory the SFT trace JSONL files are written to. Defaults to `sft_traces` under the data directory. |
 | `ODYSSEUS_SKIP_RUN_HINT` | *unset* | `setup.py:284` | Any non-empty value suppresses the `start the server with` hint at the end of setup. `start-macos.sh` sets it because it starts the server itself. |
-| `ODYSSEUS_TEST_STATIC_ORIGIN` | *unset* | `scripts/css_snapshot.py:249` (+6 more) | Origin an already-running static server is serving the repository from, so snapshot tooling reuses it instead of starting its own. |
+| `ODYSSEUS_TEST_STATIC_ORIGIN` | *unset* | `scripts/css_snapshot.py:254` (+6 more) | Origin an already-running static server is serving the repository from, so snapshot tooling reuses it instead of starting its own. |
 | `ODYSSEUS_TEST_STATIC_PORT` | *unset* | `tests/conftest.py:137` | Fixed port for the test suite's static server. Unset takes an ephemeral port, which is what keeps parallel runs from colliding. |
 
 ### Build and release metadata
