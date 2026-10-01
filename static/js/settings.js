@@ -9,24 +9,18 @@ import { initTtsSettings, initSttSettings } from './settings/speech.js';
 import { initDocumentWritingStyle } from './settings/writingStyle.js';
 import { initImageSettings } from './settings/imageModels.js';
 import { initAgentSettings } from './settings/agent.js';
-import {
-  getSettingsRegistryIssues,
-  isAdminManagedSettingsTab,
-} from './settings/registry.js';
+import { getSettingsRegistryIssues } from './settings/registry.js';
 import { bindSettingsSearch } from './settings/search.js';
 import { bindSettingsSidebar } from './settings/sidebar.js';
-import {
-  activateSettingsPanel,
-  getActiveSettingsTab,
-  bindSettingsNavigation,
-} from './settings/navigation.js';
+import { bindSettingsNavigation } from './settings/navigation.js';
 import {
   bindSettingsDrag,
   bindSettingsClose,
   bindOpenPromptModalLink,
-  showSettingsModal,
-  hideSettingsModal,
 } from './settings/lifecycle.js';
+import { bindSettingsPeekToggle } from './settings/peek.js';
+import { createSettingsShell } from './settings/shell.js';
+import { handleSettingsOauthReturn } from './settings/oauthReturn.js';
 import { sortModelIds } from './modelSort.js';
 import { providerLogo } from './providers.js';
 import { isAltGrEvent } from './platform.js';
@@ -58,79 +52,18 @@ function safeRasterDataUrl(raw) {
   return /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(value) ? value : '';
 }
 
-/* ── Settings shell coordination ── */
-function onSettingsPanelActivated(tab) {
-  // Appearance keeps its existing transparent preview behavior.
-  document.body.classList.toggle('settings-appearance-open', tab === 'appearance');
-  syncAppearanceOpacity(tab === 'appearance');
-
-  // AI endpoints are intentionally refreshed only when entering the AI panel.
-  if (tab === 'ai') refreshAiModelEndpoints();
-}
-
-function openAdminSettingsTab(tab) {
-  if (window.adminModule && typeof window.adminModule.open === 'function') {
-    window.adminModule.open(tab);
-    return true;
-  }
-  return false;
-}
-
-/* ── Appearance-tab opacity slider ──
-   Mirrors the Theme customizer's slider: fades the settings modal's
-   background (and inner cards) via color-mix so the user can watch the
-   rest of the UI react to toggles, while keeping text/controls crisp
-   (no element opacity). Only shown/active on the Appearance tab. */
-const _SETTINGS_PEEK = 55; // % opacity when the Peek toggle is on
-function _applySettingsOpacity(on) {
-  const content = modalEl && modalEl.querySelector('.settings-modal-content, .modal-content');
-  if (!content) return;
-  const cards = content.querySelectorAll('.admin-card');
-  if (on) {
-    const bgMix = `color-mix(in srgb, var(--bg) ${_SETTINGS_PEEK}%, transparent)`;
-    const panelMix = `color-mix(in srgb, var(--panel) ${_SETTINGS_PEEK}%, transparent)`;
-    content.style.setProperty('background', bgMix, 'important');
-    content.style.setProperty('backdrop-filter', 'none', 'important');
-    content.style.setProperty('-webkit-backdrop-filter', 'none', 'important');
-    cards.forEach(c => {
-      c.style.setProperty('background', panelMix, 'important');
-      c.style.setProperty('backdrop-filter', 'none', 'important');
-      c.style.setProperty('-webkit-backdrop-filter', 'none', 'important');
-    });
-  } else {
-    content.style.removeProperty('background');
-    content.style.removeProperty('backdrop-filter');
-    content.style.removeProperty('-webkit-backdrop-filter');
-    cards.forEach(c => {
-      c.style.removeProperty('background');
-      c.style.removeProperty('backdrop-filter');
-      c.style.removeProperty('-webkit-backdrop-filter');
-    });
-  }
-}
-
-// Show/hide the Peek toggle for the Appearance tab and apply or clear the fade.
-function syncAppearanceOpacity(active) {
-  const toggle = el('settings-opacity-wrap');
-  if (toggle) toggle.classList.toggle('hidden', !active);
-  if (active) {
-    _applySettingsOpacity(toggle ? toggle.classList.contains('active') : false);
-  } else {
-    _applySettingsOpacity(false); // clear the fade off the Appearance tab
-  }
-}
-
-function initOpacityToggle() {
-  const toggle = el('settings-opacity-wrap');
-  if (!toggle || toggle.dataset.bound === '1') return;
-  toggle.dataset.bound = '1';
-  toggle.addEventListener('click', () => {
-    const on = !toggle.classList.contains('active');
-    toggle.classList.toggle('active', on);
-    toggle.setAttribute('aria-pressed', on ? 'true' : 'false');
-    _applySettingsOpacity(on);
-  });
-}
+/* ── Settings shell coordination ──
+   Panel activation side effects, the admin handoff, admin-only visibility and
+   the public open/close API live in ./settings/shell.js. This coordinator only
+   supplies the panel-owned pieces the shell needs. */
+const _shell = createSettingsShell({
+  getModal: () => modalEl,
+  ensureInitialized: () => { if (!initialized) initAll(); },
+  syncAppearanceCheckboxes: () => syncAppearanceCheckboxes(),
+  refreshAiModelEndpoints: () => refreshAiModelEndpoints(),
+  isAdmin: () => !!window._isAdmin,
+  getAdminModule: () => window.adminModule,
+});
 
 /* ═══════════════════════════════════════════
    AI TAB
@@ -1796,8 +1729,8 @@ function initAll() {
   modalEl = el('settings-modal');
 
   bindSettingsNavigation(modalEl, {
-    openAdminTab: openAdminSettingsTab,
-    onPanelActivated: onSettingsPanelActivated,
+    openAdminTab: _shell.openAdminTab,
+    onPanelActivated: _shell.onPanelActivated,
   });
 
   bindSettingsSearch(modalEl, {
@@ -1827,7 +1760,7 @@ function initAll() {
     closeSettings: close,
   });
 
-  initOpacityToggle();
+  bindSettingsPeekToggle(modalEl);
   initialized = true;
   initDefaultChat();
   initTeacherModel();
@@ -5236,85 +5169,14 @@ async function initUnifiedIntegrations() {
   await renderList();
 }
 
-/* ── Admin visibility sync ── */
-function syncAdminVisibility() {
-  if (!modalEl) return;
-  const isAdmin = !!window._isAdmin;
-  modalEl.querySelectorAll('.admin-only').forEach(el => {
-    el.style.display = isAdmin ? '' : 'none';
-  });
-}
-
 /* ═══════════════════════════════════════════
    PUBLIC API
    ═══════════════════════════════════════════ */
-export function open(tab) {
-  if (!initialized) initAll();
+export function open(tab) { _shell.open(tab); }
+export function close() { _shell.close(); }
+function syncAdminVisibility() { _shell.syncAdminVisibility(); }
 
-  syncAppearanceCheckboxes();
-  showSettingsModal(modalEl);
-  syncAdminVisibility();
-
-  if (tab) {
-    activateSettingsPanel(modalEl, tab);
-  }
-
-  // Preserve existing panel-specific side effects when Settings is opened
-  // directly to a tab as well as when the user navigates there.
-  const activeTab = tab || getActiveSettingsTab(modalEl);
-  onSettingsPanelActivated(activeTab);
-
-  // Auto-init admin data if showing an admin tab.
-  if (isAdminManagedSettingsTab(activeTab) && window.adminModule && !window.adminModule._initialized) {
-    window.adminModule._initData();
-  }
-}
-
-export function close() {
-  if (!modalEl) return;
-
-  // Always clear the Appearance state so the rest of the app does not remain
-  // dimmed if Settings is closed while that panel is active.
-  document.body.classList.remove('settings-appearance-open');
-  syncAppearanceOpacity(false);
-
-  hideSettingsModal(modalEl);
-}
-
-// Handle redirect back from Google OAuth2 — open settings to integrations and show status.
-(function _handleOauthRedirect() {
-  const sp = new URLSearchParams(window.location.search);
-  if (!sp.has('email_oauth_success') && !sp.has('email_oauth_error')) return;
-  // Strip params from URL without a page reload.
-  const clean = window.location.pathname + window.location.hash;
-  window.history.replaceState(null, '', clean);
-  const success = sp.has('email_oauth_success');
-  const errMsg = sp.get('email_oauth_error') || '';
-  // Open settings → integrations once the document is ready. This module owns
-  // the open() API, so it does not need to wait for a window-level alias.
-  function _showResult() {
-    open('integrations');
-    // Brief toast-style banner.
-    const banner = document.createElement('div');
-    banner.textContent = success
-      ? 'Google account connected — email is ready'
-      : `Google OAuth failed: ${errMsg || 'unknown error'}`;
-    Object.assign(banner.style, {
-      position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
-      background: success ? 'var(--accent, #50fa7b)' : 'var(--red, #ff5555)',
-      color: '#000', padding: '8px 18px', borderRadius: '6px', fontSize: '12px',
-      fontWeight: '600', zIndex: '99999', pointerEvents: 'none',
-      boxShadow: '0 2px 12px rgba(0,0,0,0.3)',
-    });
-    document.body.appendChild(banner);
-    setTimeout(() => banner.remove(), 4000);
-  }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', _showResult, { once: true });
-  } else {
-    _showResult();
-  }
-})();
+handleSettingsOauthReturn({ openSettings: open });
 
 const settingsModule = { open, close, initIntegrations, initUnifiedIntegrations, syncAdminVisibility, refreshAiModelEndpoints };
 
