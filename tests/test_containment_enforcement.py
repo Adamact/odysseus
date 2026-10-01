@@ -79,7 +79,11 @@ async def test_fully_overclaimed_group_grant_cannot_spawn(workspace, monkeypatch
         await containment.run(forged, "echo forbidden")
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX namespace recipe")
 def test_home_interpreter_is_bound_read_only(workspace, monkeypatch):
+    original = containment.shutil.which
+    monkeypatch.setattr(containment.shutil, "which", lambda name:
+                        "/usr/bin/bwrap" if name == "bwrap" else original(name))
     monkeypatch.setattr(sys, "prefix", "/home/test/venv")
     spec = subprocess_tools._owned_spec(str(workspace), {}, 5)
     assert "/home/test/venv" in spec.readonly_extra
@@ -111,6 +115,76 @@ async def test_actual_namespace_hides_host_pid_tree_and_sibling(namespaces):
     assert result["teardown"]["dead"] is True
 
 
+@pytest.mark.skipif(not hasattr(os, "pidfd_open"), reason="Linux kernel handles")
+async def test_dead_owner_cannot_hide_live_namespace_init(workspace, monkeypatch):
+    from types import SimpleNamespace
+    child = await asyncio.create_subprocess_exec(sys.executable, "-c", "import time; time.sleep(60)",
+                                                 start_new_session=True)
+    spec = containment.ContainmentSpec(str(workspace), dict(os.environ), 5, required={containment.WALL_CLOCK})
+    grant = containment.acquire(spec, owner="init-life")
+    token = containment.process_ownership.start_token(child.pid)
+    live = replace(grant, mechanism="bubblewrap", pid=99999999, pgid=99999999)
+    async def wait():
+        return 0
+    owner = SimpleNamespace(returncode=0, wait=wait, _ody_namespace_pid=child.pid,
+                            _ody_namespace_token=token, _ody_namespace_pidfd=os.pidfd_open(child.pid))
+    def denied(*args):
+        raise PermissionError("EPERM")
+    monkeypatch.setattr(containment.signal, "pidfd_send_signal", denied)
+    try:
+        result = await containment._release_awaited(live, owner, grace_s=0)
+        assert result.dead is False
+        assert child.pid in result.survivors
+        assert child.returncode is None
+        record = containment.active_grants()[0]
+        assert record["release"]["dead"] is False
+        assert record["released_at"] is None
+    finally:
+        child.kill()
+        await child.wait()
+        containment.release(live, grace_s=0)
+
+
+@pytest.mark.skipif(not hasattr(os, "pidfd_open"), reason="Linux kernel handles")
+@pytest.mark.parametrize("foreign", [False, True])
+async def test_recovered_namespace_init_identity_survives_owner_exit(workspace, foreign):
+    child = await asyncio.create_subprocess_exec(sys.executable, "-c", "import time; time.sleep(60)",
+                                                 start_new_session=True)
+    spec = containment.ContainmentSpec(str(workspace), dict(os.environ), 5, required={containment.WALL_CLOCK})
+    grant = containment.acquire(spec, owner="recovered-init")
+    token = "different-boot" if foreign else containment.process_ownership.start_token(child.pid)
+    containment._update_record(grant.id, pid=99999999, pgid=99999999, start_token="old-owner",
+                               namespace_pid=child.pid, namespace_start_token=token, execution_started=True)
+    try:
+        result = containment.reap_record(containment.active_grants()[0], grace_s=0)
+        assert result.dead is True
+        if foreign:
+            assert child.returncode is None  # Never signal a reused namespace PID.
+        else:
+            await asyncio.wait_for(child.wait(), 3)
+            assert child.returncode is not None
+        assert containment.active_grants() == []
+    finally:
+        if child.returncode is None:
+            child.kill()
+        await child.wait()
+
+
+async def test_repeated_release_does_not_signal_reused_pid(workspace, monkeypatch):
+    spec = containment.ContainmentSpec(str(workspace), dict(os.environ), 5, required={containment.WALL_CLOCK})
+    grant = containment.acquire(spec, owner="completed")
+    assert containment.release(grant).dead
+    def forbidden(*args):
+        pytest.fail("completed grant signalled a reused slot")
+    monkeypatch.setattr(containment, "_signal_tree", forbidden)
+    assert containment.release(replace(grant, pid=12345678, pgid=12345678)).dead
+    async def forbidden_spawn(*args, **kwargs):
+        pytest.fail("released grant spawned another process")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", forbidden_spawn)
+    with pytest.raises(ValueError, match="released grant"):
+        await containment.run(grant, "echo forbidden")
+
+
 async def test_default_namespace_preserves_loopback_sidecars(namespaces):
     async def reply(reader, writer):
         writer.write(b"sidecar\n")
@@ -135,6 +209,35 @@ async def test_namespace_handshake_closes_model_stdin(namespaces):
     )
     assert result["output"] == "closed", result
     assert result["teardown"]["dead"] is True
+
+
+@pytest.mark.parametrize("legacy_name", [True, False])
+async def test_execution_environment_cannot_replace_probed_bwrap(namespaces, monkeypatch, legacy_name):
+    bin_dir = namespaces / "bin"
+    bin_dir.mkdir()
+    outside = namespaces.parent / "uncontained-effect"
+    impostor = bin_dir / "bwrap"
+    import shlex
+    impostor.write_text("#!/bin/sh\nprintf escaped > " + shlex.quote(str(outside)) + "\n")
+    impostor.chmod(0o700)
+    if legacy_name:
+        original = containment._bwrap_prefix
+        def bare_name(spec):
+            argv = original(spec)
+            argv[0] = "bwrap"
+            return argv
+        monkeypatch.setattr(containment, "_bwrap_prefix", bare_name)
+    result = await subprocess_tools.BashTool().execute("printf contained", {
+        "subproc_env": {**os.environ, "PATH": str(bin_dir) + os.pathsep + os.environ.get("PATH", "")},
+    })
+    if legacy_name:
+        # Reproduce the old mismatch: availability probed the host binary,
+        # while launch resolved a different binary through the child's PATH.
+        assert "containment unavailable" in result["error"]
+        assert outside.read_text() == "escaped"
+    else:
+        assert result["output"] == "contained", result
+        assert not outside.exists()
 
 
 async def test_partial_initialization_reaps_before_model_code_starts(namespaces, monkeypatch):
