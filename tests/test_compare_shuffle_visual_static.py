@@ -1,6 +1,6 @@
 from pathlib import Path
 import re
-from tests.helpers.stylesheets import app_css
+from tests.helpers.stylesheets import app_css, stylesheet_cache_version
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -65,9 +65,8 @@ def test_compare_cache_key_bumped_for_shuffle_notice():
     index = _read("static/js/compare/index.js")
 
     app_versions = re.findall(r"/static/app\.js\?v=([A-Za-z0-9_-]+)", html)
-    style_version = re.search(r"/static/style\.css\?v=([A-Za-z0-9_-]+)", html)
     assert app_versions and len(set(app_versions)) == 1
-    assert style_version and style_version.group(1) == app_versions[0]
+    assert stylesheet_cache_version() == app_versions[0]
     assert re.search(r"compare/index\.js\?v=[A-Za-z0-9_-]+", app)
     assert re.search(r"vote\.js\?v=[A-Za-z0-9_-]+", index)
     assert re.search(r"panes\.js\?v=[A-Za-z0-9_-]+", index)
