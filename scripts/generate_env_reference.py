@@ -557,6 +557,11 @@ VARIABLE_NOTES: dict[str, tuple[str, str, str]] = {
         "Cache directory handed to the browser MCP server, so its npm download "
         "survives a container rebuild.",
     ),
+    "ODYSSEUS_BROWSER_MCP_CALL_TIMEOUT_S": (
+        "Browser automation", USER,
+        "Upper bound in seconds for one browser MCP tool call. A call that exceeds "
+        "it fails without being retried.",
+    ),
     "ODYSSEUS_BROWSER_MCP_REQUIRE_CACHE": (
         "Browser automation", USER,
         "Truthy refuses to start the browser MCP server unless its npm package is "
