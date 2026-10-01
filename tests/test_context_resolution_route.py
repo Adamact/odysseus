@@ -510,3 +510,25 @@ def test_compact_selection_rule_and_contract_stamp():
     assert is_compact_preview_contract(SimpleNamespace(selection_mode=MODE))
     assert not is_compact_preview_contract(SimpleNamespace(selection_mode="routed"))
     assert not is_compact_preview_contract(None)
+
+
+def test_synthetic_request_without_app_scope_does_not_gain_agent_privilege():
+    """A synthetic Request without scope['app'] must not crash or gain privileges."""
+    from starlette.requests import Request
+    from routes.chat_routes import _request_privileges
+    from src.agent_runtime.runtime_selection import uses_compact_preview_runtime
+
+    req = Request({"type": "http", "method": "POST", "path": "/api/chat_stream", "headers": []})
+    privs = _request_privileges(req, "alice")
+    assert privs == {}
+    assert privs.get("can_use_agent") is None
+
+    # Plain chat without app/auth state must not qualify for compact agent preview
+    selected = uses_compact_preview_runtime(
+        clean_route_requested=True,
+        turn_contract_enabled=True,
+        agent_mode=False,
+        agent_permitted=privs.get("can_use_agent", True),
+        image_generation=False,
+    )
+    assert not selected

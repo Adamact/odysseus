@@ -148,7 +148,12 @@ def _turn_contract_enabled(*, exact_tool_approval, runtime_surface,
 
 def _request_privileges(request, user) -> Dict[str, Any]:
     """Per-user privileges from the app's auth manager; empty when unmanaged."""
-    auth_manager = getattr(request.app.state, "auth_manager", None)
+    try:
+        app = getattr(request, "app", None)
+    except (AttributeError, KeyError):
+        app = None
+    state = getattr(app, "state", None) if app is not None else None
+    auth_manager = getattr(state, "auth_manager", None) if state is not None else None
     if not user or not auth_manager:
         return {}
     return auth_manager.get_privileges(user) or {}
