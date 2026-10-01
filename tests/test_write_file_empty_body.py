@@ -17,6 +17,8 @@ import pytest
 from src import tool_execution as te
 from src.agent_tools import ToolBlock
 from src.agent_tools.filesystem_tools import EditFileTool, WriteFileTool
+from src.tool_schemas import function_call_to_tool_block
+from src.tool_parsing import parse_tool_blocks
 
 RECIPE = "# Classic banana cake\n\nMash 3 bananas. Bake 180C for 1 hour.\n"
 
@@ -128,6 +130,22 @@ async def test_refusal_names_the_byte_count_and_the_explicit_form(target):
 
 
 @pytest.mark.asyncio
+async def test_refusal_suggestion_is_valid_json_for_paths_with_quotes(target):
+    quoted_path = os.path.join(os.path.dirname(target), 'recipe"draft.md')
+    _seed(quoted_path)
+    refused = await WriteFileTool().execute(_text_call(quoted_path, ""), {})
+    match = re.search(
+        r"explicit empty content: (\{.*\})$", refused["error"], re.S
+    )
+    assert match, refused
+    suggested_args = json.loads(match.group(1))
+    assert suggested_args == {"path": quoted_path, "content": ""}
+    cleared = await WriteFileTool().execute(match.group(1), {})
+    assert cleared["exit_code"] == 0, cleared
+    assert os.path.getsize(quoted_path) == 0
+
+
+@pytest.mark.asyncio
 async def test_the_resend_the_refusal_prints_actually_clears_the_file(target):
     """The guidance is only useful if a caller can paste it back verbatim. This reads
     the JSON object out of the refusal and runs it as the next call."""
@@ -159,12 +177,75 @@ async def test_empty_body_on_a_new_path_still_creates_an_empty_file(target):
 
 
 @pytest.mark.asyncio
+async def test_whitespace_only_body_on_a_new_path_preserves_the_requested_content(
+    target,
+):
+    whitespace = "   \n\t"
+    res = await WriteFileTool().execute(_text_call(target, whitespace), {})
+    assert res["exit_code"] == 0, res
+    assert _read(target) == whitespace
+
+
+@pytest.mark.asyncio
+async def test_explicit_whitespace_only_json_content_preserves_the_requested_content(
+    target,
+):
+    _seed(target)
+    whitespace = " \t "
+    res = await WriteFileTool().execute(_json_call(target, content=whitespace), {})
+    assert res["exit_code"] == 0, res
+    assert _read(target) == whitespace
+
+
+@pytest.mark.asyncio
 async def test_empty_body_over_an_already_empty_file_succeeds(target):
     """Nothing is at risk, so the guard has nothing to refuse."""
     _seed(target, "")
     res = await WriteFileTool().execute(_text_call(target, ""), {})
     assert res["exit_code"] == 0, res
     assert os.path.getsize(target) == 0
+
+
+@pytest.mark.asyncio
+async def test_empty_body_does_not_truncate_data_written_after_the_size_check(
+    target, monkeypatch
+):
+    """A write racing the size check must survive the empty-body path."""
+    _seed(target, "")
+    real_getsize = os.path.getsize
+
+    def write_after_size_check(path):
+        size = real_getsize(path)
+        if path == target and size == 0:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("concurrent update")
+        return size
+
+    monkeypatch.setattr(os.path, "getsize", write_after_size_check)
+    res = await WriteFileTool().execute(_text_call(target, ""), {})
+    assert res["exit_code"] == 0, res
+    assert _read(target) == "concurrent update"
+
+
+@pytest.mark.asyncio
+async def test_empty_body_does_not_truncate_a_file_created_after_the_absence_check(
+    target, monkeypatch
+):
+    """Exclusive creation must not overwrite a file that appeared during the check."""
+    real_isfile = os.path.isfile
+
+    def create_after_absence_check(path):
+        exists = real_isfile(path)
+        if path == target and not exists:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("concurrent update")
+            return False
+        return exists
+
+    monkeypatch.setattr(os.path, "isfile", create_after_absence_check)
+    res = await WriteFileTool().execute(_text_call(target, ""), {})
+    assert res["exit_code"] == 1, res
+    assert _read(target) == "concurrent update"
 
 
 @pytest.mark.asyncio
@@ -185,6 +266,38 @@ async def test_edit_file_remains_an_explicit_way_to_clear_a_file(target):
     res = await EditFileTool().execute(
         json.dumps({"path": target, "old_string": RECIPE, "new_string": ""}), {}
     )
+    assert res["exit_code"] == 0, res
+    assert os.path.getsize(target) == 0
+
+
+@pytest.mark.asyncio
+async def test_native_function_call_can_explicitly_clear_a_file(target):
+    """The native schema conversion must preserve the explicit empty-content intent."""
+    _seed(target)
+    block = function_call_to_tool_block(
+        "write_file", json.dumps({"path": target, "content": ""})
+    )
+    assert block is not None
+    res = await WriteFileTool().execute(block.content, {})
+    assert res["exit_code"] == 0, res
+    assert os.path.getsize(target) == 0
+
+
+@pytest.mark.asyncio
+async def test_raw_openai_function_call_can_explicitly_clear_a_file(target):
+    """The raw OpenAI JSON parser must retain explicit empty-content intent too."""
+    _seed(target)
+    arguments = json.dumps({"path": target, "content": ""})
+    raw_call = json.dumps(
+        {
+            "type": "function",
+            "function": {"name": "write_file", "arguments": arguments},
+        }
+    )
+    blocks = parse_tool_blocks(raw_call)
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "write_file"
+    res = await WriteFileTool().execute(blocks[0].content, {})
     assert res["exit_code"] == 0, res
     assert os.path.getsize(target) == 0
 

@@ -345,30 +345,45 @@ class WriteFileTool:
                         old = f.read()
                 except (FileNotFoundError, IsADirectoryError, UnicodeDecodeError, OSError):
                     old = ""
-                if not body.strip() and not declared_clear:
-                    # Why size on disk rather than `old`: the read above answers ""
-                    # for a file it cannot decode, so a non-UTF-8 target holding real
-                    # bytes looks empty through `old` and would still be truncated.
-                    # Why in this position: open(path, "w") truncates on entry, so a
-                    # check after the write has nothing left to protect.
-                    existing_bytes = os.path.getsize(path) if os.path.isfile(path) else 0
-                    if existing_bytes > 0:
-                        raise _EmptyBodyWouldTruncate(path, existing_bytes)
                 d = os.path.dirname(path)
                 if d:
                     os.makedirs(d, exist_ok=True)
+                if not body.strip() and not declared_clear:
+                    # Empty/whitespace-only writes to an already-empty file are no-ops.
+                    # Avoid reopening in truncating mode: another writer may have added
+                    # data since the read above.
+                    if os.path.isfile(path):
+                        existing_bytes = os.path.getsize(path)
+                        if existing_bytes > 0:
+                            raise _EmptyBodyWouldTruncate(path, existing_bytes)
+                        return old, 0
+
+                    # Create a missing target exclusively. If another writer wins
+                    # the race, inspect what appeared rather than truncating it.
+                    try:
+                        with open(path, "x", encoding="utf-8") as f:
+                            f.write(body)
+                    except FileExistsError:
+                        if os.path.isfile(path):
+                            existing_bytes = os.path.getsize(path)
+                            if existing_bytes > 0:
+                                raise _EmptyBodyWouldTruncate(path, existing_bytes)
+                            return old, 0
+                        raise
+                    return old, len(body)
+
                 with open(path, "w", encoding="utf-8") as f:
                     f.write(body)
                 return old, len(body)
             old_content, size = await asyncio.to_thread(_write)
         except _EmptyBodyWouldTruncate as e:
+            clear_call = json.dumps({"path": raw_path, "content": ""})
             return {
                 "error": (
                     f"write_file: refused to write an empty body over {e.path} — it holds "
                     f"{e.existing_bytes} bytes, which the write would have destroyed, so "
                     f"the file is unchanged. To clear it on purpose, resend with an "
-                    f"explicit empty content: "
-                    f'{{"path": "{raw_path}", "content": ""}}'
+                    f"explicit empty content: {clear_call}"
                 ),
                 "exit_code": 1,
             }
