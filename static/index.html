@@ -1549,6 +1549,15 @@
             <span>System</span>
           </button>
           </div>
+
+          <!-- Build provenance, pinned below the scrolling nav so it stays at
+               the bottom-left of the panel: the version this build registers
+               and the commit the running process actually loaded. Populated
+               from /api/version; stays hidden until that answers. -->
+          <div class="settings-sidebar-build admin-only" id="settings-sidebar-build" hidden>
+            <span class="settings-sidebar-build-version" id="settings-sidebar-build-version"></span>
+            <span class="settings-sidebar-build-commit" id="settings-sidebar-build-commit"></span>
+          </div>
         </div>
         <div class="settings-panels">
 
