@@ -1,7 +1,7 @@
 // Model Picker — chatbox model selector dropdown
 // Extracted from sessions.js
 
-import { providerLogo } from './providers.js';
+import { providerLogo, providerLabel } from './providers.js';
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import settingsModule from './settings.js?v=20260912writingstyle3';
 import { sortModelObjects } from './modelSort.js';
@@ -252,8 +252,7 @@ function _initModelPickerDropdown() {
 
   // Local endpoint health — only probed for LOCAL endpoints, since
   // cloud APIs are essentially always up. Cached briefly on the
-  // server side too (8s TTL). Picker opens do not probe; the refresh button
-  // is the explicit network/probe action.
+  // server side too (8s TTL).
   let _localProbe = {};            // {endpoint_id: {alive, latency_ms, error}}
   let _localProbeFetchedAt = 0;
   const _LOCAL_PROBE_TTL_MS = 5000;
@@ -354,12 +353,12 @@ function _initModelPickerDropdown() {
   }
 
   async function _refreshPickerModels({ force = false, showLoading = false } = {}) {
-    if (!window.modelsModule || typeof window.modelsModule.refreshModels !== 'function') return;
+    if (!window.modelsModule || typeof window.modelsModule.refreshModels !== 'function') return false;
     const seq = ++_pickerLoadSeq;
     _pickerLoading = true;
     if (showLoading) _renderLoading(force ? 'Refreshing models…' : 'Loading models…');
     try {
-      await window.modelsModule.refreshModels(force);
+      await window.modelsModule.refreshModels(force, { waitForRefresh: force });
       await _refreshLocalProbe();
     } finally {
       if (seq === _pickerLoadSeq) {
@@ -367,6 +366,7 @@ function _initModelPickerDropdown() {
         listEl.classList.remove('is-loading');
       }
     }
+    return seq === _pickerLoadSeq;
   }
 
   // ── Provider display names and grouping ──
@@ -810,13 +810,8 @@ async function _pick(m) {
         _renderLoading('Loading models…');
       }
       if (window.modelsModule && window.modelsModule.refreshModels) {
-        // Force the cheap /api/models cache refresh when the picker opens.
-        // This does not wait on provider probes; the backend returns cached
-        // inventory and starts refresh work separately. Without this, models
-        // enabled in Added Models can be absent from the chatbox picker until
-        // the tab's frontend cache ages out.
-        _refreshPickerModels({ force: hasCache, showLoading: !hasCache }).then(() => {
-          if (!menu.classList.contains('hidden')) _populate(search.value || '');
+        _refreshPickerModels({ force: true, showLoading: !hasCache }).then(isLatest => {
+          if (isLatest && !menu.classList.contains('hidden')) _populate(search.value || '');
           updateModelPicker();
         }).catch(() => {});
       }
@@ -974,13 +969,20 @@ export function updateModelPicker() {
   const normalizeRouteUrl = url => String(url || '').replace(/\/chat\/completions\/?$/, '').replace(/\/$/, '');
   const selectedEndpoint = candidates.find(item => selectedId ? item.endpoint_id === selectedId
     : normalizeRouteUrl(item.url) === normalizeRouteUrl(selectedUrl));
-  const routeName = s?.endpoint_name || selectedEndpoint?.endpoint_name;
-  if (routeName) {
-    displayName = `${displayName} · ${routeName}`;
-  }
-  // The header indicator clips long names with ellipsis; show the full model
-  // identifier on hover (#1982). No tooltip on the "Select model" placeholder.
-  label.title = modelId ? displayName : '';
+  const routeName = s?.endpoint_name || selectedEndpoint?.endpoint_name || '';
+  const endpointUrl = selectedUrl || selectedEndpoint?.url || '';
+  const detectedProvider = selectedEndpoint?.category === 'local'
+    ? 'Local' : providerLabel(endpointUrl || routeName);
+  let addressLabel = !routeName;
+  try {
+    const endpoint = new URL(endpointUrl);
+    addressLabel = addressLabel || [endpoint.host, endpoint.hostname, endpointUrl].includes(routeName);
+  } catch (_) {}
+  const provider = addressLabel ? detectedProvider : routeName;
+  if (modelId && provider) displayName = `${provider} · ${displayName}`;
+  // Keep route details and the full model ID available without putting raw
+  // local addresses in the compact picker label.
+  label.title = modelId ? [...new Set([modelId, routeName, endpointUrl].filter(Boolean))].join(' · ') : '';
   const logo = modelId ? providerLogo(modelId) : null;
   if (logo) {
     label.innerHTML = '<span class="model-picker-logo">' + logo + '</span> ';

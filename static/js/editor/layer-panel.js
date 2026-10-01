@@ -99,7 +99,7 @@ export function createLayerPanelRenderer(deps) {
   const {
     composite, saveState, showLayerThumb, hideLayerThumb,
     loadLayerAlphaAsSelection, loadMaskAsSelection, getDocumentSelection,
-    openFxPopup, editAdjLayer, editRetainedEffect, addEffectMask, rasterizeEffects,
+    openFxPopup, openLayerStyles, editAdjLayer, editRetainedEffect, addEffectMask, rasterizeEffects,
     createLayer, renderLayer, replacePlacedLayer, rasterizePlacedLayer,
     lassoToMask, wandToMask, getActiveMaskLayer,
     syncFxPanelToActiveLayerIfPresent, onSelectLayer,
@@ -227,15 +227,39 @@ export function createLayerPanelRenderer(deps) {
     const summary = document.createElement('summary');
     summary.title = `${label} properties`;
     summary.setAttribute('aria-label', summary.title);
-    summary.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"></path><circle cx="9" cy="6" r="2"></circle><circle cx="15" cy="12" r="2"></circle><circle cx="11" cy="18" r="2"></circle></svg>';
+    summary.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h4m4 0h10M3 16h10m4 0h4M7 5v6m10 2v6"/></svg>';
     const panel = document.createElement('div');
     panel.className = 'ge-mask-properties-panel';
-    details.addEventListener('toggle', () => {
-      if (!details.open) return;
+    panel.setAttribute('popover', 'manual');
+    let positionFrame = 0;
+    const positionPanel = () => {
+      if (!details.open || !details.isConnected) {
+        if (panel.matches(':popover-open')) panel.hidePopover();
+        return;
+      }
+      const viewport = window.visualViewport;
+      const left = viewport?.offsetLeft || 0;
+      const top = viewport?.offsetTop || 0;
+      const width = viewport?.width || window.innerWidth;
+      const height = viewport?.height || window.innerHeight;
+      panel.style.maxWidth = `${Math.max(0, width - 12)}px`;
+      panel.style.maxHeight = `${Math.max(0, height - 12)}px`;
       const rect = summary.getBoundingClientRect();
-      const width = 190;
-      panel.style.left = `${Math.max(6, Math.min(window.innerWidth - width - 6, rect.right - width))}px`;
-      panel.style.top = `${Math.min(window.innerHeight - 150, rect.bottom + 4)}px`;
+      const bounds = panel.getBoundingClientRect();
+      const y = rect.bottom + 4 + bounds.height <= top + height - 6
+        ? rect.bottom + 4 : rect.top - bounds.height - 4;
+      panel.style.left = `${Math.max(left + 6, Math.min(left + width - bounds.width - 6, rect.right - bounds.width))}px`;
+      panel.style.top = `${Math.max(top + 6, Math.min(top + height - bounds.height - 6, y))}px`;
+      positionFrame = requestAnimationFrame(positionPanel);
+    };
+    details.addEventListener('toggle', () => {
+      cancelAnimationFrame(positionFrame);
+      if (!details.open) {
+        if (panel.matches(':popover-open')) panel.hidePopover();
+        return;
+      }
+      panel.showPopover();
+      positionPanel();
     });
     const makeRange = (className, title, min, max, step, value, update, historyLabel) => {
       const row = document.createElement('label');
@@ -1034,12 +1058,7 @@ export function createLayerPanelRenderer(deps) {
     const list = document.getElementById('ge-layers-list');
     if (!list) return;
     const sharedTools = document.getElementById('ge-layer-tools');
-    if (sharedTools) {
-      // Controls are rebuilt with each row, so clear the previous active
-      // row's cluster before the list is rendered again.
-      sharedTools.innerHTML = '';
-      sharedTools.hidden = true;
-    }
+    if (sharedTools) sharedTools.hidden = true;
     const blendSelect = document.getElementById('ge-layer-blend');
     normalizeLayerSelection(state);
     wireSelectionActions();
@@ -1148,6 +1167,10 @@ export function createLayerPanelRenderer(deps) {
           loadLayerAlphaAsSelection(layer);
           return;
         }
+        if (!e.shiftKey && !e.ctrlKey && !e.metaKey &&
+            state.activeLayerId === layer.id && !state.activeGroupId &&
+            !layer.activeMaskId && state.selectedLayerIds.length === 1 &&
+            state.selectedLayerIds[0] === layer.id) return;
         if (e.shiftKey) selectLayerRange(state, layer.id);
         else if (e.ctrlKey || e.metaKey) toggleLayerSelection(state, layer.id);
         else selectOnlyLayer(state, layer.id);
@@ -1157,6 +1180,7 @@ export function createLayerPanelRenderer(deps) {
         state.maskCanvas = null;
         state.maskCtx = null;
         syncSelectionUi();
+        document.querySelectorAll('.ge-layer-group-row.active').forEach(row => row.classList.remove('active'));
         onSelectLayer?.(active);
         composite();
         // Preserve the name element across the first click of a double-click
@@ -1195,6 +1219,21 @@ export function createLayerPanelRenderer(deps) {
       // from the raster canvas. Use the normal renderer when available so
       // their layer previews match what the document actually displays.
       const thumb = createInlineThumbnail(() => renderLayer?.(layer) || layer.canvas, `${layer.name} preview`);
+      thumb.title = `${layer.name} preview (Ctrl-click to select pixels)`;
+      thumb.addEventListener('click', (event) => {
+        if (!(event.ctrlKey || event.metaKey) || layer.kind === 'adjustment') return;
+        event.preventDefault();
+        event.stopPropagation();
+        selectOnlyLayer(state, layer.id);
+        layer.activeMaskId = null;
+        state.maskInspectMode = false;
+        state.maskCanvas = null;
+        state.maskCtx = null;
+        syncSelectionUi();
+        onSelectLayer?.(layer);
+        loadLayerAlphaAsSelection(layer);
+        render();
+      });
       item.appendChild(thumb);
 
       const nameEl = document.createElement('span');
@@ -1203,7 +1242,7 @@ export function createLayerPanelRenderer(deps) {
         const marker = document.createElement('span');
         marker.className = 'ge-layer-placed-marker';
         marker.title = 'Placed image';
-        marker.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="1"/><rect x="7" y="7" width="10" height="10" rx="1"/></svg>';
+        marker.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="position:relative;top:2px"><rect x="3" y="3" width="18" height="18" rx="1"/><rect x="7" y="7" width="10" height="10" rx="1"/></svg>';
         nameEl.appendChild(marker);
       }
       if (layer.kind === 'text' || layer.kind === 'shape') {
@@ -1230,7 +1269,6 @@ export function createLayerPanelRenderer(deps) {
       nameEl.appendChild(document.createTextNode(layer.name + (layer.kind !== 'adjustment' && isLayerEmpty(layer) ? ' (empty)' : '')));
       // Keep the name node stable across the first click of a double-click
       // so inline renaming can receive the browser's dblclick event.
-      nameEl.addEventListener('click', event => event.stopPropagation());
       nameEl.addEventListener('dblclick', event => {
         event.preventDefault();
         event.stopPropagation();
@@ -1373,6 +1411,18 @@ export function createLayerPanelRenderer(deps) {
         openLayerFx(e);
       });
       controls.appendChild(fxBtn);
+      const stylesButton = document.createElement('button');
+      stylesButton.type = 'button';
+      stylesButton.className = 'ge-layer-btn ge-layer-style-btn';
+      stylesButton.textContent = 'fx';
+      stylesButton.title = 'Layer styles';
+      stylesButton.setAttribute('aria-label', 'Layer styles');
+      stylesButton.setAttribute('aria-haspopup', 'menu');
+      stylesButton.setAttribute('aria-expanded', 'false');
+      stylesButton.addEventListener('click', event => {
+        event.stopPropagation(); openLayerStyles?.(layer, stylesButton);
+      });
+      if (layer.kind !== 'adjustment') controls.appendChild(stylesButton);
 
       // Duplicate — clones pixels + offset + opacity + masks + adjLayers
       // + visibility; inserts above the original; new copy becomes
@@ -1618,8 +1668,9 @@ export function createLayerPanelRenderer(deps) {
       if (state.layers.length > 1) {
         const delBtn = document.createElement('button');
         delBtn.className = 'ge-layer-btn danger';
-        delBtn.textContent = '×';
+        delBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
         delBtn.title = layer.isBase ? 'Delete original layer (Ctrl+Z to undo)' : 'Delete layer';
+        delBtn.setAttribute('aria-label', delBtn.title);
         delBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
           await deleteLayers(rowTargets(layer));
@@ -2042,22 +2093,6 @@ export function createLayerPanelRenderer(deps) {
           });
           list.appendChild(sub);
         }
-      }
-    }
-
-    // Keep one action strip for the active layer/group. The buttons retain
-    // their row-specific closures, but the UI no longer repeats them on
-    // every layer row.
-    if (sharedTools) {
-      const activeRow = selectedGroup
-        ? [...list.children].find(row => row.dataset.groupId === selectedGroup.id)
-        : selectedLayer
-          ? [...list.children].find(row => row.dataset.layerId === selectedLayer.id)
-          : null;
-      const controls = activeRow?.querySelector(':scope > .ge-layer-controls');
-      if (controls) {
-        sharedTools.appendChild(controls);
-        sharedTools.hidden = false;
       }
     }
 

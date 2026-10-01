@@ -2,6 +2,7 @@
 
 import json
 
+from src.tool_policy import WEB_TOOL_NAMES
 from routes.chat_routes import (
     _effective_agent_rounds,
     _effective_native_output_tokens,
@@ -811,14 +812,14 @@ def test_local_network_turn_is_not_short_circuited_by_web_disabled_guard():
     context = _host_bridge_context()
     assert not _web_search_unavailable_for_turn(
         {"web", "files"},
-        {"web_search", "web_fetch"},
+        set(WEB_TOOL_NAMES),
         "Find the local IP for ajax; do not use web search.",
         context,
         None,
     )
     assert _web_search_unavailable_for_turn(
         {"web"},
-        {"web_search", "web_fetch"},
+        set(WEB_TOOL_NAMES),
         "Search the web for the latest Qwen release.",
         context,
         None,

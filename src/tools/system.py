@@ -293,6 +293,38 @@ def _task_date_utc(value):
         parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
     return parsed
 
+def _task_structured_schedule(args, fallback_time=None):
+    """Translate unambiguous day fields into the scheduler's legacy format."""
+    if 'day_of_month' in args:
+        day = args['day_of_month']
+        if isinstance(day, bool) or not isinstance(day, int) or not 1 <= day <= 31:
+            raise ValueError('day_of_month must be an integer from 1 to 31')
+        if ('weekdays' in args or args.get('scheduled_day') is not None
+                or args.get('cron_expression') or args.get('schedule') not in (None, 'monthly')
+                or args.get('trigger_type', 'schedule') != 'schedule'):
+            raise ValueError('day_of_month is only for monthly schedules; omit other day fields')
+        return {**args, 'schedule': 'monthly', 'scheduled_day': day}
+    if 'weekdays' not in args:
+        return args
+    days = args['weekdays']
+    names = ('sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday')
+    if not isinstance(days, list) or not days or any(not isinstance(d, str) or d not in names for d in days):
+        raise ValueError('weekdays must contain weekday names from monday through sunday')
+    if args.get('cron_expression') or args.get('scheduled_day') is not None:
+        raise ValueError('Use weekdays or cron_expression/scheduled_day, not both')
+    if args.get('trigger_type', 'schedule') != 'schedule' or args.get('schedule') == 'once':
+        raise ValueError('weekdays requires a recurring schedule trigger')
+    from datetime import datetime
+    clock = args.get('scheduled_time', fallback_time)
+    try:
+        parsed = datetime.strptime(clock, '%H:%M')
+    except (TypeError, ValueError) as exc:
+        raise ValueError('scheduled_time in HH:MM UTC is required with weekdays') from exc
+    cron_days = ','.join(str(n) for n in sorted({names.index(d) for d in days}))
+    return {**args, 'schedule': 'cron', 'scheduled_time': parsed.strftime('%H:%M'),
+            'cron_expression': f'{parsed.minute} {parsed.hour} * * {cron_days}'}
+
+
 async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
     """Handle manage_tasks tool calls: CRUD on scheduled tasks."""
     import uuid as _uuid
@@ -409,6 +441,8 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
                 bits = [t.status or "unknown"]
                 if t.schedule:
                     bits.append(str(t.schedule))
+                if t.schedule == "cron" and t.cron_expression:
+                    bits.append(t.cron_expression)
                 if t.scheduled_time:
                     bits.append(str(t.scheduled_time))
                 if t.next_run:
@@ -420,6 +454,7 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
             return {"response": "\n".join(lines), "exit_code": 0}
 
         elif action == "create":
+            args = _task_structured_schedule(args)
             task_type = args.get("task_type", "llm")
             trigger_type = args.get("trigger_type", "schedule")
 
@@ -433,14 +468,19 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
             scheduled_date = None
             if trigger_type == "schedule":
                 schedule = args.get("schedule", "daily")
+                if args.get('scheduled_date') and schedule != 'once':
+                    raise ValueError('scheduled_date is only for schedule=once; use day_of_month and scheduled_time for monthly tasks, or weekdays and scheduled_time for weekly tasks')
                 if schedule == "once":
                     scheduled_date = _task_date_utc(args.get("scheduled_date"))
                 next_run = compute_next_run(
                     schedule, args.get("scheduled_time", "09:00"),
                     args.get("scheduled_day"), scheduled_date,
+                    cron_expression=args.get("cron_expression"),
                 )
                 if schedule == "once" and next_run is None:
                     return {"error": "scheduled_date must be in the future", "exit_code": 1}
+                if schedule == "cron" and next_run is None:
+                    return {"error": "A valid cron_expression is required for schedule=cron", "exit_code": 1}
 
             task_id = str(_uuid.uuid4())
             # Guard each fallback with `or`: args.get("prompt", default) returns
@@ -458,6 +498,7 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
                 scheduled_time=args.get("scheduled_time", "09:00") if trigger_type == "schedule" else None,
                 scheduled_day=args.get("scheduled_day"),
                 scheduled_date=scheduled_date,
+                cron_expression=args.get("cron_expression") if trigger_type == "schedule" else None,
                 trigger_type=trigger_type,
                 trigger_event=args.get("trigger_event"),
                 trigger_count=args.get("trigger_count"),
@@ -481,6 +522,30 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
             if owner and task.owner != owner:
                 return {"error": "Access denied", "exit_code": 1}
 
+            if 'weekdays' in args or 'day_of_month' in args:
+                clock = task.scheduled_time
+                if task.schedule == 'cron':
+                    fields = (task.cron_expression or '').split()
+                    clock = (f'{fields[1]}:{fields[0]}' if len(fields) == 5
+                             and fields[0].isdigit() and fields[1].isdigit() else None)
+                args = _task_structured_schedule({
+                    'trigger_type': task.trigger_type or 'schedule', **args,
+                }, fallback_time=clock)
+            if ((args.get('schedule') or task.schedule) == 'cron'
+                    and args.get('scheduled_time') is not None
+                    and args.get('cron_expression') is None):
+                from datetime import datetime
+                try:
+                    clock = datetime.strptime(args['scheduled_time'], '%H:%M')
+                except (TypeError, ValueError) as exc:
+                    raise ValueError('scheduled_time must be HH:MM UTC') from exc
+                fields = (task.cron_expression or '').split()
+                if len(fields) != 5:
+                    raise ValueError('Supply cron_expression to retime a schedule without a five-field cron expression')
+                # For cron tasks the executable clock lives in the expression,
+                # not the legacy scheduled_time column used by simple schedules.
+                args = {**args, 'scheduled_time': clock.strftime('%H:%M'),
+                        'cron_expression': ' '.join([str(clock.minute), str(clock.hour), *fields[2:]])}
             changed = []
             for field in ("name", "prompt", "output_target"):
                 if args.get(field) is not None:
@@ -503,12 +568,14 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
                 changed.append("trigger_count")
 
             schedule_changed = False
-            for field in ("schedule", "scheduled_time", "scheduled_day"):
+            for field in ("schedule", "scheduled_time", "scheduled_day", "cron_expression"):
                 if args.get(field) is not None:
                     setattr(task, field, args[field])
                     changed.append(field)
                     schedule_changed = True
             if "scheduled_date" in args:
+                if args.get('scheduled_date') and task.schedule != 'once':
+                    raise ValueError('scheduled_date is only for schedule=once; use day_of_month and scheduled_time for monthly tasks, or weekdays and scheduled_time for weekly tasks')
                 task.scheduled_date = _task_date_utc(args["scheduled_date"])
                 changed.append("scheduled_date")
                 schedule_changed = True
@@ -519,9 +586,12 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
                 task.next_run = compute_next_run(
                     task.schedule, task.scheduled_time, task.scheduled_day,
                     task.scheduled_date,
+                    cron_expression=task.cron_expression,
                 )
                 if task.schedule == "once" and task.next_run is None:
                     raise ValueError("scheduled_date must be in the future")
+                if task.schedule == "cron" and task.next_run is None:
+                    raise ValueError("A valid cron_expression is required for schedule=cron")
 
             db.commit()
             return {"response": f"Updated task '{task.name}': {', '.join(changed)}", "exit_code": 0}
@@ -552,9 +622,12 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
                     task.next_run = compute_next_run(
                         task.schedule, task.scheduled_time, task.scheduled_day,
                         task.scheduled_date,
+                        cron_expression=task.cron_expression,
                     )
                     if task.schedule == "once" and task.next_run is None:
                         raise ValueError("A future scheduled_date is required to resume this one-off task")
+                    if task.schedule == "cron" and task.next_run is None:
+                        raise ValueError("A valid cron_expression is required to resume this task")
             db.commit()
             return {"response": f"Task '{task.name}' {action}d", "exit_code": 0}
 

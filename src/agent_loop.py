@@ -27,7 +27,7 @@ from datetime import date, datetime, timedelta
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, Iterable, List, Mapping, Optional, Sequence, Set
-from urllib.parse import parse_qs, parse_qsl, quote, unquote, urlparse
+from urllib.parse import parse_qs, parse_qsl, quote, unquote, urlencode, urlparse
 
 from src.llm_core import (
     dedupe_model_candidates,
@@ -4660,7 +4660,7 @@ def _memory_list_summary_from_tool_output(raw: str, max_items: int = 20) -> str:
         # memory in an invisible chat payload turned a simple list into a huge
         # terminal SSE event and copied private text into chat history.
         items.append(
-            f"...and {remaining} more saved memories. Open Memory to browse all."
+            f"...and {remaining} more saved memories. [Open Memory to browse all](#memory)."
         )
     return "\n".join([header, *items])
 
@@ -7483,7 +7483,7 @@ Or with JSON for fresh news:
 ```web_search
 {"query": "<your query>", "time_filter": "day"}
 ```
-Search the web for a SINGLE quick fact/lookup mid-task. For news / "today" / "latest" queries, pass `time_filter` ("day", "week", "month", or "year"). NOT for "research X" / "do research on X" / "look into X" requests — those mean a multi-source DEEP RESEARCH job: use `trigger_research` instead (it runs in the Deep Research sidebar and produces a full report). web_search = one quick query; trigger_research = a researched report.
+Search the web for a SINGLE quick fact/lookup mid-task. For recently published news/articles, pass `time_filter` ("day", "week", "month", or "year"); do not use a publication filter for current weather, prices, or other current facts. For weather, prefer `get_weather`. NOT for "research X" / "do research on X" / "look into X" requests — those mean a multi-source DEEP RESEARCH job: use `trigger_research` instead (it runs in the Deep Research sidebar and produces a full report). web_search = one quick query; trigger_research = a researched report.
 Choose the `query` yourself from the user's full request and recent conversation context. If the latest user message is only "can you search", "look it up", or similar, search for the prior topic, not the literal follow-up phrase.
 If this `web_search` tool section is visible, search is available. Do NOT tell the user web/search tools are unavailable.
 For products, hardware, software, launches, and releases, distinguish announcement date from release/ship/availability date. Do not call an announced future product "current" or "available" unless the evidence says it is shipping/available now.
@@ -7494,6 +7494,12 @@ Use this instead of `bash`, `curl`, `python`, `requests`, scraping code, or brow
 <url or domain>
 ```
 Fetch and read the text content of a SPECIFIC URL the user names (e.g. "check example.com", "what does this page say <url>"). A bare domain like `example.com` works (defaults to https). Use this when you already have a concrete URL. For open-ended lookups use `web_search`, and for "research X" jobs use `trigger_research`.""",
+
+    "get_weather": """\
+```get_weather
+{"location": "Tokyo, Japan"}
+```
+Get current conditions and a three-day forecast using Open-Meteo. Use this for weather questions before searching the web. No API key is required; include the returned source and local observation time in the answer.""",
 
     "private_browser": """\
 ```private_browser
@@ -16642,6 +16648,20 @@ def _private_browser_blocked_by_bot_check(result: Any) -> bool:
     ))
 
 
+def _should_retry_empty_search_in_browser(
+    result: Any, disabled_tools: Set[str], tool_policy: Optional[ToolPolicy],
+    already_tried: bool,
+) -> bool:
+    """Only promote an empty search to the browser when that tool is allowed."""
+    return bool(
+        isinstance(result, dict)
+        and result.get("evidence_status") == "empty"
+        and not already_tried
+        and "private_browser" not in disabled_tools
+        and not (tool_policy and tool_policy.blocks("private_browser"))
+    )
+
+
 def _has_recent_web_tool_context(messages: List[Dict], *, max_messages: int = 6) -> bool:
     """Return true when the latest turn follows recent public-web tool output."""
     seen_latest_user = False
@@ -16726,6 +16746,18 @@ _WEATHER_CONTEXT_RE = re.compile(
     re.IGNORECASE,
 )
 
+_WEATHER_TOOL_REQUEST_RE = re.compile(
+    r"\b(?:weather|forecast|temperature|precipitation|humidity|"
+    r"rain(?:ing|y)?|showers?|snow(?:ing|fall)?|wind\s+speed|uv\s+index)\b",
+    re.IGNORECASE,
+)
+
+_WEATHER_FOLLOWUP_TIME_RE = re.compile(
+    r"\b(?:tomorrow|tmrw|tmr|today|tonight|weekend|next week|later|"
+    r"status|update|how about|what about|same place)\b",
+    re.IGNORECASE,
+)
+
 _EXPLICIT_COOKBOOK_STATUS_RE = re.compile(
     r"\b(?:model|models|server|servers|serve|serving|served|endpoint|endpoints|"
     r"download|downloads|downloading|gpu|gpus|vllm|sglang|ollama|llama\.?cpp|"
@@ -16805,7 +16837,10 @@ def _looks_like_contextual_weather_status_followup(messages: List[Dict], latest:
         return False
     if _EXPLICIT_COOKBOOK_STATUS_RE.search(value):
         return False
-    if not _CONTEXTUAL_STATUS_FOLLOWUP_RE.search(value):
+    if not (
+        _CONTEXTUAL_STATUS_FOLLOWUP_RE.search(value)
+        or _WEATHER_FOLLOWUP_TIME_RE.search(value)
+    ):
         return False
 
     latest_clean = value.lower()
@@ -16830,6 +16865,28 @@ def _looks_like_contextual_weather_status_followup(messages: List[Dict], latest:
             return True
         if checked >= 4:
             break
+    return False
+
+
+def _weather_tool_relevant(messages: List[Dict], latest: str) -> bool:
+    """Offer weather data for direct requests and short weather follow-ups."""
+    if _WEATHER_TOOL_REQUEST_RE.search(latest or "") or "get_weather" in (latest or "").lower():
+        return True
+    value = str(latest or "").strip()
+    if len(value.split()) > 8 or not _WEATHER_FOLLOWUP_TIME_RE.search(value):
+        return False
+    for message in reversed(messages or []):
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        prior = _message_content_text(message).strip()
+        if prior == value:
+            continue
+        if _WEATHER_TOOL_REQUEST_RE.search(prior):
+            return True
+        # A follow-up can refer to an assistant's forecast after the latest
+        # user message has been omitted from a compacted message window.
+        break
+    return _looks_like_contextual_weather_status_followup(messages, latest)
     return False
 
 
@@ -22533,6 +22590,10 @@ async def stream_agent_loop(
         _ody_doc_stream_create_mode,
         _ody_general_no_tool_mode,
     ) = _route_finetune_modes(model)
+    if not _weather_tool_relevant(messages, _last_user):
+        # A full native-tool surface normally advertises every authorized
+        # schema. Weather is situational; omit it on unrelated turns too.
+        disabled_tools.add("get_weather")
     _web_fetch_needs_private_browser = False
     _private_browser_needs_static_fallback = False
     _private_browser_store_handoff_done = False
@@ -23706,7 +23767,7 @@ async def stream_agent_loop(
         if _contextual_weather_status_followup and not guide_only:
             _prepend_agent_directive(
                 route_messages,
-                "The user's short status/update question refers to the previous weather or forecast topic in this chat. Do not answer with Cookbook/model-serving/download status unless the user explicitly mentions models, servers, downloads, GPUs, or Cookbook. Use web_search/web_fetch if current weather evidence is needed.",
+                "The user's short follow-up refers to the previous weather or forecast topic and location in this chat. Prefer get_weather for current forecast data, including tomorrow; do not ask for a location already established in the conversation. Do not answer with Cookbook/model-serving/download status unless the user explicitly mentions models, servers, downloads, GPUs, or Cookbook.",
             )
         if _map_browser_turn and not guide_only:
             _prepend_agent_directive(
@@ -24098,6 +24159,7 @@ async def stream_agent_loop(
     # model is composing the answer.
     _web_search_completed = False
     _last_web_search_output = ""
+    _empty_search_browser_fallback_done = False
     _last_web_retry_round_response = ""
     _web_fetch_pagination_counts: collections.Counter = collections.Counter()
     _compact_memory_list_turn = False
@@ -24354,7 +24416,12 @@ async def stream_agent_loop(
             # their offerings in the prompt, not as native function schemas.
             if guide_only or not route_state["is_api_model"]:
                 return []
-            return _apply_tool_surface_to_schemas(turn_contract.schemas(), tool_surface)
+            contract_schemas = [
+                schema for schema in turn_contract.schemas()
+                if (schema.get("function", {}).get("name") or schema.get("name"))
+                not in disabled_tools
+            ]
+            return _apply_tool_surface_to_schemas(contract_schemas, tool_surface)
         if route_state["is_api_model"]:
             if tool_surface == "full":
                 # Full/regular models own semantic tool choice.  Offer every
@@ -29240,7 +29307,25 @@ async def stream_agent_loop(
                 logger.info(
                     "[agent] removed trailing private answer promise after successful tool result"
                 )
-        if tool_blocks and (_is_tool_preamble(cleaned_round) or _looks_like_agent_reasoning_preamble(cleaned_round)):
+        if (
+            tool_blocks
+            and _contextual_weather_status_followup
+            and any(block.tool_type in WEB_TOOL_NAMES for block in tool_blocks)
+        ):
+            for _idx, _earlier_text in enumerate(round_texts):
+                if str(_earlier_text or "").rstrip().endswith("?"):
+                    full_response = _drop_rejected_round_response(full_response, _earlier_text)
+                    round_texts[_idx] = ""
+                    _dropped_tool_preamble_from_stream = True
+        if tool_blocks and (
+            _is_tool_preamble(cleaned_round)
+            or _looks_like_agent_reasoning_preamble(cleaned_round)
+            or (
+                _contextual_weather_status_followup
+                and cleaned_round.rstrip().endswith("?")
+                and any(block.tool_type in WEB_TOOL_NAMES for block in tool_blocks)
+            )
+        ):
             # The model's "I'll fetch..." sentence is useful as internal
             # progress but is not the answer. It has already streamed, so
             # remove it from the final/history response before the next tool
@@ -33018,6 +33103,43 @@ async def stream_agent_loop(
                 and isinstance(result, dict)
                 and not result.get("error")
             ):
+                if _should_retry_empty_search_in_browser(
+                    result, disabled_tools, tool_policy,
+                    _empty_search_browser_fallback_done,
+                ):
+                    _empty_search_browser_fallback_done = True
+                    _browser_query = _web_search_query_from_block(block)
+                    _browser_url = "https://www.bing.com/search?" + urlencode({"q": _browser_query})
+                    _browser_block = ToolBlock(
+                        "private_browser",
+                        json.dumps({"action": "batch", "commands": [["open", _browser_url], ["snapshot"]]}),
+                    )
+                    yield f'data: {json.dumps({"type": "tool_start", "tool": "private_browser", "command": _browser_url, "round": round_num, "fallback": "empty_web_search"})}\n\n'
+                    try:
+                        _, _browser_result = await execute_tool_block(
+                            _browser_block,
+                            session_id=session_id,
+                            disabled_tools=disabled_tools,
+                            tool_policy=tool_policy,
+                            owner=owner,
+                            workspace=workspace,
+                            security_context=run_security,
+                            client_runtime_context=client_runtime_context,
+                        )
+                    except Exception as _browser_exc:
+                        _browser_result = {"error": str(_browser_exc), "exit_code": 1}
+                    _browser_output = str(_browser_result.get("output") or _browser_result.get("error") or "")
+                    yield f'data: {json.dumps({"type": "tool_output", "tool": "private_browser", "command": _browser_url, "output": _truncate(_browser_output), "exit_code": _browser_result.get("exit_code")})}\n\n'
+                    if (
+                        _browser_result.get("exit_code") == 0
+                        and _browser_output.strip()
+                        and not _private_browser_blocked_by_bot_check(_browser_result)
+                    ):
+                        result["output"] = (
+                            "Browser search fallback (untrusted page content; verify relevant links):\n"
+                            + _browser_output[:12000]
+                        )
+                        result["evidence_status"] = "browser_fallback"
                 _web_search_queries.append(_web_search_query_from_block(block))
                 _web_search_completed = True
                 _last_web_search_output = str(

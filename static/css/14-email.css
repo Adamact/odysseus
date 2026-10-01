@@ -1746,6 +1746,28 @@ body.doc-find-active .doc-editor-highlight * {
   z-index: 1;
 }
 
+/* Code uses non-wrapping, identical lines in both layers. Prose keeps the
+   single-layer caret fix above. Colors come from the current theme's --hl-*.
+   Find mode retains its own overlay and visible textarea text. */
+.doc-code-syntax .doc-editor-textarea,
+.doc-code-syntax .doc-editor-highlight,
+.doc-code-syntax .doc-editor-highlight code {
+  white-space: pre !important;
+  overflow-wrap: normal !important;
+  word-break: normal !important;
+}
+.doc-code-syntax .doc-editor-highlight code {
+  width: max-content;
+  min-width: 100%;
+}
+body:not(.doc-find-active) .doc-code-syntax:not(.diff-mode) .doc-editor-highlight {
+  display: block !important;
+}
+body:not(.doc-find-active) .doc-code-syntax:not(.diff-mode) .doc-editor-textarea {
+  color: transparent !important;
+  background: transparent !important;
+}
+
 /* Emoji picker (monochrome icon picker) */
 .emoji-picker-btn {
   background: none; border: none; color: var(--fg); opacity: 0.35;

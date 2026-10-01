@@ -324,7 +324,7 @@ async function _cleanupIncognitoSessions() {
   const keep = ids.filter(sid => sid === currentSessionId);
   sessionStorage.setItem(_INCOGNITO_SESSIONS_KEY, JSON.stringify(keep));
   await Promise.all(toDelete.map(sid =>
-    fetch(`${API_BASE}/api/session/${sid}`, { method: 'DELETE' }).catch(() => {})
+    fetch(_sessionDeletionUrl(sid), { method: 'DELETE' }).catch(() => {})
   ));
 }
 
@@ -342,29 +342,6 @@ let _researchPollTimer = null;
 
 function _persistCompletedSessions() {
   try { localStorage.setItem(_COMPLETED_SESSIONS_KEY, JSON.stringify([..._completedSessions])); } catch (_) {}
-}
-
-function _renderSessionRunState(state, isRunning) {
-  if (!state) return;
-  if (state._whirlpool) {
-    state._whirlpool.destroy();
-    state._whirlpool = null;
-  }
-  state.replaceChildren();
-  state.classList.toggle('is-working', isRunning);
-  state.classList.toggle('is-done', !isRunning);
-  if (isRunning) {
-    const whirlpool = spinnerModule.createWhirlpool(12);
-    whirlpool.element.classList.add('session-run-whirlpool');
-    state.appendChild(whirlpool.element);
-    state._whirlpool = whirlpool;
-    state.title = 'Agent is working';
-    state.setAttribute('aria-label', 'Agent is working');
-  } else {
-    state.textContent = '✓';
-    state.title = 'Agent finished while you were away';
-    state.setAttribute('aria-label', 'Agent finished while you were away');
-  }
 }
 
 // Session list keyboard navigation state
@@ -1103,7 +1080,7 @@ function createSessionItem(s) {
       return;
     }
     dropdown.style.display = 'none';
-    if (!await uiModule.styledConfirm('Delete this session?', { confirmText: 'Delete', danger: true })) {
+    if (!await _confirmSessionDeletion([s.id])) {
       _forceSidebarOpen();
       return;
     }
@@ -1131,7 +1108,7 @@ function createSessionItem(s) {
     }
     // Await API deletion, then reload the authoritative list from the server
     try {
-      await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' });
+      await fetch(_sessionDeletionUrl(s.id), { method: 'DELETE' });
     } catch (e) { /* network error — session may still exist server-side */ }
     await loadSessions();
   });
@@ -1191,13 +1168,6 @@ function createSessionItem(s) {
         div.classList.add('stream-complete');
       }
     }
-  }
-
-  if (_isProcessing || _isDone) {
-    const state = document.createElement('span');
-    state.className = 'session-run-state ' + (_isProcessing ? 'is-working' : 'is-done');
-    _renderSessionRunState(state, _isProcessing);
-    div.appendChild(state);
   }
 
   div.appendChild(menuBtn);
@@ -1481,10 +1451,10 @@ function _renderSessionListImpl() {
     deleteBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const count = folders[folderName].length;
-      if (!await uiModule.styledConfirm(`Delete folder "${folderName}" and all ${count} session(s) inside it?`, { confirmText: 'Delete', danger: true })) return;
+      if (!await _confirmSessionDeletion(folders[folderName].map(s => s.id), `Delete folder "${folderName}" and all ${count} chats inside it?`)) return;
       for (const s of folders[folderName]) {
         try {
-          await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' });
+          await fetch(_sessionDeletionUrl(s.id), { method: 'DELETE' });
           _deselectCurrentSession(s.id);
         } catch (err) {
           console.error('Failed to delete session:', s.id, err);
@@ -1593,10 +1563,10 @@ function _renderSessionListImpl() {
     deleteBtn.title = 'Delete all unsorted sessions';
     deleteBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      if (!await uiModule.styledConfirm(`Delete all ${unfiled.length} unsorted session(s)?`, { confirmText: 'Delete', danger: true })) return;
+      if (!await _confirmSessionDeletion(unfiled.map(s => s.id), `Delete all ${unfiled.length} unsorted chats?`)) return;
       for (const s of unfiled) {
         try {
-          await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' });
+          await fetch(_sessionDeletionUrl(s.id), { method: 'DELETE' });
           _deselectCurrentSession(s.id);
         } catch (err) {
           console.error('Failed to delete session:', s.id, err);
@@ -1872,11 +1842,11 @@ function _initBulkSelect() {
     deleteBtn.addEventListener('click', async () => {
       if (_selectedIds.size === 0) return;
       const count = _selectedIds.size;
-      if (!await uiModule.styledConfirm(`Delete ${count} session(s)? This cannot be undone.`, { confirmText: 'Delete', danger: true })) return;
+      if (!await _confirmSessionDeletion([..._selectedIds], `Delete ${count} chats? This cannot be undone.`)) return;
       const deletedIds = [];
       for (const sid of _selectedIds) {
         try {
-          const res = await fetch(`${API_BASE}/api/session/${sid}`, { method: 'DELETE' });
+          const res = await fetch(_sessionDeletionUrl(sid), { method: 'DELETE' });
           if (res.ok) deletedIds.push(sid);
         } catch (_) {}
       }
@@ -2667,6 +2637,44 @@ export function setCurrentSessionId(id) {
   }
 }
 
+const _sessionImageDeletionChoices = new Map();
+
+async function _confirmSessionDeletion(ids, message = 'Delete this chat?') {
+  const uniqueIds = [...new Set(ids)];
+  uniqueIds.forEach(id => _sessionImageDeletionChoices.delete(String(id)));
+  let counts;
+  try {
+    counts = await Promise.all(uniqueIds.map(async id => {
+      const response = await fetch(`${API_BASE}/api/session/${encodeURIComponent(id)}/deletion-info`);
+      if (!response.ok) throw new Error('Unable to check attached images');
+      const info = await response.json();
+      if (!Number.isInteger(info.image_count) || info.image_count < 0) throw new Error('Invalid image count');
+      return info.image_count;
+    }));
+  } catch (_) {
+    uiModule.showError('Could not check this chat’s images. Nothing was deleted. Please try again.');
+    return false;
+  }
+  const hasImages = counts.some(count => count > 0);
+  const answer = await uiModule.styledConfirm(
+    hasImages
+      ? `${message} ${uniqueIds.length === 1 ? 'This chat has' : 'These chats have'} images in Gallery. Delete those images as well? Keeping them also keeps them in their albums.`
+      : message,
+    hasImages
+      ? { title: 'Delete chat', confirmText: 'Delete chat only', alternateText: 'Delete chat and images', danger: true }
+      : { confirmText: 'Delete', danger: true },
+  );
+  if (!answer) return false;
+  uniqueIds.forEach(id => _sessionImageDeletionChoices.set(String(id), answer === 'alternate'));
+  return true;
+}
+
+function _sessionDeletionUrl(id) {
+  const deleteImages = _sessionImageDeletionChoices.get(String(id)) === true;
+  _sessionImageDeletionChoices.delete(String(id));
+  return `${API_BASE}/api/session/${encodeURIComponent(id)}?delete_images=${deleteImages}`;
+}
+
 export async function deleteCurrentSessionFromTopMenu() {
   const sid = currentSessionId;
   if (!sid) {
@@ -2678,7 +2686,7 @@ export async function deleteCurrentSessionFromTopMenu() {
     uiModule.showToast('Unfavorite before deleting');
     return false;
   }
-  if (!await uiModule.styledConfirm('Delete this session?', { confirmText: 'Delete', danger: true })) {
+  if (!await _confirmSessionDeletion([sid])) {
     return false;
   }
   if (window.chatModule && window.chatModule.abortCurrentRequest) {
@@ -2692,7 +2700,7 @@ export async function deleteCurrentSessionFromTopMenu() {
     if (pm.removePersistentChat) pm.removePersistentChat(sid);
   } catch (e) {}
   try {
-    const res = await fetch(`${API_BASE}/api/session/${sid}`, { method: 'DELETE' });
+    const res = await fetch(_sessionDeletionUrl(sid), { method: 'DELETE' });
     if (!res.ok) throw new Error('Failed');
     uiModule.showToast('Session deleted');
   } catch (e) {
@@ -2732,11 +2740,11 @@ async function _onSessionListKeydown(e) {
       uiModule.showToast('Unfavorite before deleting');
       return;
     }
-    const ok = await uiModule.styledConfirm('Delete this session?', { confirmText: 'Delete', danger: true });
+    const ok = await _confirmSessionDeletion([s.id]);
     if (!ok) return;
     _sessionListFocused = true;
     (async () => {
-      await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' });
+      await fetch(_sessionDeletionUrl(s.id), { method: 'DELETE' });
       _deselectCurrentSession(s.id);
       await loadSessions();
     })();
@@ -2811,19 +2819,7 @@ function _updateResearchDots() {
 
     if (listItem) {
       let state = listItem.querySelector('.session-run-state');
-      if (isRunning || isCompleted) {
-        if (!state) {
-          state = document.createElement('span');
-          state.className = 'session-run-state';
-          const menu = listItem.querySelector('.session-menu-btn');
-          listItem.insertBefore(state, menu || null);
-        }
-        const alreadyRunning = state.classList.contains('is-working') && !!state._whirlpool;
-        const alreadyDone = state.classList.contains('is-done') && state.textContent.trim() === '✓';
-        if ((isRunning && !alreadyRunning) || (isCompleted && !alreadyDone)) {
-          _renderSessionRunState(state, isRunning);
-        }
-      } else if (state) {
+      if (state) {
         if (state._whirlpool) state._whirlpool.destroy();
         state.remove();
       }
@@ -3244,9 +3240,9 @@ async function _arcRestore(sid) {
 }
 
 async function _arcDelete(sid) {
-  if (!await window.styledConfirm('Delete this session permanently?', { confirmText: 'Delete', danger: true })) return;
+  if (!await _confirmSessionDeletion([sid], 'Delete this chat permanently?')) return;
   try {
-    const res = await fetch(`${API_BASE}/api/session/${sid}`, { method: 'DELETE' });
+    const res = await fetch(_sessionDeletionUrl(sid), { method: 'DELETE' });
     if (!res.ok) throw new Error('Failed');
     await _animateSessionRowsRemoving([sid], '#archive-grid .archive-row[data-session-id]');
     _arcRemove(sid);
@@ -3279,12 +3275,12 @@ async function _arcBulkRestore() {
 async function _arcBulkDelete() {
   const ids = [..._arc.selected];
   if (!ids.length) return;
-  const ok = await uiModule.styledConfirm(`Delete ${ids.length} session${ids.length > 1 ? 's' : ''} permanently?`, { confirmText: 'Delete', danger: true });
+  const ok = await _confirmSessionDeletion(ids, `Delete ${ids.length} chats permanently?`);
   if (!ok) return;
   const deletedIds = [];
   for (const sid of ids) {
     try {
-      const res = await fetch(`${API_BASE}/api/session/${sid}`, { method: 'DELETE' });
+      const res = await fetch(_sessionDeletionUrl(sid), { method: 'DELETE' });
       if (res.ok) {
         deletedIds.push(sid);
         _arcRemove(sid);
@@ -3593,9 +3589,12 @@ export function openLibrary(defaultTab) {
 
   // Bulk delete
   document.getElementById('lib-bulk-delete').addEventListener('click', async () => {
-    if (!await uiModule.styledConfirm(`Delete ${_lib.selected.size} items?`, { confirmText: 'Delete', danger: true })) return;
+    const confirmed = (_lib.tab === 'chats' || _lib.tab === 'archive')
+      ? await _confirmSessionDeletion([..._lib.selected], `Delete ${_lib.selected.size} chats?`)
+      : await uiModule.styledConfirm(`Delete ${_lib.selected.size} items?`, { confirmText: 'Delete', danger: true });
+    if (!confirmed) return;
     if (_lib.tab === 'chats' || _lib.tab === 'archive') {
-      for (const sid of _lib.selected) await fetch(`${API_BASE}/api/session/${sid}`, { method: 'DELETE' });
+      for (const sid of _lib.selected) await fetch(_sessionDeletionUrl(sid), { method: 'DELETE' });
     } else if (_lib.tab === 'documents') {
       for (const did of _lib.selected) await fetch(`${API_BASE}/api/document/${did}`, { method: 'DELETE' });
     } else if (_lib.tab === 'research') {
@@ -3660,7 +3659,7 @@ function _renderLibChats(grid) {
       _showDropdown(e.currentTarget, [
         { label: 'Open', action: () => { closeLibrary(); selectSession(s.id); } },
         { label: 'Archive', action: async () => { await fetch(`${API_BASE}/api/session/${s.id}/archive`, { method: 'POST', headers: { 'Content-Type': 'application/json' } }); await loadSessions(); _renderLibGrid(); } },
-        { label: 'Delete', action: async () => { if (!await uiModule.styledConfirm('Delete?', { confirmText: 'Delete', danger: true })) return; await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' }); await loadSessions(); _renderLibGrid(); }, danger: true },
+        { label: 'Delete', action: async () => { if (!await _confirmSessionDeletion([s.id])) return; await fetch(_sessionDeletionUrl(s.id), { method: 'DELETE' }); await loadSessions(); _renderLibGrid(); }, danger: true },
       ]);
     });
     grid.appendChild(card);
@@ -3690,7 +3689,7 @@ async function _renderLibArchive(grid) {
         e.stopPropagation();
         _showDropdown(e.currentTarget, [
           { label: 'Restore', action: async () => { await fetch(`${API_BASE}/api/session/${s.id}/restore`, { method: 'POST' }); await loadSessions(); _renderLibGrid(); } },
-          { label: 'Delete', action: async () => { if (!await uiModule.styledConfirm('Delete?', { confirmText: 'Delete', danger: true })) return; await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' }); _renderLibGrid(); }, danger: true },
+          { label: 'Delete', action: async () => { if (!await _confirmSessionDeletion([s.id])) return; await fetch(_sessionDeletionUrl(s.id), { method: 'DELETE' }); _renderLibGrid(); }, danger: true },
         ]);
       });
       grid.appendChild(card);

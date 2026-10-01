@@ -16,7 +16,7 @@ GUIDE_ONLY_DIRECTIVE = (
     "output they will produce locally."
 )
 
-WEB_TOOL_NAMES = frozenset({"web_search", "web_fetch"})
+WEB_TOOL_NAMES = frozenset({"web_search", "web_fetch", "get_weather"})
 WEB_ACCESS_TOOL_NAMES = frozenset({
     *WEB_TOOL_NAMES,
     "private_browser",

@@ -336,16 +336,21 @@ async def test_native_sft_owner_can_use_confined_read_file_tool(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('deny_core', [False, True])
 async def test_exact_odysseus_clean_route_offers_only_requested_compact_family(
-    monkeypatch, registered_mcp_manager,
+    monkeypatch, registered_mcp_manager, deny_core,
 ):
     from routes import chat_routes
-    from src import tool_security
+    from src import settings, tool_security
 
     endpoint = _chat_stream_endpoint(
         monkeypatch, "agent", {},
         session_model="odysseus-qwen3.5-tools-pre-heretic",
     )
+    if deny_core:
+        monkeypatch.setattr(settings, 'get_setting', lambda key, default=None:
+            ['bash', 'python', 'read_file', 'web_search', 'web_fetch', 'ask_user']
+            if key == 'disabled_tools' else default)
     message = "List my scheduled tasks. Return at most three names and statuses."
     monkeypatch.setattr(
         chat_routes, "coerce_message_and_session",
@@ -372,7 +377,8 @@ async def test_exact_odysseus_clean_route_offers_only_requested_compact_family(
     contract = observed[0]
     assert contract.selection_mode == "clean_compact_v3_preview"
     assert contract.capabilities == {"tasks"}
-    assert contract.offered == {"manage_tasks", "ask_user"}
+    assert contract.offered == ({"manage_tasks"} if deny_core else {"manage_tasks", "ask_user"})
+    assert not {"bash", "python", "read_file", "web_search", "web_fetch"} & contract.offered
     assert contract.required == {"manage_tasks"}
     assert contract.permits("manage_tasks")
 

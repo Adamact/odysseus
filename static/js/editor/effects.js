@@ -1,6 +1,16 @@
 /** Retained, non-destructive layer effects. */
+import { LAYER_STYLES, styleParams, renderLayerStyle, renderDropShadow } from './layer-styles.js';
+
+export function effectsWithPreview(owner) {
+  const effects = owner.effects || [];
+  const preview = owner._effectPreview;
+  if (!preview) return effects;
+  const index = preview.id ? effects.findIndex(effect => effect.id === preview.id) : -1;
+  return index < 0 ? [...effects, preview] : effects.map((effect, i) => i === index ? preview : effect);
+}
 
 const EFFECT_TYPES = new Set(['gaussian-blur', 'sharpen', 'color-overlay', 'drop-shadow', 'stroke', 'linear-gradient', 'radial-gradient']);
+for (const type of Object.keys(LAYER_STYLES)) EFFECT_TYPES.add(type);
 
 export const EFFECT_PRESETS = {
   'soft-blur': { type: 'gaussian-blur', params: { radius: 4 } },
@@ -28,6 +38,7 @@ function normalizeEffectMask(mask) {
 }
 
 export function defaultEffectParams(type) {
+  if (LAYER_STYLES[type]) return styleParams(type);
   if (type === 'gaussian-blur') return { radius: 6 };
   if (type === 'sharpen') return { amount: 0.5 };
   if (type === 'color-overlay') return { color: '#ffffff', opacity: 0.2, blendMode: 'source-atop' };
@@ -52,6 +63,7 @@ export function normalizeEffect(effect) {
   const params = effect?.params && typeof effect.params === 'object'
     ? { ...defaults, ...clone(effect.params) }
     : defaults;
+  if (LAYER_STYLES[type]) Object.assign(params, styleParams(type, params));
   if (type === 'gaussian-blur') params.radius = Math.max(0, Math.min(200, Number(params.radius) || 0));
   if (type === 'sharpen') params.amount = Math.max(0, Math.min(1, Number(params.amount) || 0));
   if (type === 'color-overlay') {
@@ -98,6 +110,7 @@ export function normalizeEffect(effect) {
 }
 
 export function effectLabel(type) {
+  if (LAYER_STYLES[type]) return LAYER_STYLES[type].label;
   return {
     'gaussian-blur': 'Gaussian Blur',
     sharpen: 'Sharpen',
@@ -189,7 +202,9 @@ export function renderEffects(source, effects = [], shouldContinue = () => true)
     next.width = current.width;
     next.height = current.height;
     const ctx = next.getContext('2d');
-    if (effect.type === 'gaussian-blur') {
+    if (LAYER_STYLES[effect.type]) {
+      ctx.drawImage(renderLayerStyle(current, effect.type, effect.params), 0, 0);
+    } else if (effect.type === 'gaussian-blur') {
       ctx.filter = `blur(${effect.params.radius}px)`;
       ctx.drawImage(current, 0, 0);
       ctx.filter = 'none';
@@ -205,13 +220,7 @@ export function renderEffects(source, effects = [], shouldContinue = () => true)
       ctx.fillRect(0, 0, next.width, next.height);
       ctx.globalAlpha = 1;
     } else if (effect.type === 'drop-shadow') {
-      ctx.globalAlpha = effect.params.opacity;
-      ctx.shadowColor = effect.params.color;
-      ctx.shadowBlur = effect.params.blur;
-      ctx.shadowOffsetX = effect.params.x;
-      ctx.shadowOffsetY = effect.params.y;
-      ctx.drawImage(current, 0, 0);
-      ctx.globalAlpha = 1;
+      ctx.drawImage(renderDropShadow(current, effect.params), 0, 0);
     } else if (effect.type === 'stroke') {
       ctx.globalAlpha = effect.params.opacity;
       ctx.shadowColor = effect.params.color;
@@ -232,6 +241,7 @@ export function renderEffects(source, effects = [], shouldContinue = () => true)
       : next;
     const blended = copyCanvas(current);
     const blendCtx = blended.getContext('2d');
+    if (effect.type === 'drop-shadow') blendCtx.globalCompositeOperation = 'destination-over';
     blendCtx.globalAlpha = effect.opacity;
     blendCtx.drawImage(contribution, 0, 0);
     blendCtx.globalAlpha = 1;

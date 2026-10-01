@@ -42,6 +42,21 @@ def test_history_budget_keeps_latest_oversized_snapshot():
     assert run_node(script) == {"ids": [2], "bytes": 500}
 
 
+def test_moves_share_pixels_but_keep_independent_offsets_and_changed_pixels():
+    script = textwrap.dedent(
+        f"""
+        import {{ shareSnapshotPixels, trimHistoryStack }} from {json.dumps(MODULE)};
+        const make=(x, pixel=7)=>({{layers:[{{id:'a',offset:{{x,y:0}},imageData:{{width:10,height:10,data:new Uint8ClampedArray(400).fill(pixel)}}}}]}});
+        const stack=[];
+        for(let x=0;x<20;x++)stack.push(shareSnapshotPixels(make(x),stack.at(-1)));
+        const bytes=trimHistoryStack(stack,30,800);
+        const changed=shareSnapshotPixels(make(20,8),stack.at(-1));
+        console.log(JSON.stringify({{count:stack.length,bytes,first:stack[0].layers[0].offset.x,last:stack.at(-1).layers[0].offset.x,shared:stack[0].layers[0].imageData===stack.at(-1).layers[0].imageData,changed:changed.layers[0].imageData!==stack.at(-1).layers[0].imageData}}));
+        """
+    )
+    assert run_node(script) == {"count": 20, "bytes": 400, "first": 0, "last": 19, "shared": True, "changed": True}
+
+
 def test_history_budget_counts_saved_selections_and_group_masks():
     script = textwrap.dedent(
         f"""

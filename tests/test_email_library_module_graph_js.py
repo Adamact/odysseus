@@ -66,10 +66,10 @@ def _listed_exports(path: Path) -> set[str]:
 # siblings in the package import helpers back out of it — so the wrapper is what
 # declares which names are API and which are package-internal.
 #
-# Written out rather than derived because three of the five callers reach these
-# through a dynamic import and a property read (`mod.openEmailLibrary` in
-# chatStream.js and chatRenderer.js, `mod.refreshEmailLibrary` and
-# `mod.openEmailLibrary` in document.js, `mod.mountEmailSettings` in
+# Written out rather than derived because most callers reach these through a
+# dynamic import and a property read (`mod.openEmailLibrary` in chatStream.js
+# and chatRenderer.js, `mod.refreshEmailLibrary` and `mod.openEmailLibrary` in
+# document.js, `mod.openEmailFromTool` in chat.js, `mod.mountEmailSettings` in
 # settings.js), which no import scan can see. Only emailInbox.js imports names
 # statically, and `test_wrapper_exposes_every_statically_imported_name` covers
 # that half exactly.
@@ -78,6 +78,7 @@ _PUBLIC_SURFACE = {
     "initEmailLibrary",
     "isOpen",
     "mountEmailSettings",
+    "openEmailFromTool",
     "openEmailLibrary",
     "openEmailLibrarySettings",
     "prewarmEmailLibrary",

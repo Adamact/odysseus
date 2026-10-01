@@ -15,7 +15,9 @@ def test_image_settings_only_list_online_served_image_models():
 
     assert "fetch('/api/model-endpoints'" in settings
     assert "!endpoint.is_enabled || !endpoint.online" in settings
-    assert "endpoint.model_type || '').toLowerCase() !== 'image'" in settings
+    # Image capability is decided per model, so image models served from a
+    # general endpoint (for example gpt-image-1) are listed too.
+    assert "modelCaps(modelId, '', endpoint.model_type).gen" in settings
     assert "stable-diffusion-3.5-medium', 'stable-diffusion-inpainting" not in settings
     assert "(not detected)" not in settings[settings.index("async function initImageSettings"):settings.index("function syncImgDisabled")]
 

@@ -156,7 +156,7 @@ async def list_sessions(content: str, session_id: Optional[str] = None, owner: O
             safe_name = (sess.name or "Untitled").replace("[", "\\[").replace("]", "\\]")
             msg_count = getattr(sess, "message_count", 0) or 0
             model = getattr(sess, "model", "unknown")
-            marker = " ← most recent" if i == 0 else ""
+            marker = " ← current chat" if sid == session_id else (" ← most recent" if i == 0 else "")
             lines.append(f"- **[{safe_name}](#session-{sid})** (id: `{sid}`, model: {model}, {msg_count} msgs, last active {_rel(ts)}){marker}")
 
         if not lines:
@@ -166,6 +166,7 @@ async def list_sessions(content: str, session_id: Optional[str] = None, owner: O
             "results": (
                 f"Found {len(rows)} session(s), sorted most-recent first:\n"
                 + "\n".join(lines)
+                + "\nFor the previous/last chat, exclude the row marked current chat. Use the exact returned ID, not an alias. If the target is ambiguous, ask using chat titles before changing anything."
                 + "\n\nAssistant: when replying to the user, preserve the chat-title markdown links exactly as shown, e.g. `[Chat](#session-id)`. Do not rewrite this as a plain, non-clickable table."
             )
         }

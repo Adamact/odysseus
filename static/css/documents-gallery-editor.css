@@ -809,18 +809,25 @@ mark.doc-find-mark {
   align-self: center;
 }
 .ge-mask-properties > summary {
-  width: 30px;
-  height: 30px;
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  min-height: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   list-style: none;
   cursor: pointer;
   color: var(--fg);
-  border: 1px solid transparent;
+  opacity: 0.4;
+  background: none;
+  border: none;
   border-radius: 4px;
+  transition: opacity 0.1s;
 }
 .ge-mask-properties > summary::-webkit-details-marker { display: none; }
+.ge-mask-properties > summary > svg { width: 12px; height: 12px; flex: none; }
 .ge-mask-sub-item:has(.ge-mask-properties[open]) {
   position: relative;
   z-index: 50;
@@ -829,6 +836,19 @@ mark.doc-find-mark {
 .ge-layers-list > .ge-layer-item:not(.ge-adj-sub-item):not(.ge-mask-sub-item) > .ge-layer-controls,
 .ge-layers-list > .ge-layer-group-row > .ge-layer-controls {
   display: none;
+}
+.ge-layers-list > .ge-layer-item:not(.ge-adj-sub-item):not(.ge-mask-sub-item).active > .ge-layer-controls,
+.ge-layers-list > .ge-layer-item:not(.ge-adj-sub-item):not(.ge-mask-sub-item).active-parent > .ge-layer-controls,
+.ge-layers-list > .ge-layer-group-row.active > .ge-layer-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding-top: 4px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
 }
 .ge-layer-tools[hidden] { display: none; }
 .ge-layer-tools .ge-layer-btn { min-width: 26px; }

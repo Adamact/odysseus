@@ -26,8 +26,8 @@ export async function initDocumentWritingStyle() {
       const res = await _postSettings({ document_writing_style: styleEl.value });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       if (msg) msg.textContent = '✓ Saved';
-    } catch (_) {
-      if (msg) msg.textContent = 'Failed to save';
+    } catch (e) {
+      if (msg) msg.textContent = e.status === 403 ? 'Admin access is required to change these settings.' : 'Failed to save';
     }
     setTimeout(() => { if (msg) msg.textContent = ''; }, 3000);
   });

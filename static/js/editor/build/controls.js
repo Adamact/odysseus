@@ -12,6 +12,13 @@
 export function controlsHTML({ color, brushSize, wandTolerance }) {
   const brushSliderValue = Math.round(Math.log(Math.max(1, brushSize)) / Math.log(800) * 1000);
   return `
+    <div id="ge-pen-section" style="display:none;">
+      <div class="ge-section-title">Pen Selection</div>
+      <div class="ge-control-row ge-actions">
+        <button type="button" class="ge-btn ge-btn-sm" id="ge-pen-commit" title="Close path and make selection (Enter)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg> Make selection</button>
+        <button type="button" class="ge-btn ge-btn-sm" id="ge-pen-cancel" title="Cancel path (Escape)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12"/></svg> Cancel</button>
+      </div>
+    </div>
     <div class="ge-layer-geometry-section" id="ge-layer-geometry-section">
       <div class="ge-section-title"><span>Position</span><span id="ge-layer-geometry-name"></span></div>
       <div class="ge-layer-geometry-grid">
@@ -238,7 +245,7 @@ export function controlsHTML({ color, brushSize, wandTolerance }) {
         <input type="range" id="ge-lasso-grow" min="-40" max="40" value="0" title="Expand (+) or contract (−) the selection before baking." />
       </div>
       <div class="ge-control-row ge-actions" style="margin-top:4px;flex-wrap:wrap;">
-        <button class="ge-btn ge-btn-sm ge-btn-iconlabel" id="ge-lasso-invert" title="Invert selection (Ctrl+Alt+I)">
+        <button class="ge-btn ge-btn-sm ge-btn-iconlabel" id="ge-lasso-invert" title="Invert selection (Ctrl+Alt+Shift+I)">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
           Invert
         </button>
@@ -289,7 +296,7 @@ export function controlsHTML({ color, brushSize, wandTolerance }) {
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
           Clear
         </button>
-        <button class="ge-btn ge-btn-sm ge-btn-iconlabel" id="ge-wand-invert" title="Invert selection (Ctrl+Alt+I)">
+        <button class="ge-btn ge-btn-sm ge-btn-iconlabel" id="ge-wand-invert" title="Invert selection (Ctrl+Alt+Shift+I)">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
           Invert
         </button>
@@ -612,6 +619,10 @@ export function layerPanelHTML() {
   return `<div class="ge-layers-header">
       <span class="ge-layers-grab"></span>
       <span class="ge-layers-title">Layers</span>
+      <div class="ge-layer-header-tools" role="group" aria-label="Layer actions">
+      <button type="button" class="ge-btn ge-btn-sm ge-icon-btn" id="ge-add-layer" title="New layer" aria-label="New layer">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
       <button class="ge-btn ge-btn-sm ge-icon-btn" id="ge-merge-down" title="Merge down" aria-label="Merge down">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="6 13 12 19 18 13"/></svg>
       </button>
@@ -627,7 +638,8 @@ export function layerPanelHTML() {
       <button class="ge-btn ge-btn-sm ge-icon-btn" id="ge-group-selected" title="Group selected layers" aria-label="Group selected layers">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h7l2 2h9v10H3z"/></svg>
       </button>
-      <button class="ge-btn ge-btn-sm" id="ge-add-layer" title="Add empty layer">+ Add</button>
+      <button class="ge-btn ge-btn-sm" id="ge-layer-fill" title="Fill selected layer or selection with foreground color (Alt+Backspace)">Fill</button>
+      </div>
     </div>
     <div class="ge-layer-blend-row">
       <label for="ge-layer-blend">Blend</label>

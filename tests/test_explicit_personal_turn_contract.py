@@ -1,4 +1,31 @@
+import pytest
+
 from src.turn_contract import requested_capabilities, selected_tools_for_request
+
+
+@pytest.mark.parametrize('prompt', [
+    "Find and read Morgan's latest email about the design review.",
+    "Search my inbox and read the latest message about customer reviews.",
+    "Find and open Casey's latest email about ratings. Do not send a reply.",
+])
+def test_review_subject_and_freshness_do_not_override_mailbox_source(prompt):
+    assert selected_tools_for_request(prompt) == {'search_emails', 'read_email'}
+    assert requested_capabilities(prompt) == {'email'}
+
+
+@pytest.mark.parametrize('prompt', [
+    'Find the latest reviews of noise cancelling headphones.',
+    'What are the reviews of this hotel like?',
+    'Search for current battery recycling developments.',
+])
+def test_public_discovery_still_uses_web_search(prompt):
+    assert selected_tools_for_request(prompt) == {'web_search'}
+
+
+def test_personal_notes_lookup_does_not_fall_back_to_public_search():
+    prompt = 'Find my latest notes about design reviews.'
+    assert 'web_search' not in (selected_tools_for_request(prompt) or ())
+    assert 'notes' in requested_capabilities(prompt)
 
 
 def test_calendar_to_email_draft_offers_complete_read_to_draft_chain():

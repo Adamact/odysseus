@@ -99,6 +99,14 @@ export function wireImport({ container, saveState, createLayer, composite, rende
   document.getElementById('ge-import-file')?.addEventListener('click', () => importFileInput.click());
 
   document.getElementById('ge-import-paste')?.addEventListener('click', async () => {
+    const pasteFromKeyboard = () => {
+      document.getElementById('gallery-editor-container')?.focus();
+      uiModule?.showToast('Press Ctrl+V to paste the image');
+    };
+    if (!navigator.clipboard?.read) {
+      pasteFromKeyboard();
+      return;
+    }
     try {
       const clipItems = await navigator.clipboard.read();
       let blob = null;
@@ -113,7 +121,7 @@ export function wireImport({ container, saveState, createLayer, composite, rende
       img.onerror = () => { URL.revokeObjectURL(url); if (uiModule) uiModule.showToast('Failed to load clipboard image'); };
       img.src = url;
     } catch (e) {
-      if (uiModule) uiModule.showToast('Clipboard access denied or no image available');
+      pasteFromKeyboard();
     }
   });
 

@@ -2096,6 +2096,20 @@ export function initEmailLibrary(config) {
 
 export function isOpen() { return state._libOpen; }
 
+export async function openEmailFromTool(target, isCurrent = () => true) {
+  const response = await fetch(`${API_BASE}/api/email/accounts`, { credentials: 'same-origin' });
+  if (!response.ok) throw new Error('Could not load email accounts');
+  const data = await response.json();
+  const key = String(target.account || '').trim().toLowerCase();
+  const matches = (data.accounts || []).filter(account =>
+    [account.id, account.from_address, account.imap_user, account.name]
+      .some(value => value && String(value).trim().toLowerCase() === key));
+  if (matches.length !== 1) throw new Error('Could not uniquely identify the email account');
+  if (!/^\d+$/.test(String(target.uid || ''))) throw new Error('Invalid email message ID');
+  if (!isCurrent()) return;
+  openEmailLibrary({ uid: String(target.uid), folder: target.folder || 'INBOX', account_id: matches[0].id });
+}
+
 export function openEmailLibrary(opts = {}) {
   // Foreground email always wins: cancel a delayed/idle callback and abort the
   // one optional request if it has already started. Generation checks make a

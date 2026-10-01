@@ -717,7 +717,6 @@ body.notes-drag-mode .note-card-pin svg {
 /* Hide the "Add a to-do…" quick-add bar in archive view — you can't add
    new items from the archive. */
 .notes-pane-archive .notes-quick-add { display: none !important; }
-.note-checkbox:hover .note-checkbox-agent { opacity: 0.55; }
 @keyframes note-reminder-pulse {
   0%, 100% {
     box-shadow:

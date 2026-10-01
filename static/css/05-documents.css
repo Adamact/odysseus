@@ -2354,7 +2354,8 @@ mark.doc-find-mark.current {
 .diff-chunk-btn-reject:hover { border-color: #f2cc60; background: color-mix(in srgb, #f2cc60 15%, transparent); }
 
 .doc-suggestion-accept-all {
-  flex: 1;
+  flex: 1.3;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2363,15 +2364,16 @@ mark.doc-find-mark.current {
   border: none;
   border-radius: 5px;
   cursor: pointer;
-  font-size: 10px;
+  font-size: 11px;
   font-family: inherit;
-  background: transparent;
+  white-space: nowrap;
+  background: var(--accent);
   border: 1px solid var(--accent);
-  color: var(--accent);
+  color: var(--bg);
   transition: background 0.1s;
 }
 .doc-suggestion-accept-all:hover {
-  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  background: color-mix(in srgb, var(--accent) 85%, var(--bg));
 }
 .doc-suggestion-reason {
   opacity: 0.6;
@@ -2433,10 +2435,11 @@ mark.doc-find-mark.current {
 /* Mobile: suggestion card overlays top of editor (no room on side) */
 @media (max-width: 768px) {
   .doc-suggestion-card {
-    right: 8px;
+    box-sizing: border-box;
+    left: 8px;
     right: 8px;
     width: auto;
-    top: 8px !important;
+    overflow-y: auto;
   }
   .doc-suggestion-card::before { display: none; }
 }

@@ -193,7 +193,7 @@ def test_web_search_enabled_for_turn_requires_explicit_enable():
 
 
 def test_sft_workspace_clamp_does_not_strip_private_web_tools():
-    tools = {"bash", "read_file", "web_search", "web_fetch", "ask_user", "update_plan", "ask_teacher"}
+    tools = {"bash", "read_file", *WEB_TOOL_NAMES, "ask_user", "update_plan", "ask_teacher"}
 
     stripped = al._strip_workspace_tools_for_sft(tools, "sft_alex_creator")
 

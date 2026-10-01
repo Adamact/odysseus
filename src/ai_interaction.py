@@ -706,6 +706,16 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
     if not lines:
         return {"error": "No action specified"}
 
+    theme_args = None
+    if content.lstrip().startswith('{'):
+        import json
+        try:
+            theme_args = json.loads(content)
+        except ValueError:
+            return {"error": "Invalid UI action JSON."}
+        if not isinstance(theme_args, dict) or theme_args.get('action') != 'create_theme':
+            return {"error": "Structured UI action must be create_theme."}
+        lines = ['create_theme']
     parts = lines[0].strip().split(None, 2)
     action = parts[0].lower()
 
@@ -792,16 +802,13 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
         }
 
     elif action == "set_theme":
-        theme_name = parts[1].lower() if len(parts) > 1 else ""
+        theme_name = content.strip().partition(' ')[2].strip().lower().replace(' ', '-')
         # Theme colors are defined in static/js/theme.js on the frontend.
         # We pass the name; the frontend looks it up from presets + custom themes.
         # Also check user's custom themes stored in prefs.
         # Must match the THEMES keys in static/js/theme.js.
-        known_presets = [
-            "dark", "light", "midnight", "cyberpunk", "retrowave", "forest",
-            "ocean", "ume", "terminal", "organs", "gpt", "claude", "cute",
-            "eclipse", "porcelain", "arcade", "blueprint", "monolith", "yoyo",
-        ]
+        from src.theme_palette import THEME_PRESETS
+        known_presets = THEME_PRESETS
         custom_themes = {}
         try:
             from routes.prefs_routes import _load_for_user
@@ -821,6 +828,11 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
                 stored["colors"] = previous["colors"]
             elif isinstance(custom_themes.get(theme_name), dict):
                 stored["colors"] = custom_themes[theme_name]
+            theme_source = custom_themes.get(theme_name)
+            if not theme_source and previous.get('name') == theme_name:
+                theme_source = previous
+            if isinstance(theme_source, dict):
+                stored.update({k: v for k, v in theme_source.items() if k.startswith('bgEffect') or k in ('bgPattern', 'frosted')})
             prefs["theme"] = stored
             _save_for_user(owner, prefs)
         except Exception:
@@ -832,8 +844,24 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
         }
 
     elif action == "create_theme":
-        # Re-split without limit to get all parts
-        parts = lines[0].strip().split()
+        import shlex
+        try:
+            if theme_args is not None:
+                from src.theme_palette import normalize_theme_colors
+                palette = normalize_theme_colors(theme_args.get('colors'))
+                theme_name = theme_args.get('name')
+                if not isinstance(theme_name, str) or not theme_name.strip():
+                    return {"error": "name must be a nonempty theme name."}
+                base = ('bg', 'fg', 'panel', 'border', 'accent')
+                parts = ['create_theme', theme_name.strip(), *(palette[k] for k in base)]
+                parts.extend(f'{k}={v}' for k, v in palette.items() if k not in base)
+                from src.theme_palette import normalize_theme_background
+                background = normalize_theme_background(theme_args.get('background'), palette['accent'])
+                parts.extend(f'{k}={v}' for k, v in background.items())
+            else:
+                parts = shlex.split(content.strip())
+        except ValueError as exc:
+            return {"error": f"Invalid theme arguments: {exc}"}
         # create_theme <name> <bg> <fg> <panel> <border> <accent> [key=value ...]
         if len(parts) < 7:
             return {"error": "create_theme needs: create_theme <name> <bg> <fg> <panel> <border> <accent> (all hex colors). Optional advanced color key=value pairs (userBubbleBg, aiBubbleBg, bubbleBorder, sidebarBg, sectionAccent, brandColor, inputBg, inputBorder, sendBtnBg, sendBtnHover, codeBg, codeFg, toggleBg, toggleActive, accentPrimary, accentError). Optional background EFFECTS: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num e.g. 1>, bgEffectSize=<num e.g. 1>, frosted=true|false"}
@@ -855,7 +883,8 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
         # Background-effect fields (animated pattern + frosted glass). Different
         # value types than the hex-only advanced keys, so parse separately.
         _BG_PATTERNS = {"none", "dots", "synapse", "rain", "constellations",
-                        "perlin-flow", "petals", "sparkles", "embers"}
+                        "perlin-flow", "petals", "sparkles", "embers",
+                        "starfield-depth", "ascii-fireflies"}
         bg = {}
         for part in parts[7:]:
             if "=" not in part:
@@ -873,9 +902,9 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
                 if not _re.match(r'^#[0-9a-fA-F]{6}$', av):
                     return {"error": f"Invalid hex color for bgEffectColor: '{av}'. Use format #RRGGBB"}
                 bg["effectColor"] = av
-            elif ak in ("bgEffectIntensity", "bgEffectSize"):
+            elif ak in ("bgEffectIntensity", "bgEffectSize", "bgEffectSpeed"):
                 try:
-                    bg["effectIntensity" if ak == "bgEffectIntensity" else "effectSize"] = float(av)
+                    bg[ak[2].lower() + ak[3:]] = float(av)
                 except ValueError:
                     return {"error": f"Invalid number for {ak}: '{av}'"}
             elif ak == "frosted":
@@ -890,9 +919,13 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
             custom_themes[name] = dict(colors)
             prefs["custom-themes"] = custom_themes
             prefs["theme"] = {"name": name, "colors": dict(colors)}
+            for key, value in bg.items():
+                stored_key = 'frosted' if key == 'frosted' else 'bg' + key[0].upper() + key[1:]
+                custom_themes[name][stored_key] = value
+                prefs['theme'][stored_key] = value
             _save_for_user(owner, prefs)
         except Exception:
-            pass
+            return {"error": "Could not save the theme. No theme change was applied; retry when preferences storage is available."}
         return {
             "ui_event": "create_theme",
             "theme_name": name,
@@ -1069,21 +1102,31 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
         return result
 
     elif action == "get_theme":
+        from src.theme_palette import BACKGROUND_PATTERNS, THEME_PRESETS
+        prefs = {}
         try:
             from routes.prefs_routes import _load_for_user
-            saved = _load_for_user(owner).get("theme")
+            prefs = _load_for_user(owner)
+            saved = prefs.get("theme")
         except Exception:
             saved = None
+        available = {'presets': list(THEME_PRESETS),
+                     'custom_themes': sorted((prefs.get('custom-themes') or {}).keys()),
+                     'background_patterns': list(BACKGROUND_PATTERNS)}
         name = str(saved.get("name") or "").strip() if isinstance(saved, dict) else ""
         if not name:
             return {
                 "results": "The current client theme has not been synchronized to the server.",
                 "theme_known": False,
+                **available,
             }
         return {
             "results": f"Current theme: {name}",
             "current_theme": name,
             "theme_known": True,
+            'colors': saved.get('colors'),
+            'background': {k: v for k, v in saved.items() if k.startswith('bg') or k == 'frosted'},
+            **available,
         }
 
     elif action == "get_toggles":
@@ -1118,11 +1161,23 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
     from pathlib import Path
     from src.url_safety import check_outbound_url
 
-    lines = content.strip().split("\n")
-    prompt = lines[0].strip() if lines else ""
-    model_spec = lines[1].strip() if len(lines) > 1 and lines[1].strip() else ""
-    size = lines[2].strip() if len(lines) > 2 and lines[2].strip() else "1024x1024"
-    quality = lines[3].strip() if len(lines) > 3 and lines[3].strip() else "medium"
+    if content.lstrip().startswith('{'):
+        try:
+            args = json.loads(content)
+        except (TypeError, ValueError):
+            return {"error": "Image arguments must be a JSON object"}
+        if not isinstance(args, dict):
+            return {"error": "Image arguments must be a JSON object"}
+        prompt = str(args.get('prompt') or '').strip()
+        model_spec = str(args.get('model') or '').strip()
+        size = str(args.get('size') or '1024x1024')
+        quality = str(args.get('quality') or 'medium')
+    else:
+        lines = content.strip().split("\n")
+        prompt = lines[0].strip() if lines else ""
+        model_spec = lines[1].strip() if len(lines) > 1 and lines[1].strip() else ""
+        size = lines[2].strip() if len(lines) > 2 and lines[2].strip() else "1024x1024"
+        quality = lines[3].strip() if len(lines) > 3 and lines[3].strip() else "medium"
 
     if not prompt:
         return {"error": "Image prompt is required (line 1)"}
@@ -1133,6 +1188,9 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
         _settings = load_settings()
     except Exception:
         _settings = {}
+
+    if not _settings.get("image_gen_enabled", True):
+        return {"error": "Image generation is disabled by the administrator."}
 
     # Use admin-configured model/quality if not specified by the tool call
     if not model_spec:
@@ -1221,6 +1279,9 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
     # Build the images endpoint URL from the chat completions URL
     base_url = url.replace("/chat/completions", "").replace("/v1/messages", "").rstrip("/")
     images_url = base_url + "/images/generations"
+    from src.model_capability_readers.base import detect_vendor
+    if detect_vendor(url) == "openrouter":
+        images_url = base_url + "/images"
 
     # Validate size for cloud image models (local diffusion accepts any WxH)
     valid_gpt_sizes = {"1024x1024", "1024x1536", "1536x1024", "auto"}
@@ -1357,7 +1418,7 @@ async def do_edit_image(
     model_spec: str = "",
     session_id: Optional[str] = None,
     owner: Optional[str] = None,
-    size: str = "1024x1024",
+    size: str = "auto",
     quality: str = "medium",
     progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
 ) -> Dict:
@@ -1404,8 +1465,23 @@ async def do_edit_image(
     except ValueError:
         return {"error": f"No endpoint found with image model '{model_spec}'."}
 
+    if not size or size == "auto":
+        from PIL import Image
+        from src.image_model_ids import image_edit_size
+        try:
+            with Image.open(path) as source:
+                width, height = source.size
+                # EXIF rotation changes the displayed portrait/landscape shape.
+                if source.getexif().get(274) in {5, 6, 7, 8}:
+                    width, height = height, width
+            size = image_edit_size(model_id, width, height)
+        except (OSError, ValueError, Image.DecompressionBombError):
+            return {"error": "Could not read the attached image dimensions. Try a PNG, JPEG, or WebP image."}
+
     base_url = url.replace("/chat/completions", "").replace("/v1/messages", "").rstrip("/")
     edits_url = base_url + "/images/edits"
+    from src.model_capability_readers.base import detect_vendor
+    is_openrouter = detect_vendor(url) == "openrouter"
     mime = mimetypes.guess_type(str(path))[0] or "image/png"
     payload = {
         "model": model_id,
@@ -1443,6 +1519,11 @@ async def do_edit_image(
             return ""
 
     def _save_image_bytes(image_bytes: bytes, suffix: str = ".png") -> tuple[str, str]:
+        nonlocal size
+        from io import BytesIO
+        from PIL import Image
+        with Image.open(BytesIO(image_bytes)) as output:
+            size = f"{output.width}x{output.height}"
         img_dir = Path(GENERATED_IMAGES_DIR)
         img_dir.mkdir(parents=True, exist_ok=True)
         filename = f"{uuid.uuid4().hex[:12]}{suffix}"
@@ -1513,7 +1594,7 @@ async def do_edit_image(
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(connect=30.0, read=600.0, write=60.0, pool=30.0)) as client:
             progress_task = None
-            if progress_callback:
+            if progress_callback and not is_openrouter:
                 progress_url = base_url + f"/images/progress/{request_id}"
 
                 async def _poll_progress():
@@ -1537,9 +1618,27 @@ async def do_edit_image(
 
                 progress_task = asyncio.create_task(_poll_progress())
             try:
-                with path.open("rb") as f:
-                    files = {"image": (path.name, f, mime)}
-                    resp = await client.post(edits_url, data=payload, files=files, headers=headers)
+                if is_openrouter:
+                    # OpenRouter's Image API uses JSON reference images for
+                    # edits, not OpenAI's multipart /images/edits protocol.
+                    image_b64 = base64.b64encode(path.read_bytes()).decode("ascii")
+                    edit_payload = {
+                        "model": model_id,
+                        "prompt": prompt,
+                        "n": 1,
+                        "size": size,
+                        "quality": payload["quality"],
+                        "output_format": "png",
+                        "input_references": [{
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{mime};base64,{image_b64}"},
+                        }],
+                    }
+                    resp = await client.post(base_url + "/images", json=edit_payload, headers=headers)
+                else:
+                    with path.open("rb") as f:
+                        files = {"image": (path.name, f, mime)}
+                        resp = await client.post(edits_url, data=payload, files=files, headers=headers)
             finally:
                 if progress_task:
                     progress_task.cancel()
@@ -1560,14 +1659,14 @@ async def do_edit_image(
                     )
                 except Exception:
                     pass
-                if resp.status_code in (400, 404, 405, 422):
+                if not is_openrouter and resp.status_code in (400, 404, 405, 422):
                     fallback = await _try_local_img2img_fallback(client)
                     if fallback:
                         return fallback
                     if resp.status_code == 404:
                         return {
                             "error": (
-                                f"Image model '{model_id}' is reachable, but this endpoint does not expose image editing. "
+                                f"The configured endpoint returned 404 for image editing with '{model_id}'. "
                                 "Use it without an attached image for text-to-image generation, or serve an edit/img2img "
                                 "model for attached-image prompts."
                             )

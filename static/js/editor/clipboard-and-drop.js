@@ -40,7 +40,10 @@ export function wireClipboardAndDrop({
   const { signal } = clipboardBindings;
   // ── Paste ──
   window.addEventListener('paste', (e) => {
-    if (!state.editorOpen || state.container !== container || e.defaultPrevented) return;
+    if (!state.editorOpen || state.container !== container) return;
+    // Editable fields keep native paste. The Clipboard button focuses the
+    // canvas container before asking for a keyboard paste when read() is
+    // unavailable on an insecure origin.
     if (e.target?.isContentEditable || e.target?.closest?.('input, textarea, select, [role="dialog"]')) return;
 
     function pasteAsLayer(imgSource, label, offset = { x: 0, y: 0 }) {
@@ -65,30 +68,26 @@ export function wireClipboardAndDrop({
       uiModule.showToast('Pasted as new layer');
     }
 
-    // Check internal clipboard first (from Ctrl+C lasso/wand).
-    if (state.internalClipboard) {
+    const imageItem = Array.from(e.clipboardData?.items || []).find(item => item.type.startsWith('image/'));
+    if (imageItem) {
       e.preventDefault();
       e.stopImmediatePropagation();
-      pasteAsLayer(state.internalClipboard, 'Pasted Selection', state.internalClipboardOffset || { x: 0, y: 0 });
-      return;
-    }
-
-    // Fall back to system clipboard.
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    for (const item of items) {
-      if (!item.type.startsWith('image/')) continue;
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      const blob = item.getAsFile();
+      const blob = imageItem.getAsFile();
+      if (!blob) return;
       const url = URL.createObjectURL(blob);
       const img = new Image();
       // External clipboard images follow the same source-backed import path
       // as files, gallery images, and drops. Internal selection clipboard
       // content is handled above as an identity placed layer.
       img.onload = () => { handleImportedImage(img, 'Pasted image'); URL.revokeObjectURL(url); };
+      img.onerror = () => { URL.revokeObjectURL(url); uiModule?.showToast('Failed to load clipboard image'); };
       img.src = url;
-      break;
+      return;
+    }
+    if (state.internalClipboard && !e.defaultPrevented && !e.clipboardData?.types?.includes?.('text/plain')) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      pasteAsLayer(state.internalClipboard, 'Pasted Selection', state.internalClipboardOffset || { x: 0, y: 0 });
     }
   }, { capture: true, signal });
 

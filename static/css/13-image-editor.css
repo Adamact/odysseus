@@ -111,10 +111,49 @@
   overflow: hidden;
   position: relative;
 }
+.ge-editor-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 34px;
+  padding: 3px 10px;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+.ge-editor-footer .ge-canvas-size {
+  min-width: 0;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 65%, transparent);
+}
+.ge-footer-zoom {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.ge-footer-zoom > .ge-btn { min-width: 28px; min-height: 26px; }
+.ge-footer-zoom .ge-zoom-stack { flex-direction: row; gap: 5px; min-width: 56px; }
+.ge-footer-zoom .ge-zoom-label { top: 0; left: 0; font-size: 11px; letter-spacing: 0; opacity: 0.8; }
+.ge-footer-zoom .ge-zoom-glyph { left: 0; }
+.ge-footer-zoom .ge-stacked-btn { min-width: 48px; }
 .gallery-editor-container {
   flex: 1;
   min-height: 0;
   display: none;
+}
+.gallery-editor-container input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.gallery-editor-container input[type="number"]::-webkit-inner-spin-button,
+.gallery-editor-container input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
 }
 
 .ge-toolbar {
@@ -3415,6 +3454,7 @@ button .spinner-whirlpool {
 }
 .ge-layers-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
@@ -3426,6 +3466,14 @@ button .spinner-whirlpool {
   position: relative;
 }
 .ge-layers-title { flex: 1; }
+.ge-layers-header #ge-add-layer { flex: 0 0 auto; white-space: nowrap; }
+.ge-layer-header-tools {
+  display: flex;
+  flex: 0 0 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
 .ge-layers-grab { display: none; } /* mobile only */
 .ge-layers-merge-wrap { position: relative; display: inline-flex; }
 .ge-layers-merge-wrap #ge-layers-merge-btn { position: relative; top: 0; }
@@ -3497,9 +3545,10 @@ button .spinner-whirlpool {
   /* Cap the list so a huge layer stack scrolls within its own box
      rather than pushing the whole panel arbitrarily tall. */
   max-height: 320px;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 0;
+  padding: 0 0 6px;
 }
 .ge-layer-item {
   display: flex;
@@ -3570,9 +3619,12 @@ button .spinner-whirlpool {
 /* Row-hover tint removed — kept the layer row's background stable so
    it doesn't shift visually as the user reaches for the opacity slider. */
 .ge-layer-item.active {
-  background: color-mix(in srgb, var(--red) 8%, transparent);
-  border-left-color: var(--red);
+  background: color-mix(in srgb, var(--accent, var(--red)) 52%, var(--bg-secondary, var(--bg)));
+  border-left-color: var(--accent, var(--red));
+  box-shadow: inset 3px 0 0 var(--accent, var(--red)), inset 0 0 0 1px color-mix(in srgb, var(--accent, var(--red)) 80%, transparent);
 }
+.ge-layer-item.active > .ge-layer-name,
+.ge-layer-group-row.active > .ge-layer-group-name { font-weight: 700; }
 /* "Active parent" — the layer is selected, but a mask sub-layer below
    it is the actual paint target. Soft hint so the user can see which
    parent owns the active mask without competing with the mask's
@@ -3582,7 +3634,7 @@ button .spinner-whirlpool {
   border-left-color: color-mix(in srgb, var(--fg) 30%, transparent);
 }
 .ge-layer-item.selected:not(.active):not(.active-parent) {
-  background: color-mix(in srgb, var(--accent, var(--red)) 7%, transparent);
+  background: color-mix(in srgb, var(--accent, var(--red)) 22%, var(--bg));
   box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
 }
 .ge-layer-group-row {
@@ -3650,8 +3702,8 @@ button .spinner-whirlpool {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg) 65%, transparent);
 }
 .ge-layer-group-row.active {
-  background: color-mix(in srgb, var(--accent, var(--red)) 12%, var(--bg-secondary));
-  box-shadow: inset 2px 0 0 var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 38%, var(--bg-secondary));
+  box-shadow: inset 2px 0 0 var(--accent, var(--red)), inset 0 0 0 1px color-mix(in srgb, var(--accent, var(--red)) 50%, transparent);
 }
 .ge-layer-group-toggle {
   width: 18px;
@@ -3802,15 +3854,20 @@ button .spinner-whirlpool {
 }
 .ge-mask-properties {
   position: relative;
-  flex: 0 0 30px;
+  flex: 0 0 22px;
 }
 .ge-mask-properties > summary:hover,
 .ge-mask-properties[open] > summary {
-  color: var(--accent, var(--red));
-  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+  opacity: 0.8;
 }
+.ge-mask-properties[open] > summary { color: var(--accent, var(--red)); opacity: 0.95; }
 .ge-mask-properties-panel {
   position: fixed;
+  box-sizing: border-box;
+  margin: 0;
+  bottom: auto;
+  overflow: auto;
+  color: var(--fg);
   z-index: 9999;
   right: auto;
   top: 0;
@@ -3823,6 +3880,7 @@ button .spinner-whirlpool {
   background: var(--bg-secondary, var(--bg));
   box-shadow: 0 8px 24px rgba(0,0,0,.28);
 }
+.ge-mask-properties-panel:not(:popover-open) { display: none; }
 .ge-mask-property-row {
   display: grid;
   grid-template-columns: 52px minmax(0, 1fr) 35px;
@@ -3942,6 +4000,27 @@ button .spinner-whirlpool {
 .ge-layer-btn:hover { opacity: 0.8; }
 .ge-layer-btn.active { color: var(--accent, var(--red)); opacity: 0.95; }
 .ge-layer-btn:disabled { cursor: default; opacity: 0.16; }
+.ge-layer-style-btn { font-style: italic; font-weight: 700; font-size: 13px; }
+.ge-layer-style-menu {
+  animation: none;
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: 4px;
+  min-width: 170px;
+  max-width: calc(100vw - 12px);
+  max-height: calc(100dvh - 12px);
+  overflow-y: auto;
+  box-sizing: border-box;
+  background: var(--panel, var(--bg));
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px #0005;
+}
+.ge-layer-style-menu:not(:popover-open) { display: none; }
+.ge-layer-style-menu:popover-open { display: block; }
+.ge-layer-style-menu > button { width: 100%; border: 0; background: none; font: inherit; text-align: left; }
 .ge-layer-btn.danger:hover { color: var(--red); opacity: 1; }
 
 .ge-layer-lock-menu {

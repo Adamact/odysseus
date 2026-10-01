@@ -81,6 +81,10 @@ class SetAdminRequest(BaseModel):
     is_admin: bool
 
 
+class ResetUserPasswordRequest(BaseModel):
+    new_password: str
+
+
 class SetOpenRegistrationRequest(BaseModel):
     enabled: bool
 
@@ -320,6 +324,20 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         ok = auth_manager.create_user(body.username, body.password, body.is_admin)
         if not ok:
             raise HTTPException(409, "Username already taken")
+        return {"ok": True}
+
+    @router.put("/users/{username}/password")
+    async def reset_user_password(username: str, body: ResetUserPasswordRequest, request: Request):
+        user = _get_current_user(request)
+        if not user or not auth_manager.is_admin(user):
+            raise HTTPException(403, "Admin only")
+        if len(body.new_password) < PASSWORD_MIN_LENGTH:
+            raise HTTPException(400, f"Password must be at least {PASSWORD_MIN_LENGTH} characters")
+        if len(body.new_password.encode("utf-8")) > 72:
+            raise HTTPException(400, "Password must be at most 72 UTF-8 bytes")
+        ok = await asyncio.to_thread(auth_manager.reset_user_password, username, body.new_password, user)
+        if not ok:
+            raise HTTPException(403, "Password reset is only available for existing non-admin accounts")
         return {"ok": True}
 
     @router.put("/users/{username}/privileges")

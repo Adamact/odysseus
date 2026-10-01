@@ -20,6 +20,7 @@ export {
   initEmailLibrary,
   isOpen,
   openEmailLibrary,
+  openEmailFromTool,
   mountEmailSettings,
   openEmailLibrarySettings,
   closeEmailLibrary,

@@ -800,6 +800,54 @@ VARIABLE_NOTES: dict[str, tuple[str, str, str]] = {
         "On by default. Keeps synthetic personal-assistant fixtures out of workspace "
         "mode; set 0, false, no or off to let them through.",
     ),
+    "ODYSSEUS_AJAX_TEST_URL": (
+        "Testing, capture and development tooling", INTERNAL,
+        "Chat-completions URL of a live Ajax endpoint. Unset skips the opt-in live "
+        "Ajax email tests.",
+    ),
+    "ODYSSEUS_EDITOR_TEST_ENDPOINT": (
+        "Testing, capture and development tooling", INTERNAL,
+        "Chat-completions URL the opt-in editor-writing and organizer smoke tools "
+        "drive. Both tools require it.",
+    ),
+    "ODYSSEUS_EDITOR_ACTIONS": (
+        "Testing, capture and development tooling", INTERNAL,
+        "Comma-separated writing actions the editor-writing smoke tool runs. Unset "
+        "runs every action plus edit and update.",
+    ),
+    "ODYSSEUS_EDITOR_MAX_TOKENS": (
+        "Testing, capture and development tooling", INTERNAL,
+        "Completion token limit for each editor-writing smoke request.",
+    ),
+    "ODYSSEUS_EDITOR_RICH_FIXTURE": (
+        "Testing, capture and development tooling", INTERNAL,
+        "Set to 1 to run the editor-writing smoke tool against a rich-text document "
+        "fixture instead of Markdown.",
+    ),
+    "ODYSSEUS_EDITOR_TRACE": (
+        "Testing, capture and development tooling", INTERNAL,
+        "Any non-empty value prints every stream event after each editor-writing "
+        "smoke action.",
+    ),
+    "ODYSSEUS_ORGANIZER_TRACE": (
+        "Testing, capture and development tooling", INTERNAL,
+        "Any non-empty value prints each provider request the organizer smoke tool "
+        "sends.",
+    ),
+    "ODYSSEUS_ORGANIZER_AUTO_CHOICE": (
+        "Testing, capture and development tooling", INTERNAL,
+        "With organizer tracing on, any non-empty value replaces forced tool choice "
+        "with auto on traced requests.",
+    ),
+    "ODYSSEUS_ORGANIZER_TRACE_MESSAGES": (
+        "Testing, capture and development tooling", INTERNAL,
+        "With organizer tracing on, any non-empty value also prints the request "
+        "messages.",
+    ),
+    "ODYSSEUS_ORGANIZER_CASES": (
+        "Testing, capture and development tooling", INTERNAL,
+        "Comma-separated organizer smoke case names to run. Unset runs every case.",
+    ),
     "ODYSSEUS_RUNTIME_REVISION": (
         "Testing, capture and development tooling", INTERNAL,
         "Revision string stamped into each captured SFT trace record, so a trace can "

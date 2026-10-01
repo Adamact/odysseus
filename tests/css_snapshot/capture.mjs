@@ -103,10 +103,47 @@ function pageMeasure(job) {
     return { root, leaf };
   }
 
-  function readStyle(el, pseudo, properties, wantCustom) {
+  function readStyle(el, pseudo, properties, wantCustom, lineRelativeProperties = []) {
+    // Style/layout is flushed when querying animations. Sample CSS animations
+    // at the start, and settle transitions to their destination. WAAPI timing
+    // overrides leave animation/transition declarations in getComputedStyle.
+    for (const animation of document.getAnimations()) {
+      if (animation instanceof CSSTransition) animation.finish();
+      else {
+        animation.pause();
+        animation.currentTime = 0;
+      }
+    }
     const cs = getComputedStyle(el, pseudo || undefined);
     const values = {};
-    for (const prop of properties) values[prop] = cs.getPropertyValue(prop);
+    for (const prop of properties) {
+      let value = cs.getPropertyValue(prop);
+      // Chromium on macOS serializes this alias as a quoted system-ui family;
+      // Linux preserves the alias spelling. Keep every other family and order.
+      if (prop === 'font-family') {
+        value = value.replace(/(^|,\s*)BlinkMacSystemFont(?=\s*(?:,|$))/g, '$1"system-ui"');
+      }
+      values[prop] = value;
+    }
+    if (lineRelativeProperties.length) {
+      // `normal` line-height uses the installed fallback font's metrics. Measure
+      // one lh with this element's font, then retain the authored line count
+      // rather than the platform's pixel height. Only inventory opt-ins use it.
+      const ruler = document.createElement('div');
+      ruler.style.cssText = 'all:initial;position:absolute;left:-10000px;height:1lh;';
+      for (const prop of ['font-family', 'font-size', 'font-weight', 'font-style',
+                          'font-stretch', 'font-variant', 'line-height']) {
+        ruler.style.setProperty(prop, cs.getPropertyValue(prop));
+      }
+      document.body.appendChild(ruler);
+      const lineHeight = parseFloat(getComputedStyle(ruler).height);
+      ruler.remove();
+      for (const prop of lineRelativeProperties) {
+        if (values[prop]?.endsWith('px')) {
+          values[prop] = `${Number((parseFloat(values[prop]) / lineHeight).toFixed(6))}lh`;
+        }
+      }
+    }
     if (wantCustom) {
       const names = [];
       for (let i = 0; i < cs.length; i += 1) {
@@ -151,7 +188,8 @@ function pageMeasure(job) {
     // Reading a layout property forces the style and layout pass before the
     // computed values are read back.
     void document.body.offsetHeight;
-    measured[entry.key] = readStyle(el, entry.pseudo, job.properties, !!entry.custom);
+    measured[entry.key] = readStyle(el, entry.pseudo, job.properties, !!entry.custom,
+                                   entry.lineRelativeProperties || []);
     if (restore) restore();
   }
 
@@ -211,6 +249,10 @@ async function main() {
           javaScriptEnabled: true,
         });
         const tab = await context.newPage();
+        const cdp = await context.newCDPSession(tab);
+        // Pin the UA standard font preference rather than overriding author
+        // CSS. macOS defaults to Times; Linux defaults to Times New Roman.
+        await cdp.send('Page.setFontFamilies', { fontFamilies: { standard: 'Times New Roman' } });
 
         // Registered first so the document/stylesheet handlers below win:
         // Playwright matches the most recently registered route.
@@ -239,6 +281,9 @@ async function main() {
           const response = await route.fetch();
           let html = await response.text();
           html = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '');
+          // Focus states are outside this idle-state inventory. Autofocus can
+          // run after load, racing the measurement and changing outline-offset.
+          html = html.replace(/(<[^>]*?)\sautofocus(?=[\s=>])(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?/gi, '$1');
           if (shippedStylesheets !== null) {
             html = html.replace(/<link\b[^>]*rel=["']stylesheet["'][^>]*>/gi, '');
             html = html.replace(/<\/head>/i, `  ${shippedStylesheets}\n</head>`);
@@ -253,6 +298,7 @@ async function main() {
         if (!response || !response.ok()) {
           throw new Error(`${page.url} returned ${response ? response.status() : 'no response'}`);
         }
+        if (job.measurementDelayMs) await tab.waitForTimeout(job.measurementDelayMs);
         const result = await tab.evaluate(pageMeasure, {
           elements: page.elements || [],
           bench: page.bench || [],

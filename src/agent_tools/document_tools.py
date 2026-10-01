@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Optional
 import hashlib
 import html
+import difflib
 import logging
 import re
 from src.constants import MAX_READ_CHARS
@@ -295,10 +296,13 @@ def parse_edit_blocks(content: str) -> list:
     # preserve whitespace inside the actual find/replace text.
     pattern = (
         r'<<<FIND>>>[ \t]*(?:\r?\n)?(.*?)[ \t]*(?:\r?\n)?'
-        r'<<<REPLACE>>>[ \t]*(?:\r?\n)?(.*?)[ \t]*(?:\r?\n)?<<<END>>>'
+        r'<<<(REPLACE|REPLACE_ALL)>>>[ \t]*(?:\r?\n)?(.*?)[ \t]*(?:\r?\n)?<<<END>>>'
     )
     for m in re.finditer(pattern, content, re.DOTALL):
-        edits.append({"find": m.group(1), "replace": m.group(2)})
+        edit = {"find": m.group(1), "replace": m.group(3)}
+        if m.group(2) == 'REPLACE_ALL':
+            edit['replace_all'] = True
+        edits.append(edit)
     if not edits and "<<<FIND>>>" in content and "<<<REPLACE>>>" in content:
         # Some native callers stop generation immediately after the replace
         # body. Treat end-of-content as the terminal marker only in that
@@ -711,6 +715,74 @@ class UpdateDocumentTool:
         finally:
             db.close()
 
+def _document_find_contexts(content, find):
+    """Give a failed caller exact contextual anchors instead of a blind retry."""
+    contexts = []
+    for index, match in enumerate(re.finditer(re.escape(find), content)):
+        if index >= 3:
+            break
+        start = content.rfind('\n', 0, match.start()) + 1
+        end = content.find('\n', match.end())
+        end = len(content) if end < 0 else end
+        # Rich-text paragraphs are often stored on one HTML line.
+        for tag in ('p', 'div'):
+            paragraph = content.rfind(f'<{tag}', 0, match.start())
+            close = content.find(f'</{tag}>', match.end())
+            if paragraph >= 0 and close >= 0 and close + len(tag) + 3 - paragraph <= 1200:
+                start, end = paragraph, close + len(tag) + 3
+                break
+        context = content[start:end]
+        if len(context) <= 1200 and content.count(context) == 1:
+            contexts.append(context)
+    return '\nExact unique anchors from the current document:\n' + '\n'.join(contexts) if contexts else ''
+
+
+def _document_find_repair_hint(content, find, count):
+    """Offer bounded exact source text for an unmatched or ambiguous edit."""
+    if isinstance(count, int) and count > 1:
+        return _document_find_contexts(content, find)[:900]
+    if not isinstance(count, int) or count != 0:
+        return ''
+    # Minified markup may be one enormous line. Parse tag boundaries instead
+    # of comparing a small FIND against that entire line. This is evidence for
+    # a corrected call, never permission to apply a fuzzy replacement.
+    if find.lstrip().startswith('<'):
+        from html.parser import HTMLParser
+
+        class SourceTags(HTMLParser):
+            def __init__(self):
+                super().__init__(convert_charrefs=False)
+                self.tags = []
+
+            def handle_starttag(self, tag, attrs):
+                raw = self.get_starttag_text()
+                if raw and len(raw) <= 1000:
+                    self.tags.append(raw)
+
+            def handle_startendtag(self, tag, attrs):
+                self.handle_starttag(tag, attrs)
+
+        parser = SourceTags()
+        parser.feed(content)
+        matches = difflib.get_close_matches(find, list(dict.fromkeys(parser.tags)), n=2, cutoff=0.7)
+        if matches:
+            return 'Copy an exact source fragment into FIND (including its spacing and quotes): ' + ' | '.join(
+                repr(match) for match in matches)
+    if re.fullmatch(r"[\w'-]{3,40}", find):
+        words = re.findall(r"[\w'-]{3,40}", content)
+        by_lower = {word.casefold(): word for word in words}
+        matches = difflib.get_close_matches(find.casefold(), by_lower, n=5, cutoff=0.6)
+        if matches:
+            return 'Closest words actually in the document: ' + ', '.join(
+                repr(by_lower[word]) for word in matches)
+    paragraphs = re.findall(r'<(?:p|div)\b[^>]*>.*?</(?:p|div)>', content, re.S | re.I)
+    if not paragraphs:
+        paragraphs = content.splitlines()
+    candidates = [p for p in paragraphs if len(p) <= 500]
+    matches = difflib.get_close_matches(find, candidates, n=2, cutoff=0.4)
+    return 'Closest exact passages in the document: ' + ' | '.join(matches) if matches else ''
+
+
 class EditDocumentTool:
     async def execute(self, content: str, ctx: dict) -> Dict:
         """Apply targeted FIND/REPLACE edits to an existing document."""
@@ -795,34 +867,66 @@ class EditDocumentTool:
                 return {"error": "No edits applied — FIND text cannot be blank"}
 
             updated_content = doc.current_content
-            applied = 0
-            skipped = 0
-            for edit in edits:
-                _find = edit["find"]
-                if _find == edit["replace"]:
-                    logger.warning("edit_document: skipping no-op FIND/REPLACE block")
+            applied, skipped, no_op_edits = 0, 0, 0
+            invalid_edits = []
+            # Validate against evolving content before the database write.
+            # Only exact unique matches may be saved; report every rejected
+            # entry explicitly so a partial batch cannot masquerade as complete.
+            prose = str(doc.language or '').lower() in {'text', 'markdown', 'richtext', 'email', ''}
+            for edit_number, edit in enumerate(edits, 1):
+                find = edit['find']
+                replacement = edit['replace']
+                if find == replacement:
                     skipped += 1
+                    no_op_edits += 1
                     continue
-                if _find in updated_content:
-                    updated_content = updated_content.replace(_find, edit["replace"], 1)
-                    applied += 1
-                else:
-                    # Defensive: the active-doc context shows a "N\t" line-number
-                    # gutter for reference. Weaker models sometimes copy that prefix
-                    # into FIND. If the exact match failed, retry with a leading
-                    # "<digits><tab>" stripped from each FIND line — but only use it
-                    # when that stripped form actually matches, so we never corrupt a
-                    # legitimately tab-prefixed document.
-                    _stripped = "\n".join(re.sub(r"^\d+\t", "", _l) for _l in _find.split("\n"))
-                    if _stripped != _find and _stripped in updated_content:
-                        updated_content = updated_content.replace(_stripped, edit["replace"], 1)
-                        applied += 1
-                        logger.info("edit_document: matched after stripping line-number gutter from FIND")
-                    else:
-                        logger.warning(f"edit_document: FIND text not found, skipping: {_find[:80]!r}")
-                        skipped += 1
+                if find not in updated_content:
+                    stripped = "\n".join(re.sub(r"^\d+\t", "", line) for line in find.split("\n"))
+                    if stripped != find and stripped in updated_content:
+                        find = stripped
+                count = updated_content.count(find) if find else 0
+                replace_all = edit.get('replace_all') is True
+                if count == 0 or (count != 1 and not replace_all):
+                    invalid_edits.append((edit_number, count, edit['find']))
+                    continue
+                position = updated_content.index(find)
+                positions = [m.start() for m in re.finditer(re.escape(find), updated_content)] if replace_all else [position]
+                if prose and re.fullmatch(r"[\w]+", find):
+                    for match_pos in positions:
+                        before = updated_content[match_pos - 1:match_pos] if match_pos else ''
+                        after = updated_content[match_pos + len(find):match_pos + len(find) + 1]
+                        if (before and (before.isalnum() or before == '_')) or (after and (after.isalnum() or after == '_')):
+                            invalid_edits.append((edit_number, 'part of a word', edit['find']))
+                            break
+                    if invalid_edits and invalid_edits[-1][0] == edit_number:
+                        continue
+                updated_content = updated_content.replace(find, replacement) if replace_all else updated_content[:position] + replacement + updated_content[position + len(find):]
+                applied += 1
+
+            partial_edits = bool(invalid_edits and applied)
+            if invalid_edits and not partial_edits:
+                details = '; '.join(
+                    f'#{number} ({reason} matches): {find[:100]!r}'
+                    if isinstance(reason, int) else f'#{number} ({reason}): {find[:100]!r}'
+                    for number, reason, find in invalid_edits[:8]
+                )
+                extra = f'; and {len(invalid_edits) - 8} more' if len(invalid_edits) > 8 else ''
+                return {
+                    'error': f'No edits applied. Invalid FIND entries: {details}{extra}. '
+                             'Do not repeat the unchanged call. Copy FIND exactly from the current source or the hints below, '
+                             'then retry the corrected entries. If no hint identifies the target, read the document first. '
+                             'Other entries were not saved. ' + ' '.join(
+                                 f'#{number}: {_document_find_repair_hint(doc.current_content, find, reason)}'
+                                 for number, reason, find in invalid_edits[:3]
+                                 if _document_find_repair_hint(doc.current_content, find, reason)
+                             ),
+                    'exit_code': 1, 'applied': 0,
+                    'invalid_edit_numbers': [number for number, _, _ in invalid_edits],
+                }
 
             if applied == 0:
+                if no_op_edits == len(edits):
+                    return {"error": "No edits applied: every FIND and REPLACE pair is identical. Write a changed replacement that fulfills the requested revision; keep FIND copied from the current document."}
                 return {"error": f"No edits applied — none of the FIND blocks matched the document content (skipped {skipped})"}
 
             missing_id = _missing_document_upload(owner, updated_content)
@@ -855,7 +959,7 @@ class EditDocumentTool:
             db.add(ver)
             db.commit()
 
-            return {
+            result = {
                 "action": "edit",
                 "doc_id": target_id,
                 "title": doc.title,
@@ -865,6 +969,17 @@ class EditDocumentTool:
                 "applied": applied,
                 "skipped": skipped,
             }
+            if partial_edits:
+                result.update({
+                    'partial': True,
+                    'rejected': len(invalid_edits),
+                    'invalid_edits': [
+                        {'number': number, 'matches': reason, 'find': find[:100],
+                         'hint': _document_find_repair_hint(updated_content, find, reason)}
+                        for number, reason, find in invalid_edits
+                    ],
+                })
+            return result
         except Exception as e:
             db.rollback()
             return {"error": f"Failed to edit document: {e}"}
@@ -897,8 +1012,8 @@ class SuggestDocumentTool:
                 return version_error
 
             # Validate that FIND text exists in document
-            valid = []
-            for s in suggestions:
+            valid, invalid = [], []
+            for number, s in enumerate(suggestions, 1):
                 find_text = s["find"]
                 # Browser selections from markdown, rich text, and email are
                 # rendered text, while the stored document may contain LF
@@ -906,22 +1021,44 @@ class SuggestDocumentTool:
                 # back to the exact source fragment used by the editor.
                 source_find = _visible_text_match_source(doc.current_content, find_text)
                 if source_find is not None:
+                    stored = doc.current_content or ''
+                    if stored.count(source_find) != 1:
+                        invalid.append({'number': number, 'find': find_text[:100],
+                                        'reason': 'ambiguous',
+                                        'hint': _document_find_contexts(stored, source_find)[:900]})
+                        continue
+                    if re.fullmatch(r"[\w]+", source_find):
+                        pos = stored.index(source_find)
+                        before = stored[pos - 1:pos] if pos else ''
+                        after = stored[pos + len(source_find):pos + len(source_find) + 1]
+                        if (before and before.isalnum()) or (after and after.isalnum()):
+                            invalid.append({'number': number, 'find': find_text[:100],
+                                            'reason': 'part of a word', 'hint': ''})
+                            continue
                     if source_find != find_text:
                         s = dict(s)
                         s["find"] = source_find
                     s["id"] = _stable_suggestion_id(target_id, s)
                     valid.append(s)
                 else:
-                    logger.warning(f"suggest_document: FIND text not found, skipping: {find_text[:80]!r}")
+                    invalid.append({'number': number, 'find': find_text[:100],
+                                    'reason': 'not found',
+                                    'hint': _document_find_repair_hint(doc.current_content or '', find_text, 0)[:900]})
 
             if not valid:
-                return {"error": "No suggestions matched the document content"}
+                details = '; '.join(f"#{item['number']} {item['reason']}: {item['find']!r} {item['hint']}"
+                                    for item in invalid[:5])
+                return {'error': 'No suggestions created: ' + details,
+                        'exit_code': 1, 'rejected': len(invalid)}
 
             return {
                 "action": "suggest",
                 "doc_id": target_id,
                 "suggestions": valid,
                 "count": len(valid),
+                "partial": bool(invalid),
+                "rejected": len(invalid),
+                "invalid_suggestions": invalid,
             }
         finally:
             db.close()

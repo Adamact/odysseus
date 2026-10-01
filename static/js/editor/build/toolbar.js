@@ -38,6 +38,7 @@ export function buildToolbar({ currentTool, onSelectTool, onClearSelection }) {
     { id: 'burn', label: 'Burn', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 22c4 0 7-3 7-7 0-5-4-8-7-13-3 5-7 8-7 13 0 4 3 7 7 7Z"/><path d="M9 16c1.5 1 4.5 1 6 0"/></svg>' },
     { id: 'marquee', label: 'Marquee', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="1" stroke-dasharray="3 3"/></svg>' },
     { id: 'lasso', label: 'Lasso', icon: '⟡' },
+    { id: 'pen', label: 'Pen selection', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19 7-7 3 3-7 7-3-3zM18 13l-1.5-7.5L2 2l3.5 14.5L13 18M2 2l7.5 7.5"/><circle cx="10" cy="10" r="2"/></svg>' },
     { id: 'wand', label: 'Wand', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4V2"/><path d="M15 16v-2"/><path d="M8 9h2"/><path d="M20 9h2"/><path d="M17.8 11.8L19 13"/><path d="M15 9h0"/><path d="M17.8 6.2L19 5"/><path d="M3 21l9-9"/><path d="M12.2 6.2L11 5"/></svg>' },
     { id: 'sam', label: 'SAM', ai: true, icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7c3-3 13-3 16 0"/><path d="M4 17c3 3 13 3 16 0"/><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3"/></svg>' },
     { sep: true },
@@ -60,6 +61,7 @@ export function buildToolbar({ currentTool, onSelectTool, onClearSelection }) {
     btn.className = 'ge-tool-btn' + (t.id === currentTool ? ' active' : '');
     btn.dataset.tool = t.id;
     btn.title = t.label + (t.key ? ` (${t.key})` : '');
+    if (t.id === 'pen') btn.title += ' - Click anchors; drag for curves; close path or press Enter';
     // Heavy 4-point AI star marker for AI-backed tools — sits just to
     // the left of the icon so the user can spot AI vs local tools at a
     // glance now that the "AI Tools" separator is gone.

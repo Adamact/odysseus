@@ -5,6 +5,7 @@
 
 import { byId as el } from './dom.js';
 import { postSettings as _postSettings } from './api.js';
+import { modelCaps } from '../editor/ai-models.js';
 import { sortModelIds } from '../modelSort.js';
 
 export async function initImageSettings() {
@@ -18,9 +19,9 @@ export async function initImageSettings() {
     const endpoints = await endpointsRes.json();
     const imageModels = new Set();
     (Array.isArray(endpoints) ? endpoints : []).forEach(endpoint => {
-      if (!endpoint.is_enabled || !endpoint.online || String(endpoint.model_type || '').toLowerCase() !== 'image') return;
+      if (!endpoint.is_enabled || !endpoint.online) return;
       (Array.isArray(endpoint.models) ? endpoint.models : []).forEach(modelId => {
-        if (modelId) imageModels.add(String(modelId));
+        if (modelId && modelCaps(modelId, '', endpoint.model_type).gen) imageModels.add(String(modelId));
       });
     });
     sortModelIds(Array.from(imageModels)).forEach(mid => {
@@ -51,7 +52,7 @@ export async function initImageSettings() {
       const res = await _postSettings({ image_gen_enabled: enabledToggle ? enabledToggle.checked : false, image_model: modelSel.value, image_quality: qualSel.value });
       if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)'; setTimeout(() => { msg.textContent = ''; }, 2000);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) { msg.textContent = e.status === 403 ? 'Admin access is required to change these settings.' : 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
   modelSel.addEventListener('change', saveSettings);
   qualSel.addEventListener('change', saveSettings);

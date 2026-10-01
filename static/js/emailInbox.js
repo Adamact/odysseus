@@ -847,6 +847,11 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
       await _docModule.openEmailDraft(data);
       return;
     }
+    if (wantsAiReply && _docModule?.generateEmailReply) {
+      const opened = await _openEmail(em, itemEl, data, 'reply-all', '', '', mailboxContext);
+      if (!opened) return false;
+      return await _docModule.generateEmailReply({ mode: 'ai-reply-fast', noteHint, originalBody: data.body }) === true;
+    }
     if (wantsAiReply) {
       const activeReplyAccount = data.account_id || em.account_id || accountAtStart;
       if (data.cached_ai_reply && !noteHint && !activeReplyAccount) {
@@ -1128,7 +1133,8 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
           // connection (or when caching is interfering). loadDocument's
           // GET path can still be used as a fallback.
           if (_docModule.injectFreshDoc) {
-            _docModule.injectFreshDoc(doc);
+            await _docModule.injectFreshDoc(doc);
+            if (!isCurrentOpen()) return;
           } else {
             await _docModule.loadDocument(doc.id);
             if (!isCurrentOpen()) return;

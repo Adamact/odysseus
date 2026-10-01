@@ -821,6 +821,14 @@ const STUBS = new Map([
     },
   ],
   [
+    path.join(JS, 'editor/ai-models.js'),
+    {
+      modelCaps() {
+        return {};
+      },
+    },
+  ],
+  [
     path.join(JS, 'providers.js'),
     {
       providerLogo() {
