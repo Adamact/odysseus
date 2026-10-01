@@ -78,6 +78,11 @@ def reap_containment_grants() -> Dict[str, Any]:
             # supervisor owns the wall clock and teardown, independently.
             report["background_kept"] = report.get("background_kept", 0) + 1
             continue
+        if record.get("lifetime") != "cleanup" and record.get("manager_pid") and process_ownership.verify(
+            record["manager_pid"], record.get("manager_token"),
+        ) == process_ownership.OWNED:
+            report["manager_kept"] = report.get("manager_kept", 0) + 1
+            continue
         verdict = process_ownership.verify_record(record)
         if verdict == process_ownership.GONE:
             if containment._group_present(record.get("pgid")):
@@ -144,6 +149,121 @@ def reap_bg_jobs() -> Dict[str, Any]:
         return {"seen": 0, "retired": 0, "kept": 0}
 
 
+def reap_legacy_agent_tmux() -> Dict[str, Any]:
+    """Retire this runtime's legacy agent shells; a name prefix is not ownership.
+
+    Match the original clean Bash launcher and this runtime's HOME marker on
+    every pane. Snapshot session/server identities and process start tokens
+    before teardown; ambiguous sessions remain visible and unsignalled.
+    """
+    import os
+    import re
+    import shlex
+    import shutil
+    import subprocess
+    import uuid
+    from src import containment
+    from src.constants import DATA_DIR
+
+    report = {"seen": 0, "torn_down": 0, "unverifiable": 0, "failed": 0}
+    tmux = shutil.which("tmux")
+    if os.name == "nt" or not tmux:
+        return report
+    pattern = "#{session_id}\t#{session_name}\t#{session_created}\t#{pane_pid}\t#{pane_id}\t#{pid}\t#{pane_start_command}"
+    def snapshot():
+        result = subprocess.run([tmux, "list-panes", "-a", "-F", pattern],
+                                capture_output=True, text=True, timeout=5)
+        if result.returncode:
+            if not result.stdout and any(message in result.stderr.lower() for message in ("no server", "no sessions", "error connecting")):
+                return {}
+            raise RuntimeError("tmux pane discovery failed")
+        sessions = {}
+        for line in result.stdout.splitlines():
+            fields = line.split("\t", 6)
+            if len(fields) != 7 or not fields[1].startswith("ody-agent-"):
+                continue
+            sessions.setdefault(fields[0], []).append(tuple(fields))
+        return {key: sorted(rows) for key, rows in sessions.items()}
+
+    def launcher_is_ours(command):
+        try:
+            argv = shlex.split(command)
+        except ValueError:
+            return False
+        if not argv or argv.pop(0) != "env":
+            return False
+        env = {}
+        while argv and "=" in argv[0]:
+            key, value = argv.pop(0).split("=", 1)
+            if key not in {"PATH", "VIRTUAL_ENV", "HOME", "TMPDIR", "TERM", "COLUMNS", "LINES"}:
+                return False
+            env[key] = value
+        return argv == ["/bin/bash", "--noprofile", "--norc"] and env.get("HOME") == DATA_DIR
+
+    try:
+        sessions = snapshot()
+        for session_id, panes in sessions.items():
+            report["seen"] += 1
+            if not re.fullmatch(r"\$\d+", session_id) or not all(launcher_is_ours(row[6]) for row in panes):
+                report["unverifiable"] += 1
+                continue
+            server_pid = int(panes[0][5])
+            server_token = process_ownership.start_token(server_pid)
+            roots = [int(row[3]) for row in panes]
+            table = process_ownership.process_table()
+            if not all(pid in table and table[pid].ppid == server_pid and shlex.split(table[pid].command) == [
+                "/bin/bash", "--noprofile", "--norc",
+            ] for pid in roots):
+                # A stale pane PID can now name a bystander. Its parent and
+                # current launcher must still match the observed tmux server.
+                report["unverifiable"] += 1
+                continue
+            targets = process_ownership.descendants(roots, table=table)
+            identities = {pid: process_ownership.start_token(pid) for pid in targets}
+            if snapshot().get(session_id) != panes or process_ownership.verify(server_pid, server_token) != process_ownership.OWNED or any(
+                process_ownership.verify(pid, identities[pid]) != process_ownership.OWNED for pid in roots
+            ):
+                report["unverifiable"] += 1
+                continue
+            # Persist every positively identified tree before touching it. A
+            # failed teardown then remains discoverable even if its pane dies.
+            tracked = []
+            for pid in reversed(targets):
+                if process_ownership.verify(pid, identities[pid]) != process_ownership.OWNED:
+                    continue
+                spec = containment.ContainmentSpec(workspace=os.getcwd(), env={}, wall_clock_s=1,
+                                                   required=frozenset({containment.PROCESS_TREE}))
+                grant = containment.ContainmentGrant(
+                    id=uuid.uuid4().hex[:12], mechanism="process_group", workspace=spec.workspace,
+                    enforced=frozenset({containment.PROCESS_TREE}), degraded=(), unenforced_required=(),
+                    owner=f"legacy-tmux:{session_id}", mode=containment.MODE_ENFORCING,
+                    spec=spec, pid=pid, pgid=containment._pgid_of(pid),
+                )
+                containment._write_record(grant)
+                containment._update_record(grant.id, lifetime="cleanup", start_token=identities[pid])
+                tracked.append((grant, identities[pid]))
+            dead = True
+            for grant, token in tracked:
+                outcome = containment.release(grant, start_token=token, require_identity=True)
+                dead = dead and outcome.dead
+            remaining = snapshot().get(session_id)
+            if remaining and dead:
+                # Use the immutable tmux session id, not its reusable name.
+                if remaining != panes or process_ownership.verify(server_pid, server_token) != process_ownership.OWNED:
+                    dead = False
+                else:
+                    result = subprocess.run([tmux, "kill-session", "-t", session_id],
+                                            capture_output=True, timeout=5)
+                    dead = result.returncode == 0 and session_id not in snapshot()
+            report["torn_down" if dead else "failed"] += 1
+    except Exception:
+        report["failed"] += 1
+        logger.warning("process_reaper: legacy agent tmux cleanup failed", exc_info=True)
+    if report["unverifiable"]:
+        logger.warning("process_reaper: left %s legacy tmux sessions without positive ownership", report["unverifiable"])
+    return report
+
+
 def reap_orphans() -> Dict[str, Any]:
     """Run both reconciliations. Returns a report; raises nothing.
 
@@ -154,6 +274,7 @@ def reap_orphans() -> Dict[str, Any]:
         "mechanism": process_ownership.inspection_mechanism(),
         "grants": reap_containment_grants(),
         "bg_jobs": reap_bg_jobs(),
+        "agent_tmux": reap_legacy_agent_tmux(),
     }
     if report["mechanism"] == process_ownership.MECHANISM_NONE:
         logger.error(

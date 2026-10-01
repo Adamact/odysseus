@@ -922,42 +922,6 @@ class BashTool:
         if "/tmp/" in content:
             isolated_tmp = _isolated_tmp_dir(agent_cwd())
             content = content.replace("/tmp/", isolated_tmp.rstrip("/") + "/")
-        progress_cb = ctx.get("progress_cb")
-        _subproc_env = ctx.get("subproc_env")
-        session_id = ctx.get("session_id")
-        if not IS_WINDOWS and session_id and shutil.which("tmux"):
-            try:
-                content, boundary, _confined = _contained_command(content, agent_cwd())
-            except containment.ContainmentUnavailable as exc:
-                return containment.unavailable_tool_result(exc, tool="bash")
-            stdout, stderr, rc, timed_out = await _run_tmux_bash(
-                content,
-                session_id=str(session_id),
-                cwd=agent_cwd(),
-                env=_subproc_env,
-                timeout=DEFAULT_BASH_TIMEOUT,
-                progress_cb=progress_cb,
-            )
-            if timed_out:
-                return {
-                    "error": f"bash: timed out after {DEFAULT_BASH_TIMEOUT}s — terminated task shell session",
-                    "exit_code": 124,
-                    "stdout": _truncate(stdout, MAX_OUTPUT_CHARS),
-                    "stderr": _truncate(stderr, MAX_OUTPUT_CHARS),
-                    "tmux_session": _tmux_session_name(str(session_id)),
-                    "containment": boundary,
-                }
-            output = stdout.rstrip()
-            err = stderr.rstrip()
-            if err:
-                output = (output + "\nSTDERR: " + err).strip() if output else "STDERR: " + err
-            return {
-                "output": _truncate(output, MAX_OUTPUT_CHARS) or "(no output)",
-                "exit_code": rc or 0,
-                "tmux_session": _tmux_session_name(str(session_id)),
-                "containment": boundary,
-            }
-
         return await _run_owned_command(content, ctx, tool="bash", timeout=DEFAULT_BASH_TIMEOUT)
 
 class HostShellTool:

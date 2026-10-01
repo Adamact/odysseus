@@ -426,6 +426,7 @@ def test_reap_orphans_reports_both_stores_and_the_mechanism(
     seed_grant()
     seed_job()
     verdicts(monkeypatch, {4242: process_ownership.GONE})
+    monkeypatch.setattr(process_reaper, "reap_legacy_agent_tmux", lambda: {"seen": 0})
     monkeypatch.setattr(containment, "_group_present", lambda _pgid: False)
 
     report = process_reaper.reap_orphans()

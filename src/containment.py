@@ -446,6 +446,8 @@ def _write_record(grant: ContainmentGrant) -> None:
     records[grant.id] = {
         "id": grant.id,
         "owner": grant.owner,
+        "manager_pid": os.getpid(),
+        "manager_token": process_ownership.start_token(os.getpid()),
         "mechanism": grant.mechanism,
         "mode": grant.mode,
         "workspace": grant.workspace,
