@@ -1345,6 +1345,14 @@ async def _startup_event():
     from src.cookbook_serve_lifecycle import cookbook_serve_lifecycle_loop
     _startup_tasks.append(asyncio.create_task(cookbook_serve_lifecycle_loop()))
 
+    # Reconcile the processes a previous run left behind: tear down orphaned
+    # containment grants, and stop trusting background-job records whose pid the
+    # kernel has since reassigned. Runs once, and deliberately runs *here* —
+    # every record it sees predates this run, which is what makes "I cannot
+    # identify this process" a safe thing to act on. See src/process_reaper.py.
+    from src.process_reaper import reap_orphans_at_startup
+    _startup_tasks.append(asyncio.create_task(reap_orphans_at_startup()))
+
     logger.info("Application startup complete")
 
 async def _shutdown_event():

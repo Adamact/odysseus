@@ -66,6 +66,7 @@ from typing import Any, Awaitable, Callable, Mapping, Optional
 from core.atomic_io import atomic_write_json
 from core.platform_compat import IS_WINDOWS, find_bash, pid_alive
 
+from src import process_ownership
 from src.constants import CONTAINMENT_STATE_FILE, MAX_OUTPUT_CHARS
 
 logger = logging.getLogger(__name__)
@@ -256,6 +257,12 @@ class ReleaseOutcome:
     escalated: bool
     survivors: tuple[int, ...] = ()
     mechanism: str = ""
+    #: The ownership verdict, when teardown had to establish one — a grant
+    #: recovered from the durable store after a restart. Empty for an
+    #: in-process teardown, where the caller holds the child and the question
+    #: does not arise. A non-empty value other than
+    #: :data:`process_ownership.OWNED` means **no signal was sent**.
+    ownership: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -263,6 +270,7 @@ class ReleaseOutcome:
             "escalated": self.escalated,
             "survivors": list(self.survivors),
             "mechanism": self.mechanism,
+            "ownership": self.ownership,
         }
 
 
@@ -906,7 +914,17 @@ async def run(
     # exits, getpgid can no longer tell us which group its children are in.
     pgid = None if IS_WINDOWS else (_pgid_of(proc.pid) or proc.pid)
     live = replace(grant, pid=proc.pid, pgid=pgid)
-    _update_record(grant.id, pid=proc.pid, pgid=pgid, started_at=time.time())
+    # The start token is what makes this record signallable by a *later*
+    # process. Without it a restart reaper holds a pid and no way to tell
+    # whether the pid is still this child or something the kernel has since
+    # handed to a stranger; see src/process_ownership.py.
+    _update_record(
+        grant.id,
+        pid=proc.pid,
+        pgid=pgid,
+        started_at=time.time(),
+        start_token=process_ownership.capture(proc.pid)["start_token"],
+    )
 
     out_buf: list[str] = []
     err_buf: list[str] = []
@@ -1092,6 +1110,75 @@ def _outcome_for(
     )
 
 
+def _ownership_gate(
+    grant: ContainmentGrant,
+    pid: int,
+    pgid: Optional[int],
+    token: Optional[str],
+) -> Optional[ReleaseOutcome]:
+    """Decide whether a recovered grant may be signalled at all.
+
+    Returns None to let teardown proceed, or the outcome to report instead.
+    Reached only for a grant recovered from the durable store — the restart and
+    reaper path, where the recorded pid is a claim rather than a child this
+    process is holding.
+
+    The rule is fail-closed: **a signal requires a positive identity.** Anything
+    else is reported as an undead tree rather than silently killed, because the
+    alternative is sending SIGKILL to whatever the kernel has since given that
+    pid to. ODY-86 was this defect; the reason the record stays active on a
+    refusal is that an unreapable orphan has to remain visible instead of being
+    closed out as handled.
+    """
+    verdict = process_ownership.verify(pid, token)
+    if verdict == process_ownership.OWNED:
+        return None
+
+    if verdict == process_ownership.GONE:
+        # The leader is gone. Its group may still hold processes it
+        # backgrounded, but with the leader unverifiable there is nothing left
+        # to prove the group is still ours, and a recycled group id would mean
+        # killpg hits strangers. An empty group is the clean case.
+        if not _group_present(pgid):
+            return replace(
+                _outcome_for(grant, dead=True, escalated=False), ownership=verdict,
+            )
+        logger.warning(
+            "containment: grant %s leader pid %s is gone but group %s still has "
+            "members; not signalling a group whose ownership cannot be proven",
+            grant.id, pid, pgid,
+        )
+        return ReleaseOutcome(
+            dead=False,
+            escalated=False,
+            survivors=(pgid,) if pgid else (),
+            mechanism=grant.mechanism,
+            ownership=verdict,
+        )
+
+    if verdict == process_ownership.FOREIGN:
+        logger.warning(
+            "containment: grant %s records pid %s, which now belongs to a "
+            "different process; refusing to signal it",
+            grant.id, pid,
+        )
+    else:
+        logger.warning(
+            "containment: grant %s pid %s cannot be verified on this host (%s); "
+            "refusing to signal an unidentified process",
+            grant.id, pid, process_ownership.inspection_mechanism(),
+        )
+    return ReleaseOutcome(
+        dead=False,
+        escalated=False,
+        # Not ours to enumerate, and listing a foreign pid as a survivor of
+        # *our* grant would invite the next reaper to kill it.
+        survivors=(),
+        mechanism=grant.mechanism,
+        ownership=verdict,
+    )
+
+
 def release(grant: ContainmentGrant, *, grace_s: float = 2.0) -> ReleaseOutcome:
     """Authoritative teardown: signal the group, escalate, then verify.
 
@@ -1106,10 +1193,17 @@ def release(grant: ContainmentGrant, *, grace_s: float = 2.0) -> ReleaseOutcome:
     otherwise report a tree that is already gone.
     """
     pid, pgid = grant.pid, grant.pgid
+    # A grant that carries its own pid belongs to the process holding it: this
+    # caller launched the child and no identity question arises. A grant whose
+    # pid had to be recovered from the durable store is the restart case, and
+    # there the pid is a *claim* about a process this run never started.
+    recovered = pid is None
+    token: Optional[str] = None
     if pid is None or (pgid is None and not IS_WINDOWS):
         record = _load_records().get(grant.id) or {}
         pid = pid if pid is not None else record.get("pid")
         pgid = pgid if pgid is not None else record.get("pgid")
+        token = record.get("start_token")
     try:
         pid = int(pid) if pid else 0
     except (TypeError, ValueError):
@@ -1124,6 +1218,12 @@ def release(grant: ContainmentGrant, *, grace_s: float = 2.0) -> ReleaseOutcome:
         outcome = _outcome_for(grant, dead=True, escalated=False)
         _finish_release(grant, outcome)
         return outcome
+
+    if recovered:
+        refusal = _ownership_gate(grant, pid, pgid, token)
+        if refusal is not None:
+            _finish_release(grant, refusal)
+            return refusal
 
     if IS_WINDOWS:
         try:
@@ -1165,6 +1265,47 @@ def release(grant: ContainmentGrant, *, grace_s: float = 2.0) -> ReleaseOutcome:
     outcome = _outcome_for(grant, dead=_tree_gone(pid, pgid, reap=True), escalated=escalated)
     _finish_release(grant, outcome)
     return outcome
+
+
+def reap_record(record: Mapping[str, Any], *, grace_s: float = 2.0) -> ReleaseOutcome:
+    """Tear down a grant known only by its durable record.
+
+    The entry point for a reaper after a restart: the process that acquired the
+    grant is gone, so there is no :class:`ContainmentGrant` in memory, only the
+    row :func:`active_grants` returned. Reconstructs the minimum
+    :func:`release` needs and goes through the same ownership gate — a record is
+    a claim about a pid, and a reaper is exactly the caller that must not treat
+    it as more than that.
+
+    ``env`` is not reconstructed because it is never persisted (it is where
+    credentials live) and teardown does not use it.
+    """
+    record = dict(record or {})
+    spec = ContainmentSpec(
+        workspace=record.get("workspace") or os.getcwd(),
+        env={},
+        wall_clock_s=int(record.get("wall_clock_s") or 1),
+        required=frozenset(record.get("required") or ()),
+    )
+    grant = ContainmentGrant(
+        id=str(record.get("id") or ""),
+        mechanism=str(record.get("mechanism") or "none"),
+        workspace=spec.workspace,
+        enforced=frozenset(record.get("enforced") or ()),
+        degraded=tuple(record.get("degraded") or ()),
+        unenforced_required=tuple(record.get("unenforced_required") or ()),
+        owner=str(record.get("owner") or "reaper"),
+        mode=str(record.get("mode") or CONTAINMENT_MODE),
+        spec=spec,
+        external=bool(record.get("external")),
+        # Left as None on purpose: release() then recovers pid, pgid and the
+        # start token from the store itself and routes through the ownership
+        # gate. Passing them here would mark the grant as held in-process and
+        # skip the very check this path exists to apply.
+        pid=None,
+        pgid=None,
+    )
+    return release(grant, grace_s=grace_s)
 
 
 async def _release_awaited(

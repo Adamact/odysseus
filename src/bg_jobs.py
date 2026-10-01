@@ -38,6 +38,7 @@ from core.platform_compat import (
     pid_alive,
 )
 
+from src import process_ownership
 from src.constants import BG_JOBS_DIR, BG_JOBS_FILE
 
 _JOBS_DIR = Path(BG_JOBS_DIR)
@@ -152,6 +153,11 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
         "followed_up": False,       # has the agent been re-invoked with the result?
         "log_path": str(log_path),
         "exit_path": str(exit_path),
+        # Identity, not just a slot. The pid above is reused by the kernel, and
+        # this record outlives the process and the server; the token is what a
+        # later run compares before it signals anything. See
+        # src/process_ownership.py.
+        "start_token": process_ownership.capture(proc.pid)["start_token"],
     }
     jobs = _load()
     jobs[job_id] = rec
@@ -283,10 +289,65 @@ def kill(job_id: str) -> Optional[Dict[str, Any]]:
     return rec
 
 
+def disown_unverified() -> Dict[str, Any]:
+    """Stop tracking running jobs whose process can no longer be proven ours.
+
+    Called once at startup by :mod:`src.process_reaper`, never from the poll
+    loop — every record it sees was written by an earlier run, which is what
+    makes "unidentifiable" a statement about a previous run's child rather than
+    about a job this run just launched.
+
+    Signals nothing. A detached job is meant to survive a restart, so a job that
+    verifies as ours is left alone and its result is still collected. What is
+    corrected is the record that would otherwise be signalled later on a pid the
+    kernel has reassigned: the max-runtime branch of :func:`refresh` sends
+    SIGTERM then SIGKILL to ``rec["pid"]`` an hour in, and on a reused pid that
+    lands on a bystander.
+
+    Fail closed: a job that cannot be verified is retired too, not kept.
+    Retiring loses a result, which is visible; keeping it leaves a pid this
+    server will eventually signal without knowing what it is pointing at, which
+    is not.
+    """
+    jobs = _load()
+    report = {"seen": 0, "retired": 0, "kept": 0}
+    changed = False
+    now = time.time()
+    for rec in jobs.values():
+        if rec.get("status") != "running":
+            continue
+        report["seen"] += 1
+        verdict = process_ownership.verify(rec.get("pid"), rec.get("start_token"))
+        if verdict in (process_ownership.OWNED, process_ownership.GONE):
+            # OWNED: still ours, still running, still watched. GONE: refresh()
+            # already turns an absent process into a "died" record, and it may
+            # yet find an exit-code file the job wrote before it went.
+            report["kept"] += 1
+            continue
+        rec["status"] = "failed"
+        rec["exit_code"] = -1
+        rec["ended_at"] = now
+        rec["ownership_lost"] = verdict
+        # followed_up stays False: the agent asked for this job and is owed an
+        # answer, even when the answer is that we lost track of it.
+        report["retired"] += 1
+        changed = True
+    if changed:
+        _save(jobs)
+    return report
+
+
 def result_text(rec: Dict[str, Any]) -> str:
     """Human/agent-readable summary of a finished job, for the follow-up."""
     out = _read_output(rec)
-    if rec.get("killed"):
+    if rec.get("ownership_lost"):
+        head = (
+            "Background job was abandoned across a server restart: its process "
+            f"could not be identified as ours ({rec.get('ownership_lost')}), so it was "
+            "neither waited on nor signalled. Any output below is what it had "
+            "written by then; if the work matters, re-run it."
+        )
+    elif rec.get("killed"):
         head = "Background job was killed."
     elif rec.get("timed_out"):
         head = f"Background job timed out after {rec.get('max_runtime_s')}s."

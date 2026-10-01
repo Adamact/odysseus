@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import re
 from typing import Any, Dict, List, Optional
 
@@ -1024,6 +1025,189 @@ async def do_list_served_models(content: str, owner: Optional[str] = None) -> Di
     return {"output": "\n".join(lines), "tasks": merged, "exit_code": 0}
 
 
+# How long a tmux query may take before the stop gives up on identifying the
+# session's processes and says so. The kill itself does not depend on it.
+_TMUX_QUERY_TIMEOUT_S = 5
+# Grace between SIGTERM and SIGKILL for a model server that ignored SIGHUP.
+_SWEEP_GRACE_S = 2.0
+_SWEEP_POLL_S = 0.05
+
+
+async def _capture_session_processes(session_id: str) -> tuple[List[Dict[str, Any]], str]:
+    """Snapshot the processes belonging to a local tmux session.
+
+    This is what gives the survivor sweep an *ownership* record rather than a
+    resemblance. tmux knows which pane hosts the session, the pane pid's
+    descendants are the processes that session started, and a start token taken
+    now is what lets the sweep prove, after the kill, that a pid it is about to
+    signal is still one of them.
+
+    Returns ``(records, note)``. An empty list with a note is the honest
+    outcome when the session cannot be enumerated — the note reaches the tool
+    result, because "I found no survivors" and "I could not look" are different
+    answers and the sweep used to give the first for both (ODY-94).
+    """
+    from src import process_ownership
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "tmux", "list-panes", "-a", "-F", "#{session_name} #{pane_pid}",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, _stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=_TMUX_QUERY_TIMEOUT_S
+            )
+        except asyncio.TimeoutError:
+            with contextlib.suppress(Exception):
+                proc.kill()
+                await proc.communicate()
+            return [], "; could not identify the session's processes (tmux timed out)"
+    except (OSError, FileNotFoundError) as exc:
+        return [], f"; could not identify the session's processes (tmux unavailable: {exc})"
+    if proc.returncode not in (0, None):
+        return [], "; could not identify the session's processes (tmux listed no panes)"
+
+    pane_pids: List[int] = []
+    for line in (stdout or b"").decode("utf-8", errors="replace").splitlines():
+        name, _, pid_text = line.strip().rpartition(" ")
+        if name == session_id and pid_text.isdigit():
+            pane_pids.append(int(pid_text))
+    if not pane_pids:
+        # The session is already gone, so nothing links a survivor to it. Said
+        # out loud rather than reported as a clean sweep.
+        return [], "; the session had no live pane, so its processes could not be identified"
+
+    def _snapshot() -> tuple[List[Dict[str, Any]], str]:
+        try:
+            table = process_ownership.process_table()
+        except process_ownership.InspectionUnavailable as exc:
+            return [], f"; could not identify the session's processes ({exc})"
+        own = {os.getpid(), os.getppid()}
+        records = []
+        for pid in process_ownership.descendants(pane_pids, table=table):
+            if pid in own:
+                continue
+            info = table.get(pid)
+            records.append({
+                "pid": pid,
+                "start_token": process_ownership.capture(pid)["start_token"],
+                "command": info.command if info else "",
+            })
+        return records, ""
+
+    return await asyncio.to_thread(_snapshot)
+
+
+def _signal_owned(pid: int, token: Optional[str], sig: int) -> bool:
+    """Signal ``pid`` only while it still verifies as the process we captured.
+
+    Re-verified immediately before every signal, including the escalation: the
+    gap between SIGTERM and SIGKILL is exactly long enough for the pid to be
+    freed and reissued, and a SIGKILL aimed at whatever landed in the slot is
+    the bug this sweep exists to stop committing.
+    """
+    from src import process_ownership
+
+    if process_ownership.verify(pid, token) != process_ownership.OWNED:
+        return False
+    try:
+        os.kill(pid, sig)
+        return True
+    except (ProcessLookupError, PermissionError, OSError):
+        return False
+
+
+def _sweep_session_survivors(
+    owned: List[Dict[str, Any]], tracked_cmd: str, capture_note: str,
+) -> str:
+    """Terminate the captured processes that outlived the tmux kill.
+
+    Blocking; call it off the event loop. Returns the note to append to the
+    tool result — the sweep's outcome is part of whether the stop worked, and
+    silence here is what let a half-stopped server read as stopped.
+
+    Only captured pids are signalled. A process that merely matches
+    ``tracked_cmd`` is reported and left alone: the Cookbook composed that
+    command line, so an identical one may well be a server the user started by
+    hand, and killing it because it resembles ours is indistinguishable from
+    killing ours. Naming it lets whoever is reading decide.
+    """
+    import signal as _signal
+    import time as _time
+
+    from src import process_ownership
+
+    if capture_note:
+        return capture_note
+
+    live = [rec for rec in owned
+            if process_ownership.verify(rec["pid"], rec["start_token"]) == process_ownership.OWNED]
+    killed: List[int] = []
+    survivors: List[int] = []
+    for rec in live:
+        pid, token = rec["pid"], rec["start_token"]
+        if not _signal_owned(pid, token, _signal.SIGTERM):
+            continue
+        deadline = _time.monotonic() + _SWEEP_GRACE_S
+        while _time.monotonic() < deadline:
+            if process_ownership.verify(pid, token) != process_ownership.OWNED:
+                break
+            _time.sleep(_SWEEP_POLL_S)
+        if process_ownership.verify(pid, token) == process_ownership.OWNED:
+            _signal_owned(pid, token, _signal.SIGKILL)
+            deadline = _time.monotonic() + 1.0
+            while _time.monotonic() < deadline:
+                if process_ownership.verify(pid, token) != process_ownership.OWNED:
+                    break
+                _time.sleep(_SWEEP_POLL_S)
+        if process_ownership.verify(pid, token) == process_ownership.OWNED:
+            survivors.append(pid)
+        else:
+            killed.append(pid)
+
+    note = ""
+    if killed:
+        note += f"; killed {len(killed)} surviving process(es) owned by the session"
+    if survivors:
+        note += (
+            f"; {len(survivors)} process(es) survived SIGKILL and are still "
+            f"running (pid {', '.join(str(pid) for pid in survivors)})"
+        )
+    note += _unowned_match_note(tracked_cmd, {rec["pid"] for rec in owned})
+    return note
+
+
+def _unowned_match_note(tracked_cmd: str, owned_pids: set) -> str:
+    """Report, without signalling, processes that look like the tracked command.
+
+    The old sweep killed these. It could not tell them apart from the server it
+    started, and neither can this — so it names them instead. Reporting keeps
+    the information the old behaviour acted on while giving up the one thing it
+    was never entitled to do.
+    """
+    from src import process_ownership
+
+    if not tracked_cmd:
+        return ""
+    try:
+        table = process_ownership.process_table()
+    except process_ownership.InspectionUnavailable:
+        return "; could not check for unowned processes matching the command"
+    strangers = sorted(
+        pid for pid, info in table.items()
+        if info.command == tracked_cmd and pid not in owned_pids and pid != os.getpid()
+    )
+    if not strangers:
+        return ""
+    return (
+        f"; note: {len(strangers)} other process(es) match this server's command "
+        f"line (pid {', '.join(str(pid) for pid in strangers)}) — not signalled, "
+        f"because nothing identifies them as started by this session"
+    )
+
+
 async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
                                  ssh_port: str = "", verb: str = "Stopped") -> Dict:
     """Kill a cookbook tmux session — remote-aware — AND mark the task
@@ -1077,6 +1261,16 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
         cmd = f"tmux kill-session -t {shlex.quote(session_id)}"
         target_label = session_id
 
+    # Capture what this session owns BEFORE the kill. Once tmux tears the
+    # session down the pane is gone, and with it the only evidence linking a
+    # surviving model server to the session that started it. A sweep that looks
+    # afterwards has nothing left but the command line, which identifies a
+    # *kind* of process and not one we started.
+    owned: List[Dict[str, Any]] = []
+    owned_note = ""
+    if not remote and isinstance(matched, dict):
+        owned, owned_note = await _capture_session_processes(session_id)
+
     try:
         if remote:
             async with httpx.AsyncClient(timeout=15) as client:
@@ -1117,37 +1311,16 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
         if kill_failed and not already_gone:
             return {"error": f"Failed to {verb.lower()} {target_label}: {kill_err or 'kill-session returned non-zero'}", "exit_code": 1}
 
-        # Some model servers survive the tmux session's SIGHUP. For local
-        # tracked tasks only, terminate processes whose full command line
-        # exactly matches the command saved by the Cookbook launcher.
+        # Some model servers survive the tmux session's SIGHUP. Terminate the
+        # ones this session actually owns — captured above, each verified by
+        # identity at signal time — and report, without signalling, anything
+        # that merely looks like the tracked command.
+        sweep_note = ""
         if not remote and isinstance(matched, dict):
-            import os
-            import signal
             tracked_cmd = str((matched.get("payload") or {}).get("_cmd") or "").strip()
-            matched_pids: list[int] = []
-            # No procfs means no way to match a survivor by its command line.
-            # The tmux kill above already stopped the session, so skip the
-            # sweep instead of failing a stop that worked.
-            if tracked_cmd and platform_compat.has_procfs():
-                proc_root = platform_compat.PROC_ROOT
-                for pid_name in os.listdir(proc_root):
-                    if not pid_name.isdigit() or int(pid_name) == os.getpid():
-                        continue
-                    try:
-                        raw = (proc_root / pid_name / "cmdline").read_bytes()
-                        process_cmd = raw.replace(b"\x00", b" ").decode("utf-8", errors="replace").strip()
-                    except (OSError, PermissionError):
-                        continue
-                    if process_cmd == tracked_cmd:
-                        matched_pids.append(int(pid_name))
-                        with contextlib.suppress(ProcessLookupError, PermissionError):
-                            os.kill(int(pid_name), signal.SIGTERM)
-            if matched_pids:
-                await asyncio.sleep(0.5)
-                for pid in matched_pids:
-                    with contextlib.suppress(ProcessLookupError, PermissionError):
-                        os.kill(pid, 0)
-                        os.kill(pid, signal.SIGKILL)
+            sweep_note = await asyncio.to_thread(
+                _sweep_session_survivors, owned, tracked_cmd, owned_note,
+            )
 
         # Update state: mark stopped (so the UI + list reflect reality).
         if matched is not None:
@@ -1160,7 +1333,7 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
                 logger.debug(f"failed to mark {session_id} stopped in state: {e}")
 
         suffix = " (was already gone)" if already_gone else ""
-        return {"output": f"{verb} {target_label}{suffix}", "exit_code": 0}
+        return {"output": f"{verb} {target_label}{suffix}{sweep_note}", "exit_code": 0}
     except Exception as e:
         return {"error": str(e), "exit_code": 1}
 
