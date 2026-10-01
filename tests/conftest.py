@@ -201,3 +201,36 @@ def _no_leaked_module_stubs():
         "at teardown.",
         pytrace=False,
     )
+
+
+@pytest.fixture(autouse=True)
+def _no_context_window_network_probe(request):
+    """Keep turn preparation from probing real provider metadata in tests.
+
+    The compact runtime resolves its context window before the first model
+    request. Tests that drive it with placeholder endpoints must not perform
+    DNS or HTTP lookups; modules that exercise the probe opt in with a
+    module-level ``CONTEXT_PROBE_NETWORK = True`` and supply their own client.
+    """
+    if getattr(request.module, "CONTEXT_PROBE_NETWORK", False):
+        yield
+        return
+    try:
+        from src.agent_runtime import context_resolution
+    except Exception:
+        yield
+        return
+
+    async def _disabled_probe(endpoint_url, model, headers, is_local, observations, errors, timeout):
+        errors.append("probe_disabled_in_tests")
+
+    # A private patcher keeps the shared ``monkeypatch`` fixture's teardown
+    # order unchanged for tests that check their own sys.modules hygiene.
+    patcher = pytest.MonkeyPatch()
+    patcher.setattr(context_resolution, "_probe", _disabled_probe)
+    context_resolution.clear_probe_cache()
+    try:
+        yield
+    finally:
+        patcher.undo()
+        context_resolution.clear_probe_cache()

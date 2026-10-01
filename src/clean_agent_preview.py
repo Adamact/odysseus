@@ -4904,7 +4904,9 @@ async def preview_model_response(client, endpoint_url, headers, request, recover
     )
     transport_attempts = 0
     while True:
-        limit = recovery.get('context_limit')
+        # A provider-stated limit learned this turn overrides the window
+        # resolved at turn preparation.
+        limit = recovery.get('context_limit') or recovery.get('budget_limit')
         if limit:
             message_context = max(1, limit
                 - estimate_tool_schema_tokens(request.get('tools'))
@@ -4995,6 +4997,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                          client_runtime_context=None, max_tokens=768, max_rounds=8,
                          max_tool_calls=0,
                          external_tool_schemas=None, temperature=0.0,
+                         context_resolution=None,
                          request_authority=MISSING_AUTHORITY, **ignored):
     from src.generation_sampling import validate_temperature
     temperature = validate_temperature(temperature)
@@ -5249,7 +5252,16 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     static_fetch_failed_urls = set()
     entity_result_links = {}
     calendar_create_confirmation = ''
-    context_recovery = {}
+    # Resolve the effective window once, before any model request, so the
+    # turn budgets against it and metrics report exactly what it ran under.
+    # Terminal metrics must never start this discovery themselves.
+    if context_resolution is None:
+        from src.agent_runtime.context_resolution import resolve_effective_context
+        context_resolution = await resolve_effective_context(
+            endpoint_url, model, headers=headers,
+            client_runtime_context=client_runtime_context,
+        )
+    context_recovery = {'budget_limit': context_resolution.budget_limit}
     successful_write = False
     editor_batch_pending = False
     editor_suggested_finds = []
@@ -8026,9 +8038,15 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
         return
     elapsed = time.monotonic() - started
     ttft = first_token - started if first_token else None
+    from src.agent_runtime.context_resolution import context_metrics
+    # Report the stored resolution plus any limit the provider stated during
+    # this turn. This is pure bookkeeping; no metadata request happens here.
+    context_resolution = context_resolution.observe_runtime_limit(
+        context_recovery.get('context_limit'))
     yield event({'type': 'metrics', 'data': {
         'email_task_scope': {**intent_accounting, 'failed': intent_scope_failed},
         'model': model, 'input_tokens': usage_in, 'output_tokens': usage_out,
+        **context_metrics(context_resolution, last_request_tokens),
         'total_tokens': usage_in + usage_out, 'response_time': round(elapsed, 3),
         'time_to_first_token': round(ttft, 3) if ttft is not None else None,
         'tokens_per_second': round(usage_out / elapsed, 2) if elapsed > 0 else 0,
