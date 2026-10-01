@@ -2,6 +2,7 @@
 
 import asyncio
 import builtins
+import errno
 import importlib
 import importlib.util
 import json
@@ -62,6 +63,29 @@ def test_shell_routes_import_without_posix_pty_modules(monkeypatch):
 
     assert module.PTY_SUPPORTED is False
     assert module._find_line_break(b"ok\n") == (2, 1)
+
+
+def test_shell_routes_import_without_sigkill(monkeypatch):
+    """Native Windows has no signal.SIGKILL; app.py imports this module anyway.
+
+    The teardown escalation is resolved at import time, so naming SIGKILL
+    unconditionally would stop the whole app from starting on Windows rather
+    than only degrading PTY teardown there.
+    """
+    monkeypatch.delattr(signal, "SIGKILL", raising=False)
+
+    module_path = Path(__file__).resolve().parents[1] / "routes" / "shell_routes.py"
+    spec = importlib.util.spec_from_file_location(
+        "_shell_routes_without_sigkill", module_path
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.modules.pop(spec.name, None)
+
+    assert module.PTY_KILL_ESCALATION == (signal.SIGTERM,)
 
 
 async def test_generate_pty_reports_explicit_unsupported_error(monkeypatch):
@@ -312,6 +336,48 @@ async def test_generate_pty_timeout_says_so_when_the_session_survives(
     assert timed_out["data"] == (
         "Command timed out after 1s" + shell_routes.PTY_KILL_FAILED_HINT
     )
+
+
+def test_session_alive_treats_a_refused_probe_as_alive(monkeypatch):
+    """EPERM says the group exists but we may not signal it, not that it died.
+
+    Only ESRCH proves a process group is gone. Collapsing every OSError into
+    "gone" is the one error that makes teardown report a surviving session as
+    contained.
+    """
+    import routes.shell_routes as shell_routes
+
+    def refuse(_pgid, _sig):
+        raise PermissionError(errno.EPERM, "Operation not permitted")
+
+    monkeypatch.setattr(shell_routes.os, "killpg", refuse)
+    assert shell_routes._session_alive(4242, 4242) is True
+
+    def gone(_pgid, _sig):
+        raise ProcessLookupError(errno.ESRCH, "No such process")
+
+    monkeypatch.setattr(shell_routes.os, "killpg", gone)
+    assert shell_routes._session_alive(4242, 4242) is False
+
+
+async def test_terminate_pty_session_reports_a_group_it_may_not_signal(monkeypatch):
+    """A session we cannot signal at all is reported as not contained.
+
+    Both the signal and the liveness probe are refused, so teardown has done
+    nothing and must say so rather than infer death from its own failure.
+    """
+    import routes.shell_routes as shell_routes
+
+    def refuse(*_args):
+        raise PermissionError(errno.EPERM, "Operation not permitted")
+
+    monkeypatch.setattr(shell_routes, "PTY_KILL_GRACE", 0.01)
+    monkeypatch.setattr(shell_routes, "_session_pgid", lambda _: 4242)
+    monkeypatch.setattr(shell_routes.os, "killpg", refuse)
+    monkeypatch.setattr(shell_routes.os, "kill", refuse)
+
+    proc = SimpleNamespace(pid=4242, returncode=0, wait=None)
+    assert await shell_routes._terminate_pty_session(proc) is False
 
 
 class TestFindLineBreak:

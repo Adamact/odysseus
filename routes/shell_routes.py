@@ -564,7 +564,14 @@ PTY_UNSUPPORTED_ERROR = "pty_unsupported"
 # PTY teardown. The PTY child leads its own session (os.setsid), so killing it
 # has to signal the whole process group and then confirm the group is gone —
 # see _terminate_pty_session.
-PTY_KILL_ESCALATION = (signal.SIGTERM, signal.SIGKILL)
+# ``signal.SIGKILL`` does not exist on native Windows, and this module is
+# imported unconditionally by app.py, so resolve the escalation defensively
+# rather than at the cost of the whole app failing to start there.
+PTY_KILL_ESCALATION = tuple(
+    sig
+    for sig in (getattr(signal, "SIGTERM", None), getattr(signal, "SIGKILL", None))
+    if sig is not None
+)
 PTY_KILL_GRACE = 1.0  # seconds a signalled session gets to exit
 PTY_KILL_POLL_INTERVAL = 0.05  # re-check interval while waiting for it
 PTY_KILL_FAILED_HINT = "; processes it started survived the kill and are still running"
@@ -722,9 +729,16 @@ def _session_alive(pgid: int | None, pid: int) -> bool:
     if pgid is not None and killpg is not None:
         try:
             killpg(pgid, 0)
-            return True
+        except ProcessLookupError:
+            return False  # ESRCH — no member of the group is left
         except OSError:
-            return False
+            # Anything else (EPERM when the group holds a process we may not
+            # signal, EINVAL) answers the probe without proving the group is
+            # gone. Only ESRCH does that, so treat the rest as still running:
+            # reporting a surviving session as contained is the one outcome
+            # teardown must never produce.
+            return True
+        return True
     return pid_alive(pid)
 
 
