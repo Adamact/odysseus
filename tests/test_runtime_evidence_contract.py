@@ -128,7 +128,7 @@ def test_readback_does_not_substitute_for_required_executable_tests():
                                   'Test suite ran successfully', 'No failures.', 'Done.',
                                   'I executed the command.', 'Successfully created the file.'])
 def test_no_execution_receipts_cannot_support_adversarial_success_claims(claim):
-    ledger = EvidenceLedger()
+    ledger = EvidenceLedger(CompletionRequirements(verifier_required=True))
     answer, reason = completion_answer(claim, ledger, ledger.evaluate())
     assert reason
     assert answer.startswith('The task is incomplete:')
@@ -178,7 +178,7 @@ async def test_mixed_thinking_delta_cannot_publish_success_before_gate(thinking)
         yield 'data: {"type":"tool_start","tool":"bash"}\n\n'
         yield 'data: {"type":"metrics","data":{"thinking":"All tests passed."}}\n\n'
         yield 'data: [DONE]\n\n'
-    events = decode([chunk async for chunk in stream([])])
+    events = decode([chunk async for chunk in stream([{'role': 'user', 'content': 'Run the tests.'}])])
     assert events[0] == {'type': 'tool_start', 'tool': 'bash'}
     assert events[1]['type'] == 'completion_decision'
     assert not events[1]['data']['can_complete']
@@ -398,3 +398,79 @@ async def test_unknown_tool_never_creates_dispatch_identity(monkeypatch):
         await execute_tool_block(ToolBlock('unknown_nonexistent_tool', '{}'), security_context=NO_TOOL_SECURITY_CONTEXT)
     assert journal.actions[0].execution_id is None
     assert not journal.actions[0].outcome['authoritative']
+
+
+@pytest.mark.parametrize('tool,command,claim', [
+    ('read_file', 'README.md', 'I ran the tests.'),
+    ('bash', 'printf observation', 'The tests passed.'),
+    ('read_file', 'README.md', 'I updated config.py.'),
+    ('bash', 'printf observation', 'I created the file.'),
+    ('write_file', '{"path":"other.py"}', 'I updated config.py.'),
+    ('write_file', '{"path":"nested/config.py"}', 'I updated config.py.'),
+    ('bash', 'python -m unittest', 'I ran pytest and the tests passed.'),
+    ('bash', 'pytest tests/test_other.py', 'I ran pytest tests/test_config.py.'),
+    ('bash', 'pytest', 'I updated config.py and the tests passed.'),
+    ('write_file', '{"path":"config.py"}', 'I updated config.py and ran pytest.'),
+    ('bash', 'python -m unittest pytest', 'I ran pytest.'),
+    ('write_file', '{"path":"config.py"}', 'I updated "settings.py".'),
+    ('bash', 'pytest', 'Created config.py and ran pytest.'),
+])
+def test_slice2_unrelated_receipt_cannot_support_claim(tool, command, claim):
+    ledger = EvidenceLedger.from_tool_events([
+        {'tool': tool, 'command': command, 'exit_code': 0},
+    ])
+    answer, reason = completion_answer(claim, ledger, ledger.evaluate())
+    assert reason
+    assert claim not in answer
+
+
+@pytest.mark.parametrize('claim', ['I ran pytest.', 'The tests passed.', 'Tests: PASS'])
+def test_slice2_matching_verifier_supports_test_claim(claim):
+    ledger = EvidenceLedger.from_tool_events([
+        {'tool': 'bash', 'command': 'python3 -m pytest -q', 'exit_code': 0},
+    ])
+    answer, reason = completion_answer(claim, ledger, ledger.evaluate())
+    assert claim in answer
+    assert not reason
+
+
+@pytest.mark.parametrize('claim', ['I updated config.py.', 'I updated `./config.py` successfully.',
+                                  'I updated "config.py".'])
+def test_slice2_matching_mutation_supports_artifact_claim(claim):
+    ledger = EvidenceLedger.from_tool_events([
+        {'tool': 'edit_file', 'command': '{"path":"config.py"}', 'exit_code': 0},
+    ], CompletionRequirements(required_artifacts=('config.py',)))
+    answer, reason = completion_answer(claim, ledger, ledger.evaluate())
+    assert claim in answer
+    assert not reason
+
+
+def test_slice2_one_matching_path_does_not_support_multiple_artifact_claims():
+    ledger = EvidenceLedger.from_tool_events([
+        {'tool': 'edit_file', 'command': '{"path":"config.py"}', 'exit_code': 0},
+    ])
+    claim = 'I updated config.py and settings.py.'
+    answer, reason = completion_answer(claim, ledger, ledger.evaluate())
+    assert reason
+    assert claim not in answer
+
+
+def test_slice2_verifier_before_mutation_cannot_support_current_test_success():
+    ledger = EvidenceLedger.from_tool_events([
+        {'tool': 'bash', 'command': 'pytest', 'exit_code': 0},
+        {'tool': 'edit_file', 'command': '{"path":"config.py"}', 'exit_code': 0},
+    ], CompletionRequirements(required_artifacts=('config.py',)))
+    answer, reason = completion_answer('The tests passed.', ledger, ledger.evaluate())
+    assert reason
+    assert 'The tests passed.' not in answer
+
+
+def test_slice2_matching_artifact_and_verifier_support_combined_claim():
+    ledger = EvidenceLedger.from_tool_events([
+        {'tool': 'edit_file', 'command': '{"path":"config.py"}', 'exit_code': 0},
+        {'tool': 'bash', 'command': 'pytest tests/test_config.py', 'exit_code': 0},
+    ], CompletionRequirements(required_artifacts=('config.py',)))
+    claim = 'I updated config.py and ran pytest tests/test_config.py.'
+    answer, reason = completion_answer(claim, ledger, ledger.evaluate())
+    assert claim in answer
+    assert not reason

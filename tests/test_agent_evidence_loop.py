@@ -135,6 +135,40 @@ def test_terminal_completion_missing_artifact_does_not_add_model_rounds(monkeypa
     assert decision["missing_artifacts"] == ["answer.json"]
 
 
+def test_slice2_explanatory_request_does_not_add_verification_or_model_rounds(monkeypatch):
+    calls = _patch_loop(monkeypatch, ['Tests pass when the command exits zero.'])
+    events = _run('Explain how to write code and then test it.', max_rounds=1)
+    assert calls() == 1
+    decision = next(event['data'] for event in events if event.get('type') == 'completion_decision')
+    assert decision['can_complete'] is True
+    assert 'The task is incomplete' not in json.dumps(events)
+    metrics = next(event['data'] for event in events if event.get('type') == 'metrics')
+    assert not metrics['completion_requirements']['verifier_required']
+    assert metrics['completion_gate']['additional_provider_calls'] == 0
+
+
+def test_slice2_fabricated_execution_on_conversational_turn_does_not_add_rounds(monkeypatch):
+    calls = _patch_loop(monkeypatch, ['I ran pytest and all tests passed.'])
+    events = _run('Explain what pytest does.', max_rounds=1)
+    assert calls() == 1
+    final = next(event['content'] for event in events if event.get('type') == 'final_response')
+    assert 'I ran pytest' not in final
+    assert 'The task is incomplete' not in final
+    metrics = next(event['data'] for event in events if event.get('type') == 'metrics')
+    assert metrics['completion_gate']['additional_provider_calls'] == 0
+
+
+def test_slice2_unsupported_test_report_does_not_add_model_rounds(monkeypatch):
+    calls = _patch_loop(monkeypatch, ['I ran pytest and all 42 tests passed.'])
+    events = _run('Run pytest.', max_rounds=4, relevant_tools={'bash'})
+    assert calls() == 1
+    decision = next(event['data'] for event in events if event.get('type') == 'completion_decision')
+    assert decision['can_complete'] is False
+    final = next(event['content'] for event in events if event.get('type') == 'final_response')
+    assert final.startswith('The task is incomplete:')
+    assert '42' not in final
+
+
 def test_failed_trailing_tool_with_planning_prose_continues_artifact_task(monkeypatch):
     calls = _patch_loop(
         monkeypatch,

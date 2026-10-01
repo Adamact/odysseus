@@ -17,7 +17,8 @@ from time import perf_counter
 
 from src.agent_evidence import (
     CompletionDecision, CompletionStatus, EvidenceKind, EvidenceLedger,
-    requirements_from_runtime_context,
+    requirements_from_runtime_context, _execution_obligation, _unquoted_statements,
+    _ARTIFACT_PATH,
 )
 from .journal import ActionJournal, bind_journal, current_journal
 
@@ -30,10 +31,9 @@ _TEST_STATUS_CLAIM = re.compile(
     r'(?:all\s+|have\s+|has\s+|now\s+|are\s+|is\s+|ran\s+)*'
     r'(?:pass(?:ed|ing)?|succeeded|successful(?:ly)?|green)\b|'
     r'\b(?:zero|no|0)\s+(?:test\s+)?failures\b', re.I)
-_TERMINAL_SUCCESS = re.compile(r'^\s*(?:done|completed|success|all done|all set|fixed)\b', re.I)
 _EXECUTION_CLAIM = re.compile(
-    r'\b(?:(?:I|we|I\'ve|we\'ve)\s+(?:have\s+)?(?:successfully\s+)?(?:ran|executed|tested|verified|created|updated|modified|wrote|saved|fixed|completed)|'
-    r'(?:file|artifact|command|script|service|server)\s+(?:was\s+|has\s+been\s+|is\s+)?(?:successfully\s+)?(?:created|updated|written|saved|executed|started)|'
+    r'\b(?:(?:I|we|I\'ve|we\'ve|and)\s+(?:have\s+)?(?:successfully\s+)?(?:ran|executed|tested|verified|created|updated|modified|wrote|saved|fixed|completed)|'
+    rf'(?:file|artifact|command|script|service|server|{_ARTIFACT_PATH})\s+(?:was\s+|has\s+been\s+|is\s+)?(?:successfully\s+)?(?:created|updated|written|saved|executed|started)|'
     r'(?:successfully\s+)(?:ran|executed|created|updated|saved|completed))\b', re.I)
 _UNATTESTED_TEST_METRIC = re.compile(
     r'\b\d+\s+(?:(?:unit|integration)\s+)?tests?\s+pass(?:ed|ing)?\b|'
@@ -41,6 +41,55 @@ _UNATTESTED_TEST_METRIC = re.compile(
 _UNBOUNDED_SUCCESS = re.compile(
     r'\b(?:everything|all\s+(?:bugs|issues))\s+(?:is\s+|are\s+|has\s+been\s+)?'
     r'(?:fixed|resolved|working)\b', re.I)
+_MUTATION_CLAIM = re.compile(
+    r'\b(?:created|updated|modified|wrote|written|saved|fixed)\b', re.I)
+_TEST_IDENTITY = re.compile(r'\b(?:pytest|unittest)\b', re.I)
+_TEST_SUBJECT = re.compile(r'\b(?:tests?|test suite|pytest|unittest|checks?|verification)\b', re.I)
+_CLAIM_PATH = re.compile(_ARTIFACT_PATH)
+_BARE_SUCCESS = re.compile(r'^\s*(?:done|completed|success|all done|all set|fixed)[.!]?\s*$', re.I)
+_NON_REPORT_SCOPE = re.compile(
+    r'^\s*(?:if|unless|suppose|imagine|hypothetically|for\s+(?:example|instance))\b|'
+    r'\b(?:if|when|whenever|unless|until)\b|'
+    r'\b(?:can|could|may|might|should|would|will|must)\b|'
+    r'\b(?:says?|said|states?|stated|example)\b', re.I)
+
+
+def _current_run_claims(statement: str, *, execution_required: bool) -> list[tuple[str, str]]:
+    """Classify asserted execution, separately from the turn's obligation.
+
+    Past actions and current result/status predicates are reports. Conditional,
+    modal, attributed and example clauses are scoped prose. Bare terminal
+    success only carries execution meaning under an execution contract.
+    """
+    if _BARE_SUCCESS.fullmatch(statement):
+        return [('terminal', statement)] if execution_required else []
+    actions = list(_EXECUTION_CLAIM.finditer(statement))
+    leading = re.match(r'^\s*(?:successfully\s+)?(?:created|updated|modified|wrote|saved)\b', statement, re.I)
+    if leading:
+        actions.insert(0, leading)
+    candidates = [('action', match) for match in actions]
+    for kind, pattern in [('metric', _UNATTESTED_TEST_METRIC), ('metric', _UNBOUNDED_SUCCESS),
+                          ('test', _TEST_CLAIM), ('test', _TEST_STATUS_CLAIM)]:
+        candidates.extend((kind, match) for match in pattern.finditer(statement))
+    claims = []
+    for kind, match in candidates:
+        # Scope markers after an asserted action do not make that action
+        # hypothetical ("I ran pytest to see if ..."). An immediate conditional
+        # continuation does qualify a result ("Tests passed if ...").
+        if _NON_REPORT_SCOPE.search(statement[:match.start()]) or re.match(
+                r'\s+(?:if|when|whenever|unless|until)\b', statement[match.end():], re.I):
+            continue
+        end = next((action.start() for action in actions if action.start() > match.start()), len(statement))
+        scope = statement[match.start():end]
+        if kind == 'action':
+            if _MUTATION_CLAIM.search(match.group()):
+                kind = 'mutation'
+            elif _TEST_SUBJECT.search(scope):
+                kind = 'test'
+            else:
+                kind = 'execution'
+        claims.append((kind, scope))
+    return claims
 
 
 def completion_answer(text: str, ledger: EvidenceLedger, decision: CompletionDecision) -> tuple[str, str]:
@@ -51,32 +100,47 @@ def completion_answer(text: str, ledger: EvidenceLedger, decision: CompletionDec
     The execution outcome remains separate from a discarded model assertion.
     """
     incomplete = decision.reason if not decision.can_complete and decision.status != CompletionStatus.AWAITING_USER else ''
-    productive = [event for event in ledger.events
-                  if event.authoritative and event.success
-                  and event.tool not in {'update_plan', 'todowrite', 'ask_user'}]
+    execution_required = _execution_obligation(ledger.requirements)
     kept = []
     removed = ''
-    for statement in re.split(r'(?<=[.!?])(?=\s)|(?<=\n)', text):
+    for statement, scoped in _unquoted_statements(text):
         why = ''
-        if _UNATTESTED_TEST_METRIC.search(statement) or _UNBOUNDED_SUCCESS.search(statement):
-            why = 'test counts, coverage or exhaustive correctness were not established by execution evidence'
-        elif (_TEST_CLAIM.search(statement) or _TEST_STATUS_CLAIM.search(statement)) and decision.status != CompletionStatus.VERIFIED:
-            why = 'no current passing executable verification supports the claim'
-        elif (_EXECUTION_CLAIM.search(statement) or _TERMINAL_SUCCESS.search(statement)) and not productive:
-            why = 'no successful operation supports the execution claim'
-        elif incomplete and _TERMINAL_SUCCESS.search(statement):
-            why = incomplete
+        for claim, scope in _current_run_claims(scoped, execution_required=execution_required):
+            paths = tuple(match.group().rstrip('.') for match in _CLAIM_PATH.finditer(scope))
+            if claim == 'metric':
+                why = 'test counts, coverage or exhaustive correctness were not established by execution evidence'
+            elif claim == 'test':
+                identities = tuple(match.group().lower() for match in _TEST_IDENTITY.finditer(scope))
+                if decision.status != CompletionStatus.VERIFIED or not ledger._supports_verifier_claim(identities, paths):
+                    why = 'no current passing executable verification supports the claim'
+            elif claim == 'mutation':
+                if not ledger._supports_artifact_claim(EvidenceKind.ARTIFACT_MUTATION, paths):
+                    why = 'no matching artifact mutation supports the execution claim'
+            elif claim == 'execution':
+                # A generic assertion cannot be tied confidently to a receipt.
+                why = 'no matching operation supports the execution claim'
+            elif claim == 'terminal' and decision.status not in {CompletionStatus.SATISFIED, CompletionStatus.VERIFIED}:
+                why = incomplete or 'no successful execution supports completion'
+            if why:
+                break
         if why:
             removed = removed or why
         else:
             kept.append(statement)
     prose = ''.join(kept).strip() if removed else text
-    if incomplete or (removed and decision.status in {CompletionStatus.UNVERIFIED, CompletionStatus.AWAITING_USER}):
+    if incomplete or (removed and execution_required and decision.status in {CompletionStatus.UNVERIFIED, CompletionStatus.AWAITING_USER}):
         reason = incomplete or removed
         missing = (' Missing artifacts: ' + ', '.join(decision.missing_artifacts) + '.'
                    if decision.missing_artifacts else '')
         notice = 'The task is incomplete: ' + reason.rstrip('.') + '.' + missing
+        recorded = [path for path in ledger.requirements.required_artifacts
+                    if ledger._supports_artifact_claim(EvidenceKind.ARTIFACT_MUTATION, (path,))]
+        if removed and recorded:
+            notice += ' Recorded artifact mutation: ' + ', '.join(recorded) + '.'
         return notice + ('\n\n' + prose if prose.strip() else ''), reason
+    if removed and not execution_required and decision.status != CompletionStatus.VERIFIED:
+        notice = 'Unsupported execution claims were omitted: ' + removed.rstrip('.') + '.'
+        return (prose.rstrip() + '\n\n' + notice) if prose.strip() else notice, removed
     if decision.can_complete and (ledger.requirements.required_artifacts or ledger.requirements.verifier_required or removed):
         facts = []
         if ledger.requirements.required_artifacts:
@@ -219,8 +283,8 @@ def with_completion_gate(func):
             _, unsafe_draft = completion_answer(draft, ledger, presentation_decision)
             if not answer.strip() and unsafe_draft:
                 reason = reason or unsafe_draft
-                safe_answer = 'The task is incomplete: ' + reason.rstrip('.') + '.'
-            if reason and decision.can_complete and decision.status == CompletionStatus.UNVERIFIED:
+                safe_answer, _ = completion_answer(draft, ledger, presentation_decision)
+            if reason and _execution_obligation(requirements) and decision.can_complete and decision.status == CompletionStatus.UNVERIFIED:
                 decision = CompletionDecision(CompletionStatus.UNVERIFIED, False, reason,
                                               decision.evidence_ids, decision.missing_artifacts)
             released_at = perf_counter()

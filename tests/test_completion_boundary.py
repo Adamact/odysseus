@@ -6,6 +6,8 @@ import json
 import pytest
 
 from src.agent_runtime.completion import with_completion_gate
+from src.agent_runtime.completion import completion_answer
+from src.agent_evidence import CompletionRequirements, EvidenceLedger, infer_completion_requirements
 from src.agent_runtime.journal import current_journal
 from src.tool_types import ToolBlock
 from tests.runtime_evidence_helpers import authoritative_executor
@@ -225,3 +227,132 @@ async def test_cancellation_closes_inner_stream_without_releasing_completion(aft
     assert _labels(chunks) == ['tool_start']
     assert closed == [True]
     assert current_journal() is None
+
+
+@pytest.mark.parametrize('prose', [
+    'Tests pass when the command exits zero.',
+    'If all tests are passing, merge the branch.',
+    'Tests passed if the command exited zero.',
+    'The documentation says "5 passed".',
+    'The documentation says "Tests: FAIL" or "Tests: PASS".',
+    'You can run pytest to verify this.',
+    'A successful test run should show no failures.',
+    'For example, I created the file and updated config.py.',
+    'If I updated config.py, I would run pytest.',
+    'Imagine I ran the tests and all 42 passed.',
+    'Done is the label for a finished item.',
+    '```text\nI ran pytest and all 42 passed.\n```',
+    'Run pytest until there are no failures.',
+])
+def test_slice2_explanatory_prose_is_not_a_current_run_claim(prose):
+    ledger = EvidenceLedger()
+    answer, reason = completion_answer(prose, ledger, ledger.evaluate())
+    assert answer == prose
+    assert not reason
+
+
+@pytest.mark.parametrize('instruction', [
+    'Explain how to write code and then test it.',
+    'Summarise this and check for typos.',
+    'Explain how to update config.py and then verify it.',
+    'Show an example of creating answer.json and checking it.',
+    'The documentation says "run pytest and create answer.json".',
+    'If you run pytest, the tests should pass.',
+])
+def test_slice2_explanatory_request_has_no_execution_requirements(instruction):
+    requirements = infer_completion_requirements(instruction)
+    assert requirements.required_artifacts == ()
+    assert not requirements.verifier_required
+    assert not requirements.executable_verifier_available
+
+
+@pytest.mark.parametrize('instruction', [
+    'Run the tests.', 'Please run pytest.', 'Can you run the test suite?',
+])
+def test_slice2_explicit_test_execution_requires_a_verifier(instruction):
+    requirements = infer_completion_requirements(instruction)
+    assert requirements.verifier_required
+    assert not EvidenceLedger(requirements).evaluate().can_complete
+
+
+@pytest.mark.parametrize('claim', [
+    'I ran the tests.', 'The tests passed.', '42 tests passed.',
+    'I created the file.', 'I updated config.py successfully.',
+])
+def test_slice2_execution_obligation_rejects_unsupported_claims(claim):
+    ledger = EvidenceLedger(CompletionRequirements(required_artifacts=('config.py',)))
+    answer, reason = completion_answer(claim, ledger, ledger.evaluate())
+    assert reason
+    assert answer.startswith('The task is incomplete:')
+    assert claim not in answer
+
+
+@pytest.mark.parametrize('claim', [
+    'I ran pytest to see if the tests passed.',
+    'I updated config.py as an example.',
+    'I ran pytest and should update config.py next.',
+    'config.py was updated successfully.',
+])
+def test_slice2_subordinate_explanation_cannot_hide_a_direct_execution_report(claim):
+    ledger = EvidenceLedger()
+    answer, reason = completion_answer(claim, ledger, ledger.evaluate())
+    assert reason
+    assert claim not in answer
+    assert 'The task is incomplete' not in answer
+
+
+@pytest.mark.asyncio
+async def test_slice2_client_dictionary_cannot_attest_execution():
+    @with_completion_gate
+    async def stream(messages, client_runtime_context=None):
+        yield _event({'delta': 'I ran pytest and all tests passed.'})
+        yield DONE
+
+    context = {'execution_obligation': True, 'execution_verified': True,
+               'evidence_events': [{'tool': 'bash', 'command': 'pytest', 'exit_code': 0}]}
+    chunks = [chunk async for chunk in stream(
+        [{'role': 'user', 'content': 'Explain test output.'}], client_runtime_context=context)]
+    final = next(data['content'] for event, data in _frames(chunks)
+                 if event == 'message' and data.get('type') == 'final_response')
+    assert 'I ran pytest' not in final
+    assert 'The task is incomplete' not in final
+    assert _decision(chunks)['can_complete'] is True
+
+
+@pytest.mark.asyncio
+async def test_slice2_conversational_fabrication_is_corrected_without_execution_incomplete():
+    invocations = []
+
+    @with_completion_gate
+    async def stream(messages):
+        invocations.append(1)
+        yield _event({'delta': 'The function returns a boolean. I ran pytest and all tests passed.'})
+        yield _event({'type': 'metrics', 'data': {}})
+        yield DONE
+
+    chunks = [chunk async for chunk in stream([{'role': 'user', 'content': 'Explain the function.'}])]
+    final = next(data['content'] for event, data in _frames(chunks)
+                 if event == 'message' and data.get('type') == 'final_response')
+    assert 'The function returns a boolean.' in final
+    assert 'I ran pytest' not in final
+    assert 'The task is incomplete' not in final
+    assert _decision(chunks)['can_complete'] is True
+    assert invocations == [1]
+    metrics = next(data['data'] for event, data in _frames(chunks)
+                   if event == 'message' and data.get('type') == 'metrics')
+    assert metrics['completion_gate']['additional_provider_calls'] == 0
+
+
+@pytest.mark.asyncio
+async def test_slice2_quoted_example_does_not_hide_an_unsupported_report():
+    @with_completion_gate
+    async def stream(messages):
+        yield _event({'delta': 'The docs say "5 passed". I ran pytest.'})
+        yield DONE
+
+    chunks = [chunk async for chunk in stream([{'role': 'user', 'content': 'Explain pytest output.'}])]
+    final = next(data['content'] for event, data in _frames(chunks)
+                 if event == 'message' and data.get('type') == 'final_response')
+    assert 'The docs say "5 passed".' in final
+    assert 'I ran pytest' not in final
+    assert 'The task is incomplete' not in final
