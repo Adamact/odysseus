@@ -20375,6 +20375,10 @@ def _blocks_before_inference(turn_contract) -> bool:
     )
 
 
+from src.agent_runtime.authority import MISSING_AUTHORITY, active_request_authority, with_request_authority
+
+
+@with_request_authority
 @with_turn_contract
 @with_teacher_takeover
 @with_completion_gate
@@ -20420,6 +20424,7 @@ async def stream_agent_loop(
     suppress_skills: bool = False,
     reasoning_effort: Optional[str] = None,
     _parent_run_id: Optional[str] = None,
+    request_authority=MISSING_AUTHORITY,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
 
@@ -32758,6 +32763,7 @@ async def stream_agent_loop(
                             block.tool_type, block.content
                         ),
                         request_text=_last_user,
+                        request_authority=active_request_authority(),
                     )
                     desc = f"{block.tool_type}: APPROVAL REQUIRED"
                     result = {
@@ -37372,6 +37378,7 @@ async def stream_agent_loop(
             active_document=active_document,
             active_email=active_email,
             turn_contract=turn_contract,
+            request_authority=active_request_authority(),
             external_untrusted_context_seen=run_security.external_untrusted_context_seen,
             client_runtime_context=client_runtime_context,
             plan_mode=plan_mode,

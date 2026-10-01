@@ -36,11 +36,12 @@ def _background_result_message(rec):
     return untrusted_context_message("background job output", inject)
 
 
-async def _drain_agent(sess, messages):
+async def _drain_agent(sess, messages, request_authority=None):
     """Run the agent loop headless against a session. Returns
     (final_prose, tool_events) — tool_events in the same shape the live chat
     saves, so the frontend rebuilds them as standard agent-thread tool cards."""
     from src.agent_loop import stream_agent_loop
+    from src.agent_runtime.authority import RequestAuthority
     full = ""
     final_replaced = False
     tool_events = []
@@ -52,6 +53,9 @@ async def _drain_agent(sess, messages):
         session_id=sess.id,
         max_rounds=_FOLLOWUP_MAX_ROUNDS,
         owner=getattr(sess, "owner", None),
+        workspace=request_authority.workspace or None if request_authority is not None else None,
+        request_authority=(request_authority or RequestAuthority.empty(
+            owner=getattr(sess, "owner", None), session_id=sess.id)),
     ):
         if not chunk.startswith("data: "):
             continue
@@ -132,7 +136,12 @@ async def _run_followup(rec: dict) -> bool:
     context = sess.get_context_messages()
     context.append(_background_result_message(rec))
 
-    full, tool_events = await _drain_agent(sess, context)
+    from src.agent_runtime.authority import restore_background_authority
+    from src.settings import get_setting
+    authority = restore_background_authority(
+        rec["id"], owner=getattr(sess, "owner", None), session_id=sess.id)
+    authority = authority.restrict(disabled_tools=get_setting("disabled_tools", []) or ())
+    full, tool_events = await _drain_agent(sess, context, request_authority=authority)
 
     # Persist ONLY the assistant continuation so it renders as a normal agent
     # turn — a standard chat bubble plus `tool_events` that the frontend

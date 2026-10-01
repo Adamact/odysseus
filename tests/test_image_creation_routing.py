@@ -125,6 +125,8 @@ async def test_generation_dispatch_uses_owner_aware_backend(monkeypatch, exit_co
     from types import SimpleNamespace
     from src import ai_interaction, tool_execution
     from src.agent_runtime.journal import ActionJournal, bind_journal
+    from tests.runtime_evidence_helpers import server_authorized_executor
+    execute = server_authorized_executor(tool_execution.execute_tool_block)
     calls = []
     async def generate(content, **kwargs):
         calls.append((content, kwargs))
@@ -140,9 +142,9 @@ async def test_generation_dispatch_uses_owner_aware_backend(monkeypatch, exit_co
     block = SimpleNamespace(tool_type='generate_image', content='{"prompt":"A city"}')
     journal = ActionJournal()
     with bind_journal(journal):
-        _, denied = await tool_execution.execute_tool_block(block, owner='pewds', session_id='fixture',
+        _, denied = await execute(block, owner='pewds', session_id='fixture',
             disabled_tools={'generate_image'}, security_context=tool_execution.NO_TOOL_SECURITY_CONTEXT)
-        _, result = await tool_execution.execute_tool_block(block, owner='pewds', session_id='fixture',
+        _, result = await execute(block, owner='pewds', session_id='fixture',
             security_context=tool_execution.NO_TOOL_SECURITY_CONTEXT)
     assert denied['exit_code'] != 0
     assert journal.actions[0].execution_id is None

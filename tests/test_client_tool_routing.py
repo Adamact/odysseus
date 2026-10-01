@@ -14,6 +14,7 @@ from routes.chat_routes import _agent_turn_cwd
 import routes.chat_routes as chat_routes
 from src import tool_execution as _te
 from src.agent_loop import _is_explicit_local_network_request
+from tests.runtime_evidence_helpers import server_authorized_executor
 
 # Hold module-object references (not just from-imported names): other test
 # modules re-import src.tool_execution via sys.modules pops, so string-target
@@ -28,7 +29,7 @@ _ROUTED_BRIDGE_TOOLS = _te._ROUTED_BRIDGE_TOOLS
 async def _execute_tool_block_for_unit_tests(*args, **kwargs):
     """Use the explicit non-security-context test mode for dispatch tests."""
     kwargs.setdefault("security_context", _te.NO_TOOL_SECURITY_CONTEXT)
-    return await _te.execute_tool_block(*args, **kwargs)
+    return await server_authorized_executor(_te.execute_tool_block)(*args, **kwargs)
 
 
 execute_tool_block = _execute_tool_block_for_unit_tests

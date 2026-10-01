@@ -486,12 +486,15 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
             # Guard each fallback with `or`: args.get("prompt", default) returns
             # None when the key is present but null, and None[:50] raises.
             name = args.get("name") or (args.get("prompt") or args.get("action_name") or "Task")[:50]
+            from src.agent_runtime.authority import seal_task_authority
 
             task = ScheduledTask(
                 id=task_id,
                 owner=owner,
                 name=name,
                 prompt=args.get("prompt"),
+                request_authority_json=seal_task_authority(
+                    args.get("prompt"), task_type, args.get("action_name"), owner=owner),
                 task_type=task_type,
                 action=args.get("action_name"),
                 schedule=args.get("schedule", "daily") if trigger_type == "schedule" else None,
@@ -557,6 +560,10 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
             if args.get("action_name") is not None:
                 task.action = args["action_name"]
                 changed.append("action")
+            if any(args.get(field) is not None for field in ("prompt", "task_type", "action_name")):
+                from src.agent_runtime.authority import seal_task_authority
+                task.request_authority_json = seal_task_authority(
+                    task.prompt, task.task_type, task.action, owner=owner)
             if args.get("trigger_type") is not None:
                 task.trigger_type = args["trigger_type"]
                 changed.append("trigger_type")
