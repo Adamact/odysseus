@@ -162,7 +162,7 @@ async def test_windows_bash_does_not_use_a_stray_tmux_executable(monkeypatch, tm
     async def fail_tmux(*_args, **_kwargs):
         pytest.fail("native Windows must not enter the POSIX tmux path")
 
-    monkeypatch.setattr(subprocess_tools, "_run_tmux_bash", fail_tmux)
+    monkeypatch.setattr(subprocess_tools.asyncio, "create_subprocess_shell", fail_tmux)
 
     result = await subprocess_tools.BashTool().execute(
         "pwd",

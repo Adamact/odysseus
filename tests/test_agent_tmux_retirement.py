@@ -17,7 +17,7 @@ async def test_a_chat_session_always_uses_the_owned_runner(monkeypatch, tmp_path
     monkeypatch.setattr(subprocess_tools.shutil, "which", lambda name: "/fake/tmux" if name == "tmux" else original(name))
     async def forbidden(*args, **kwargs):
         pytest.fail("native Bash resurrected a persistent tmux shell")
-    monkeypatch.setattr(subprocess_tools, "_run_tmux_bash", forbidden)
+    monkeypatch.setattr(subprocess_tools.asyncio, "create_subprocess_shell", forbidden)
     result = await subprocess_tools.BashTool().execute("printf ok", {"session_id": "same-chat"})
     assert result["output"] == "ok"
     assert result["teardown"]["dead"] is True

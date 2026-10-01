@@ -151,3 +151,37 @@ async def test_capture_preserves_multibyte_text_across_chunks(native_boundary):
         [sys.executable, "-c", "import sys; sys.stdout.write('€' * 30000)"], argv=True)
     assert result.stdout == "€" * 30000
     assert result.output_truncated is False
+
+
+async def test_chat_bash_captures_more_than_2000_lines(native_boundary):
+    result = await subprocess_tools.BashTool().execute(
+        "printf 'START\\n'; for i in $(seq 1 3000); do printf 'x\\n'; done; printf 'END\\n'",
+        {"session_id": "large-output-chat"},
+    )
+    assert result["output"].startswith("START\n")
+    assert result["output"].endswith("\nEND")
+    assert len(result["output"].splitlines()) == 3002
+    assert result["output_truncated"] is False
+    assert result["teardown"]["dead"] is True
+
+
+async def test_chat_bash_reports_capture_limit_as_incomplete(native_boundary):
+    result = await subprocess_tools.BashTool().execute(
+        "for i in $(seq 1 12000); do printf 'x\\n'; done", {"session_id": "capped-chat"},
+    )
+    assert result["exit_code"] == 0
+    assert result["output_truncated"] is True
+    assert "truncated" in result["output"]
+    assert result["teardown"]["dead"] is True
+
+
+async def test_repeated_chat_calls_refresh_environment(native_boundary):
+    first = await subprocess_tools.BashTool().execute('printf "%s" "$VALUE"', {
+        "session_id": "same-chat", "subproc_env": {"PATH": "/usr/bin:/bin", "VALUE": "first"},
+    })
+    second = await subprocess_tools.BashTool().execute('printf "%s" "$VALUE"', {
+        "session_id": "same-chat", "subproc_env": {"PATH": "/usr/bin:/bin", "VALUE": "second"},
+    })
+    assert first["output"] == "first"
+    assert second["output"] == "second"
+    assert first["containment"]["id"] != second["containment"]["id"]
