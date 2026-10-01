@@ -1,16 +1,20 @@
 """Tests for shell_routes.py helpers."""
 
+import asyncio
 import builtins
 import importlib
 import importlib.util
 import json
 import os
+import shlex
+import signal
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from core.platform_compat import pid_alive
 from routes.shell_routes import (
     _find_line_break,
     _host_docker_access_enabled,
@@ -83,6 +87,231 @@ async def test_generate_pty_reports_explicit_unsupported_error(monkeypatch):
         },
         {"exit_code": -1, "error": shell_routes.PTY_UNSUPPORTED_ERROR},
     ]
+
+
+pty_session = pytest.mark.skipif(
+    not hasattr(os, "setsid"), reason="process sessions are POSIX-only"
+)
+
+
+async def _spawn_pty_style_session(script: str):
+    """Spawn `script` the way _generate_pty does: its own session via setsid."""
+    return await asyncio.create_subprocess_shell(
+        script,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+        preexec_fn=os.setsid,
+    )
+
+
+def _stubborn_child(pid_file: Path, ignore: tuple[str, ...]) -> str:
+    """Shell snippet that starts a child ignoring `ignore`, then waits for it.
+
+    Killing a PTY session leader makes the kernel send SIGHUP to the
+    terminal's foreground process group, so a plain `sleep` child looks
+    contained even when nothing ever signalled the group. A child that ignores
+    SIGHUP is what an admin actually runs into — a `nohup`ed job, a daemon,
+    anything meant to outlive its terminal.
+
+    The child publishes its own pid only after installing the handlers, and
+    the snippet blocks until it does, so a test can never signal it while it
+    is still starting up and read that as teardown having worked.
+    """
+    ignores = "".join(
+        f"signal.signal(signal.{name}, signal.SIG_IGN); " for name in ignore
+    )
+    script = (
+        f"import os, signal, time; {ignores}"
+        f"open({str(pid_file)!r}, 'w').write(str(os.getpid())); "
+        "time.sleep(120)"
+    )
+    return (
+        f"{sys.executable} -c {shlex.quote(script)} & "
+        f"while [ ! -s {pid_file} ]; do sleep 0.02; done"
+    )
+
+
+async def _never_disconnected() -> bool:
+    return False
+
+
+def _reap_if_alive(pid: int) -> None:
+    """Clean up a descendant the code under test was supposed to have killed."""
+    if pid_alive(pid):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+
+async def _read_pid(path: Path, timeout: float = 5.0) -> int:
+    """Wait for a child to publish its pid, then return it."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        if path.exists():
+            text = path.read_text().strip()
+            if text:
+                return int(text)
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"child never wrote its pid to {path}")
+
+
+@pty_session
+async def test_terminate_pty_session_kills_descendants(tmp_path):
+    """Tearing down a PTY command takes its children, not only the shell."""
+    import routes.shell_routes as shell_routes
+
+    pid_file = tmp_path / "child.pid"
+    proc = await _spawn_pty_style_session(
+        f"sleep 120 & echo $! > {pid_file}; sleep 120"
+    )
+    try:
+        child_pid = await _read_pid(pid_file)
+        assert pid_alive(child_pid)
+
+        assert await shell_routes._terminate_pty_session(proc) is True
+
+        assert proc.returncode is not None
+        assert not pid_alive(child_pid)
+    finally:
+        await shell_routes._terminate_pty_session(proc)
+
+
+@pty_session
+async def test_terminate_pty_session_escalates_past_ignored_sigterm(tmp_path):
+    """A child that ignores SIGTERM is still gone when teardown returns."""
+    import routes.shell_routes as shell_routes
+
+    pid_file = tmp_path / "child.pid"
+    child = _stubborn_child(pid_file, ("SIGHUP", "SIGTERM"))
+    proc = await _spawn_pty_style_session(f"{child}; sleep 120")
+    try:
+        child_pid = await _read_pid(pid_file)
+        assert pid_alive(child_pid)
+
+        assert await shell_routes._terminate_pty_session(proc) is True
+
+        assert not pid_alive(child_pid)
+    finally:
+        await shell_routes._terminate_pty_session(proc)
+
+
+@pty_session
+async def test_generate_pty_timeout_kills_the_whole_session(tmp_path):
+    """A timed-out PTY command leaves none of its children running."""
+    import routes.shell_routes as shell_routes
+
+    pid_file = tmp_path / "child.pid"
+    child = _stubborn_child(pid_file, ("SIGHUP",))
+    cmd = f"{child}; echo ready; sleep 120"
+    request = SimpleNamespace(is_disconnected=_never_disconnected)
+
+    events = [
+        json.loads(chunk.removeprefix("data: ").strip())
+        async for chunk in shell_routes._generate_pty(cmd, 1, request)
+    ]
+
+    child_pid = await _read_pid(pid_file)
+    try:
+        assert events[-1] == {"exit_code": -1}
+        assert events[-2]["data"].startswith("Command timed out after 1s")
+        assert not pid_alive(child_pid)
+    finally:
+        _reap_if_alive(child_pid)
+
+
+@pty_session
+async def test_generate_pty_disconnect_kills_the_whole_session(tmp_path):
+    """Abandoning the stream kills the command's children too."""
+    import routes.shell_routes as shell_routes
+
+    pid_file = tmp_path / "child.pid"
+    child = _stubborn_child(pid_file, ("SIGHUP",))
+    cmd = f"{child}; echo ready; sleep 120"
+
+    polls = []
+
+    async def disconnect_after_first_poll() -> bool:
+        polls.append(None)
+        return len(polls) > 1
+
+    request = SimpleNamespace(is_disconnected=disconnect_after_first_poll)
+
+    async for _ in shell_routes._generate_pty(cmd, 0, request):
+        pass
+
+    child_pid = await _read_pid(pid_file)
+    try:
+        assert not pid_alive(child_pid)
+    finally:
+        _reap_if_alive(child_pid)
+
+
+async def test_terminate_pty_session_reports_a_session_it_could_not_kill(
+    monkeypatch,
+):
+    """Teardown returns False rather than claiming a surviving session died."""
+    import routes.shell_routes as shell_routes
+
+    monkeypatch.setattr(shell_routes, "PTY_KILL_GRACE", 0.01)
+    monkeypatch.setattr(shell_routes, "_signal_session", lambda *_: True)
+    monkeypatch.setattr(shell_routes, "_session_alive", lambda *_: True)
+    monkeypatch.setattr(shell_routes, "_session_pgid", lambda _: 4242)
+
+    proc = SimpleNamespace(pid=4242, returncode=0, wait=None)
+    assert await shell_routes._terminate_pty_session(proc) is False
+
+
+async def test_terminate_pty_session_escalates_before_giving_up(monkeypatch):
+    """SIGTERM then SIGKILL — the group is never signalled only once."""
+    import routes.shell_routes as shell_routes
+
+    sent = []
+    monkeypatch.setattr(shell_routes, "PTY_KILL_GRACE", 0.01)
+    monkeypatch.setattr(shell_routes, "_session_pgid", lambda _: 4242)
+    monkeypatch.setattr(shell_routes, "_session_alive", lambda *_: True)
+    monkeypatch.setattr(
+        shell_routes,
+        "_signal_session",
+        lambda pgid, pid, sig: sent.append(sig) or True,
+    )
+
+    proc = SimpleNamespace(pid=4242, returncode=0, wait=None)
+    await shell_routes._terminate_pty_session(proc)
+
+    assert sent == [signal.SIGTERM, signal.SIGKILL]
+
+
+@pty_session
+async def test_generate_pty_timeout_says_so_when_the_session_survives(
+    monkeypatch,
+):
+    """A timed-out command no longer reports clean termination it didn't get."""
+    import routes.shell_routes as shell_routes
+
+    real_terminate = shell_routes._terminate_pty_session
+
+    async def terminate_but_report_failure(proc):
+        await real_terminate(proc)
+        return False
+
+    monkeypatch.setattr(
+        shell_routes, "_terminate_pty_session", terminate_but_report_failure
+    )
+
+    request = SimpleNamespace(is_disconnected=_never_disconnected)
+    events = [
+        json.loads(chunk.removeprefix("data: ").strip())
+        async for chunk in shell_routes._generate_pty("echo ready; sleep 30", 1, request)
+    ]
+
+    assert events[-1] == {"exit_code": -1}
+    timed_out = events[-2]
+    assert timed_out["stream"] == "stderr"
+    assert timed_out["data"] == (
+        "Command timed out after 1s" + shell_routes.PTY_KILL_FAILED_HINT
+    )
 
 
 class TestFindLineBreak:
