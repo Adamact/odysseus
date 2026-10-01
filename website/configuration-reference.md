@@ -52,7 +52,7 @@ The source tree reads **108** `ODYSSEUS_*` variables: 78 an operator may want to
 | Variable | Default | Read in | What it does |
 |---|---|---|---|
 | `ODYSSEUS_DATA_DIR` | `get_default_data_dir()` | `src/constants.py:56` (+1 more) | Root directory for every persisted file. Prefer this over the per-path overrides; the rest of `src/constants.py` derives from it. |
-| `ODYSSEUS_MAIL_ATTACHMENTS_DIR` | `os.path.join(DATA_DIR, 'mail-attachments')` | `src/constants.py:102` | Dedicated override for the mail attachment store, which otherwise lives under the data directory. |
+| `ODYSSEUS_MAIL_ATTACHMENTS_DIR` | `os.path.join(DATA_DIR, 'mail-attachments')` | `src/constants.py:103` | Dedicated override for the mail attachment store, which otherwise lives under the data directory. |
 
 ### Model routing and providers
 
@@ -167,7 +167,7 @@ The source tree reads **108** `ODYSSEUS_*` variables: 78 an operator may want to
 
 | Variable | Default | Read in | What it does |
 |---|---|---|---|
-| `ODYSSEUS_INTERNAL_BASE` | *unset* | `src/constants.py:178` | Base URL the in-app tool layer uses for loopback HTTP calls. Set it when the app is not reachable at the port it thinks it is bound to. |
+| `ODYSSEUS_INTERNAL_BASE` | *unset* | `src/constants.py:179` | Base URL the in-app tool layer uses for loopback HTTP calls. Set it when the app is not reachable at the port it thinks it is bound to. |
 | `ODYSSEUS_INTERNAL_TOKEN` | *unset* | `core/middleware.py:20` | Security-relevant. Token that lets the in-app tool layer reach admin-gated routes over loopback. Unset generates a fresh per-process token, which is what you want unless something outside the process needs the same value. |
 
 ### Integrations (Claude, Codex)
