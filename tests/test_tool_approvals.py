@@ -333,6 +333,8 @@ def test_approved_document_version_guard_rejects_changed_target():
 
 @pytest.mark.asyncio
 async def test_missing_sealed_document_does_not_fall_back_to_another(monkeypatch):
+    import sys
+    from types import ModuleType
     import src.agent_tools.document_tools as document_tools
 
     class FakeDb:
@@ -342,7 +344,11 @@ async def test_missing_sealed_document_does_not_fall_back_to_another(monkeypatch
         def rollback(self):
             pass
 
-    monkeypatch.setattr("src.database.SessionLocal", lambda: FakeDb())
+    database = ModuleType("src.database")
+    database.SessionLocal = lambda: FakeDb()
+    database.Document = object
+    database.DocumentVersion = object
+    monkeypatch.setitem(sys.modules, "src.database", database)
     monkeypatch.setattr(
         document_tools,
         "_get_owned_document",

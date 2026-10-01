@@ -2198,8 +2198,9 @@ def test_python_loaded_code_sees_virtual_workspace_alias(monkeypatch, tmp_path):
     import venv
     from types import SimpleNamespace
 
-    if not shutil.which("bwrap"):
-        return
+    from src import containment
+    if not containment._bwrap_available():
+        pytest.skip("functional bubblewrap namespaces unavailable")
 
     from pathlib import Path
 
@@ -2210,12 +2211,13 @@ def test_python_loaded_code_sees_virtual_workspace_alias(monkeypatch, tmp_path):
     venv.EnvBuilder(with_pip=False).create(environment)
     monkeypatch.setattr(subprocess_tools, "sys", SimpleNamespace(
         prefix=str(environment),
+        base_prefix=sys.base_prefix,
         executable=str(environment / "bin" / "python"),
         version_info=sys.version_info,
     ))
     script = workspace / ".python-workspace-alias-test.py"
     output = workspace / ".python-workspace-alias-test.txt"
-    outside = workspace / "host-sibling.txt"
+    outside = workspace.parent / "host-sibling.txt"
     outside.write_text("must stay hidden from private /tmp")
     script.write_text(
         "from pathlib import Path; "
@@ -2237,6 +2239,7 @@ def test_workspace_namespace_mounts_only_a_nested_python_environment(monkeypatch
     from src.agent_tools import subprocess_tools
 
     monkeypatch.setattr(subprocess_tools.shutil, "which", lambda name: "/usr/bin/bwrap")
+    monkeypatch.setattr(subprocess_tools.containment, "_bwrap_available", lambda: True)
     environment = tmp_path / "nested" / "venv"
     environment.mkdir(parents=True)
     (environment / "pyvenv.cfg").write_text("home = /usr/bin\n")
@@ -2258,16 +2261,23 @@ def test_workspace_namespace_rejects_broad_or_symlinked_python_prefixes(monkeypa
     from src.agent_tools import subprocess_tools
 
     monkeypatch.setattr(subprocess_tools.shutil, "which", lambda name: "/usr/bin/bwrap")
+    monkeypatch.setattr(subprocess_tools.containment, "_bwrap_available", lambda: True)
     linked_root = tmp_path / "linked-root"
     linked_root.symlink_to("/", target_is_directory=True)
+    # Compared against the argv with no interpreter prefix at all: an unsafe
+    # prefix must add *nothing*. Asserting the absence of a literal
+    # `--ro-bind <prefix> <prefix>` instead would also fire on a base mount the
+    # argv makes for its own reasons -- /home and /mnt are read-only binds
+    # there -- which says nothing about whether the prefix was rejected.
+    baseline = shlex.split(
+        subprocess_tools._wrap_workspace_namespace("echo ok", str(tmp_path))
+    )
     for unsafe_prefix in ("/", "/tmp", "/var", "/home", str(linked_root)):
         command = subprocess_tools._wrap_workspace_namespace(
             "echo ok", str(tmp_path), interpreter_prefix=unsafe_prefix,
         )
         args = shlex.split(command)
-        assert ["--ro-bind", unsafe_prefix, unsafe_prefix] not in [
-            args[index:index + 3] for index in range(len(args) - 2)
-        ]
+        assert args == baseline, f"prefix {unsafe_prefix} changed the namespace argv"
         assert ["--tmpfs", "/tmp"] in [
             args[index:index + 2] for index in range(len(args) - 1)
         ]
@@ -2283,6 +2293,7 @@ def test_workspace_namespace_preserves_the_64_bit_dynamic_loader(monkeypatch):
     from src.agent_tools import subprocess_tools
 
     monkeypatch.setattr(subprocess_tools.shutil, "which", lambda name: "/usr/bin/bwrap")
+    monkeypatch.setattr(subprocess_tools.containment, "_bwrap_available", lambda: True)
     command = subprocess_tools._wrap_workspace_namespace("echo ok", "/tmp/workspace")
     assert command is not None
     args = shlex.split(command)

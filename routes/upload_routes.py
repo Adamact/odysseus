@@ -24,6 +24,7 @@ from core.database import (
 from src.auth_helpers import effective_user
 from src.attachment_refs import attachment_refs_from_metadata
 from src.constants import GENERATED_IMAGES_DIR
+from src.path_confinement import is_inside
 from src.upload_handler import (
     UploadCleanupSafetyError,
     count_recent_uploads,
@@ -152,10 +153,7 @@ def setup_upload_routes(upload_handler):
         return os.path.realpath(getattr(upload_handler, "upload_dir", UPLOAD_DIR))
 
     def _path_inside_upload_dir(path: str) -> bool:
-        try:
-            return os.path.commonpath([_upload_root(), os.path.realpath(path)]) == _upload_root()
-        except Exception:
-            return False
+        return is_inside(_upload_root(), path)
 
     def _resolve_upload_path(file_id: str) -> str:
         from src.constants import UPLOAD_DIR

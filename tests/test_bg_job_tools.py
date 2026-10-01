@@ -11,7 +11,7 @@ import time
 
 import pytest
 
-from src import bg_jobs
+from src import bg_jobs, containment, process_ownership
 from src.agent_tools.bg_job_tools import ManageBgJobsTool
 
 
@@ -23,7 +23,11 @@ def store(tmp_path, monkeypatch):
     monkeypatch.setattr(bg_jobs, "_JOBS_DIR", jobs_dir)
     monkeypatch.setattr(bg_jobs, "_pid_alive", lambda pid: True)
     killed: list = []
-    monkeypatch.setattr(bg_jobs, "_kill", lambda pid: killed.append(pid))
+    monkeypatch.setattr(process_ownership, "verify", lambda *args: process_ownership.OWNED)
+    def fake_kill(pid, **kwargs):
+        killed.append(pid)
+        return containment.ReleaseOutcome(dead=True, escalated=False)
+    monkeypatch.setattr(bg_jobs, "_kill", fake_kill)
     return {"dir": jobs_dir, "killed": killed}
 
 

@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 from fastapi import HTTPException, UploadFile
 
+from src.path_confinement import is_inside
 from src.upload_limits import format_byte_limit, get_chat_upload_max_bytes
 
 
@@ -256,12 +257,7 @@ class UploadHandler:
     
     def inside_base_dir(self, path: str) -> bool:
         """Check if path is inside base directory"""
-        base = os.path.realpath(self.base_dir)
-        p = os.path.realpath(path)
-        try:
-            return os.path.commonpath([base, p]) == base
-        except Exception:
-            return False
+        return is_inside(self.base_dir, path)
     
     def get_upload_dir(self):
         """Get date-based upload directory"""
@@ -684,12 +680,7 @@ class UploadHandler:
 
     def _inside_upload_dir(self, path: str) -> bool:
         """Check if path is inside the upload directory."""
-        base = os.path.normcase(os.path.realpath(self.upload_dir))
-        p = os.path.normcase(os.path.realpath(path))
-        try:
-            return os.path.commonpath([base, p]) == base
-        except Exception:
-            return False
+        return is_inside(self.upload_dir, path)
 
     def _atomic_write_json(
         self,

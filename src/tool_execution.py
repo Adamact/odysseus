@@ -34,7 +34,14 @@ from src.tool_capabilities import ToolRunSecurityContext, blocked_tool_result
 from src.tool_approvals import ExactToolApproval
 from src.tool_policy import ToolPolicy
 from src.client_tool_contract import TUI_ROUTED_BRIDGE_TOOL_NAMES
-from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES, DATA_DIR
+from src.constants import (
+    DATA_DIR,
+    MAX_DIFF_LINES,
+    MAX_OUTPUT_CHARS,
+    MAX_READ_CHARS,
+    WORKSPACE_MOUNT,
+)
+from src.path_confinement import canonical_root, confine, is_inside
 from src.tool_utils import _truncate, get_mcp_manager
 
 
@@ -341,9 +348,24 @@ def _text_write_to_binary_artifact_result(content: str) -> tuple[str, Dict] | No
 
 async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[str], client_runtime_context: Optional[Dict]):
     import base64
+    from urllib.parse import urlparse
     bridge = _client_bridge(client_runtime_context)
     if bridge is None:
         return tool, {"error": f"{tool}: TUI host bridge is not available", "exit_code": 1}
+
+    url = str(bridge.get("url") or "").strip()
+    parsed = urlparse(url)
+    sanitized_endpoint = f"{parsed.scheme}://{parsed.netloc}{parsed.path}" if parsed.scheme and parsed.netloc else "tui_bridge"
+    from src import containment
+    spec = containment.agent_spec(agent_cwd(), {}, int(_BRIDGE_TOOL_TIMEOUT_S))
+    grant = containment.declare_external_bridge(
+        spec,
+        owner=str(session_id or "tui_bridge"),
+        endpoint=sanitized_endpoint,
+    )
+    boundary = grant.to_dict()
+    boundary["executed"] = False
+
     if tool == "bash":
         from src.agent_tools.subprocess_tools import _host_shell_requires_detach, _host_shell_should_auto_poll
 
@@ -394,9 +416,13 @@ async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[s
                     "output": "host job still running; poll the returned job_id",
                     "exit_code": 0,
                 }
+        if isinstance(result, dict):
+            b = dict(boundary)
+            b["executed"] = (result.get("exit_code") == 0 or (isinstance(result.get("exit_code"), int) and not result.get("error")))
+            result["containment"] = b
         return desc, result
     if tool == "python":
-        return "python: (client)", await _bridge_post(
+        py_res = await _bridge_post(
             bridge,
             "/run",
             {
@@ -407,6 +433,11 @@ async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[s
             timeout_s=_BRIDGE_TOOL_TIMEOUT_S,
             err_prefix="python",
         )
+        if isinstance(py_res, dict):
+            b = dict(boundary)
+            b["executed"] = (py_res.get("exit_code") == 0 or (isinstance(py_res.get("exit_code"), int) and not py_res.get("error")))
+            py_res["containment"] = b
+        return "python: (client)", py_res
     if tool == "grep":
         stripped = content.strip()
         try:
@@ -814,13 +845,7 @@ def _resolve_tool_path(raw_path: str) -> str:
         )
 
     for root in _tool_path_roots():
-        if resolved == root:
-            return resolved
-        try:
-            common = os.path.commonpath([resolved, root])
-        except ValueError:
-            continue
-        if common == root:
+        if is_inside(root, resolved):
             return resolved
     raise ValueError(
         f"path '{raw_path}' is outside the allowed roots"
@@ -838,33 +863,27 @@ def _resolve_tool_path_in_workspace(workspace: str, raw_path: str) -> str:
     """
     if raw_path is None or not str(raw_path).strip():
         raise ValueError("path is required")
-    base = os.path.realpath(workspace)
+    base = canonical_root(workspace)
     expanded = os.path.expanduser(str(raw_path).strip())
     # `/workspace` is the stable user-facing agent root in tasks and docs.
     # Native/manual installs may bind the request to another physical folder;
     # resolve the alias inside that active workspace rather than rejecting it.
-    if expanded == "/workspace":
+    if expanded == WORKSPACE_MOUNT:
         expanded = base
-    elif expanded.startswith("/workspace/"):
-        expanded = os.path.join(base, expanded.removeprefix("/workspace/"))
-    candidate = expanded if os.path.isabs(expanded) else os.path.join(base, expanded)
-    resolved = os.path.realpath(candidate)
+    elif expanded.startswith(WORKSPACE_MOUNT + "/"):
+        expanded = os.path.join(base, expanded.removeprefix(WORKSPACE_MOUNT + "/"))
+    try:
+        resolved = confine(base, expanded)
+    except (ValueError, OSError):
+        raise ValueError(f"path '{raw_path}' is outside the workspace ({workspace})")
+    # Confinement says "inside the root"; the deny list says "allowed". They
+    # are separate questions and this one stays here, with the policy that
+    # owns it.
     if _is_sensitive_path(resolved):
         raise ValueError(
             f"path '{raw_path}' is inside a sensitive directory "
             f"(e.g. .ssh, .gnupg) or matches a sensitive filename"
         )
-    if resolved != base:
-        # normcase so containment holds on case-insensitive filesystems
-        # (Windows, default macOS): it lowercases on Windows and is a no-op on
-        # POSIX. commonpath raises ValueError across Windows drives (C: vs D:)
-        # or mixed abs/rel — both mean "outside", so the except rejects them.
-        nbase = os.path.normcase(base)
-        try:
-            if os.path.commonpath([os.path.normcase(resolved), nbase]) != nbase:
-                raise ValueError
-        except ValueError:
-            raise ValueError(f"path '{raw_path}' is outside the workspace ({workspace})")
     return resolved
 
 
@@ -1192,6 +1211,10 @@ def _split_bg_marker(content: str):
     return False, content
 
 
+def _agent_subprocess_env() -> dict:
+    return {**os.environ, "TERM": "xterm-256color", "COLUMNS": "120", "LINES": "40", "HOME": _AGENT_WORKDIR}
+
+
 async def _direct_fallback(
     tool: str,
     content: str,
@@ -1202,13 +1225,7 @@ async def _direct_fallback(
     disabled_tools: Optional[set] = None,
     tool_policy: Optional[ToolPolicy] = None,
 ) -> Optional[Dict]:
-    _subproc_env = {
-        **os.environ,
-        "TERM": "xterm-256color",
-        "COLUMNS": "120",
-        "LINES": "40",
-        "HOME": _AGENT_WORKDIR,
-    }
+    _subproc_env = _agent_subprocess_env()
 
     try:
         ctx = {
@@ -1668,7 +1685,11 @@ async def _execute_tool_block_impl(
         if _is_bg and _bg_cmd:
             from src import bg_jobs
             mark_dispatch()
-            rec = bg_jobs.launch(_bg_cmd, session_id=session_id, cwd=agent_cwd())
+            from src import containment
+            try:
+                rec = bg_jobs.launch(_bg_cmd, session_id=session_id, cwd=agent_cwd(), env=_agent_subprocess_env())
+            except containment.ContainmentUnavailable as exc:
+                return "bash (background): containment unavailable", containment.unavailable_tool_result(exc, tool="bash")
             # Only this server launch may seal detached-job authority; a
             # handler/bridge output carrying a job id is not a grant source.
             save_background_authority(rec["id"], active_request_authority())
@@ -1678,7 +1699,7 @@ async def _execute_tool_block_impl(
                 "output": (
                     f"Started background job `{rec['id']}`. It is running detached; "
                     f"do NOT wait for it or poll it. You will be automatically re-invoked "
-                    f"with its full output when it finishes. Continue with other work, or "
+                    f"with its captured output and any capture limit when it finishes. Continue with other work, or "
                     f"end your turn now and resume when the result arrives. If the user "
                     f"later asks to check progress or stop it, call the manage_bg_jobs "
                     f"tool yourself (output or kill); do not tell them to run a tool "
@@ -1686,6 +1707,7 @@ async def _execute_tool_block_impl(
                 ),
                 "exit_code": 0,
                 "bg_job_id": rec["id"],
+                "containment": rec.get("containment"),
             }
             logger.info(f"Tool executed: {desc} -> bg job {rec['id']}")
             return desc, result

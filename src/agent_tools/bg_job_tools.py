@@ -87,6 +87,9 @@ class ManageBgJobsTool:
                 if rec.get("status") != "running":
                     return {"output": f"Job `{job_id}` already {_status_label(rec)}; nothing to kill.", "exit_code": 0}
                 killed = bg_jobs.kill(job_id)
+                if not killed or not killed.get("killed"):
+                    return {"error": f"Could not verify termination of background job `{job_id}`.",
+                            "exit_code": 1, "teardown": (killed or {}).get("teardown")}
                 return {"output": f"Killed background job `{job_id}` ({(killed or {}).get('command', '').splitlines()[0][:80]}).", "exit_code": 0}
 
             out = rec.get("output") or "(no output yet)"

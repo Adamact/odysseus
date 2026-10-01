@@ -1,5 +1,6 @@
 import asyncio
 import ast
+import logging
 import os
 import re
 import shlex
@@ -8,15 +9,16 @@ import shutil
 import subprocess
 import sys
 import time
-import collections
 import json
-from typing import Optional, Callable, Awaitable, Tuple, Dict
+from typing import Optional
 from urllib.parse import urlparse
 
 import httpx
 
-from src.constants import MAX_OUTPUT_CHARS
-from src.agent_runtime.journal import mark_operation_started
+from src import containment
+from src.constants import AGENT_ISOLATED_TMP_DIRNAME, MAX_OUTPUT_CHARS, WORKSPACE_MOUNT
+
+logger = logging.getLogger(__name__)
 
 # Agent shell calls must fail fast enough for the loop to recover and choose a
 # better tool.  A one-hour default can pin an entire benchmark worker on an
@@ -25,9 +27,6 @@ from src.agent_runtime.journal import mark_operation_started
 DEFAULT_BASH_TIMEOUT = 120
 DEFAULT_PYTHON_TIMEOUT = 60 * 60
 
-PROGRESS_INTERVAL_S = 2.0
-PROGRESS_TAIL_LINES = 12
-TMUX_CAPTURE_LINES = 2000
 _HOST_SHELL_BRIDGE_HOSTS = {"127.0.0.1", "localhost", "::1", "host.docker.internal"}
 IS_WINDOWS = sys.platform.startswith("win")
 _HOST_SHELL_CANCEL_TASKS: set[asyncio.Task] = set()
@@ -217,11 +216,6 @@ def is_host_shell_bridge_url_allowed(url: str) -> bool:
     return True
 
 
-def _tmux_session_name(session_id: Optional[str]) -> str:
-    raw = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(session_id or "default")).strip("-")
-    return f"ody-agent-{raw[:80] or 'default'}"
-
-
 def _replace_workspace_alias(content: str, cwd: str) -> str:
     """Map virtual /workspace paths without corrupting absolute host paths."""
     return re.sub(
@@ -231,11 +225,221 @@ def _replace_workspace_alias(content: str, cwd: str) -> str:
     )
 
 
+#: Roots the namespace argv mounts itself. A host path under one of these is
+#: already reachable inside the namespace, so it needs no bind and must not get
+#: a ``--dir`` chain: mkdir inside a read-only bind fails and takes the whole
+#: namespace with it.
+_NAMESPACE_MOUNTED_ROOTS = ("/usr", "/home", "/mnt")
+
+#: Destinations a bind must never overlay. Replacing the private root, the
+#: private /tmp or the workspace mount with a host directory undoes the
+#: namespace from inside the argv that builds it.
+_NAMESPACE_RESERVED_DESTS = frozenset({
+    "/", "/tmp", "/var", "/opt", "/etc", WORKSPACE_MOUNT,
+    "/root", "/run", "/proc", "/dev", "/sys", *_NAMESPACE_MOUNTED_ROOTS,
+})
+
+
+def _namespace_visible_without_bind(path: str) -> bool:
+    """True when ``path`` is already reachable through a root the argv mounts."""
+    return any(
+        path == root or path.startswith(root + os.sep)
+        for root in _NAMESPACE_MOUNTED_ROOTS
+    )
+
+
+def _namespace_dir_chain(path: str) -> list[str]:
+    """``--dir`` args for every ancestor of ``path`` the argv has to create.
+
+    bwrap mounts into a tmpfs root, so a bind destination's parents have to
+    exist before the bind. Returns nothing when the parents already exist by
+    virtue of a mount the argv made — creating a directory inside a read-only
+    bind is an error, not a no-op.
+    """
+    if _namespace_visible_without_bind(path):
+        return []
+    parents: list[str] = []
+    parent = os.path.dirname(path)
+    while parent not in ("/", "", "/tmp", "/etc", WORKSPACE_MOUNT, *_NAMESPACE_MOUNTED_ROOTS):
+        parents.append(parent)
+        parent = os.path.dirname(parent)
+    args: list[str] = []
+    for directory in reversed(parents):
+        args.extend(("--dir", directory))
+    return args
+
+
+def _isolated_tmp_dir(cwd: str) -> str:
+    """The workspace-local stand-in for the host ``/tmp``.
+
+    Creation is best-effort: the source tree is read-only in Docker and a
+    workspace can be mounted read-only, and a command that mentions ``/tmp/``
+    must not die with an OSError traceback because a scratch directory could
+    not be made. The rewrite still points at the workspace, so a command that
+    really needs to write there fails on its own terms, inside the boundary,
+    with its own error message.
+    """
+    path = os.path.join(cwd, AGENT_ISOLATED_TMP_DIRNAME)
+    try:
+        os.makedirs(path, exist_ok=True)
+    except OSError:
+        pass
+    return path
+
+
+def _execution_boundary(
+    cwd: str, *, wall_clock_s: int = DEFAULT_BASH_TIMEOUT,
+) -> "containment.ContainmentProbe":
+    """What this host can actually enforce for an agent command in ``cwd``.
+
+    The single place the shell and Python tools ask. Both used to decide for
+    themselves, by testing whether a namespace wrapper came back non-None, and
+    both then fell through to a regex if it had not — so "was that command
+    confined" had no answer and no field in the result. Routing the question
+    through :mod:`src.containment` means one mechanism table, one answer, and a
+    ``containment`` block in the tool result either way.
+
+    ``network`` is left inherited on purpose: ``--unshare-net`` was measured to
+    cut the loopback sidecars this product depends on (ChromaDB on 8100), and
+    the Dockerfile installs ``nmap``/``iproute2``/``dnsutils`` because
+    Docker-hosted agents are expected to do LAN work. It is a reported
+    dimension here, not an enforced one.
+    """
+    try:
+        return containment.probe(
+            containment.agent_spec(
+                workspace=cwd,
+                env={},
+                wall_clock_s=wall_clock_s,
+                max_output_bytes=MAX_OUTPUT_CHARS,
+            )
+        )
+    except ValueError as exc:
+        # A workspace that is not a usable directory is a caller bug to
+        # containment, which raises rather than reporting. Here it must not
+        # take out the tool, and it is still a containment failure: nothing can
+        # be confined to a directory that is not there. Fail closed. The reason
+        # goes in the message rather than a traceback -- this is a known shape,
+        # not an unexpected exception.
+        logger.warning(
+            "execution boundary: cannot probe containment for workspace %r (%s); "
+            "treating every required dimension as unenforced",
+            cwd, exc,
+        )
+        return containment.ContainmentProbe(
+            mechanism="none",
+            enforced=frozenset(),
+            degraded=(),
+            unenforced_required=tuple(sorted(containment.DEFAULT_REQUIRED)),
+            mode=containment.CONTAINMENT_MODE,
+        )
+
+
+#: What the fallback actually is, named so it cannot be mistaken for a
+#: mechanism. ``_replace_workspace_alias`` rewrites the literal token
+#: ``/workspace`` to the real path in the command string; a command that never
+#: mentions ``/workspace`` is untouched by it and runs on the host unrestricted.
+ALIAS_REWRITE_MECHANISM = "workspace_alias_rewrite"
+
+#: Guards the one-per-process fallback warning below. Module state, because the
+#: fact it reports is a property of the host rather than of a command.
+_ALIAS_FALLBACK_LOGGED = False
+
+
+def _filesystem_boundary_block(mechanism: str, mode: str, *, confined: bool) -> dict:
+    """The ``containment`` block for a spawn these tools still build themselves.
+
+    Reports the **filesystem dimension only**, deliberately. The probe knows
+    this host could also give a process group and a real wall clock, but
+    Compatibility namespace previews assemble their own ``create_subprocess_*``
+    call and pass neither ``start_new_session`` nor a group-wide kill, so
+    listing those dimensions here would be the false claim
+    :mod:`src.containment` calls worse than an honest absence. They arrive when
+    this spawn path moves onto :func:`containment.run`, not before.
+    """
+    return {
+        "mechanism": mechanism,
+        "mode": mode,
+        "enforced": [containment.FILESYSTEM] if confined else [],
+        "unenforced_required": [] if confined else [containment.FILESYSTEM],
+        "contained": confined,
+        "executed": True,
+        # Names the scope of the claim, so "process_tree is absent from
+        # enforced" reads as "not reported here" rather than "not enforced".
+        "reported_dimensions": [containment.FILESYSTEM],
+    }
+
+
+def _contained_command(
+    content: str,
+    cwd: str,
+    *,
+    chdir: str = WORKSPACE_MOUNT,
+    interpreter_prefix: str | None = None,
+) -> tuple[str, dict, bool]:
+    """Resolve ``content`` into the strongest form this host can run.
+
+    Returns ``(command, containment_block, confined)``. The caller spawns
+    ``command``, copies ``containment_block`` into its result verbatim, and
+    refuses instead when ``confined`` is false under enforcing mode.
+
+    This replaces ``namespaced or _replace_workspace_alias(...)``, the line this
+    ticket exists to delete. The two branches it chose between are not
+    comparable — one is a mount namespace, the other is a regex — and choosing
+    the second silently means an uncontained host execution reads in the
+    transcript exactly like a contained one. The fallback still happens under
+    an explicit report-only diagnostic mode; the difference is that it is now
+    recorded in the result.
+
+    :raises containment.ContainmentUnavailable: filesystem containment could
+        not be established and the mode is enforcing. The command is not run.
+    """
+    probe = _execution_boundary(cwd)
+    wrapped = _wrap_workspace_namespace(
+        content, cwd, chdir=chdir, interpreter_prefix=interpreter_prefix,
+    )
+    # The probe's filesystem answer and the wrapper's None/not-None answer rest
+    # on the same functional namespace probe, so they agree
+    # by construction. `wrapped` is still what decides, because it is what
+    # actually runs: a probe that said yes to a wrapper that declined would be
+    # the same false claim in the other direction.
+    if wrapped is not None:
+        return wrapped, _filesystem_boundary_block(
+            probe.mechanism, probe.mode, confined=True,
+        ), True
+    if probe.mode == containment.MODE_ENFORCING:
+        raise containment.ContainmentUnavailable(
+            frozenset({containment.FILESYSTEM}), ALIAS_REWRITE_MECHANISM,
+        )
+    # Once per process, not once per command. The host's ability to establish a
+    # namespace does not change between calls, so a per-call warning would
+    # drown the log on every macOS install while adding nothing — and the
+    # per-call fact is already in the result block, which is where a reader
+    # looking at one command will look.
+    global _ALIAS_FALLBACK_LOGGED
+    if not _ALIAS_FALLBACK_LOGGED:
+        _ALIAS_FALLBACK_LOGGED = True
+        logger.warning(
+            "execution boundary: no filesystem containment is available on this "
+            "host (mechanism %r); agent commands fall back to the %s, which is "
+            "a path rewrite and not a boundary. Reported per command in the "
+            "result's containment block.",
+            probe.mechanism, ALIAS_REWRITE_MECHANISM,
+        )
+    return (
+        _replace_workspace_alias(content, cwd),
+        _filesystem_boundary_block(
+            ALIAS_REWRITE_MECHANISM, probe.mode, confined=False,
+        ),
+        False,
+    )
+
+
 def _wrap_workspace_namespace(
     content: str,
     cwd: str,
     *,
-    chdir: str = "/workspace",
+    chdir: str = WORKSPACE_MOUNT,
     interpreter_prefix: str | None = None,
 ) -> str | None:
     """Run a shell command with the active workspace mounted at /workspace.
@@ -245,22 +449,9 @@ def _wrap_workspace_namespace(
     bubblewrap namespace preserves that public contract for each concurrent
     agent without creating a process-global /workspace symlink.
     """
-    if IS_WINDOWS or not shutil.which("bwrap"):
+    if IS_WINDOWS or not containment._bwrap_available():
         return None
-    args = [
-        "bwrap", "--die-with-parent", "--new-session", "--tmpfs", "/",
-        "--dir", "/usr", "--ro-bind", "/usr", "/usr",
-        "--symlink", "usr/bin", "/bin",
-        "--symlink", "usr/lib", "/lib",
-        "--symlink", "usr/lib64", "/lib64",
-        "--symlink", "usr/bin", "/sbin",
-        "--dir", "/etc", "--ro-bind", "/etc", "/etc",
-        "--dir", "/home", "--bind", "/home", "/home",
-        "--dir", "/mnt", "--bind", "/mnt", "/mnt",
-        "--dir", "/tmp", "--tmpfs", "/tmp",
-        "--dev-bind", "/dev", "/dev", "--proc", "/proc",
-        "--dir", "/workspace", "--bind", cwd, "/workspace",
-    ]
+    readonly = [path for path in ("/home", "/mnt") if os.path.isdir(path)]
     # setup-python installs interpreters under /opt, and local CI virtualenvs
     # can live under /tmp. Those paths are hidden by the private root/tmpfs.
     # Expose only the active interpreter environment, read-only, so Python
@@ -268,15 +459,7 @@ def _wrap_workspace_namespace(
     if interpreter_prefix:
         prefix = os.path.abspath(interpreter_prefix)
         resolved_prefix = os.path.realpath(prefix)
-        mounted_roots = ("/usr", "/home", "/mnt")
-        reserved_roots = {
-            "/", "/tmp", "/var", "/opt", "/etc", "/workspace",
-            "/root", "/run", "/proc", "/dev", "/sys", *mounted_roots,
-        }
-        already_visible = any(
-            prefix == root or prefix.startswith(root + os.sep)
-            for root in mounted_roots
-        )
+        already_visible = _namespace_visible_without_bind(prefix)
         # A prefix is trusted only when it names a specific interpreter tree.
         # In particular, never overlay the private root, tmpfs, or workspace
         # with a broad host directory. Reject symlinked prefixes too: bwrap
@@ -293,304 +476,91 @@ def _wrap_workspace_namespace(
         if (
             not already_visible
             and prefix == resolved_prefix
-            and prefix not in reserved_roots
+            and prefix not in _NAMESPACE_RESERVED_DESTS
             and len(prefix.split(os.sep)) >= 3
             and os.path.isdir(prefix)
             and has_environment_layout
         ):
-            parents = []
-            parent = os.path.dirname(prefix)
-            while parent not in ("/", "/tmp", "/etc", "/workspace", *mounted_roots):
-                parents.append(parent)
-                parent = os.path.dirname(parent)
-            for directory in reversed(parents):
-                args.extend(("--dir", directory))
-            args.extend(("--ro-bind", prefix, prefix))
-    args.extend(("--chdir", chdir, "/bin/bash", "-lc", content))
+            readonly.append(prefix)
+    spec = containment.ContainmentSpec(
+        workspace=cwd, env={}, wall_clock_s=DEFAULT_BASH_TIMEOUT,
+        readonly_extra=tuple(readonly),
+    )
+    args = containment._bwrap_prefix(spec)
+    args[-1] = chdir
+    args.extend(("/bin/bash", "-lc", content))
     return shlex.join(args)
 
 
-async def _run_exec(*args: str, timeout: float = 10) -> Tuple[str, str, int]:
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+def _owned_spec(cwd: str, env: Optional[dict], timeout: int, readonly_extra: tuple = ()) -> containment.ContainmentSpec:
+    """Server-defined boundary shared by the native execution tools."""
+    readonly = []
+    for prefix in (sys.prefix, sys.base_prefix):
+        prefix = os.path.realpath(prefix)
+        visible = any(prefix == root or prefix.startswith(root + os.sep) for root in ("/usr", "/etc"))
+        if not visible and prefix not in _NAMESPACE_RESERVED_DESTS:
+            readonly.append(prefix)
+    return containment.agent_spec(
+        cwd, dict(os.environ if env is None else env), timeout,
+        readonly_extra=tuple(dict.fromkeys([*readonly, *readonly_extra])),
     )
+
+
+async def _run_owned_command(command, ctx: dict, *, tool: str, timeout: int, argv: bool = False,
+                             readonly_extra: tuple = ()) -> dict:
+    from src.tool_execution import agent_cwd, _truncate
+
+    grant = None
     try:
-        out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-        return "", "timeout", 124
-    return (
-        out_b.decode("utf-8", errors="replace"),
-        err_b.decode("utf-8", errors="replace"),
-        proc.returncode or 0,
-    )
-
-
-async def _tmux_has_session(name: str) -> bool:
-    _, _, rc = await _run_exec("tmux", "has-session", "-t", name, timeout=3)
-    return rc == 0
-
-
-async def _tmux_capture(name: str) -> str:
-    out, _, _ = await _run_exec(
-        "tmux", "capture-pane", "-p", "-J", "-S", f"-{TMUX_CAPTURE_LINES}", "-t", name,
-        timeout=5,
-    )
-    return out
-
-
-async def _tmux_send_line(name: str, line: str) -> None:
-    if line:
-        await _run_exec("tmux", "send-keys", "-t", name, "-l", line, timeout=5)
-    await _run_exec("tmux", "send-keys", "-t", name, "C-m", timeout=5)
-
-
-async def _ensure_tmux_session(name: str, cwd: str, env: Optional[dict]) -> None:
-    # tmux creates child panes from the long-lived server environment, not
-    # necessarily from the app process that issued ``new-session``.  On hosts
-    # where tmux predates the Odysseus virtualenv this silently resolves
-    # ``python`` to the system interpreter, losing plotting/PDF dependencies
-    # and prompting futile pip-install loops.  Reassert the small execution
-    # environment on both new and reused panes.
-    forwarded_env = {
-        key: str(env[key])
-        for key in ("PATH", "VIRTUAL_ENV", "HOME", "TMPDIR")
-        if env and env.get(key)
-    }
-    if await _tmux_has_session(name):
-        if forwarded_env:
-            exports = " ".join(
-                f"{key}={shlex.quote(value)}" for key, value in forwarded_env.items()
-            )
-            await _tmux_send_line(name, f"export {exports}")
-        await _run_exec("tmux", "send-keys", "-t", name, "stty -echo", "C-m", timeout=5)
-        return
-    env_args = [f"{key}={value}" for key, value in forwarded_env.items()]
-    await _run_exec(
-        "tmux", "new-session", "-d", "-s", name, "-c", cwd,
-        "env",
-        *env_args,
-        f"TERM={env.get('TERM', 'xterm-256color') if env else 'xterm-256color'}",
-        f"COLUMNS={env.get('COLUMNS', '120') if env else '120'}",
-        f"LINES={env.get('LINES', '40') if env else '40'}",
-        "/bin/bash",
-        "--noprofile",
-        "--norc",
-        timeout=10,
-    )
-    if not await _tmux_has_session(name):
-        raise RuntimeError(f"failed to create tmux session {name}")
-    await _run_exec("tmux", "send-keys", "-t", name, "stty -echo", "C-m", timeout=5)
-
-
-def _output_after_marker(capture: str, start_marker: str, end_marker: str) -> Tuple[str, bool]:
-    lines = capture.splitlines()
-    start_idx = -1
-    for idx, line in enumerate(lines):
-        if line.strip() == start_marker:
-            start_idx = idx
-    if start_idx < 0:
-        return capture, False
-    end_idx = -1
-    for idx in range(start_idx + 1, len(lines)):
-        if lines[idx].strip().startswith(end_marker):
-            end_idx = idx
-    if end_idx < 0:
-        return "\n".join(lines[start_idx + 1:]), False
-    return "\n".join(lines[start_idx + 1:end_idx]), True
-
-
-def _extract_marker_rc(capture: str, end_marker: str) -> int:
-    for line in reversed(capture.splitlines()):
-        stripped = line.strip()
-        if stripped.startswith(end_marker):
-            suffix = stripped[len(end_marker):].strip()
-            if suffix.isdigit():
-                return int(suffix)
-    return 0
-
-
-async def _run_tmux_bash(
-    content: str,
-    *,
-    session_id: str,
-    cwd: str,
-    env: Optional[dict],
-    timeout: float,
-    progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
-) -> Tuple[str, str, Optional[int], bool]:
-    name = _tmux_session_name(session_id)
-    await _ensure_tmux_session(name, cwd, env)
-
-    stamp = f"{int(time.time() * 1000)}-{abs(hash(content)) % 1000000}"
-    start_marker = f"__ODYSSEUS_CMD_START_{stamp}__"
-    end_prefix = f"__ODYSSEUS_CMD_END_{stamp}__:"
-    # Execute each tool call in a non-interactive child shell.  The tmux pane
-    # is deliberately persistent, but handing its terminal stdin to commands
-    # lets programs such as ffmpeg block forever on overwrite prompts.  EOF is
-    # the deterministic behavior expected from an agent tool invocation.
-    child_command = f"/bin/bash -lc {shlex.quote(content)} </dev/null"
-    wrapped = (
-        f"printf '\\n{start_marker}\\n'\n"
-        f"{child_command}\n"
-        f"__ody_rc=$?\n"
-        f"printf '\\n{end_prefix}%s\\n' \"$__ody_rc\"\n"
-    )
-    for line in wrapped.splitlines():
-        await _tmux_send_line(name, line)
-
-    started = time.time()
-    last_tail = ""
-    while True:
-        capture = await _tmux_capture(name)
-        body, done = _output_after_marker(capture, start_marker, end_prefix)
-        tail = "\n".join(body.splitlines()[-PROGRESS_TAIL_LINES:])
-        if progress_cb and tail != last_tail:
-            last_tail = tail
-            try:
-                await progress_cb({
-                    "elapsed_s": round(time.time() - started, 1),
-                    "tail": tail,
-                    "tmux_session": name,
-                })
-            except Exception:
-                pass
-        if done:
-            rc = _extract_marker_rc(capture, end_prefix)
-            cleaned = _clean_tmux_command_output(body, wrapped)
-            return cleaned, "", rc, False
-        if time.time() - started > timeout:
-            try:
-                await _run_exec("tmux", "send-keys", "-t", name, "C-c", timeout=3)
-            except Exception:
-                pass
-            # Ctrl-C targets the pane's foreground process group, but a child
-            # can outlive its wrapper shell and become an orphan. Destroy this
-            # task-scoped session as the timeout boundary; the next tool call
-            # recreates it through _ensure_tmux_session.
-            try:
-                await _run_exec("tmux", "kill-session", "-t", name, timeout=3)
-            except Exception:
-                pass
-            cleaned = _clean_tmux_command_output(body, wrapped)
-            return cleaned, "", 124, True
-        await asyncio.sleep(0.5)
-
-
-def _clean_tmux_command_output(text: str, wrapped_command: str) -> str:
-    lines = text.splitlines()
-    wrapped_lines = {ln.rstrip() for ln in wrapped_command.splitlines() if ln.strip()}
-    cleaned = []
-    for line in lines:
-        raw = line.rstrip()
-        stripped = raw.strip()
-        if not stripped:
-            cleaned.append(raw)
-            continue
-        if stripped in wrapped_lines:
-            continue
-        if stripped.startswith("__ody_rc=") or stripped.startswith("printf "):
-            continue
-        if re.fullmatch(r"(?:bash|sh)-[\d.]+\$ ?", stripped):
-            continue
-        if re.fullmatch(r"[\w.@:/~+-]+[#$] ?", stripped):
-            continue
-        cleaned.append(raw)
-    return "\n".join(cleaned).strip()
-
-async def _run_subprocess_streaming(
-    proc: asyncio.subprocess.Process,
-    *,
-    timeout: float,
-    progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
-) -> Tuple[str, str, Optional[int], bool]:
-    started = time.time()
-    stdout_full: list[str] = []
-    stderr_full: list[str] = []
-    tail = collections.deque(maxlen=PROGRESS_TAIL_LINES)
-
-    async def _reader(stream, full_buf, label: str):
-        if stream is None:
-            return
-        while True:
-            line = await stream.readline()
-            if not line:
-                break
-            decoded = line.decode("utf-8", errors="replace").rstrip("\n")
-            full_buf.append(decoded)
-            if label == "err":
-                tail.append(f"! {decoded}")
+        grant = containment.acquire(
+            _owned_spec(agent_cwd(), ctx.get("subproc_env"), timeout, readonly_extra),
+            owner=str(ctx.get("session_id") or ctx.get("owner") or tool),
+        )
+        if containment.FILESYSTEM not in grant.enforced:
+            if argv:
+                command = [*command[:-1], _replace_workspace_alias(command[-1], grant.workspace)]
             else:
-                tail.append(decoded)
+                command = _replace_workspace_alias(command, grant.workspace)
+        result = await containment.run(grant, command, argv=argv, progress_cb=ctx.get("progress_cb"))
+    except containment.ContainmentUnavailable as exc:
+        return containment.unavailable_tool_result(exc, tool=tool)
+    except (OSError, RuntimeError, ValueError) as exc:
+        boundary = grant.to_dict() if grant else {}
+        boundary["executed"] = bool(getattr(exc, "containment_executed", False))
+        if not getattr(exc, "containment_established", False):
+            boundary.update(contained=False, enforced=[])
+        return {"error": f"{tool}: execution failed: {exc}", "exit_code": 1,
+                "containment": boundary}
 
-    async def _progress_emitter():
-        await asyncio.sleep(PROGRESS_INTERVAL_S)
-        while True:
-            if progress_cb:
-                try:
-                    await progress_cb({
-                        "elapsed_s": round(time.time() - started, 1),
-                        "tail": "\n".join(list(tail)),
-                    })
-                except Exception:
-                    pass
-            await asyncio.sleep(PROGRESS_INTERVAL_S)
+    boundary = result.grant.to_dict()
+    boundary["executed"] = True
+    teardown = result.release.to_dict() if result.release else {"dead": False}
+    output = result.stdout.rstrip()
+    if result.stderr.rstrip():
+        output = (output + "\nSTDERR: " + result.stderr.rstrip()).strip()
+    truncated = result.output_truncated or len(output) > MAX_OUTPUT_CHARS
+    capture_note = " Captured output was truncated." if truncated else ""
+    common = {"containment": boundary, "teardown": teardown, "output_truncated": truncated}
+    if not teardown["dead"]:
+        return {**common, "error": f"{tool}: process teardown could not verify death.{capture_note}",
+                "failure_kind": "process_teardown_failed", "exit_code": 1,
+                "stdout": _truncate(result.stdout, MAX_OUTPUT_CHARS),
+                "stderr": _truncate(result.stderr, MAX_OUTPUT_CHARS)}
+    if result.timed_out:
+        return {**common, "error": f"{tool}: timed out after {timeout}s; process tree terminated.{capture_note}",
+                "exit_code": 124, "stdout": _truncate(result.stdout, MAX_OUTPUT_CHARS),
+                "stderr": _truncate(result.stderr, MAX_OUTPUT_CHARS)}
+    if tool == "python":
+        child_failure = _python_child_runtime_failure(result.stdout, result.stderr, result.exit_code)
+        if child_failure:
+            return {**common, "error": _truncate("python: a child operation failed despite a zero Python exit status:\n" + child_failure, MAX_OUTPUT_CHARS),
+                    "exit_code": 1, "stderr": _truncate(result.stderr, MAX_OUTPUT_CHARS)}
+    if truncated:
+        note = "\n…[output truncated by containment capture limit]…"
+        output = output[:MAX_OUTPUT_CHARS - len(note)] + note
+    return {**common, "output": _truncate(output, MAX_OUTPUT_CHARS) or "(no output)",
+            "exit_code": result.exit_code if result.exit_code is not None else 1}
 
-    rd_out = asyncio.create_task(_reader(proc.stdout, stdout_full, "out"))
-    rd_err = asyncio.create_task(_reader(proc.stderr, stderr_full, "err"))
-    prog_task = asyncio.create_task(_progress_emitter()) if progress_cb else None
-
-    timed_out = False
-    try:
-        await asyncio.wait_for(proc.wait(), timeout=timeout)
-    except asyncio.TimeoutError:
-        timed_out = True
-        try:
-            proc.kill()
-        except Exception:
-            pass
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=2)
-        except Exception:
-            pass
-    except asyncio.CancelledError:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=2)
-        except Exception:
-            pass
-        for t in (rd_out, rd_err):
-            t.cancel()
-        if prog_task is not None:
-            prog_task.cancel()
-        raise
-    finally:
-        if prog_task is not None and not prog_task.done():
-            prog_task.cancel()
-            try:
-                await prog_task
-            except (asyncio.CancelledError, Exception):
-                pass
-        for t in (rd_out, rd_err):
-            try:
-                await asyncio.wait_for(t, timeout=1)
-            except Exception:
-                pass
-
-    return (
-        "\n".join(stdout_full),
-        "\n".join(stderr_full),
-        proc.returncode,
-        timed_out,
-    )
 
 class BashTool:
     async def execute(self, content: str, ctx: dict) -> dict:
@@ -639,76 +609,10 @@ class BashTool:
                 ),
                 "exit_code": 1,
             }
-        isolated_tmp = os.path.join(agent_cwd(), ".tmp")
         if "/tmp/" in content:
-            os.makedirs(isolated_tmp, exist_ok=True)
+            isolated_tmp = _isolated_tmp_dir(agent_cwd())
             content = content.replace("/tmp/", isolated_tmp.rstrip("/") + "/")
-        namespaced = _wrap_workspace_namespace(content, agent_cwd())
-        content = namespaced or _replace_workspace_alias(content, agent_cwd())
-        progress_cb = ctx.get("progress_cb")
-        _subproc_env = ctx.get("subproc_env")
-        session_id = ctx.get("session_id")
-        if not IS_WINDOWS and session_id and shutil.which("tmux"):
-            stdout, stderr, rc, timed_out = await _run_tmux_bash(
-                content,
-                session_id=str(session_id),
-                cwd=agent_cwd(),
-                env=_subproc_env,
-                timeout=DEFAULT_BASH_TIMEOUT,
-                progress_cb=progress_cb,
-            )
-            if timed_out:
-                return {
-                    "error": f"bash: timed out after {DEFAULT_BASH_TIMEOUT}s — terminated task shell session",
-                    "exit_code": 124,
-                    "stdout": _truncate(stdout, MAX_OUTPUT_CHARS),
-                    "stderr": _truncate(stderr, MAX_OUTPUT_CHARS),
-                    "tmux_session": _tmux_session_name(str(session_id)),
-                }
-            output = stdout.rstrip()
-            err = stderr.rstrip()
-            if err:
-                output = (output + "\nSTDERR: " + err).strip() if output else "STDERR: " + err
-            return {
-                "output": _truncate(output, MAX_OUTPUT_CHARS) or "(no output)",
-                "exit_code": rc or 0,
-                "tmux_session": _tmux_session_name(str(session_id)),
-            }
-
-        try:
-            if IS_WINDOWS:
-                proc = await _create_bash_subprocess(
-                    content,
-                    cwd=agent_cwd(),
-                    env=_subproc_env,
-                )
-            else:
-                # Preserve the existing captured POSIX path; the structural
-                # helper is primarily needed to avoid cmd.exe on Windows.
-                proc = await asyncio.create_subprocess_shell(
-                    content,
-                    stdin=asyncio.subprocess.DEVNULL,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    env=_subproc_env,
-                    cwd=agent_cwd(),
-                )
-        except RuntimeError as exc:
-            return {"error": str(exc), "exit_code": 1}
-        mark_operation_started('subprocess', pid=proc.pid)
-        stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
-            proc,
-            timeout=DEFAULT_BASH_TIMEOUT,
-            progress_cb=progress_cb,
-        )
-        if timed_out:
-            return {"error": f"bash: timed out after {DEFAULT_BASH_TIMEOUT}s — process killed", "exit_code": 124, "stdout": _truncate(stdout, MAX_OUTPUT_CHARS), "stderr": _truncate(stderr, MAX_OUTPUT_CHARS)}
-        output = stdout.rstrip()
-        err = stderr.rstrip()
-        if err:
-            output = (output + "\nSTDERR: " + err).strip() if output else "STDERR: " + err
-        output = _truncate(output, MAX_OUTPUT_CHARS)
-        return {"output": output or "(no output)", "exit_code": rc or 0}
+        return await _run_owned_command(content, ctx, tool="bash", timeout=DEFAULT_BASH_TIMEOUT)
 
 class HostShellTool:
     async def execute(self, content: str, ctx: dict) -> dict:
@@ -749,6 +653,16 @@ class HostShellTool:
             requested_timeout = 30
         timeout = max(1, min(requested_timeout, 120))
 
+        from src import containment
+        from src.tool_execution import agent_cwd
+
+        sanitized_endpoint = f"{parsed.scheme}://{parsed.netloc}{parsed.path}" if parsed.scheme and parsed.netloc else "host_shell_bridge"
+        owner = str(ctx.get("session_id") or ctx.get("owner") or "host_shell")
+        spec = _owned_spec(agent_cwd(), ctx.get("subproc_env"), timeout)
+        grant = containment.declare_external_bridge(spec, owner=owner, endpoint=sanitized_endpoint)
+        boundary = grant.to_dict()
+        boundary["executed"] = False
+
         request_body: dict[str, object] = {"timeout": timeout}
         request_id = ""
         if job_id:
@@ -772,6 +686,8 @@ class HostShellTool:
                     return {
                         "error": f"host_shell: bridge returned HTTP {resp.status_code}",
                         "exit_code": 1,
+                        "host_bridge": "tui",
+                        "containment": boundary,
                     }
                 data = resp.json()
 
@@ -798,6 +714,8 @@ class HostShellTool:
                             return {
                                 "error": f"host_shell: bridge returned HTTP {poll.status_code}",
                                 "exit_code": 1,
+                                "host_bridge": "tui",
+                                "containment": boundary,
                             }
                         data = poll.json()
                         if not isinstance(data, dict):
@@ -828,15 +746,16 @@ class HostShellTool:
                 task.add_done_callback(_HOST_SHELL_CANCEL_TASKS.discard)
             raise
         except Exception as e:
-            return {"error": f"host_shell: bridge call failed: {e}", "exit_code": 1}
+            return {"error": f"host_shell: bridge call failed: {e}", "exit_code": 1, "containment": boundary}
 
         if not isinstance(data, dict):
-            return {"error": "host_shell: bridge returned invalid payload", "exit_code": 1}
+            return {"error": "host_shell: bridge returned invalid payload", "exit_code": 1, "containment": boundary}
         if data.get("error"):
             return {
                 "error": _truncate(str(data["error"]), MAX_OUTPUT_CHARS),
                 "exit_code": 1,
                 "host_bridge": "tui",
+                "containment": boundary,
             }
         stdout = str(data.get("stdout") or data.get("output") or "")
         stderr = str(data.get("stderr") or "")
@@ -850,15 +769,18 @@ class HostShellTool:
                 "error": "host_shell: bridge returned an invalid exit_code",
                 "exit_code": 1,
                 "host_bridge": "tui",
+                "containment": boundary,
             }
         exit_code = raw_exit_code
         output = stdout.rstrip()
         if stderr.strip():
             output = (output + "\nSTDERR: " + stderr.strip()).strip() if output else "STDERR: " + stderr.strip()
+        boundary["executed"] = True
         result = {
             "output": _truncate(output, MAX_OUTPUT_CHARS) or "(no output)",
             "exit_code": exit_code,
             "host_bridge": "tui",
+            "containment": boundary,
         }
         for key in ("detached", "job_id", "status", "running", "finished", "cwd"):
             if key in data:
@@ -957,92 +879,18 @@ class PythonTool:
                 ),
                 "exit_code": 1,
             }
-        # Only create a mount namespace when the submitted code actually
-        # relies on the public virtual path. Ordinary Python probes and
-        # scripts should retain the real workspace as os.getcwd(); wrapping
-        # every invocation would make that stable contract appear as
-        # ``/workspace`` instead.
-        needs_virtual_namespace = bool(
-            "/workspace" in content
-            or re.search(r"\b(?:runpy\.run_path|exec\s*\(|importlib\.)", content)
-        )
-        isolated_tmp = os.path.join(agent_cwd(), ".tmp")
         if "/tmp/" in content:
-            os.makedirs(isolated_tmp, exist_ok=True)
+            isolated_tmp = _isolated_tmp_dir(agent_cwd())
             content = content.replace("/tmp/", isolated_tmp.rstrip("/") + "/")
-        progress_cb = ctx.get("progress_cb")
         _subproc_env = ctx.get("subproc_env")
-        # Generated scripts commonly contain the public `/workspace/...`
-        # paths shown in the tool contract.  Rewriting the inline `-c` body
-        # cannot repair paths embedded in a script loaded via `runpy`, and a
-        # process-global `/workspace` symlink would break concurrent tasks.
-        # Give Python the same per-task namespace Bash receives so both inline
-        # code and loaded scripts see the stable virtual workspace root.
-        namespaced_content = _python_with_configured_import_paths(
+        content = _python_with_configured_import_paths(
             _python_with_visible_final_expression(content), _subproc_env
         )
-        python_command = shlex.join((sys.executable or "python", "-I", "-c", namespaced_content))
-        # Code that explicitly uses the public /workspace path runs inside a
-        # namespace whose stable cwd is that same bind. Host workspaces under
-        # /tmp or another unbound parent are intentionally invisible by their
-        # real path inside the namespace; trying to chdir there makes otherwise
-        # valid native Python fail before execution.
-        namespaced = (
-            _wrap_workspace_namespace(
-                python_command,
-                agent_cwd(),
-                chdir="/workspace",
-                interpreter_prefix=sys.prefix,
-            )
-            if needs_virtual_namespace
-            else None
+        # All Python code acquires the same server-defined boundary, including
+        # arithmetic and ordinary imports. Source text never selects a scope.
+        raw_paths = str((_subproc_env or {}).get("ODYSSEUS_PYTHON_TOOL_SITE_PACKAGES", ""))
+        roots = tuple(path for path in raw_paths.split(os.pathsep) if path and os.path.isabs(path))
+        return await _run_owned_command(
+            [sys.executable or "python", "-I", "-c", content], ctx,
+            tool="python", timeout=DEFAULT_PYTHON_TIMEOUT, argv=True, readonly_extra=roots,
         )
-        if namespaced:
-            proc = await asyncio.create_subprocess_exec(
-                "/bin/bash", "-lc", namespaced,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=_subproc_env,
-                cwd=agent_cwd(),
-            )
-        else:
-            # Platforms without a usable namespace still receive the same
-            # alias contract through a conservative source rewrite.
-            content = _python_with_configured_import_paths(
-                _python_with_visible_final_expression(
-                    _replace_workspace_alias(content, agent_cwd())
-                ),
-                _subproc_env,
-            )
-            proc = await asyncio.create_subprocess_exec(
-                (sys.executable or "python"), "-I", "-c", content,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=_subproc_env,
-                cwd=agent_cwd(),
-            )
-        mark_operation_started('subprocess', pid=proc.pid)
-        stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
-            proc,
-            timeout=DEFAULT_PYTHON_TIMEOUT,
-            progress_cb=progress_cb,
-        )
-        if timed_out:
-            return {"error": f"python: timed out after {DEFAULT_PYTHON_TIMEOUT}s — process killed", "exit_code": 124, "stdout": _truncate(stdout, MAX_OUTPUT_CHARS), "stderr": _truncate(stderr, MAX_OUTPUT_CHARS)}
-        child_failure = _python_child_runtime_failure(stdout, stderr, rc)
-        if child_failure:
-            return {
-                "error": _truncate(
-                    "python: a child operation failed despite a zero Python exit "
-                    "status:\n" + child_failure,
-                    MAX_OUTPUT_CHARS,
-                ),
-                "exit_code": 1,
-                "stderr": _truncate(stderr, MAX_OUTPUT_CHARS),
-            }
-        output = stdout.rstrip()
-        err = stderr.rstrip()
-        if err:
-            output = (output + "\nSTDERR: " + err).strip() if output else "STDERR: " + err
-        output = _truncate(output, MAX_OUTPUT_CHARS)
-        return {"output": output or "(no output)", "exit_code": rc or 0}

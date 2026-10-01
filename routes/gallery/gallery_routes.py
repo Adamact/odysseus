@@ -21,6 +21,7 @@ from src.upload_limits import (
     GALLERY_TRANSFORM_UPLOAD_MAX_BYTES,
 )
 from src.constants import GENERATED_IMAGES_DIR
+from src.path_confinement import confine
 from src.optional_deps import patch_realesrgan_torchvision_compat
 
 from routes.gallery.gallery_helpers import (
@@ -235,12 +236,9 @@ def _gallery_image_path(filename: str) -> Path:
         raise HTTPException(400, "Unsafe gallery filename")
     safe_name = _sanitize_gallery_filename(filename)
     original = str(filename or "")
-    root = GALLERY_IMAGE_DIR.resolve()
-    path = (GALLERY_IMAGE_DIR / safe_name).resolve()
     try:
-        if os.path.commonpath([str(root), str(path)]) != str(root):
-            raise ValueError
-    except Exception:
+        path = Path(confine(GALLERY_IMAGE_DIR, safe_name, allow_root=False))
+    except (ValueError, OSError):
         raise HTTPException(400, "Unsafe gallery filename")
     if safe_name != original:
         raise HTTPException(400, "Unsafe gallery filename")

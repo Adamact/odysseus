@@ -75,6 +75,7 @@ APP_KEY_FILE = os.path.join(DATA_DIR, ".app_key")
 EMBEDDING_ENDPOINT_FILE = os.path.join(DATA_DIR, "embedding_endpoint.json")
 COOKBOOK_STATE_FILE = os.path.join(DATA_DIR, "cookbook_state.json")
 BG_JOBS_FILE = os.path.join(DATA_DIR, "bg_jobs.json")
+CONTAINMENT_STATE_FILE = os.path.join(DATA_DIR, "containment_grants.json")
 VAULT_FILE = os.path.join(DATA_DIR, "vault.json")
 TIDY_CALENDAR_STATE_FILE = os.path.join(DATA_DIR, "tidy_calendar_state.json")
 SKILLS_FILE = os.path.join(DATA_DIR, "skills.json")
@@ -153,6 +154,17 @@ SCHOLARLY_LOOKUP_TOTAL_BUDGET = 20.0
 # Cleanup configuration
 CLEANUP_ENABLED = os.getenv("CLEANUP_ENABLED", "True").lower() == "true"
 CLEANUP_INTERVAL_HOURS = int(os.getenv("CLEANUP_INTERVAL_HOURS", "24"))
+
+# Agent workspace
+# The stable virtual root the tool contract promises an agent, independent of
+# where the workspace physically lives. Both the mount namespace and the
+# path resolvers map it to the active workspace, so it is the one absolute path
+# a contained command may assume.
+WORKSPACE_MOUNT = "/workspace"
+# Scratch directory inside the workspace that agent shell commands get in place
+# of the host /tmp. A dirname rather than a path: the workspace is dynamic, so
+# the full path is only knowable per turn.
+AGENT_ISOLATED_TMP_DIRNAME = ".tmp"
 
 # Auth policy
 PASSWORD_MIN_LENGTH = 8

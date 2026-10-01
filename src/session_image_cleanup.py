@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 from pathlib import Path
 
 from src.constants import GENERATED_IMAGES_DIR
+from src.path_confinement import confine
 
 logger = logging.getLogger(__name__)
 
@@ -26,14 +26,10 @@ def _generated_image_path_for_cleanup(filename: str) -> Path | None:
     name = Path(filename).name
     if name != filename or name in {".", ".."}:
         return None
-    root = Path(GENERATED_IMAGES_DIR).resolve()
-    path = (root / name).resolve()
     try:
-        if os.path.commonpath([str(root), str(path)]) != str(root):
-            return None
-    except Exception:
+        return Path(confine(GENERATED_IMAGES_DIR, name, allow_root=False))
+    except (ValueError, OSError):
         return None
-    return path
 
 
 def _image_filename_from_url(url: str) -> str:

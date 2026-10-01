@@ -9,6 +9,7 @@ import tempfile
 from typing import Optional, Dict, Any, Tuple, List
 
 from src.constants import MAX_READ_CHARS, MAX_DIFF_LINES, MAX_OUTPUT_CHARS
+from src.path_confinement import is_inside
 
 _CODENAV_SKIP_DIRS = frozenset({
     ".git", ".hg", ".svn", "node_modules", "venv", ".venv", "__pycache__",
@@ -675,13 +676,7 @@ class GlobTool:
                 # confinement that _resolve_search_root applies to the root.
                 # An escaping literal falls through to the walk, which only ever
                 # yields paths under base.
-                nbase = os.path.normcase(rbase)
-                try:
-                    inside = cand == rbase or os.path.commonpath(
-                        [os.path.normcase(cand), nbase]
-                    ) == nbase
-                except ValueError:
-                    inside = False
+                inside = is_inside(rbase, cand)
                 # A literal that names a deny-listed sensitive file (.env,
                 # .ssh/id_rsa, …) falls through to the walk, which skips it —
                 # otherwise glob would surface secret paths that read_file /

@@ -287,7 +287,8 @@ async def test_subprocess_cwd_is_workspace_e2e(ws, admin):
     """python tool runs with cwd = workspace (OS-agnostic probe)."""
     _, r = await execute_tool_block(_block("python", "import os; print(os.getcwd())"), owner="a", workspace=ws)
     assert r["exit_code"] == 0
-    assert os.path.realpath(r["output"].strip()) == os.path.realpath(ws)
+    expected_cwd = "/workspace" if "filesystem" in r["containment"]["enforced"] else ws
+    assert os.path.realpath(r["output"].strip()) == os.path.realpath(expected_cwd)
 
 
 @pytest.mark.asyncio

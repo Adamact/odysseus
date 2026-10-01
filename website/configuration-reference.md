@@ -52,7 +52,7 @@ The source tree reads **109** `ODYSSEUS_*` variables: 79 an operator may want to
 | Variable | Default | Read in | What it does |
 |---|---|---|---|
 | `ODYSSEUS_DATA_DIR` | `get_default_data_dir()` | `src/constants.py:56` (+1 more) | Root directory for every persisted file. Prefer this over the per-path overrides; the rest of `src/constants.py` derives from it. |
-| `ODYSSEUS_MAIL_ATTACHMENTS_DIR` | `os.path.join(DATA_DIR, 'mail-attachments')` | `src/constants.py:102` | Dedicated override for the mail attachment store, which otherwise lives under the data directory. |
+| `ODYSSEUS_MAIL_ATTACHMENTS_DIR` | `os.path.join(DATA_DIR, 'mail-attachments')` | `src/constants.py:103` | Dedicated override for the mail attachment store, which otherwise lives under the data directory. |
 
 ### Model routing and providers
 
@@ -75,7 +75,7 @@ The source tree reads **109** `ODYSSEUS_*` variables: 79 an operator may want to
 | `ODYSSEUS_MAX_VISUAL_EVIDENCE_FRAMES` | `'3'` | `src/agent_loop.py:15362` | How many video frames one tool result may contribute. Clamped to 1-8. |
 | `ODYSSEUS_MAX_VISUAL_EVIDENCE_IMAGES` | `'1'` | `src/agent_loop.py:15330` | How many images one tool result may contribute to the model turn. Clamped to 1-8. |
 | `ODYSSEUS_MCP_ALLOWED_COMMANDS` | `''` | `src/agent_tools/admin_tools.py:140` | Security-relevant. Comma-separated allowlist of MCP launcher basenames the agent may start. Empty by default, and the deny list still wins. |
-| `ODYSSEUS_PYTHON_TOOL_SITE_PACKAGES` | `''` | `src/agent_tools/subprocess_tools.py:931` | Security-relevant. Absolute package roots, separated by the platform path separator, exposed to the sandboxed Python tool. Empty exposes none. |
+| `ODYSSEUS_PYTHON_TOOL_SITE_PACKAGES` | `''` | `src/agent_tools/subprocess_tools.py:853` (+1 more) | Security-relevant. Absolute package roots, separated by the platform path separator, exposed to the sandboxed Python tool. Empty exposes none. |
 | `ODYSSEUS_SCRIPT_HOST` | `'localhost'` | `src/builtin_actions.py:919` | Default host for the run-script action. `localhost`, `127.0.0.1`, `local` and empty run locally; any other value runs over SSH. |
 | `ODYSSEUS_TOOL_APPROVAL_GATE` | `'0'` | `src/tool_capabilities.py:645` | Security-relevant. Truthy makes tool calls pass through the approval gate. Off by default. |
 
@@ -152,15 +152,15 @@ The source tree reads **109** `ODYSSEUS_*` variables: 79 an operator may want to
 
 | Variable | Default | Read in | What it does |
 |---|---|---|---|
-| `ODYSSEUS_SKILL_SEMANTIC_RETRIEVAL` | `'1'` | `services/memory/skills.py:789` | On by default. Set 0, false, no or off to fall back to keyword-only skill retrieval when no vector store is reachable. |
-| `ODYSSEUS_SKILL_SEMANTIC_THRESHOLD` | `'0.4'` | `services/memory/skills.py:800` | Minimum semantic score a skill needs to be retrieved. A non-numeric value falls back to the default. |
+| `ODYSSEUS_SKILL_SEMANTIC_RETRIEVAL` | `'1'` | `services/memory/skills.py:796` | On by default. Set 0, false, no or off to fall back to keyword-only skill retrieval when no vector store is reachable. |
+| `ODYSSEUS_SKILL_SEMANTIC_THRESHOLD` | `'0.4'` | `services/memory/skills.py:807` | Minimum semantic score a skill needs to be retrieved. A non-numeric value falls back to the default. |
 
 ### Speech and vision models
 
 | Variable | Default | Read in | What it does |
 |---|---|---|---|
-| `ODYSSEUS_GROUNDING_MODEL` | `'google/owlvit-base-patch32'` | `routes/gallery/gallery_routes.py:95` | Object-grounding model id the gallery loads for text-driven selection. |
-| `ODYSSEUS_SAM_MODEL` | `'facebook/sam-vit-base'` | `routes/gallery/gallery_routes.py:59` | Segmentation model id the gallery loads for subject selection. |
+| `ODYSSEUS_GROUNDING_MODEL` | `'google/owlvit-base-patch32'` | `routes/gallery/gallery_routes.py:96` | Object-grounding model id the gallery loads for text-driven selection. |
+| `ODYSSEUS_SAM_MODEL` | `'facebook/sam-vit-base'` | `routes/gallery/gallery_routes.py:60` | Segmentation model id the gallery loads for subject selection. |
 | `ODYSSEUS_STT_MODEL` | *unset* | `src/agent_tools/media_tools.py:2184` | Default speech-to-text model for media transcription when the tool call does not name one. |
 | `ODYSSEUS_TTS_CACHE_MAX_BYTES` | `500 * 1024 * 1024` | `services/tts/tts_service.py:47` | Cap on the synthesized-speech cache. A non-numeric value falls back to the default. |
 
@@ -168,7 +168,7 @@ The source tree reads **109** `ODYSSEUS_*` variables: 79 an operator may want to
 
 | Variable | Default | Read in | What it does |
 |---|---|---|---|
-| `ODYSSEUS_INTERNAL_BASE` | *unset* | `src/constants.py:178` | Base URL the in-app tool layer uses for loopback HTTP calls. Set it when the app is not reachable at the port it thinks it is bound to. |
+| `ODYSSEUS_INTERNAL_BASE` | *unset* | `src/constants.py:190` | Base URL the in-app tool layer uses for loopback HTTP calls. Set it when the app is not reachable at the port it thinks it is bound to. |
 | `ODYSSEUS_INTERNAL_TOKEN` | *unset* | `core/middleware.py:20` | Security-relevant. Token that lets the in-app tool layer reach admin-gated routes over loopback. Unset generates a fresh per-process token, which is what you want unless something outside the process needs the same value. |
 
 ### Integrations (Claude, Codex)
