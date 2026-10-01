@@ -579,3 +579,41 @@ def test_selector_read_is_an_observation_not_a_navigation() -> None:
     assert PrivateBrowserTool._navigation_target(
         "batch", {"commands": [["open", "file:///a.html"], ["snapshot"], ["open", "file:///b.html"]]}
     ) == "file:///b.html"
+
+
+def test_batch_navigation_outcome_comes_from_its_rows(browser_env) -> None:
+    state, _, _, _ = browser_env
+    responses = {}
+
+    async def _batch(command):
+        if command[-2:] == ["batch", "--json"]:
+            return responses["batch"]
+        return 0, '- heading "x"'
+
+    state["behaviour"] = _batch
+    ctx = {"session_id": "s-batch"}
+
+    # The open succeeded; a later click failing must not mark it failed.
+    responses["batch"] = (1, json.dumps([
+        {"command": ["open", "https://a.example/"], "success": True,
+         "result": {"url": "https://a.example/landing"}},
+        {"command": ["click", "@e9"], "success": False, "error": "no element"},
+    ]))
+    result = _run({"action": "batch", "commands": [["open", "https://a.example/"], ["click", "@e9"]]}, ctx)
+    assert result["browser_lifecycle"]["page_url"] == "https://a.example/landing"
+    assert result["browser_lifecycle"]["state"] == "ready"
+    assert "stale_observation" not in _run({"action": "snapshot"}, ctx)["browser_lifecycle"]
+
+    responses["batch"] = (1, json.dumps([
+        {"command": ["open", "https://b.example/"], "success": False, "error": "net::ERR"},
+    ]))
+    failed = _run({"action": "batch", "commands": [["open", "https://b.example/"]]}, ctx)
+    assert failed["browser_lifecycle"]["state"] == "navigation_failed"
+    note = _run({"action": "snapshot"}, ctx)["output"]
+    assert "shows https://a.example/landing (navigation #1), not https://b.example/" in note
+
+    responses["batch"] = (1, "daemon connection lost")
+    _run({"action": "batch", "commands": [["open", "https://c.example/"]]}, ctx)
+    unknown = _run({"action": "snapshot"}, ctx)
+    assert "outcome of the most recent navigation to https://c.example/ is unknown" in unknown["output"]
+    assert unknown["browser_lifecycle"]["page_url"] == ""

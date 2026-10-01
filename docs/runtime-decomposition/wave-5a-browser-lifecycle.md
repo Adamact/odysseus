@@ -50,7 +50,7 @@ TurnContract, generic process containment (Wave 3-S), effects/provenance
 | F4 | Missing `session_id` used agent-browser's shared `default` session | A sessionless call gets an ephemeral session that is closed and verified before the call returns |
 | F5 | Launch failure left the daemon alive | Launch-failure output triggers forced cleanup and a truthful error |
 | F6 | Concurrent actions on one session raced one daemon | Per-session `asyncio.Lock` serializes actions |
-| F7 | Observation after a failed navigation silently showed the old page | Sessions track navigation generation, page URL and failed navigation; such observations are prefixed with an explicit stale notice and flagged `stale_observation` |
+| F7 | Observation after a failed navigation silently showed the old page | Sessions track navigation generation, page URL and failed navigation; such observations are prefixed with an explicit stale notice and flagged `stale_observation`. A batch's navigation outcome comes from its per-command rows; when it cannot be determined the page is treated as unknown |
 | F8 | Recovery recursed through `execute` with a model-visible retry flag and no overall deadline | One deadline per call (action timeout + 75s); at most one retry, only for local read-only HTML open; model-supplied `_odysseus_browser_retry` is ignored |
 | F9 | `research_navigator` passed `timeout`, which the tool ignored | Passes `timeout_ms` |
 | F10 | No lifecycle evidence | Every result carries `browser_lifecycle` with stages, timings, ownership, state and cleanup receipt |
@@ -61,7 +61,7 @@ TurnContract, generic process containment (Wave 3-S), effects/provenance
 
 ## Lifecycle model
 
-Session states: `idle`, `ready`, `navigation_failed`, `reset`, `timed_out`,
+Session states: `idle`, `ready`, `navigation_failed`, `navigation_unknown`, `reset`, `timed_out`,
 `failed`, `launch_failed`, `bootstrap_failed`, `cancelled`, `closed`. Any state
 reached by forced cleanup discards the page URL so nothing earlier remains
 observable. Ownership is `retained` for a chat session (bounded by
@@ -113,3 +113,8 @@ process-lifecycle primitives from Wave 3-S/5B.
   server requires its owner task in `builtin_mcp.py`.
 - The stale-observation notice marks, but does not block, an observation after
   a failed navigation.
+- Forced cleanup waits synchronously, at most one second, for killed processes
+  to exit, so it can run from cancellation without awaiting.
+- The recovery deadline covers the action and its retry. Post-action
+  observations (page errors, settled snapshot, screenshot) keep their own
+  20 second bounds outside it.

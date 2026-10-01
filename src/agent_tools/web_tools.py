@@ -2758,6 +2758,33 @@ class PrivateBrowserTool:
         return {"ok": True, "url": url, "text": f"{header}\n\n{text}".strip()}
 
     @staticmethod
+    def _batch_navigation_outcome(output: str, command_ok: bool) -> tuple[str, str]:
+        """Outcome of a batch's last navigation: ``ok``, ``failed`` or ``unknown``.
+
+        A later command failing does not undo a navigation that succeeded,
+        so the per-command rows decide, not the batch exit status.
+        """
+
+        try:
+            rows = json.loads(output)
+        except (ValueError, TypeError):
+            rows = None
+        if isinstance(rows, list):
+            for row in reversed(rows):
+                command = row.get("command") if isinstance(row, dict) else None
+                if not (
+                    isinstance(command, list)
+                    and command
+                    and str(command[0]).lower() in {"open", "goto", "navigate"}
+                ):
+                    continue
+                if row.get("success") is True:
+                    result = row.get("result") if isinstance(row.get("result"), dict) else {}
+                    return "ok", str(result.get("url") or "")
+                return "failed", ""
+        return ("ok", "") if command_ok else ("unknown", "")
+
+    @staticmethod
     def _navigated_url(output: str) -> str:
         """Final URL reported by ``open`` (after redirects), when present."""
 
@@ -3028,12 +3055,20 @@ class PrivateBrowserTool:
                 "untrusted_content": True,
             }
         if navigation_url:
-            if command_ok:
+            outcome, final_url = "ok" if command_ok else "failed", ""
+            if action == "batch":
+                outcome, final_url = self._batch_navigation_outcome(out, command_ok)
+            if outcome == "ok":
                 browser.navigated(
-                    (read_page or {}).get("url") or self._navigated_url(out) or navigation_url
+                    final_url
+                    or (read_page or {}).get("url")
+                    or self._navigated_url(out)
+                    or navigation_url
                 )
-            else:
+            elif outcome == "failed":
                 browser.navigation_failed(navigation_url)
+            else:
+                browser.navigation_unknown(navigation_url)
         if read_page is not None:
             if not command_ok:
                 return {

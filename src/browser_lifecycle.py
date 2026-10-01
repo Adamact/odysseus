@@ -300,6 +300,7 @@ class BrowserSession:
     navigation_generation: int = 0
     page_url: str = ""
     failed_navigation_url: str = ""
+    navigation_outcome_unknown: bool = False
     _lock: asyncio.Lock | None = field(default=None, repr=False)
     _lock_loop: Any = field(default=None, repr=False)
 
@@ -321,22 +322,39 @@ class BrowserSession:
         self.navigation_generation += 1
         self.page_url = url
         self.failed_navigation_url = ""
+        self.navigation_outcome_unknown = False
         self.state = "ready"
 
     def navigation_failed(self, url: str) -> None:
         self.failed_navigation_url = url
+        self.navigation_outcome_unknown = False
         self.state = "navigation_failed"
+
+    def navigation_unknown(self, url: str) -> None:
+        """A navigation was attempted but whether it happened is unknown."""
+
+        self.page_url = ""
+        self.failed_navigation_url = url
+        self.navigation_outcome_unknown = True
+        self.state = "navigation_unknown"
 
     def discarded(self, state: str) -> None:
         """The browser and its page are gone; nothing earlier is observable."""
 
         self.page_url = ""
         self.failed_navigation_url = ""
+        self.navigation_outcome_unknown = False
         self.state = state
 
     def stale_observation_note(self) -> str:
         if not self.failed_navigation_url:
             return ""
+        if self.navigation_outcome_unknown:
+            return (
+                f"Browser lifecycle: the outcome of the most recent navigation to "
+                f"{self.failed_navigation_url} is unknown. This observation may not "
+                f"show {self.failed_navigation_url}."
+            )
         shown = self.page_url or "an earlier page"
         return (
             f"Browser lifecycle: the most recent navigation to {self.failed_navigation_url} "
