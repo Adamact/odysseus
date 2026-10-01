@@ -15,6 +15,14 @@ reference; that file is the standard the refactor works toward.
 
 ## Running focused subsets (taxonomy markers)
 
+The shared static-server fixture defaults to loopback port 7011 and refuses an
+occupied port rather than reusing another checkout's server. For focused tests
+that do not load that fixed browser URL, use `ODYSSEUS_TEST_STATIC_PORT=0` to
+allocate an ephemeral port. This permits direct subprocess/isolation tests on a
+host already serving the application without stopping or changing that service.
+Browser tests that hard-code port 7011 still need that port in their own isolated
+network namespace; do not run them against an unrelated live server.
+
 `tests/conftest.py` tags every test at collection time with two markers derived
 from its filename by `tests/_taxonomy.py`: an `area_*` marker (e.g.
 `area_security`) and a finer `sub_*` marker (e.g. `sub_owner_scope`). This adds

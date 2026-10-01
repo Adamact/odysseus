@@ -120,21 +120,35 @@ def test_disabled_generation_is_not_restored():
 
 
 @pytest.mark.asyncio
-async def test_generation_dispatch_uses_owner_aware_backend(monkeypatch):
+@pytest.mark.parametrize('exit_code', [None, 0])
+async def test_generation_dispatch_uses_owner_aware_backend(monkeypatch, exit_code):
     from types import SimpleNamespace
     from src import ai_interaction, tool_execution
+    from src.agent_runtime.journal import ActionJournal, bind_journal
     calls = []
     async def generate(content, **kwargs):
         calls.append((content, kwargs))
-        return {'image_url': '/api/generated-image/test.png', 'image_id': 'test'}
+        result = {'image_url': '/api/generated-image/test.png', 'image_id': 'test'}
+        if exit_code is not None:
+            result['exit_code'] = exit_code
+        return result
     async def legacy(*args, **kwargs):
         pytest.fail('Native generation must not use the ownerless MCP adapter')
     monkeypatch.setattr(ai_interaction, 'do_generate_image', generate)
     monkeypatch.setattr(tool_execution, '_call_mcp_tool', legacy)
     monkeypatch.setattr(tool_execution, '_owner_is_admin', lambda owner: True)
     block = SimpleNamespace(tool_type='generate_image', content='{"prompt":"A city"}')
-    _, result = await tool_execution.execute_tool_block(block, owner='pewds', session_id='fixture',
-        security_context=tool_execution.NO_TOOL_SECURITY_CONTEXT)
+    journal = ActionJournal()
+    with bind_journal(journal):
+        _, denied = await tool_execution.execute_tool_block(block, owner='pewds', session_id='fixture',
+            disabled_tools={'generate_image'}, security_context=tool_execution.NO_TOOL_SECURITY_CONTEXT)
+        _, result = await tool_execution.execute_tool_block(block, owner='pewds', session_id='fixture',
+            security_context=tool_execution.NO_TOOL_SECURITY_CONTEXT)
+    assert denied['exit_code'] != 0
+    assert journal.actions[0].execution_id is None
+    assert not journal.actions[0].outcome['authoritative']
+    assert journal.actions[1].execution_id is not None
+    assert journal.actions[1].outcome['authoritative'] is (exit_code == 0)
     assert result['image_id'] == 'test'
     assert calls == [(block.content, {'owner': 'pewds', 'session_id': 'fixture'})]
 

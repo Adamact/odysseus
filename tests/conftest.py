@@ -135,6 +135,8 @@ def _serve_test_static():
         allow_reuse_address = True
 
     requested = int(os.environ.get("ODYSSEUS_TEST_STATIC_PORT") or 0)
+    if not 0 <= requested <= 65535:
+        raise ValueError("ODYSSEUS_TEST_STATIC_PORT must be between 0 and 65535")
     try:
         server = _Server(("127.0.0.1", requested), _Handler)
     except OSError as exc:

@@ -4,6 +4,7 @@ import json
 import src.agent_loop as agent_loop
 from src.tool_parsing import ToolBlock
 from src.tool_capabilities import ToolGateDecision
+from tests.runtime_evidence_helpers import authoritative_executor
 
 
 def _events(chunks):
@@ -83,12 +84,12 @@ def _patch_loop(monkeypatch, responses, captured_kwargs=None):
         yield f'data: {json.dumps({"delta": response})}\n\n'
         yield "data: [DONE]\n\n"
 
-    monkeypatch.setattr(agent_loop, "execute_tool_block", execute)
+    monkeypatch.setattr(agent_loop, "execute_tool_block", authoritative_executor(execute))
     monkeypatch.setattr(agent_loop, "stream_llm_with_fallback", stream)
     return lambda: call_index
 
 
-def _run(instruction, *, max_rounds=4, relevant_tools=None, runtime_context=None):
+def _run_chunks(instruction, *, max_rounds=4, relevant_tools=None, runtime_context=None):
     async def collect():
         return [
             chunk
@@ -103,7 +104,11 @@ def _run(instruction, *, max_rounds=4, relevant_tools=None, runtime_context=None
             )
         ]
 
-    return _events(asyncio.run(collect()))
+    return asyncio.run(collect())
+
+
+def _run(instruction, **kwargs):
+    return _events(_run_chunks(instruction, **kwargs))
 
 
 def test_failed_workspace_mutation_attempts_are_not_hidden_by_successful_probe():
@@ -117,17 +122,51 @@ def test_failed_workspace_mutation_attempts_are_not_hidden_by_successful_probe()
     assert agent_loop._failed_workspace_mutation_attempts([failed, probe], records) == 1
 
 
-def test_terminal_completion_repairs_missing_artifact_at_most_twice(monkeypatch):
+def test_terminal_completion_missing_artifact_does_not_add_model_rounds(monkeypatch):
     calls = _patch_loop(monkeypatch, ["Done without writing anything."])
 
     events = _run("Write answer.json", max_rounds=4)
 
     blocked = [event for event in events if event.get("type") == "completion_blocked"]
-    assert [event["attempt"] for event in blocked] == [1, 2]
-    assert calls() == 3
+    assert blocked == []
+    assert calls() == 1
     decision = next(event["data"] for event in events if event.get("type") == "completion_decision")
     assert decision["status"] == "blocked"
     assert decision["missing_artifacts"] == ["answer.json"]
+
+
+def test_slice2_explanatory_request_does_not_add_verification_or_model_rounds(monkeypatch):
+    calls = _patch_loop(monkeypatch, ['Tests pass when the command exits zero.'])
+    events = _run('Explain how to write code and then test it.', max_rounds=1)
+    assert calls() == 1
+    decision = next(event['data'] for event in events if event.get('type') == 'completion_decision')
+    assert decision['can_complete'] is True
+    assert 'The task is incomplete' not in json.dumps(events)
+    metrics = next(event['data'] for event in events if event.get('type') == 'metrics')
+    assert not metrics['completion_requirements']['verifier_required']
+    assert metrics['completion_gate']['additional_provider_calls'] == 0
+
+
+def test_slice2_fabricated_execution_on_conversational_turn_does_not_add_rounds(monkeypatch):
+    calls = _patch_loop(monkeypatch, ['I ran pytest and all tests passed.'])
+    events = _run('Explain what pytest does.', max_rounds=1)
+    assert calls() == 1
+    final = next(event['content'] for event in events if event.get('type') == 'final_response')
+    assert 'I ran pytest' not in final
+    assert 'The task is incomplete' not in final
+    metrics = next(event['data'] for event in events if event.get('type') == 'metrics')
+    assert metrics['completion_gate']['additional_provider_calls'] == 0
+
+
+def test_slice2_unsupported_test_report_does_not_add_model_rounds(monkeypatch):
+    calls = _patch_loop(monkeypatch, ['I ran pytest and all 42 tests passed.'])
+    events = _run('Run pytest.', max_rounds=4, relevant_tools={'bash'})
+    assert calls() == 1
+    decision = next(event['data'] for event in events if event.get('type') == 'completion_decision')
+    assert decision['can_complete'] is False
+    final = next(event['content'] for event in events if event.get('type') == 'final_response')
+    assert final.startswith('The task is incomplete:')
+    assert '42' not in final
 
 
 def test_failed_trailing_tool_with_planning_prose_continues_artifact_task(monkeypatch):
@@ -145,7 +184,7 @@ def test_failed_trailing_tool_with_planning_prose_continues_artifact_task(monkey
             "exit_code": 1,
         }
 
-    monkeypatch.setattr(agent_loop, "execute_tool_block", fail_execute)
+    monkeypatch.setattr(agent_loop, "execute_tool_block", authoritative_executor(fail_execute))
 
     events = _run(
         "Create answer.json after inspecting the source",
@@ -155,8 +194,8 @@ def test_failed_trailing_tool_with_planning_prose_continues_artifact_task(monkey
 
     assert calls() > 1
     assert any(
-        event.get("type") == "completion_blocked"
-        and event.get("decision", {}).get("missing_artifacts") == ["answer.json"]
+        event.get("type") == "completion_decision"
+        and event.get("data", {}).get("missing_artifacts") == ["answer.json"]
         for event in events
     )
 
@@ -178,7 +217,7 @@ def test_exact_failed_call_is_blocked_across_planning_and_intervening_failure(mo
         executed.append(block.content)
         return block.tool_type, {"output": f"failed: {block.content}", "exit_code": 1}
 
-    monkeypatch.setattr(agent_loop, "execute_tool_block", fail_execute)
+    monkeypatch.setattr(agent_loop, "execute_tool_block", authoritative_executor(fail_execute))
 
     events = _run(
         "Create /tmp_workspace/results after classifying the files",
@@ -218,7 +257,7 @@ def test_exact_failed_call_can_retry_after_successful_workspace_mutation(monkeyp
             return block.tool_type, {"output": "written", "exit_code": 0}
         return block.tool_type, {"output": "classifier failed", "exit_code": 1}
 
-    monkeypatch.setattr(agent_loop, "execute_tool_block", execute)
+    monkeypatch.setattr(agent_loop, "execute_tool_block", authoritative_executor(execute))
 
     events = _run(
         "Create /tmp_workspace/results after repairing and running the classifier",
@@ -260,7 +299,7 @@ def test_terminal_artifact_task_repairs_after_consecutive_failed_batches(monkeyp
             "exit_code": 1,
         }
 
-    monkeypatch.setattr(agent_loop, "execute_tool_block", execute)
+    monkeypatch.setattr(agent_loop, "execute_tool_block", authoritative_executor(execute))
 
     events = _run(
         "Create answer.json and verify it",
@@ -312,7 +351,7 @@ def test_varied_failed_artifact_mutations_have_cumulative_cap(monkeypatch):
             "exit_code": 1,
         }
 
-    monkeypatch.setattr(agent_loop, "execute_tool_block", execute)
+    monkeypatch.setattr(agent_loop, "execute_tool_block", authoritative_executor(execute))
 
     events = _run(
         "Create answer.json and verify it",
@@ -355,7 +394,7 @@ def test_exact_successful_read_is_blocked_until_workspace_changes(monkeypatch):
             return block.tool_type, {"output": "written", "exit_code": 0}
         return block.tool_type, {"output": "7", "exit_code": 0}
 
-    monkeypatch.setattr(agent_loop, "execute_tool_block", execute)
+    monkeypatch.setattr(agent_loop, "execute_tool_block", authoritative_executor(execute))
 
     events = _run(
         "Create answer.json from the inspected workspace",
@@ -378,7 +417,7 @@ def test_exact_successful_read_is_blocked_until_workspace_changes(monkeypatch):
     assert any(tool == "write_file" for tool, _ in executed)
 
 
-def test_terminal_completion_recovers_fenced_body_after_two_repairs(monkeypatch):
+def test_missing_evidence_does_not_generate_later_fenced_body_or_mutation(monkeypatch):
     executed = []
     calls = _patch_loop(
         monkeypatch,
@@ -395,20 +434,19 @@ def test_terminal_completion_recovers_fenced_body_after_two_repairs(monkeypatch)
         executed.append(block)
         return await original_execute(block, *args, **kwargs)
 
-    monkeypatch.setattr(agent_loop, "execute_tool_block", record_execute)
+    monkeypatch.setattr(agent_loop, "execute_tool_block", authoritative_executor(record_execute))
 
     events = _run("Write answer.json", max_rounds=5)
 
-    assert [(block.tool_type, block.content) for block in executed] == [
-        ("write_file", 'answer.json\n{"ok": true}'),
-    ]
+    assert executed == []
+    assert calls() == 1
     decision = next(
         event["data"]
         for event in events
         if event.get("type") == "completion_decision"
     )
-    assert decision["status"] == "satisfied"
-    assert decision["can_complete"] is True
+    assert decision["status"] == "blocked"
+    assert decision["can_complete"] is False
 
 
 def test_successful_artifact_write_emits_satisfied_completion(monkeypatch):
@@ -497,7 +535,7 @@ def test_verified_artifact_survives_provider_error_during_finish_round(monkeypat
 
     monkeypatch.setattr(agent_loop, "stream_llm_with_fallback", stream)
 
-    events = _run(
+    chunks = _run_chunks(
         "Create /workspace/output.html",
         max_rounds=5,
         relevant_tools={"write_file", "private_browser"},
@@ -510,11 +548,17 @@ def test_verified_artifact_survives_provider_error_during_finish_round(monkeypat
         },
     )
 
+    events = _events(chunks)
     assert calls == 2
+    assert chunks[-1] == 'event: error\ndata: {"status": 504, "error": "stream timeout"}\n\n'
+    assert not any(chunk.strip() == 'data: [DONE]' for chunk in chunks)
+    decision = next(event['data'] for event in events if event.get('type') == 'completion_decision')
+    assert decision['can_complete'] is False
+    assert decision['status'] == 'failed'
     assert not any(event.get("type") == "agent_terminal" for event in events)
     final = next(event for event in events if event.get("type") == "final_response")
     assert "output.html" in final["content"]
-    assert "verified" in final["content"].lower()
+    assert final['content'].startswith('The task is incomplete:')
 
 
 def test_uninspected_artifact_still_fails_on_provider_error(monkeypatch):
@@ -539,7 +583,7 @@ def test_uninspected_artifact_still_fails_on_provider_error(monkeypatch):
 
     monkeypatch.setattr(agent_loop, "stream_llm_with_fallback", stream)
 
-    events = _run(
+    chunks = _run_chunks(
         "Create /workspace/answer.json",
         max_rounds=4,
         relevant_tools={"write_file"},
@@ -552,7 +596,13 @@ def test_uninspected_artifact_still_fails_on_provider_error(monkeypatch):
         },
     )
 
+    events = _events(chunks)
     assert calls == 2
+    assert chunks[-1] == 'event: error\ndata: {"status": 504, "error": "stream timeout"}\n\n'
+    assert not any(chunk.strip() == 'data: [DONE]' for chunk in chunks)
+    decision = next(event['data'] for event in events if event.get('type') == 'completion_decision')
+    assert decision['can_complete'] is False
+    assert decision['status'] == 'failed'
     terminal = next(
         (event for event in events if event.get("type") == "agent_terminal"),
         None,
@@ -560,6 +610,7 @@ def test_uninspected_artifact_still_fails_on_provider_error(monkeypatch):
     assert terminal is not None, events
     assert terminal["data"]["failed"] is True
     assert terminal["data"]["failure"]["status"] == 504
+    assert '[Agent stopped: Model request failed (HTTP 504)]' in terminal['data']['round_texts'][-1]
 
 
 def test_verified_artifact_gets_only_one_finish_nudge(monkeypatch):

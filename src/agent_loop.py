@@ -82,6 +82,9 @@ from src.tool_approvals import (
 )
 from src.tool_types import ToolBlock
 from src.turn_contract import selected_tools_for_request, with_turn_contract
+from src.agent_runtime.journal import propose_action, execute_action
+from src.agent_runtime.completion import with_completion_gate
+from src.teacher_escalation import with_teacher_takeover, request_teacher_takeover
 from src.tool_utils import _truncate, get_mcp_manager
 from src.agent_tools import (
     parse_tool_blocks,
@@ -9171,16 +9174,8 @@ def _failed_tool_round_limit(
 
 def _tui_python_runner_setup() -> str:
     """Select the workspace interpreter, including a primary checkout venv."""
-
-    return (
-        "runner=''; "
-        "if [ -x .venv/bin/python ]; then runner=.venv/bin/python; "
-        "elif [ -x venv/bin/python ]; then runner=venv/bin/python; "
-        "elif git_common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) "
-        "&& [ -x \"$(dirname \"$git_common\")/.venv/bin/python\" ]; then "
-        "runner=\"$(dirname \"$git_common\")/.venv/bin/python\"; "
-        "else runner=python; fi; "
-    )
+    from src.agent_runtime.identity import TUI_PYTHON_RUNNER_SETUP
+    return TUI_PYTHON_RUNNER_SETUP
 
 
 def _tui_local_test_runner_command(*, full: bool = False) -> str:
@@ -20381,6 +20376,8 @@ def _blocks_before_inference(turn_contract) -> bool:
 
 
 @with_turn_contract
+@with_teacher_takeover
+@with_completion_gate
 async def stream_agent_loop(
     endpoint_url: str,
     model: str,
@@ -20422,6 +20419,7 @@ async def stream_agent_loop(
     thinking_mode: Optional[str] = None,
     suppress_skills: bool = False,
     reasoning_effort: Optional[str] = None,
+    _parent_run_id: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
 
@@ -26322,6 +26320,9 @@ async def stream_agent_loop(
                     # next model request. Do not expose a transient provider
                     # error or terminate the turn before that retry.
                     break
+                # Let the completion gate retain the original failure even
+                # when earlier tool evidence supplies useful fallback prose.
+                yield chunk
                 terminal_status = None
                 try:
                     error_line = next(
@@ -26611,7 +26612,6 @@ async def stream_agent_loop(
                             else "The model provider returned no usable output. No workspace change was made."
                         )
                     yield f'data: {json.dumps({"type": "final_response", "content": _failure_text})}\n\n'
-                yield chunk
                 # A terminal provider/request failure is not a completed Agent
                 # round.  Stop before empty-response synthesis, metrics,
                 # teacher escalation, post-processing, or a success [DONE].
@@ -29779,7 +29779,10 @@ async def stream_agent_loop(
                     _completion_requirements,
                 )
                 _round_decision = _round_evidence.evaluate()
-                if not _round_decision.can_complete and _evidence_repair_rounds < 2:
+                # Missing evidence is an incomplete result, not a reason to
+                # manufacture additional provider rounds. Actual diagnostic
+                # failures can still enter the bounded recovery path.
+                if _round_decision.status.value == "failed" and _evidence_repair_rounds < 2:
                     _evidence_repair_rounds += 1
                     _missing = ", ".join(_round_decision.missing_artifacts)
                     _declared_verifiers = _completion_requirements.verifier_commands
@@ -31508,6 +31511,15 @@ async def stream_agent_loop(
         local_network_budget_hit = False
         local_inspection_budget_hit = False
         for i, block in enumerate(tool_blocks):
+            native_call = converted_calls[i] if i < len(converted_calls) else None
+            tool_call_id = _resolved_tool_call_id(
+                native_call,
+                session_id=str(session_id or ""),
+                round_num=round_num,
+                tool_index=i,
+                tool_name=block.tool_type,
+            )
+            _runtime_action = propose_action(block, tool_call_id, native_call)
             _call_signature = _tool_call_signature(block.tool_type, block.content)
             _previous_failure = _failed_call_history.get(_call_signature)
             _blocked_failed_retry = bool(
@@ -31524,6 +31536,8 @@ async def stream_agent_loop(
             )
             # --- Tool budget check ---
             if max_tool_calls > 0 and total_tool_calls >= max_tool_calls:
+                if _runtime_action is not None:
+                    _runtime_action.finish({'blocked': True, 'exit_code': 1, 'error': 'tool budget exceeded'})
                 yield f'data: {json.dumps({"type": "budget_exceeded", "limit": max_tool_calls, "used": total_tool_calls})}\n\n'
                 budget_hit = True
                 break
@@ -31535,26 +31549,22 @@ async def stream_agent_loop(
                 )
             ):
                 local_network_budget_hit = True
+                if _runtime_action is not None:
+                    _runtime_action.finish({'blocked': True, 'exit_code': 1, 'error': 'network action budget exceeded'})
                 break
             if (
                 _tui_local_inspection_turn
                 and total_tool_calls >= _TUI_LOCAL_INSPECTION_TOOL_CALL_CAP
             ):
                 local_inspection_budget_hit = True
+                if _runtime_action is not None:
+                    _runtime_action.finish({'blocked': True, 'exit_code': 1, 'error': 'inspection budget exceeded'})
                 break
             if local_inspection_budget_hit:
                 break
 
             if not (_blocked_failed_retry or _blocked_redundant_read):
                 total_tool_calls += 1
-            native_call = converted_calls[i] if i < len(converted_calls) else None
-            tool_call_id = _resolved_tool_call_id(
-                native_call,
-                session_id=str(session_id or ""),
-                round_num=round_num,
-                tool_index=i,
-                tool_name=block.tool_type,
-            )
             normalized_native_block = _normalize_native_tool_shell_wrapper(block, _last_user)
             if normalized_native_block != block:
                 logger.info(
@@ -32807,7 +32817,8 @@ async def stream_agent_loop(
                                 "error": "Web recovery action is repeated or exceeds the execution budget.",
                                 "output": _web_execution_budget.instruction(),
                             }
-                        return await execute_tool_block(
+                        return await execute_action(
+                            execute_tool_block, _runtime_action,
                             block,
                             session_id=session_id,
                             disabled_tools=disabled_tools,
@@ -33378,6 +33389,10 @@ async def stream_agent_loop(
 
             # Emit tool_output (include ui_event data if present)
             tool_output_data = {"type": "tool_output", "tool": block.tool_type, "command": cmd_display, "output": output_text, "exit_code": result.get("exit_code"), "execution_attempted": _execution_attempted, "blocked": bool(result.get("blocked", False))}
+            if _runtime_action is not None:
+                _runtime_action.normalize(block, 'agent_loop compatibility adapters')
+                _runtime_action.finish(result)
+                tool_output_data['action_receipt'] = _runtime_action.to_dict()
             # Keep exact arguments on email mutation events. The frontend uses
             # these UIDs to reconcile an agent cleanup immediately, even when
             # a provider returns only human-readable MCP text.
@@ -37341,29 +37356,25 @@ async def stream_agent_loop(
     )
     yield f"data: {json.dumps({'type': 'metrics', 'data': metrics})}\n\n"
 
-    # Teacher-escalation: inline takeover visible in the chat stream.
-    # The student just finished; if Tier 1 flags failure, the teacher
-    # gets a turn (with its own tool calls forwarded to the user) and
-    # a skill is saved ONLY if the teacher actually succeeds. Skipped
-    # when we ARE the teacher to avoid recursion.
+    # Queue the existing teacher hook. The outer adapter executes it only
+    # after this invocation's completion gate and action context have closed.
     if not _is_teacher_run and not guide_only and not _awaiting_user:
-        try:
-            from src.teacher_escalation import run_teacher_inline
-            async for evt in run_teacher_inline(
-                student_endpoint_url=endpoint_url,
-                student_messages=messages,
-                student_tool_events=tool_events,
-                student_reply=full_response,
-                owner=owner,
-                session_id=session_id,
-                workspace=workspace,
-                disabled_tools=disabled_tools,
-                tool_policy=tool_policy,
-                active_document=active_document,
-                active_email=active_email,
-            ):
-                yield evt
-        except Exception as _esc_err:
-            logger.warning(f"teacher escalation hook failed: {_esc_err}", exc_info=True)
+        request_teacher_takeover(
+            student_endpoint_url=endpoint_url,
+            student_messages=messages,
+            student_tool_events=tool_events,
+            student_reply=full_response,
+            owner=owner,
+            session_id=session_id,
+            workspace=workspace,
+            disabled_tools=disabled_tools,
+            tool_policy=tool_policy,
+            active_document=active_document,
+            active_email=active_email,
+            turn_contract=turn_contract,
+            external_untrusted_context_seen=run_security.external_untrusted_context_seen,
+            client_runtime_context=client_runtime_context,
+            plan_mode=plan_mode,
+        )
 
     yield "data: [DONE]\n\n"

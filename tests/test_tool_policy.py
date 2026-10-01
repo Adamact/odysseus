@@ -1681,6 +1681,9 @@ def test_calendar_create_response_includes_persistent_event_link(monkeypatch):
 
     set_user_timezone("Asia/Tokyo", 540)
 
+    from tests.runtime_evidence_helpers import authoritative_executor
+
+    @authoritative_executor
     async def _fake_exec(block, *args, **kwargs):
         if '"list_calendars"' in (block.content or ""):
             return (

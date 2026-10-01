@@ -1122,7 +1122,8 @@ def test_native_host_shell_call_runs_through_bridge_and_threads_result(monkeypat
     # at import time, so a fresh `import src.tool_execution` here can bind a
     # different module object than the execute_tool_block agent_loop calls —
     # patching that fresh copy silently no-ops in full-suite runs.
-    _dispatch_globals = al.execute_tool_block.__globals__
+    from inspect import unwrap
+    _dispatch_globals = unwrap(al.execute_tool_block).__globals__
     monkeypatch.setitem(
         _dispatch_globals,
         "owner_is_admin_or_single_user",

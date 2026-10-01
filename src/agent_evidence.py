@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
+from src.agent_runtime.identity import artifact_identity, artifact_version, executable_words, is_test_command, is_validation_command
 
 
 def workspace_artifact_is_usable(path: Path) -> bool:
@@ -99,6 +100,10 @@ class EvidenceEvent:
     command_sha256: str = ""
     output_sha256: str = ""
     detail: str = ""
+    action_id: str = ""
+    execution_id: str = ""
+    artifact_id: str = ""
+    verification_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -195,12 +200,12 @@ _VALIDATION_COMMAND_RE = re.compile(
 def command_is_validation(command: str) -> bool:
     """Return whether a shell command provides executable verification evidence."""
     value = str(command or "")
-    return bool(_TEST_COMMAND_RE.search(value) or _VALIDATION_COMMAND_RE.search(value))
+    return is_validation_command(_command_text(value))
 
 
 def command_is_test(command: str) -> bool:
     """Return whether a shell command executes a recognized test runner."""
-    return bool(_TEST_COMMAND_RE.search(str(command or "")))
+    return is_test_command(_command_text(str(command or "")))
 
 
 def _clean_path(value: str) -> str:
@@ -275,6 +280,40 @@ def _known_input_is_explicit_mutation_target(instruction: str, path: str) -> boo
     )
 
 
+def _unquoted_statements(text: str) -> Iterable[tuple[str, str]]:
+    """Yield original statements and their reportable prose, with quotes masked.
+
+    Mask before splitting so punctuation inside an example cannot change the
+    scope of the surrounding sentence. Inline code identifiers stay visible.
+    """
+    def mask(match: re.Match[str]) -> str:
+        value = match.group()
+        # Quotation marks around an artifact identify a target, rather than
+        # quote a report. Keep that target available for exact path matching.
+        if value[0] in {'"', "'"} and re.fullmatch(_ARTIFACT_PATH, value[1:-1]):
+            return ' ' + value[1:-1] + ' '
+        return re.sub(r'[^\n]', ' ', value)
+
+    masked = re.sub(
+        r'```[\s\S]*?```|~~~[\s\S]*?~~~|"[^"\n]*"|(?<!\w)\'[^\'\n]*\'(?!\w)',
+        mask, text,
+    )
+    start = 0
+    for boundary in re.finditer(r'(?<=[.!?;])(?=\s)|(?<=\n)', masked):
+        end = boundary.start()
+        if end > start:
+            yield text[start:end], masked[start:end].replace('`', '')
+        start = end
+    if start < len(text):
+        yield text[start:], masked[start:].replace('`', '')
+
+
+def _execution_obligation(requirements: CompletionRequirements) -> bool:
+    """A derived view of the existing contract, never a separate declaration."""
+    return bool(requirements.required_artifacts or requirements.verifier_required
+                or requirements.executable_verifier_available or requirements.verifier_commands)
+
+
 def infer_completion_requirements(
     instruction: str,
     *,
@@ -284,7 +323,15 @@ def infer_completion_requirements(
 ) -> CompletionRequirements:
     """Infer only explicitly requested output/edit paths from an instruction."""
 
-    text = str(instruction or "")
+    # Explanations can contain imperative examples. Their embedded actions
+    # are not requests to execute those actions. Keep independent requests in
+    # other statements, and keep explicitly supplied verifier requirements.
+    explanatory_request = re.compile(
+        r'^\s*(?:please\s+|(?:can|could|would)\s+you\s+)?'
+        r'(?:explain|describe|summari[sz]e|teach|discuss|'
+        r'show\s+(?:me\s+)?(?:an?\s+)?example|how\b)', re.I)
+    text = ''.join(scoped for _, scoped in _unquoted_statements(str(instruction or ''))
+                   if not explanatory_request.search(scoped))
     paths: list[str] = []
     for pattern in (
         _ARTIFACT_REQUEST_RE,
@@ -348,18 +395,23 @@ def infer_completion_requirements(
         for command in verifier_commands
         if str(command or "").strip()
     ))
+    explicit_test_request = re.search(
+        r'(?:^|[.;\n]|\b(?:and|then))\s*'
+        r'(?:please\s+|(?:can|could|would)\s+you\s+)?'
+        r'(?:run|execute)\s+(?:(?:the|all|a|full)\s+)*'
+        r'(?:tests?\b|test\s+suite\b|pytest\b|unittest\b|npm\s+test\b)', text, re.I)
     verifier_required = executable_verifier_available or bool(cleaned_verifier_commands) or bool(
-        re.search(
+        explicit_test_request or (paths and re.search(
             r"\b(?:then|after(?:wards)?|and)\b[^\n]{0,100}\b(?:test|verify|check|validate)\b",
-            str(instruction or ""),
+            text,
             re.IGNORECASE,
-        )
+        ))
     )
     return CompletionRequirements(
         required_artifacts=tuple(paths),
         verifier_required=verifier_required,
         executable_verifier_available=(
-            executable_verifier_available or bool(cleaned_verifier_commands)
+            executable_verifier_available or bool(cleaned_verifier_commands) or bool(explicit_test_request)
         ),
         verifier_commands=cleaned_verifier_commands,
     )
@@ -441,18 +493,12 @@ def _path_is_mentioned(command: str, required_path: str) -> bool:
     return path in command or Path(path).name in command
 
 
-def _artifact_path_matches_required(artifact_path: str, required_path: str) -> bool:
-    artifact = _clean_path(artifact_path)
+def _artifact_path_matches_required(artifact_path: str, required_path: str, workspace: str = "") -> bool:
+    artifact = str(artifact_path or '').strip()
     required = _clean_path(required_path)
     if not artifact or not required:
         return False
-    if artifact == required:
-        return True
-    # Absolute requirements are exact output contracts; same basename in a
-    # different directory is not enough.
-    if artifact.startswith("/") or required.startswith("/"):
-        return False
-    return Path(artifact).name == Path(required).name
+    return artifact_identity(artifact, workspace) == artifact_identity(required, workspace)
 
 
 def _explicit_tool_paths(tool: str, command: str) -> list[str]:
@@ -462,21 +508,28 @@ def _explicit_tool_paths(tool: str, command: str) -> list[str]:
         except (TypeError, json.JSONDecodeError):
             args = None
         if isinstance(args, Mapping):
-            path = _clean_path(str(args.get("path") or ""))
+            path = str(args.get("path") or "").strip()
             return [path] if path else []
         # Keep compatibility with the legacy ``path\ncontent`` transport.
-        path = _clean_path(str(command or "").splitlines()[0] if command else "")
+        path = (str(command or "").splitlines()[0] if command else "").strip()
         return [path] if path else []
     if tool == "edit_file":
         try:
             args = json.loads(command or "{}")
         except (TypeError, json.JSONDecodeError):
             return []
-        path = _clean_path(str(args.get("path") or "")) if isinstance(args, dict) else ""
+        path = str(args.get("path") or "").strip() if isinstance(args, dict) else ""
         return [path] if path else []
     if tool == "apply_patch":
+        try:
+            args = json.loads(command or "{}")
+        except (TypeError, json.JSONDecodeError):
+            args = None
+        if isinstance(args, Mapping):
+            patch = args.get("patch")
+            command = patch if isinstance(patch, str) else ""
         return [
-            _clean_path(match.group(1))
+            match.group(1).strip()
             for match in re.finditer(r"^\*\*\* (?:Add|Update|Delete) File:\s*(.+)$", command or "", re.MULTILINE)
             if _clean_path(match.group(1))
         ]
@@ -549,13 +602,13 @@ def _command_text(value: str) -> str:
 
 
 def _matches_declared_verifier(command: str, expected: Sequence[str]) -> bool:
-    actual = " ".join(_command_text(command).split())
+    actual = executable_words(_command_text(command))
     if not actual:
         return False
     return any(
-        normalized == actual or normalized in actual
+        normalized == actual
         for item in expected
-        if (normalized := " ".join(str(item or "").split()))
+        if (normalized := executable_words(str(item or "")))
     )
 
 
@@ -574,6 +627,11 @@ class EvidenceLedger:
     def __init__(self, requirements: CompletionRequirements | None = None) -> None:
         self.requirements = requirements or CompletionRequirements()
         self.events: list[EvidenceEvent] = []
+        self._verification_versions: dict[str, str] = {}
+        self._verification_versions_captured = False
+        # Retain receipt command identity privately for presentation matching;
+        # model prose and client dictionaries never populate this evidence.
+        self._verifier_commands: dict[str, tuple[str, ...]] = {}
 
     @classmethod
     def from_tool_events(
@@ -611,6 +669,10 @@ class EvidenceLedger:
             "command_sha256": _digest(command),
             "output_sha256": _digest(output),
         }
+        action_id = str(source.get('action_id') or '')
+        execution_id = str(source.get('execution_id') or '')
+        if action_id:
+            payload.update(action_id=action_id, execution_id=execution_id)
         evidence = EvidenceEvent(
             event_id=_event_id(payload, len(self.events)),
             kind=kind,
@@ -623,6 +685,11 @@ class EvidenceLedger:
             command_sha256=payload["command_sha256"],
             output_sha256=payload["output_sha256"],
             detail=detail,
+            action_id=action_id,
+            execution_id=execution_id,
+            artifact_id=artifact_identity(artifact_path, self.requirements.workspace_root) if artifact_path else '',
+            verification_id=('verification-' + _event_id(payload, len(self.events)))
+            if kind in {EvidenceKind.VERIFIER_RESULT, EvidenceKind.ARTIFACT_VALIDATION} else '',
         )
         self.events.append(evidence)
         return evidence
@@ -631,8 +698,12 @@ class EvidenceLedger:
         tool = str(event.get("tool") or "")
         command = str(event.get("command") or "")
         exit_code = event.get("exit_code")
-        authoritative = isinstance(exit_code, int) and not isinstance(exit_code, bool)
-        success = authoritative and exit_code == 0
+        authoritative = (
+            isinstance(exit_code, int) and not isinstance(exit_code, bool)
+            and not event.get("blocked") and not event.get("approval_required")
+            and event.get("execution_attempted") is not False
+        )
+        success = authoritative and exit_code == 0 and not event.get('error')
         if not authoritative:
             success = not bool(event.get("error"))
         self._append(
@@ -644,7 +715,11 @@ class EvidenceLedger:
 
         explicit_paths = _explicit_tool_paths(tool, command)
         mutation_paths = list(explicit_paths)
-        if command_has_mutation_effect(command) and tool not in {
+        observed_changes = event.get('artifact_changes')
+        if isinstance(observed_changes, list) and tool in {'bash', 'python', 'host_shell'}:
+            mutation_paths.extend(path for path in self.requirements.required_artifacts
+                                  if artifact_identity(path, self.requirements.workspace_root) in observed_changes)
+        elif command_has_mutation_effect(command) and tool not in {
             "write_file",
             "edit_file",
             "apply_patch",
@@ -657,7 +732,7 @@ class EvidenceLedger:
             )
         seen_paths: set[str] = set()
         for path in mutation_paths:
-            path = _clean_path(path)
+            path = str(path or '').strip()
             if not path or path in seen_paths:
                 continue
             seen_paths.add(path)
@@ -675,12 +750,12 @@ class EvidenceLedger:
             except (TypeError, json.JSONDecodeError):
                 read_args = None
             read_path = (
-                _clean_path(str(read_args.get("path") or ""))
+                str(read_args.get("path") or "").strip()
                 if isinstance(read_args, Mapping)
-                else ""
+                else command.strip() if read_args is None else ""
             )
             if read_path and any(
-                _artifact_path_matches_required(read_path, required)
+                _artifact_path_matches_required(read_path, required, self.requirements.workspace_root)
                 for required in self.requirements.required_artifacts
             ):
                 self._append(
@@ -692,18 +767,23 @@ class EvidenceLedger:
                     detail="post-write artifact inspection",
                 )
 
-        if _TEST_COMMAND_RE.search(_command_text(command)) or _matches_declared_verifier(
+        if tool in {"bash", "host_shell"} and (command_is_test(_command_text(command)) or _matches_declared_verifier(
             command,
             self.requirements.verifier_commands,
-        ):
-            self._append(
+        )):
+            if authoritative:
+                versions = event.get('artifact_versions')
+                self._verification_versions = dict(versions) if isinstance(versions, Mapping) else {}
+                self._verification_versions_captured = isinstance(versions, Mapping)
+            verifier = self._append(
                 kind=EvidenceKind.VERIFIER_RESULT,
                 success=success,
                 authoritative=authoritative,
                 source=event,
                 detail="executable test/verifier command",
             )
-        elif _VALIDATION_COMMAND_RE.search(command) and not mutation_paths:
+            self._verifier_commands[verifier.event_id] = executable_words(_command_text(command))
+        elif tool in {"bash", "host_shell"} and is_validation_command(command) and not mutation_paths:
             for path in self.requirements.required_artifacts:
                 if _path_is_mentioned(command, path):
                     self._append(
@@ -713,6 +793,41 @@ class EvidenceLedger:
                         source=event,
                         artifact_path=path,
                     )
+
+    def _supports_verifier_claim(self, identities: Sequence[str] = (), paths: Sequence[str] = ()) -> bool:
+        """Only the current passing verifier may support its named runner."""
+        if self.evaluate().status != CompletionStatus.VERIFIED:
+            return False
+        latest = next((event for event in reversed(self.events)
+                       if event.kind == EvidenceKind.VERIFIER_RESULT and event.authoritative), None)
+        if latest is None or not latest.success:
+            return False
+        words = self._verifier_commands.get(latest.event_id, ())
+        names = {Path(words[0]).name} if words else set()
+        if words and re.fullmatch(r'python(?:\d+(?:\.\d+)*)?', Path(words[0]).name) and '-m' in words:
+            module_index = words.index('-m') + 1
+            if module_index < len(words):
+                names.add(words[module_index])
+        return (all(identity in names for identity in identities)
+                and all(any(_artifact_path_matches_required(word, path, self.requirements.workspace_root)
+                            for word in words) for path in paths))
+
+    def _supports_artifact_claim(self, kind: EvidenceKind, paths: Sequence[str]) -> bool:
+        """Match every claimed artifact by identity, never by basename."""
+        targets = tuple(paths) or self.requirements.required_artifacts
+        if not targets or (not paths and len(targets) != 1):
+            return False
+        for path in targets:
+            matching = [event for event in self.events if event.kind == kind and event.authoritative
+                        and _artifact_path_matches_required(event.artifact_path, path, self.requirements.workspace_root)]
+            successful = [event for event in matching if event.success]
+            # Match evaluate(): atomic helper failures preserve the previous
+            # successful artifact; a partial shell/Python failure may not.
+            destructive_failure = bool(matching and not matching[-1].success
+                                       and matching[-1].tool in {'bash', 'python'})
+            if not successful or destructive_failure:
+                return False
+        return True
 
     def record_media_ingress(self, metadata: Mapping[str, Any]) -> None:
         for artifact in metadata.get("artifacts") or []:
@@ -767,6 +882,21 @@ class EvidenceLedger:
                 (latest_verifier.event_id,),
             )
 
+        if latest_verifier and self.requirements.workspace_root:
+            for path in self.requirements.required_artifacts:
+                identity = artifact_identity(path, self.requirements.workspace_root)
+                expected = self._verification_versions.get(identity)
+                if expected in {'unobserved', 'missing-or-unreadable'} or (
+                    expected is None and self._verification_versions_captured
+                ):
+                    return CompletionDecision(CompletionStatus.BLOCKED, False,
+                                              'artifact version could not be established for verification',
+                                              (latest_verifier.event_id,))
+                if expected is not None and expected != artifact_version(path, self.requirements.workspace_root):
+                    return CompletionDecision(CompletionStatus.BLOCKED, False,
+                                              'artifact content changed after verification',
+                                              (latest_verifier.event_id,))
+
         satisfied_ids: list[str] = []
         missing: list[str] = []
         workspace_root = str(self.requirements.workspace_root or "").strip()
@@ -774,7 +904,7 @@ class EvidenceLedger:
             matches = [
                 event for event in self.events
                 if event.kind == EvidenceKind.ARTIFACT_MUTATION
-                and _artifact_path_matches_required(event.artifact_path, required)
+                and _artifact_path_matches_required(event.artifact_path, required, self.requirements.workspace_root)
             ]
             authoritative = [
                 event for event in matches
@@ -793,10 +923,11 @@ class EvidenceLedger:
                 and latest.tool in {"bash", "python"}
             )
             filesystem_missing = False
-            if latest_success is not None and workspace_root and required.startswith("/workspace/"):
+            if latest_success is not None and workspace_root:
                 try:
                     root = Path(workspace_root).resolve()
-                    candidate = (root / required.removeprefix("/workspace/")).resolve()
+                    identity = artifact_identity(required, workspace_root)
+                    candidate = (root / identity.removeprefix('workspace:')).resolve() if identity.startswith('workspace:') else Path(required).resolve()
                     candidate.relative_to(root)
                     filesystem_missing = not workspace_artifact_is_usable(candidate)
                 except (OSError, RuntimeError, ValueError):
@@ -852,20 +983,25 @@ class EvidenceLedger:
                 if event.kind == EvidenceKind.ARTIFACT_MUTATION
                 and event.authoritative
                 and event.success
-                and _artifact_path_matches_required(event.artifact_path, required)
+                and _artifact_path_matches_required(event.artifact_path, required, self.requirements.workspace_root)
             ]
             matching_validations = [
                 (index, event)
                 for index, event in enumerate(self.events)
                 if event.kind == EvidenceKind.ARTIFACT_VALIDATION
                 and event.authoritative
-                and _artifact_path_matches_required(event.artifact_path, required)
+                and _artifact_path_matches_required(event.artifact_path, required, self.requirements.workspace_root)
             ]
             if not matching_validations:
                 continue
             latest_validation_index, latest_validation = matching_validations[-1]
             latest_artifact_mutation_index = max(matching_mutation_indices, default=-1)
             if latest_validation_index < latest_artifact_mutation_index:
+                # A pre-edit inspection cannot invalidate executable checks
+                # that passed against the later mutation. It still cannot
+                # stand in for current verification when no such check exists.
+                if latest_verifier_index > latest_artifact_mutation_index:
+                    continue
                 return CompletionDecision(
                     CompletionStatus.BLOCKED,
                     False,
@@ -882,6 +1018,10 @@ class EvidenceLedger:
             current_validation_ids.append(latest_validation.event_id)
 
         if self.requirements.verifier_required and latest_verifier is None:
+            if self.requirements.executable_verifier_available:
+                return CompletionDecision(CompletionStatus.BLOCKED, False,
+                                          'the request requires an executable verifier result',
+                                          tuple(satisfied_ids))
             validation_ids: list[str] = []
             for required in self.requirements.required_artifacts:
                 matching_validation = [
@@ -890,7 +1030,7 @@ class EvidenceLedger:
                     if event.kind == EvidenceKind.ARTIFACT_VALIDATION
                     and event.authoritative
                     and event.success
-                    and _artifact_path_matches_required(event.artifact_path, required)
+                    and _artifact_path_matches_required(event.artifact_path, required, self.requirements.workspace_root)
                 ]
                 latest_validation = matching_validation[-1] if matching_validation else None
                 if latest_validation is None or latest_validation[0] < latest_mutation_index:
