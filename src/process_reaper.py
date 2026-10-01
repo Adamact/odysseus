@@ -71,6 +71,13 @@ def reap_containment_grants() -> Dict[str, Any]:
             containment.forget(grant_id)
             report["already_gone"] += 1
             continue
+        if record.get("lifetime") == "background" and process_ownership.verify(
+            record.get("supervisor_pid"), record.get("supervisor_token"),
+        ) == process_ownership.OWNED:
+            # Detached jobs deliberately survive a server restart. Their
+            # supervisor owns the wall clock and teardown, independently.
+            report["background_kept"] = report.get("background_kept", 0) + 1
+            continue
         verdict = process_ownership.verify_record(record)
         if verdict == process_ownership.GONE:
             if containment._group_present(record.get("pgid")):

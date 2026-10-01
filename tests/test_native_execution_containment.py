@@ -140,3 +140,14 @@ async def test_python_final_expression_and_opt_in_imports(native_boundary):
     })
     assert result["output"] == "42"
     assert result["teardown"]["dead"] is True
+
+
+async def test_capture_preserves_multibyte_text_across_chunks(native_boundary):
+    spec = containment.ContainmentSpec(
+        workspace=str(native_boundary), env=dict(os.environ), wall_clock_s=5,
+        required=frozenset({containment.PROCESS_TREE, containment.WALL_CLOCK}), max_output_bytes=200000,
+    )
+    result = await containment.run(containment.acquire(spec, owner="unicode"),
+        [sys.executable, "-c", "import sys; sys.stdout.write('€' * 30000)"], argv=True)
+    assert result.stdout == "€" * 30000
+    assert result.output_truncated is False

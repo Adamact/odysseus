@@ -1187,6 +1187,10 @@ def _split_bg_marker(content: str):
     return False, content
 
 
+def _agent_subprocess_env() -> dict:
+    return {**os.environ, "TERM": "xterm-256color", "COLUMNS": "120", "LINES": "40", "HOME": _AGENT_WORKDIR}
+
+
 async def _direct_fallback(
     tool: str,
     content: str,
@@ -1197,13 +1201,7 @@ async def _direct_fallback(
     disabled_tools: Optional[set] = None,
     tool_policy: Optional[ToolPolicy] = None,
 ) -> Optional[Dict]:
-    _subproc_env = {
-        **os.environ,
-        "TERM": "xterm-256color",
-        "COLUMNS": "120",
-        "LINES": "40",
-        "HOME": _AGENT_WORKDIR,
-    }
+    _subproc_env = _agent_subprocess_env()
 
     try:
         ctx = {
@@ -1663,7 +1661,11 @@ async def _execute_tool_block_impl(
         if _is_bg and _bg_cmd:
             from src import bg_jobs
             mark_dispatch()
-            rec = bg_jobs.launch(_bg_cmd, session_id=session_id, cwd=agent_cwd())
+            from src import containment
+            try:
+                rec = bg_jobs.launch(_bg_cmd, session_id=session_id, cwd=agent_cwd(), env=_agent_subprocess_env())
+            except containment.ContainmentUnavailable as exc:
+                return "bash (background): containment unavailable", containment.unavailable_tool_result(exc, tool="bash")
             # Only this server launch may seal detached-job authority; a
             # handler/bridge output carrying a job id is not a grant source.
             save_background_authority(rec["id"], active_request_authority())
@@ -1673,7 +1675,7 @@ async def _execute_tool_block_impl(
                 "output": (
                     f"Started background job `{rec['id']}`. It is running detached; "
                     f"do NOT wait for it or poll it. You will be automatically re-invoked "
-                    f"with its full output when it finishes. Continue with other work, or "
+                    f"with its captured output and any capture limit when it finishes. Continue with other work, or "
                     f"end your turn now and resume when the result arrives. If the user "
                     f"later asks to check progress or stop it, call the manage_bg_jobs "
                     f"tool yourself (output or kill); do not tell them to run a tool "
@@ -1681,6 +1683,7 @@ async def _execute_tool_block_impl(
                 ),
                 "exit_code": 0,
                 "bg_job_id": rec["id"],
+                "containment": rec.get("containment"),
             }
             logger.info(f"Tool executed: {desc} -> bg job {rec['id']}")
             return desc, result

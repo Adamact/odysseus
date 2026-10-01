@@ -49,6 +49,7 @@ constant is reversible in a way that breaking every host is not.
 from __future__ import annotations
 
 import asyncio
+import codecs
 import json
 import logging
 import os
@@ -63,7 +64,7 @@ from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Any, Awaitable, Callable, Mapping, Optional
 
-from core.atomic_io import atomic_write_json
+from core.atomic_io import atomic_write_json, store_transaction
 from core.platform_compat import IS_WINDOWS, find_bash, pid_alive
 
 from src import process_ownership
@@ -439,6 +440,7 @@ def _prune(records: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return kept
 
 
+@store_transaction(lambda: _store_path())
 def _write_record(grant: ContainmentGrant) -> None:
     records = _prune(_load_records())
     records[grant.id] = {
@@ -465,6 +467,7 @@ def _write_record(grant: ContainmentGrant) -> None:
     _save_records(records)
 
 
+@store_transaction(lambda: _store_path())
 def _update_record(grant_id: str, **fields: Any) -> None:
     records = _load_records()
     record = records.get(grant_id)
@@ -487,6 +490,7 @@ def active_grants() -> list[dict[str, Any]]:
     ]
 
 
+@store_transaction(lambda: _store_path())
 def forget(grant_id: str) -> None:
     """Drop a record outright. For a reaper that has finished with it."""
     records = _load_records()
@@ -908,7 +912,7 @@ def _spawn_kwargs(grant: ContainmentGrant) -> dict[str, Any]:
     return kwargs
 
 
-async def _drain(stream, buffer: list[str], budget: list[int]) -> None:
+async def _drain(stream, buffer: list[str], budget: list[int], output_cb=None) -> None:
     """Read a stream to EOF, keeping at most ``budget[0]`` bytes.
 
     Reading past the cap and discarding is deliberate: stopping the read would
@@ -921,20 +925,30 @@ async def _drain(stream, buffer: list[str], budget: list[int]) -> None:
     """
     if stream is None:
         return
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    def emit(text):
+        if not text:
+            return
+        buffer.append(text)
+        if output_cb:
+            try:
+                output_cb(text)
+            except OSError:
+                budget[0] = -1
+                logger.warning("containment: output sink failed", exc_info=True)
     while True:
         line = await stream.read(65536)
         if not line:
+            emit(decoder.decode(b"", final=True))
             break
         if budget[0] < 0:
             continue
-        if len(line) <= budget[0]:
-            budget[0] -= len(line)
-            buffer.append(line.decode("utf-8", errors="replace"))
-            continue
-        chunk = line[: budget[0]]
+        chunk = line[:budget[0]]
         if chunk:
-            buffer.append(chunk.decode("utf-8", errors="replace"))
-        budget[0] = -1
+            emit(decoder.decode(chunk))
+            if budget[0] < 0:
+                continue
+        budget[0] = budget[0] - len(line) if len(line) <= budget[0] else -1
 
 
 async def run(
@@ -944,6 +958,7 @@ async def run(
     argv: bool = False,
     stdin: Optional[bytes] = None,
     progress_cb: Optional[Callable[[dict], Awaitable[None]]] = None,
+    output_cb: Optional[Callable[[str], None]] = None,
 ) -> ContainmentResult:
     """Execute inside an existing grant.
 
@@ -1006,8 +1021,8 @@ async def run(
     err_budget = [int(spec.max_output_bytes)]
     started = time.time()
     readers = [
-        asyncio.create_task(_drain(proc.stdout, out_buf, out_budget)),
-        asyncio.create_task(_drain(proc.stderr, err_buf, err_budget)),
+        asyncio.create_task(_drain(proc.stdout, out_buf, out_budget, output_cb)),
+        asyncio.create_task(_drain(proc.stderr, err_buf, err_budget, output_cb)),
     ]
     async def _wait() -> None:
         # Pipe backpressure is execution time too. Feeding a child that never
@@ -1027,7 +1042,8 @@ async def run(
             await asyncio.sleep(2.0)
             if progress_cb:
                 try:
-                    await progress_cb({"elapsed_s": round(time.time() - started, 1)})
+                    tail = "\n".join(("".join(out_buf) + "".join(err_buf)).splitlines()[-12:])[-8192:]
+                    await progress_cb({"elapsed_s": round(time.time() - started, 1), "tail": tail})
                 except Exception:
                     pass
 
@@ -1257,7 +1273,8 @@ def _ownership_gate(
     )
 
 
-def release(grant: ContainmentGrant, *, grace_s: float = 2.0) -> ReleaseOutcome:
+def release(grant: ContainmentGrant, *, grace_s: float = 2.0,
+            start_token: Optional[str] = None, require_identity: bool = False) -> ReleaseOutcome:
     """Authoritative teardown: signal the group, escalate, then verify.
 
     Returns whether the tree is **observed** gone. A caller must not record a
@@ -1276,12 +1293,12 @@ def release(grant: ContainmentGrant, *, grace_s: float = 2.0) -> ReleaseOutcome:
     # pid had to be recovered from the durable store is the restart case, and
     # there the pid is a *claim* about a process this run never started.
     recovered = pid is None
-    token: Optional[str] = None
+    token: Optional[str] = start_token
     if pid is None or (pgid is None and not IS_WINDOWS):
         record = _load_records().get(grant.id) or {}
         pid = pid if pid is not None else record.get("pid")
         pgid = pgid if pgid is not None else record.get("pgid")
-        token = record.get("start_token")
+        token = token or record.get("start_token")
     try:
         pid = int(pid) if pid else 0
     except (TypeError, ValueError):
@@ -1301,7 +1318,7 @@ def release(grant: ContainmentGrant, *, grace_s: float = 2.0) -> ReleaseOutcome:
         _finish_release(grant, outcome)
         return outcome
 
-    if recovered:
+    if recovered or require_identity:
         refusal = _ownership_gate(grant, pid, pgid, token)
         if refusal is not None:
             _finish_release(grant, refusal)
@@ -1336,6 +1353,11 @@ def release(grant: ContainmentGrant, *, grace_s: float = 2.0) -> ReleaseOutcome:
         time.sleep(_DEATH_POLL_S)
     if not _tree_gone(pid, pgid, reap=True):
         escalated = True
+        if recovered or require_identity:
+            refusal = _ownership_gate(grant, pid, pgid, token)
+            if refusal is not None:
+                _finish_release(grant, refusal)
+                return refusal
         _signal_tree(pid, pgid, signal.SIGKILL)
         # SIGKILL cannot be caught, so a short verification window is enough.
         # Anything still here is out of our reach — a zombie whose parent is

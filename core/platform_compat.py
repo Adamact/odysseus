@@ -124,7 +124,7 @@ def pid_alive(pid: Optional[int]) -> bool:
         return True  # EPERM and other inspection failures are not ESRCH.
 
 
-def kill_process_tree(pid: Optional[int]):
+def kill_process_tree(pid: Optional[int], *, start_token=None, pgid=None, require_identity=False):
     """Use the runtime's shared escalating teardown and return verified death.
 
     Callers retaining durable PIDs must validate their recorded identity before
@@ -140,9 +140,9 @@ def kill_process_tree(pid: Optional[int]):
         id="", mechanism="windows_tree" if IS_WINDOWS else "process_group",
         workspace=spec.workspace, enforced=frozenset(), degraded=(),
         unenforced_required=(), owner="compatibility", mode=containment.CONTAINMENT_MODE,
-        spec=spec, pid=int(pid), pgid=containment._pgid_of(int(pid)),
+        spec=spec, pid=int(pid), pgid=pgid or containment._pgid_of(int(pid)),
     )
-    return containment.release(grant)
+    return containment.release(grant, start_token=start_token, require_identity=require_identity)
 
 
 # ── Shell / executable resolution ───────────────────────────────────────────
