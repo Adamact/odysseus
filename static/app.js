@@ -3459,6 +3459,11 @@ function initializeEventListeners() {
   if (sidebarNewChatBtn) {
     sidebarNewChatBtn.addEventListener('click', async (e) => {
       if (e) { e.preventDefault(); e.stopImmediatePropagation(); }
+      if (window.innerWidth < 768) {
+        el('sidebar')?.classList.add('hidden');
+        el('sidebar-backdrop')?.classList.remove('visible');
+        window.syncRailSide?.();
+      }
       await _handleNewChatAction();
     });
   }

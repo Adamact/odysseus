@@ -3768,6 +3768,11 @@ def setup_email_routes():
         full = True if full is True or str(full).lower() == "true" else False
         fixture_result = _fixture_email_read(uid, folder, owner)
         if fixture_result is not None:
+            # require_owner validated the selected account. Fixture row labels
+            # are not configured account IDs; keep the selection for AI Reply
+            # and other subsequent account-scoped operations.
+            if account_id and not fixture_result.get("error"):
+                fixture_result = {**fixture_result, "account_id": account_id}
             return fixture_result
         ck = _read_cache_key(account_id, folder, uid, owner=owner) + (int(bool(full)),)
         cached = _read_cache_get(ck)
@@ -6153,6 +6158,23 @@ def setup_email_routes():
     @router.post("/ai-reply")
     async def ai_reply(data: dict, owner: str = Depends(require_owner)):
         """Generate an AI-drafted reply to an email using the user's writing style."""
+        if data.get('stream'):
+            async def events():
+                queue = asyncio.Queue()
+                async def run():
+                    result = await ai_reply({**data, 'stream': False, '_emit': queue.put}, owner)
+                    await queue.put({'type': 'result', **result})
+                task = asyncio.create_task(run())
+                try:
+                    while True:
+                        item = await queue.get()
+                        yield 'data: ' + json.dumps(item) + '\n\n'
+                        if item.get('type') == 'result':
+                            break
+                finally:
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+            return StreamingResponse(events(), media_type='text/event-stream', headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
         try:
             from src.endpoint_resolver import resolve_endpoint
 
@@ -6176,7 +6198,7 @@ def setup_email_routes():
             # Skip cache lookup when the caller supplied a user_hint — the
             # cached generic reply doesn't reflect the instructions and
             # would silently override them.
-            if message_id and not user_hint and not account_id:
+            if message_id and not user_hint and not account_id and not callable(data.get('_emit')):
                 try:
                     _c = _sql3.connect(SCHEDULED_DB)
                     owner_clause, owner_params = _email_cache_owner_clause(owner)
@@ -6276,7 +6298,7 @@ def setup_email_routes():
             # by exact id, then basename; fall back to the first served model.
             try:
                 from src.llm_core import list_model_ids
-                _avail = list_model_ids(url, headers=headers)
+                _avail = await asyncio.to_thread(list_model_ids, url, headers=headers)
                 if _avail and model not in _avail:
                     import os as _os
                     _base = _os.path.basename((model or "").rstrip("/"))
@@ -6293,7 +6315,7 @@ def setup_email_routes():
             # Owner-scoped so pre-retrieval never crosses tenants.
             context_snippets, _terms = ([], [])
             if not fast_reply:
-                context_snippets, _terms = _pre_retrieve_context(original_body, to, owner=owner)
+                context_snippets, _terms = await asyncio.to_thread(_pre_retrieve_context, original_body, to, owner=owner)
 
             # NEW: also pull the last few emails from the original sender +
             # their attachments. The "to" field on this endpoint is the
@@ -6304,7 +6326,7 @@ def setup_email_routes():
             if not fast_reply:
                 try:
                     from_addr_for_ctx = email.utils.parseaddr(to or "")[1]
-                    referenced = _fetch_sender_thread_context(
+                    referenced = await asyncio.to_thread(_fetch_sender_thread_context,
                         sender_addr=from_addr_for_ctx,
                         exclude_uid=source_uid,
                         exclude_folder=source_folder,
@@ -6315,6 +6337,14 @@ def setup_email_routes():
                     logger.warning(f"sender-thread-context failed: {_e}")
 
             system_prompt = _EMAIL_REPLY_SYS_PROMPT_BASE
+            config = await asyncio.to_thread(_get_email_config, account_id, owner=owner)
+            mailbox = config.get('from_address') or config.get('imap_user') or ''
+            system_prompt += (
+                f'\n\nYou are writing FROM this mailbox: {mailbox}. '
+                'The recipient is the person being replied to, not your identity. '
+                'Quoted participants are third parties. Do not adopt their signatures or commitments. '
+                'Return the final reply immediately inside <<<REPLY>>> and <<<END>>>; no analysis.'
+            )
             if general_style:
                 system_prompt += f"\n\nGENERAL WRITING STYLE:\n{general_style}"
             if style:
@@ -6332,7 +6362,7 @@ def setup_email_routes():
 
             user_msg = (
                 f"Recipient: {to}\nSubject: {subject}\n\n"
-                f"Original email and any current draft:\n{original_body[:6000]}\n\n"
+                f"Received email and quoted conversation (not your draft):\n{original_body[:6000]}\n\n"
             )
             if user_hint:
                 user_msg += (
@@ -6384,19 +6414,25 @@ def setup_email_routes():
                 {"role": "user", "content": user_msg},
             ]
             try:
-                reply_raw = await llm_call_async_with_fallback(
-                    _candidates,
-                    messages=_messages,
-                    temperature=0.7,
-                    max_tokens=1536 if fast_reply else 6144,
-                    timeout=120 if fast_reply else 180,
-                )
+                if callable(data.get('_emit')):
+                    from src.email_reply_stream import stream_reply
+                    reply_raw, model = await stream_reply(_candidates, _messages, data['_emit'], max_tokens=1536)
+                else:
+                    reply_raw = await llm_call_async_with_fallback(
+                        _candidates,
+                        messages=_messages,
+                        temperature=0.7,
+                        max_tokens=1536 if fast_reply else 6144,
+                        timeout=120 if fast_reply else 180,
+                        thinking_mode='off',
+                    )
             except Exception as e:
                 detail = getattr(e, "detail", None) or str(e)
                 _attempted = ", ".join(f"{m}@{u.split('/')[2] if '/' in u else u}" for u, m, _ in _candidates) or "no candidates"
-                return {"success": False, "error": f"All endpoints failed ({_attempted}): {detail}. Check your API keys in Settings → Services."}
+                return {"success": False, "error": f"AI reply failed ({_attempted}): {detail}"}
 
-            reply = _apply_email_style_mechanics(_extract_reply(reply_raw or ""))
+            from src.email_reply_stream import reply_body
+            reply = _apply_email_style_mechanics(reply_body(reply_raw or "", complete=True))
             # Small/local models sometimes satisfy the format request with a
             # one-word acknowledgement ("Thanks.") even though the email
             # needs an actual draft. Treat that as an unusable result and
@@ -6432,8 +6468,9 @@ def setup_email_routes():
                             max_tokens=2048 if fast_reply else 4096,
                             timeout=90 if fast_reply else 120,
                             max_retries=1,
+                            thinking_mode='off',
                         )
-                        retry_reply = _apply_email_style_mechanics(_extract_reply(raw_retry or ""))
+                        retry_reply = _apply_email_style_mechanics(reply_body(raw_retry or "", complete=True))
                         if retry_reply and (len(retry_reply.split()) >= 4 or allow_short_reply):
                             reply = retry_reply
                             model = cand_model

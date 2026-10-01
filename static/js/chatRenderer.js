@@ -3,6 +3,7 @@
 
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import markdownModule from './markdown.js';
+import { generatedImageResult } from './generatedImageResult.js';
 import { svgifyEmoji } from './markdown.js';
 import { addAITTSButton } from './tts-ai.js';
 import { providerLogo, providerLabel } from './providers.js';
@@ -2255,9 +2256,10 @@ function _trackAction(id) {
 /**
  * Create a footer row for an AI message with timestamp and action buttons.
  */
-export function createMsgFooter(msgElement) {
+export function createMsgFooter(msgElement, { animate = false } = {}) {
   const footer = document.createElement('div');
   footer.className = 'msg-footer';
+  if (animate) footer.classList.add('msg-footer-enter');
 
   const actions = document.createElement('span');
   actions.className = 'msg-actions';
@@ -2587,7 +2589,6 @@ export function displayMetrics(messageElement, metrics) {
   const outputTokens = metrics.output_tokens || 0;
   const tps = metrics.tokens_per_second;
   const ttft = metrics.client_ttft ?? metrics.time_to_first_token;
-  const injectedTokens = metrics.injected_tokens;
   const isReal = metrics.usage_source === 'real';
   const ctxPct = metrics.context_percent;
   const model = metrics.model || 'Unknown';
@@ -2643,7 +2644,8 @@ export function displayMetrics(messageElement, metrics) {
     const toolCalls = metrics.tool_calls;
     const prepBreakdown = metrics.agent_prep_breakdown || null;
     const prepDetails = prepBreakdown
-      ? Object.entries(prepBreakdown).map(([k, v]) => `${k}: ${v}s`).join('<br>')
+      ? Object.entries(prepBreakdown).map(([k, v]) =>
+          `<div class="ctx-stat-row"><span class="ctx-label">${uiModule.esc(k.replaceAll('_', ' '))}</span><span class="ctx-stat-value">${Number(v).toFixed(3)}s</span></div>`).join('')
       : '';
 
     // Session total cost
@@ -2660,7 +2662,6 @@ export function displayMetrics(messageElement, metrics) {
       <div class="ctx-stat-section">
         <div class="ctx-stat-row"><span class="ctx-label">Model</span><span class="ctx-stat-value">${model.split('/').pop()}</span></div>
         <div class="ctx-stat-row"><span class="ctx-label">Input</span><span class="ctx-stat-value">${inputTokens.toLocaleString()} tokens${isReal ? '' : '~'}</span></div>
-        ${injectedTokens != null ? `<div class="ctx-stat-row"><span class="ctx-label">Injected</span><span class="ctx-stat-value">${Number(injectedTokens).toLocaleString()} tokens</span></div>` : ''}
         <div class="ctx-stat-row"><span class="ctx-label">Output</span><span class="ctx-stat-value">${outputTokens.toLocaleString()} tokens${isReal ? '' : '~'}</span></div>
         <div class="ctx-stat-row"><span class="ctx-label">Total</span><span class="ctx-stat-value">${totalTok.toLocaleString()} tokens</span></div>
       </div>
@@ -2672,21 +2673,31 @@ export function displayMetrics(messageElement, metrics) {
         ${visibleTtft != null ? `<div class="ctx-stat-row"><span class="ctx-label">TTFT</span><span class="ctx-stat-value">${Number(visibleTtft).toFixed(3)}s</span></div>` : ''}
       </div>
       <div class="ctx-stat-section">
-        ${schemaCount != null ? `<div class="ctx-stat-row"><span class="ctx-label">Tool schemas</span><span class="ctx-stat-value">${Number(schemaCount).toLocaleString()}</span></div>` : ''}
+        ${schemaCount != null ? `<div class="ctx-stat-row ctx-tool-schemas" tabindex="0"><span class="ctx-label">Tool schemas</span><span class="ctx-stat-value">${Number(schemaCount).toLocaleString()}</span></div>` : ''}
         ${agentRounds != null ? `<div class="ctx-stat-row"><span class="ctx-label">Agent rounds</span><span class="ctx-stat-value">${Number(agentRounds).toLocaleString()}</span></div>` : ''}
         ${toolCalls != null ? `<div class="ctx-stat-row"><span class="ctx-label">Tool calls</span><span class="ctx-stat-value">${Number(toolCalls).toLocaleString()}</span></div>` : ''}
         ${costRows}
         ${sessionCostStr}
       </div>
-      ${prepDetails ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);font-size:0.85em;opacity:0.8;">
-        <div style="font-weight:600;margin-bottom:4px;color:var(--fg);">Agent prep</div>
-        ${prepDetails}
-      </div>` : ''}
+      ${prepDetails ? `<div class="ctx-stat-section">${prepDetails}</div>` : ''}
       ${ctxPct !== undefined && ctxPct > 0 ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);">
         <span class="ctx-label">Context</span> <span style="color:${ctxColor};font-weight:600;">${ctxPct}%</span> used
       </div>` : ''}
       ${isReal ? '' : '<div style="margin-top:4px;font-size:0.8em;opacity:0.4;">~ estimated token count</div>'}
     `;
+
+    const schemaRow = popup.querySelector('.ctx-tool-schemas');
+    if (schemaRow) {
+      const names = Array.isArray(metrics.tool_schema_names)
+        ? metrics.tool_schema_names.filter(name => typeof name === 'string' && name.trim())
+        : [];
+      const details = names.length
+        ? `Available tools:\n${names.join('\n')}`
+        : Number(schemaCount) === 0 ? 'No tools offered.' : 'Tool names were not recorded for this response.';
+      schemaRow.title = details;
+      schemaRow.setAttribute('aria-label', `Tool schemas: ${schemaCount}. ${details}`);
+      schemaRow.style.cursor = 'help';
+    }
 
     const rect = metricsContainer.getBoundingClientRect();
     popup.style.left = rect.left + 'px';
@@ -2851,7 +2862,9 @@ export function displayMetrics(messageElement, metrics) {
 
   let footer = messageElement.querySelector('.msg-footer');
   if (!footer) {
-    footer = createMsgFooter(messageElement);
+    footer = createMsgFooter(messageElement, {
+      animate: messageElement.classList?.contains('streaming'),
+    });
     if (messageElement.classList?.contains('agent-thread')) {
       footer.classList.add('agent-thread-footer');
     }
@@ -3388,8 +3401,9 @@ export function addMessage(role, content, modelName, metadata) {
           lastWrap = threadWrap;
 
           for (const ev of roundTools) {
-            if (ev.image_url) {
-              box.appendChild(buildImageBubble(ev.image_url, ev.image_prompt, ev.image_model, ev.image_size, ev.image_quality, ev.image_id));
+            const image = generatedImageResult(ev);
+            if (image) {
+              box.appendChild(buildImageBubble(image.image_url, image.image_prompt, image.image_model, image.image_size, image.image_quality, image.image_id));
             }
           }
         }

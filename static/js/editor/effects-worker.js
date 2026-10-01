@@ -1,4 +1,5 @@
 /* Worker implementation for retained-effect rasterization. */
+import { LAYER_STYLES, renderLayerStyle, renderDropShadow } from './layer-styles.js';
 
 function copyCanvas(source) {
   const out = new OffscreenCanvas(source.width, source.height);
@@ -56,7 +57,9 @@ function renderEffects(source, effects, masks) {
     if (effect.visible === false || effect.opacity <= 0) continue;
     const next = new OffscreenCanvas(current.width, current.height);
     const ctx = next.getContext('2d');
-    if (effect.type === 'gaussian-blur') {
+    if (LAYER_STYLES[effect.type]) {
+      ctx.drawImage(renderLayerStyle(current, effect.type, effect.params), 0, 0);
+    } else if (effect.type === 'gaussian-blur') {
       ctx.filter = `blur(${effect.params.radius}px)`;
       ctx.drawImage(current, 0, 0);
       ctx.filter = 'none';
@@ -69,12 +72,7 @@ function renderEffects(source, effects, masks) {
       ctx.fillStyle = effect.params.color;
       ctx.fillRect(0, 0, next.width, next.height);
     } else if (effect.type === 'drop-shadow') {
-      ctx.globalAlpha = effect.params.opacity;
-      ctx.shadowColor = effect.params.color;
-      ctx.shadowBlur = effect.params.blur;
-      ctx.shadowOffsetX = effect.params.x;
-      ctx.shadowOffsetY = effect.params.y;
-      ctx.drawImage(current, 0, 0);
+      ctx.drawImage(renderDropShadow(current, effect.params), 0, 0);
     } else if (effect.type === 'stroke') {
       ctx.globalAlpha = effect.params.opacity;
       ctx.shadowColor = effect.params.color;
@@ -98,6 +96,7 @@ function renderEffects(source, effects, masks) {
     const contribution = maskedContribution(next, masks[index]);
     const blended = copyCanvas(current);
     const blendCtx = blended.getContext('2d');
+    if (effect.type === 'drop-shadow') blendCtx.globalCompositeOperation = 'destination-over';
     blendCtx.globalAlpha = effect.opacity;
     blendCtx.drawImage(contribution, 0, 0);
     blendCtx.globalAlpha = 1;

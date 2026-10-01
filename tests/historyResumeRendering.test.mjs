@@ -54,6 +54,7 @@ async function setup() {
     window.markdownModule = (await import('/static/js/markdown.js')).default;
     markdownModule.renderMermaid = undefined;
     window.createTurnRendering = (await import('/static/js/turnRendering.js')).createTurnRendering;
+    window.startsContinuationRound = (await import('/static/js/turnRendering.js')).startsContinuationRound;
     window.applyModelRouteEventState = (await import('/static/js/chatModelProvenance.js')).applyModelRouteEventState;
     window.createTerminalStreamError = (await import('/static/js/chatStreamErrors.js')).createTerminalStreamError;
     window.addMessage = (0, eval)('(' + addMessage + ')');
@@ -285,5 +286,27 @@ test('resume error clears earlier and current streaming markers without dropping
     assert.equal(result.markers, 0);
     assert.equal(result.reloads, 0);
     assert.match(result.text, /First partial[\s\S]*Second partial[\s\S]*Provider failure/);
+  } finally { await page.close(); }
+});
+
+test('resume keeps the same initial bubble through preparation and round-one status', async () => {
+  const page = await setup();
+  try {
+    await startReplay(page);
+    await page.evaluate(() => {
+      window.initialBubble = document.querySelector('.msg-ai');
+      send({type: 'agent_step', stage: 'email_task_scope'});
+      send({type: 'agent_step', round: 1});
+      send({delta: 'Hello'});
+    });
+    await page.waitForFunction(() => document.querySelector('#chat-history').textContent.includes('Hello'));
+    const result = await page.evaluate(async () => {
+      const same = initialBubble === document.querySelector('.msg-ai');
+      const count = document.querySelectorAll('.msg-ai').length;
+      send('[DONE]');
+      await running;
+      return {same, count};
+    });
+    assert.deepEqual(result, {same: true, count: 1});
   } finally { await page.close(); }
 });

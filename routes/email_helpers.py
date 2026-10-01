@@ -1984,9 +1984,8 @@ _EMAIL_REPLY_SYS_PROMPT_BASE = (
     "<<<REPLY>>>\n"
     "(the reply body goes here)\n"
     "<<<END>>>\n"
-    "Any reasoning, planning, or notes-to-self must come BEFORE the <<<REPLY>>> marker "
-    "(ideally wrapped in <think>...</think>). Only the text between <<<REPLY>>> and <<<END>>> "
-    "is sent as the email — nothing else is shown to anyone."
+    "Start with <<<REPLY>>> immediately. Do not output reasoning, planning, or notes-to-self. "
+    "Only the final reply belongs between <<<REPLY>>> and <<<END>>>."
 )
 
 

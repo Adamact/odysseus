@@ -797,8 +797,19 @@ def setup_session_routes(
                 pass
         return {"deleted": deleted_count}
 
+    @router.get("/session/{sid}/deletion-info")
+    def session_deletion_info(request: Request, sid: str):
+        _verify_session_owner(request, sid, session_manager)
+        from src.session_image_cleanup import session_gallery_images
+        db = SessionLocal()
+        try:
+            count = session_gallery_images(db, sid).filter(GalleryImage.is_active.is_(True)).count()
+            return {"image_count": count}
+        finally:
+            db.close()
+
     @router.delete("/session/{sid}")
-    def delete_session(request: Request, sid: str):
+    def delete_session(request: Request, sid: str, delete_images: bool = False):
         """Permanently delete a session and all its messages."""
         _verify_session_owner(request, sid, session_manager)
         try:
@@ -815,7 +826,8 @@ def setup_session_routes(
                 db.close()
 
             # Delete the session and all its messages
-            if session_manager.delete_session(sid):
+            if (session_manager.delete_session(sid, delete_images=True) if delete_images
+                    else session_manager.delete_session(sid)):
                 from routes.chat_helpers import remove_session_sft_trace_rows
                 remove_session_sft_trace_rows(effective_user(request), sid)
                 return {"status": "deleted"}
@@ -834,7 +846,7 @@ def setup_session_routes(
             )
     
     @router.delete("/sessions/all")
-    def delete_all_sessions(request: Request):
+    def delete_all_sessions(request: Request, delete_images: bool = False):
         """Admin only: permanently delete ALL sessions and their messages."""
         from core.middleware import require_admin
         require_admin(request)
@@ -861,7 +873,7 @@ def setup_session_routes(
                 if filenames:
                     clauses.append(GalleryImage.filename.in_(list(filenames)))
                 image_query = db.query(GalleryImage).filter(or_(*clauses))
-            images = image_query.all()
+            images = image_query.all() if delete_images else []
             removed_images = 0
             for img in images:
                 img.is_active = False
@@ -873,6 +885,9 @@ def setup_session_routes(
                         except Exception as exc:
                             logger.warning("Could not remove generated image %s during all-session delete: %s", img.filename, exc)
                 removed_images += 1
+            db.query(GalleryImage).filter(GalleryImage.session_id.in_(session_ids)).update(
+                {GalleryImage.session_id: None}, synchronize_session=False
+            )
             db.query(DbChatMessage).delete()
             db.query(DbSession).delete()
             db.commit()

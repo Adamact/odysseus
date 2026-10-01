@@ -1587,9 +1587,9 @@ body.bg-pattern-ascii-fireflies {
       /* Completed runs keep the provider slot but turn it into a compact
          success check, so the logo does not simply appear to vanish. */
       width: 14px; height: 14px;
-      background: var(--color-success, #4caf50);
-      border-color: var(--color-success, #4caf50);
-      color: #fff;
+      background: transparent;
+      border-color: transparent;
+      color: var(--accent, var(--red));
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -1598,12 +1598,11 @@ body.bg-pattern-ascii-fireflies {
        done state so the solid notif dot doesn't collide with the SVG behind it. */
     .session-star.notify svg { display: none; }
     .session-star.notify::after {
-      content: '\2713';
-      font-family: system-ui, sans-serif;
-      font-size: 10px;
-      font-weight: 700;
-      line-height: 1;
-      transform: translateY(-0.5px);
+      content: '';
+      width: 14px;
+      height: 14px;
+      background: currentColor;
+      mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpolyline points='20 6 9 17 4 12' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
     }
     @keyframes research-done-pulse {
       0%, 100% { transform: scale(1); opacity: 1; }
@@ -2788,7 +2787,7 @@ body.bg-pattern-ascii-fireflies {
       align-items: center;
       flex-shrink: 0;
     }
-    /* Reasoning effort pill / dropdown in composer */
+    /* Reasoning effort dropdown in Chat Context */
     .reasoning-effort-wrap {
       position: relative;
       display: inline-flex;
@@ -2862,11 +2861,23 @@ body.bg-pattern-ascii-fireflies {
       color: var(--accent);
       font-weight: 600;
     }
-    @container chatbar (max-width: 480px) {
-      .reasoning-effort-prefix { display: none; }
+    .chat-context-popup .reasoning-effort-wrap {
+      width: 100%;
+      margin-top: 8px;
     }
-    @media (max-width: 480px) {
-      .reasoning-effort-prefix { display: none; }
+    .chat-context-popup .reasoning-effort-btn {
+      width: 100%;
+      font: inherit;
+    }
+    .chat-context-popup .reasoning-effort-prefix {
+      flex: 1;
+      text-align: left;
+    }
+    .chat-context-popup .reasoning-effort-menu {
+      top: calc(100% + 4px);
+      bottom: auto;
+      max-height: 180px;
+      overflow-y: auto;
     }
     .input-icon-btn {
       background: none;
@@ -4174,6 +4185,16 @@ body.bg-pattern-ascii-fireflies {
       font-size:0.75rem; color:var(--color-muted-alt);
       margin:0; opacity:1;
     }
+    .msg-footer-enter {
+      animation: msg-footer-enter 180ms ease-out both;
+    }
+    @keyframes msg-footer-enter {
+      from { opacity: 0; transform: translateY(2px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .msg-footer-enter { animation: none; }
+    }
     .msg-footer .response-metrics {
       font-size:0.75rem; color:var(--color-muted-alt);
       transition: color .15s;
@@ -4572,6 +4593,14 @@ body.bg-pattern-ascii-fireflies {
     .continue-btn.resume-btn:hover {
       border:none;
     }
+    .agent-finish-editor {
+      margin: 4px 0 6px 16px;
+      font-size: 0.8em;
+    }
+    .agent-finish-editor:disabled {
+      cursor: default;
+      opacity: 0.5;
+    }
     .continue-btn.resume-btn .resume-btn-icon {
       display:block;
       width:16px;
@@ -4621,11 +4650,11 @@ body.bg-pattern-ascii-fireflies {
       background:var(--panel);
       border:1px solid var(--border);
       border-radius:8px;
-      padding:11px 13px 12px;
+      padding:9px 12px 10px;
       font-size:0.78rem;
       color:var(--fg);
       box-shadow:0 8px 24px rgba(0,0,0,0.4);
-      min-width:250px;
+      min-width:280px;
       max-width:min(360px, calc(100vw - 16px));
       line-height:1.45;
     }
@@ -4657,19 +4686,19 @@ body.bg-pattern-ascii-fireflies {
     .ctx-stat-section {
       display:flex;
       flex-direction:column;
-      gap:4px;
+      gap:2px;
     }
     .ctx-stat-section + .ctx-stat-section {
-      margin-top:9px;
-      padding-top:8px;
+      margin-top:6px;
+      padding-top:6px;
       border-top:1px solid color-mix(in srgb, var(--border) 45%, transparent);
     }
     .ctx-stat-row {
       display:grid;
-      grid-template-columns:minmax(0, 1fr) auto;
+      grid-template-columns:minmax(82px, 1fr) minmax(0, 2fr);
       align-items:baseline;
-      gap:14px;
-      min-height:18px;
+      gap:10px;
+      min-height:16px;
     }
     .ctx-stat-row .ctx-label {
       white-space:nowrap;
@@ -4679,6 +4708,8 @@ body.bg-pattern-ascii-fireflies {
       text-align:right;
       font-variant-numeric:tabular-nums;
       white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
     }
     .edit-btn {
       background:none; border:none;
@@ -6611,6 +6642,10 @@ body.bg-pattern-ascii-fireflies {
     }
     .confirm-btn-secondary { background:var(--bg); color:var(--fg); }
     .confirm-btn-secondary:hover { background:var(--border); }
+    #styled-confirm-ok {
+      position: relative;
+      top: 2px;
+    }
     #styled-confirm-cancel .styled-confirm-cancel-label {
       position:relative;
       top:2px;
@@ -16849,7 +16884,8 @@ mark.doc-find-mark.current {
 .diff-chunk-btn-reject:hover { border-color: #f2cc60; background: color-mix(in srgb, #f2cc60 15%, transparent); }
 
 .doc-suggestion-accept-all {
-  flex: 1;
+  flex: 1.3;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -16858,15 +16894,16 @@ mark.doc-find-mark.current {
   border: none;
   border-radius: 5px;
   cursor: pointer;
-  font-size: 10px;
+  font-size: 11px;
   font-family: inherit;
-  background: transparent;
+  white-space: nowrap;
+  background: var(--accent);
   border: 1px solid var(--accent);
-  color: var(--accent);
+  color: var(--bg);
   transition: background 0.1s;
 }
 .doc-suggestion-accept-all:hover {
-  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  background: color-mix(in srgb, var(--accent) 85%, var(--bg));
 }
 .doc-suggestion-reason {
   opacity: 0.6;
@@ -16931,10 +16968,11 @@ mark.doc-find-mark.current {
 /* Mobile: suggestion card overlays top of editor (no room on side) */
 @media (max-width: 768px) {
   .doc-suggestion-card {
-    right: 8px;
+    box-sizing: border-box;
+    left: 8px;
     right: 8px;
     width: auto;
-    top: 8px !important;
+    overflow-y: auto;
   }
   .doc-suggestion-card::before { display: none; }
 }
@@ -17962,6 +18000,15 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   padding: 2px 4px;
   box-sizing: border-box;
   width: 100%;
+}
+.adm-endpoint-select-label {
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  margin-right: 5px;
+  flex: 0 0 auto;
+  justify-content: flex-start;
+  cursor: pointer;
 }
 .adm-model-label {
   display: flex;
@@ -31014,10 +31061,49 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   overflow: hidden;
   position: relative;
 }
+.ge-editor-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 34px;
+  padding: 3px 10px;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+.ge-editor-footer .ge-canvas-size {
+  min-width: 0;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 65%, transparent);
+}
+.ge-footer-zoom {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.ge-footer-zoom > .ge-btn { min-width: 28px; min-height: 26px; }
+.ge-footer-zoom .ge-zoom-stack { flex-direction: row; gap: 5px; min-width: 56px; }
+.ge-footer-zoom .ge-zoom-label { top: 0; left: 0; font-size: 11px; letter-spacing: 0; opacity: 0.8; }
+.ge-footer-zoom .ge-zoom-glyph { left: 0; }
+.ge-footer-zoom .ge-stacked-btn { min-width: 48px; }
 .gallery-editor-container {
   flex: 1;
   min-height: 0;
   display: none;
+}
+.gallery-editor-container input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.gallery-editor-container input[type="number"]::-webkit-inner-spin-button,
+.gallery-editor-container input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
 }
 
 /* Toolbar (left) */
@@ -34673,6 +34759,7 @@ button .spinner-whirlpool {
 }
 .ge-layers-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
@@ -34684,6 +34771,14 @@ button .spinner-whirlpool {
   position: relative;
 }
 .ge-layers-title { flex: 1; }
+.ge-layers-header #ge-add-layer { flex: 0 0 auto; white-space: nowrap; }
+.ge-layer-header-tools {
+  display: flex;
+  flex: 0 0 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
 .ge-layers-grab { display: none; } /* mobile only */
 .ge-layers-merge-wrap { position: relative; display: inline-flex; }
 .ge-layers-merge-wrap #ge-layers-merge-btn { position: relative; top: 0; }
@@ -34756,9 +34851,10 @@ button .spinner-whirlpool {
   /* Cap the list so a huge layer stack scrolls within its own box
      rather than pushing the whole panel arbitrarily tall. */
   max-height: 320px;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 0;
+  padding: 0 0 6px;
 }
 .ge-layer-item {
   display: flex;
@@ -34830,9 +34926,12 @@ button .spinner-whirlpool {
 /* Row-hover tint removed — kept the layer row's background stable so
    it doesn't shift visually as the user reaches for the opacity slider. */
 .ge-layer-item.active {
-  background: color-mix(in srgb, var(--red) 8%, transparent);
-  border-left-color: var(--red);
+  background: color-mix(in srgb, var(--accent, var(--red)) 52%, var(--bg-secondary, var(--bg)));
+  border-left-color: var(--accent, var(--red));
+  box-shadow: inset 3px 0 0 var(--accent, var(--red)), inset 0 0 0 1px color-mix(in srgb, var(--accent, var(--red)) 80%, transparent);
 }
+.ge-layer-item.active > .ge-layer-name,
+.ge-layer-group-row.active > .ge-layer-group-name { font-weight: 700; }
 /* "Active parent" — the layer is selected, but a mask sub-layer below
    it is the actual paint target. Soft hint so the user can see which
    parent owns the active mask without competing with the mask's
@@ -34842,7 +34941,7 @@ button .spinner-whirlpool {
   border-left-color: color-mix(in srgb, var(--fg) 30%, transparent);
 }
 .ge-layer-item.selected:not(.active):not(.active-parent) {
-  background: color-mix(in srgb, var(--accent, var(--red)) 7%, transparent);
+  background: color-mix(in srgb, var(--accent, var(--red)) 22%, var(--bg));
   box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
 }
 .ge-layer-group-row {
@@ -34915,8 +35014,8 @@ button .spinner-whirlpool {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg) 65%, transparent);
 }
 .ge-layer-group-row.active {
-  background: color-mix(in srgb, var(--accent, var(--red)) 12%, var(--bg-secondary));
-  box-shadow: inset 2px 0 0 var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 38%, var(--bg-secondary));
+  box-shadow: inset 2px 0 0 var(--accent, var(--red)), inset 0 0 0 1px color-mix(in srgb, var(--accent, var(--red)) 50%, transparent);
 }
 .ge-layer-group-toggle {
   width: 18px;
@@ -35112,28 +35211,40 @@ button .spinner-whirlpool {
 }
 .ge-mask-properties {
   position: relative;
-  flex: 0 0 30px;
+  flex: 0 0 22px;
 }
 .ge-mask-properties > summary {
-  width: 30px;
-  height: 30px;
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  min-height: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   list-style: none;
   cursor: pointer;
   color: var(--fg);
-  border: 1px solid transparent;
+  opacity: 0.4;
+  background: none;
+  border: none;
   border-radius: 4px;
+  transition: opacity 0.1s;
 }
 .ge-mask-properties > summary::-webkit-details-marker { display: none; }
+.ge-mask-properties > summary > svg { width: 12px; height: 12px; flex: none; }
 .ge-mask-properties > summary:hover,
 .ge-mask-properties[open] > summary {
-  color: var(--accent, var(--red));
-  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+  opacity: 0.8;
 }
+.ge-mask-properties[open] > summary { color: var(--accent, var(--red)); opacity: 0.95; }
 .ge-mask-properties-panel {
   position: fixed;
+  box-sizing: border-box;
+  margin: 0;
+  bottom: auto;
+  overflow: auto;
+  color: var(--fg);
   z-index: 9999;
   right: auto;
   top: 0;
@@ -35146,6 +35257,7 @@ button .spinner-whirlpool {
   background: var(--bg-secondary, var(--bg));
   box-shadow: 0 8px 24px rgba(0,0,0,.28);
 }
+.ge-mask-properties-panel:not(:popover-open) { display: none; }
 .ge-mask-sub-item:has(.ge-mask-properties[open]) {
   position: relative;
   z-index: 50;
@@ -35173,6 +35285,19 @@ button .spinner-whirlpool {
 .ge-layers-list > .ge-layer-item:not(.ge-adj-sub-item):not(.ge-mask-sub-item) > .ge-layer-controls,
 .ge-layers-list > .ge-layer-group-row > .ge-layer-controls {
   display: none;
+}
+.ge-layers-list > .ge-layer-item:not(.ge-adj-sub-item):not(.ge-mask-sub-item).active > .ge-layer-controls,
+.ge-layers-list > .ge-layer-item:not(.ge-adj-sub-item):not(.ge-mask-sub-item).active-parent > .ge-layer-controls,
+.ge-layers-list > .ge-layer-group-row.active > .ge-layer-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding-top: 4px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
 }
 .ge-layer-tools {
   display: flex;
@@ -35286,6 +35411,27 @@ button .spinner-whirlpool {
 .ge-layer-btn:hover { opacity: 0.8; }
 .ge-layer-btn.active { color: var(--accent, var(--red)); opacity: 0.95; }
 .ge-layer-btn:disabled { cursor: default; opacity: 0.16; }
+.ge-layer-style-btn { font-style: italic; font-weight: 700; font-size: 13px; }
+.ge-layer-style-menu {
+  animation: none;
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: 4px;
+  min-width: 170px;
+  max-width: calc(100vw - 12px);
+  max-height: calc(100dvh - 12px);
+  overflow-y: auto;
+  box-sizing: border-box;
+  background: var(--panel, var(--bg));
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px #0005;
+}
+.ge-layer-style-menu:not(:popover-open) { display: none; }
+.ge-layer-style-menu:popover-open { display: block; }
+.ge-layer-style-menu > button { width: 100%; border: 0; background: none; font: inherit; text-align: left; }
 .ge-layer-btn.danger:hover { color: var(--red); opacity: 1; }
 
 .ge-layer-lock-menu {
@@ -38101,6 +38247,28 @@ body.doc-find-active mark.doc-find-mark.current {
   color: var(--fg) !important;
   caret-color: var(--fg) !important;
   z-index: 1;
+}
+
+/* Code uses non-wrapping, identical lines in both layers. Prose keeps the
+   single-layer caret fix above. Colors come from the current theme's --hl-*.
+   Find mode retains its own overlay and visible textarea text. */
+.doc-code-syntax .doc-editor-textarea,
+.doc-code-syntax .doc-editor-highlight,
+.doc-code-syntax .doc-editor-highlight code {
+  white-space: pre !important;
+  overflow-wrap: normal !important;
+  word-break: normal !important;
+}
+.doc-code-syntax .doc-editor-highlight code {
+  width: max-content;
+  min-width: 100%;
+}
+body:not(.doc-find-active) .doc-code-syntax:not(.diff-mode) .doc-editor-highlight {
+  display: block !important;
+}
+body:not(.doc-find-active) .doc-code-syntax:not(.diff-mode) .doc-editor-textarea {
+  color: transparent !important;
+  background: transparent !important;
 }
 
 /* Emoji picker (monochrome icon picker) */
@@ -42148,34 +42316,6 @@ body.notes-drag-mode .note-card-pin svg {
 }
 .note-corner-menu-dropdown .ncm-item:hover {
   background: color-mix(in srgb, var(--fg) 8%, transparent);
-}
-.note-checkbox-agent {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 14px;
-  padding: 0;
-  margin: 0 1px;
-  border: 0;
-  background: transparent;
-  color: var(--accent, var(--red));
-  box-shadow: none;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.12s, color 0.12s;
-}
-.note-checkbox:hover .note-checkbox-agent { opacity: 0.55; }
-.note-checkbox-agent:hover {
-  background: transparent;
-  opacity: 1 !important;
-}
-.note-checkbox-agent.is-agent-stream-complete {
-  color: #50fa7b;
-  opacity: 0.9;
-}
-.note-checkbox-agent svg {
-  display: block;
 }
 
 .note-card {

@@ -87,7 +87,7 @@ from src.model_profiles import (
 )
 from src.tool_execution import AgentExecutionBridge, bind_execution_bridge
 from src.turn_contract import (
-    bind_turn_contract, preserve_bound_editor_selected_tools,
+    FAMILY_TOOLS, bind_turn_contract, preserve_bound_editor_selected_tools,
     requested_capabilities, resolve_turn_contract,
     requests_independent_web_source, requires_external_web_verification,
     selected_tools_for_request,
@@ -3061,10 +3061,23 @@ def setup_chat_routes(
             full_schema_route=(_effective_tool_schema_mode == "full"),
         )
         _turn_history = getattr(sess, "history", []) or []
+        from src.turn_contract import corrected_browser_target
+        _corrected_browser_target = corrected_browser_target(message, _turn_history)
         _turn_capabilities = requested_capabilities(
             message, _turn_history,
             active_document=bool(active_doc), workspace=bool(workspace),
+            image_attachment=any(str(a.get('mime') or '').startswith('image/') for a in (ctx.preprocessed.attachment_meta or [])),
         ) if _use_turn_contract else frozenset()
+        if 'image_editing' in _turn_capabilities and ctx.preprocessed.attachment_meta:
+            image_refs = ['odysseus://attachment/' + str(a['id']) for a in ctx.preprocessed.attachment_meta
+                          if a.get('id') and str(a.get('mime') or '').startswith('image/')]
+            if image_refs:
+                image_edit_context = {'role': 'system', 'content':
+                    'For the requested image edit, use edit_image with action=prompt and image_id set to the uploaded image reference: '
+                    + ', '.join(image_refs) + '. Pass the requested changes as prompt. The backend sends the actual source pixels; a description or stock-image URL is not an edited image.'}
+                ctx.messages.insert(0, image_edit_context)
+                if foreground_policy.enabled:
+                    getattr(ctx, 'route_messages', ctx.messages).insert(0, dict(image_edit_context))
         if _use_turn_contract and _explicit_browser_intent:
             # Interactive navigation is already an unambiguous request for
             # the browser family.  The lexical family classifier intentionally
@@ -3086,6 +3099,12 @@ def setup_chat_routes(
             # happened to run earlier in the session.
             _turn_capabilities = frozenset({'search_browser'})
         _active_turn_capabilities = _turn_capabilities
+        if _use_turn_contract and active_doc:
+            # A visible, owner-checked editor is a turn capability even when
+            # the request classifier focuses on another task or misses a
+            # pasted revision request. This only offers permitted schemas;
+            # it never requires or performs a document mutation.
+            _turn_capabilities = _turn_capabilities | {"documents"}
         _clean_v3_preview = bool(_use_turn_contract and _clean_v3_route_requested)
         # requested_capabilities already inherits a typed, recently executed
         # family for referential follow-ups. Do not additionally union stale
@@ -3240,7 +3259,6 @@ def setup_chat_routes(
             _privs = request.app.state.auth_manager.get_privileges(_user)
         if _privs:
             if not _privs.get("can_use_bash", True):
-                from src.turn_contract import FAMILY_TOOLS
                 disabled_tools.update(FAMILY_TOOLS["shell_files"])
             if not _privs.get("can_use_browser", True):
                 disabled_tools.update(_BROWSER_MCP_TOOLS)
@@ -3248,7 +3266,7 @@ def setup_chat_routes(
             if not _privs.get("can_use_documents", True):
                 disabled_tools.update({"manage_documents", "create_document", "edit_document", "update_document", "suggest_document"})
             if not _privs.get("can_generate_images", True):
-                disabled_tools.add("generate_image")
+                disabled_tools.update({"generate_image", "edit_image"})
             if not _privs.get("can_manage_memory", True):
                 disabled_tools.update({"manage_memory", "manage_skills"})
             if not _privs.get("can_use_research", True):
@@ -3332,7 +3350,10 @@ def setup_chat_routes(
             }.issubset(disabled_tools),
         }
         _turn_contract = None
-        if _use_turn_contract and chat_mode == "agent":
+        # Image models execute directly, not through the text-agent inventory.
+        # Keep the permission policy above, but do not apply routing omissions
+        # as denials to this separate execution path.
+        if _use_turn_contract and chat_mode == "agent" and not image_generation_session:
             from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
             from src.tool_utils import get_mcp_manager
             from src.tool_security import blocked_tools_for_owner
@@ -3444,11 +3465,15 @@ def setup_chat_routes(
                 # substitute direct sending or document creation.
                 _turn_capabilities = _turn_capabilities | {"ui"}
                 _required_tools.add("ui_control")
+            if _corrected_browser_target:
+                _selected_tools = {'private_browser', 'web_fetch', 'web_search'}
+                _required_tools = {'private_browser'}
             _turn_contract = resolve_turn_contract(
                 capabilities=_turn_capabilities, schemas=_contract_schemas,
                 policy=_contract_policy, required_tools=_required_tools,
                 required_capabilities=_active_turn_capabilities,
                 selected_tools=_selected_tools,
+                always_available_tools=(FAMILY_TOOLS["documents"] if active_doc else ()),
                 warm_tools=_warm_tools,
                 message=message, history=getattr(sess, "history", []) or [],
             )
@@ -3807,10 +3832,16 @@ def setup_chat_routes(
             yield f'data: {json.dumps(_model_info)}\n\n'
 
             _terminal_saved = False
-            if _is_image_generation_session(sess, owner=_user):
+            if image_generation_session:
                 from src.settings import get_setting
-                if tool_policy.blocks("generate_image"):
-                    _blocked_msg = tool_policy.reason_for("generate_image")
+                _image_upload = _first_image_attachment(chat_handler, att_ids, owner=_user)
+                _image_tool_name = "edit_image" if _image_upload else "generate_image"
+                _blocked_image_tool = next((
+                    name for name in dict.fromkeys(("generate_image", _image_tool_name))
+                    if tool_policy.blocks(name)
+                ), None)
+                if _blocked_image_tool:
+                    _blocked_msg = tool_policy.reason_for(_blocked_image_tool)
                     yield f'data: {json.dumps({"delta": _blocked_msg})}\n\n'
                     yield "data: [DONE]\n\n"
                     _active_streams.pop(session, None)
@@ -3822,8 +3853,6 @@ def setup_chat_routes(
                     return
                 from src.ai_interaction import do_edit_image, do_generate_image
                 _user_msg = message or ""
-                _image_upload = _first_image_attachment(chat_handler, att_ids, owner=_user)
-                _image_tool_name = "edit_image" if _image_upload else "generate_image"
                 yield f'data: {json.dumps({"type": "tool_start", "tool": _image_tool_name, "command": _user_msg[:100]})}\n\n'
                 yield ": heartbeat\n\n"
                 _progress_queue: asyncio.Queue = asyncio.Queue()
@@ -3841,7 +3870,7 @@ def setup_chat_routes(
                         model_spec=sess.model,
                         session_id=session,
                         owner=_user,
-                        size="1024x1024",
+                        size="auto",
                         progress_callback=_image_progress_callback,
                     ))
                 else:
@@ -4420,7 +4449,7 @@ def setup_chat_routes(
                                 elif data.get("type") in (
                                     "tool_start", "tool_output", "agent_step",
                                     "doc_stream_open", "doc_stream_delta",
-                                    "doc_update", "doc_suggestions", "ui_control",
+                                    "doc_update", "doc_suggestions", "editor_progress", "ui_control", "email_open",
                                     "rounds_exhausted", "budget_exceeded",
                                     "loop_breaker_triggered",
                                     "intent_nudge_exhausted",
@@ -4762,6 +4791,14 @@ def setup_chat_routes(
         _expected_run_id = request.headers.get("X-Odysseus-Run-Id")
         stopped = agent_runs.stop(session_id, _expected_run_id)
         return {"stopped": stopped}
+
+    @router.post("/api/chat/finish/{session_id}")
+    async def chat_finish(request: Request, session_id: str) -> Dict[str, Any]:
+        """Finish an editor run without discarding completed tools or review cards."""
+        _verify_session_owner(request, session_id)
+        expected_run_id = request.headers.get("X-Odysseus-Run-Id")
+        accepted = agent_runs.request_finish(session_id, expected_run_id)
+        return {"accepted": accepted}
 
     # ------------------------------------------------------------------ #
     # GET /api/chat/stream_status — check if a stream is active for a session

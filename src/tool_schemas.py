@@ -29,6 +29,7 @@ _BINARY_VISUAL_MEDIA_SUFFIXES = {
 
 _REQUIRED_NATIVE_TOOL_ARGS = {
     "web_search": ("query", "queries"),
+    "get_weather": ("location",),
     "web_fetch": ("url", "urls"),
     "pdf_extract": ("url", "path"),
     "private_browser": ("action",),
@@ -337,9 +338,21 @@ FUNCTION_TOOL_SCHEMAS = [
                 "properties": {
                     "query": {"type": "string", "description": "Search query"},
                     "command": {"type": "string", "description": "Search query in text command form"},
-                    "time_filter": {"type": "string", "enum": ["day", "week", "month", "year"], "description": "Optional publication-date window for recent articles/news. Omit for current documentation, manuals, or features unless the user specifies a publication window."}
+                    "time_filter": {"type": "string", "enum": ["day", "week", "month", "year"], "description": "Optional publication-date window for recent articles/news. Omit for current weather, prices, documentation, manuals, or features unless the user specifies a publication window."}
                 },
                 "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Get current conditions and a three-day forecast for a location from Open-Meteo. No API key. Prefer this over web_search for weather questions.",
+            "parameters": {
+                "type": "object",
+                "properties": {"location": {"type": "string", "description": "City or place, optionally with region/country"}},
+                "required": ["location"]
             }
         }
     },
@@ -356,6 +369,7 @@ FUNCTION_TOOL_SCHEMAS = [
                     "full": {"type": "boolean", "description": "Raise the download budget to the hard cap for large pages/files. Use only after a result reported partial content."},
                     "query": {"type": "string", "description": "Optional comma-separated terms used to select matching passages/pages from long documents or PDFs, for example 'DocVQA, ChartQA, TextVQA, Qwen2.5-VL-72B'."}
                 },
+                "anyOf": [{"required": ["url"]}, {"required": ["urls"]}],
                 "required": []
             }
         }
@@ -687,16 +701,18 @@ FUNCTION_TOOL_SCHEMAS = [
                     },
                     "edits": {
                         "type": "array",
-                        "description": "List of find/replace edits (first match only per edit)",
+                        "description": "List of exact edits. Each target must be unique unless replace_all is explicitly true.",
                         "items": {
                             "type": "object",
                             "properties": {
                                 "find": {"type": "string", "description": "Exact text to find in the document"},
-                                "replace": {"type": "string", "description": "Text to replace it with"}
+                                "replace": {"type": "string", "description": "Text to replace it with"},
+                                "replace_all": {"type": "boolean", "description": "Set true to correct every exact occurrence of the same error throughout the document. Never use for selection-only edits."}
                             },
                             "required": ["find", "replace"]
                         }
-                    }
+                    },
+                    "more": {"type": "boolean", "description": "Set true when more affected passages remain for a following edit batch."}
                 },
                 "required": []
             }
@@ -722,7 +738,8 @@ FUNCTION_TOOL_SCHEMAS = [
                             },
                             "required": ["find", "replace", "reason"]
                         }
-                    }
+                    },
+                    "more": {"type": "boolean", "description": "Set true when more distinct affected passages remain for a following suggestion batch."}
                 },
                 "required": ["suggestions"]
             }
@@ -908,7 +925,13 @@ FUNCTION_TOOL_SCHEMAS = [
                     "folder": {"type": "string", "description": "Email folder for open_email_reply (default INBOX)"},
                     "mode": {"type": "string", "description": "Reply draft mode for open_email_reply: reply, reply-all, or ai-reply"},
                     "body": {"type": "string", "description": "For open_email_reply: reply body to pre-fill. Required whenever the user told you what the reply should say. Opens a draft, does not send."},
-                    "colors": {"type": "object", "description": "For create_theme: the theme colors",
+                    "background": {"type": "object", "description": "For create_theme: choose an effect matching the requested mood. Use none for a plain background or random for a saved random choice.", "properties": {
+                        "pattern": {"type": "string", "enum": ["none", "dots", "synapse", "rain", "constellations", "perlin-flow", "petals", "sparkles", "embers", "starfield-depth", "ascii-fireflies", "random"]},
+                        "intensity": {"type": "number", "minimum": 0, "maximum": 1},
+                        "size": {"type": "number", "minimum": 0.2, "maximum": 3},
+                        "speed": {"type": "number", "minimum": 0.05, "maximum": 2.5}
+                    }, "required": ["pattern"]},
+                    "colors": {"type": "object", "description": "For create_theme: choose bg and accent. Omitted fg, panel and border are derived for readability. Accepts #RGB or #RRGGBB. Explicit overrides are preserved.",
                                "properties": {
                                    "bg": {"type": "string", "description": "Background color (hex, e.g. #1a1a2e)"},
                                    "fg": {"type": "string", "description": "Foreground/text color (hex)"},
@@ -932,7 +955,7 @@ FUNCTION_TOOL_SCHEMAS = [
                                    "accentPrimary": {"type": "string", "description": "Primary accent override (hex, optional)"},
                                    "accentError": {"type": "string", "description": "Error/danger color (hex, optional)"}
                                },
-                               "required": ["bg", "fg", "panel", "border", "accent"]}
+                               "required": ["bg", "accent"]}
                 },
                 "required": ["action"]
             }
@@ -1005,10 +1028,16 @@ FUNCTION_TOOL_SCHEMAS = [
                                     "description": "Built-in action (for task_type=action)"},
                     "trigger_type": {"type": "string", "enum": ["schedule", "event"],
                                      "description": "schedule = time-based, event = count-based"},
-                    "schedule": {"type": "string", "enum": ["once", "daily", "weekly", "monthly"],
+                    "schedule": {"type": "string", "enum": ["once", "daily", "weekly", "monthly", "cron"],
                                  "description": "Schedule frequency (for trigger_type=schedule)"},
+                    "cron_expression": {"type": "string", "description": "For schedule=cron: five-field UTC cron (minute hour day-of-month month weekday). Use for multiple weekdays or other custom recurrence; weekdays 0=Sunday, 1=Monday."},
+                    "weekdays": {"type": "array", "minItems": 1, "uniqueItems": True,
+                                 "items": {"type": "string", "enum": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]},
+                                 "description": "Days for one recurring task, with scheduled_time in UTC. Server builds the schedule; omit day_of_month, scheduled_date, cron_expression and scheduled_day."},
                     "scheduled_time": {"type": "string", "description": "HH:MM in UTC (for schedule triggers). Convert the user's stated local time using the UTC offset given in the 'Current date and time' context."},
                     "scheduled_day": {"type": "integer", "description": "Day of week 0=Mon (weekly) or day of month (monthly)"},
+                    "day_of_month": {"type": "integer", "minimum": 1, "maximum": 31,
+                                     "description": "Day of month for a monthly task. For weekly tasks use weekdays instead."},
                     "scheduled_date": {"type": "string", "description": "ISO datetime for one-off tasks when schedule is 'once', e.g. 2026-08-23T14:30:00Z."},
                     "trigger_event": {"type": "string", "enum": ["session_created", "message_sent", "document_created", "memory_added", "research_completed", "email_received", "skill_added"],
                                       "description": "Event name (for trigger_type=event)"},
@@ -1031,6 +1060,9 @@ FUNCTION_TOOL_SCHEMAS = [
                                "enum": ["list_events", "create_event", "update_event", "delete_event", "list_calendars"],
                                "description": "Action to perform"},
                     "summary": {"type": "string", "description": "Event title (for create/update)"},
+                    "local_start": {"type": "object", "description": "Original stated start date and clock time; backend handles timezone conversion. Alternative to dtstart.", "properties": {"date": {"type": "string", "description": "YYYY-MM-DD"}, "time": {"type": "string", "description": "HH:MM or HH:MM:SS; omit for all_day=true"}}, "required": ["date"]},
+                    "local_end": {"type": "object", "description": "End date and clock time in the same timezone as local_start. Alternative to dtend.", "properties": {"date": {"type": "string", "description": "YYYY-MM-DD"}, "time": {"type": "string", "description": "HH:MM or HH:MM:SS; omit for all_day=true"}}, "required": ["date"]},
+                    "timezone": {"type": "string", "description": "For timed create/update: stated timezone, e.g. UTC, +05:30, or Europe/Paris. Pass dtstart/dtend in that zone's original clock time; the backend converts. Omit for user-local time or all-day dates."},
                     "dtstart": {"type": "string", "description": "Start ISO datetime, or YYYY-MM-DD if all_day"},
                     "dtend": {"type": "string", "description": "End ISO datetime; defaults to +1h (or +1 day for all_day)"},
                     "all_day": {"type": "boolean", "description": "Whether this is an all-day event"},
@@ -1082,7 +1114,7 @@ FUNCTION_TOOL_SCHEMAS = [
                     "pinned": {"type": "boolean", "description": "Pin the note to the top"},
                     "archived": {"type": "boolean", "description": "For update: archive/unarchive. For list: show archived notes when true."},
                     "due_date": {"type": "string", "description": "Reminder time. Accepts natural language ('tomorrow at 9am', '11pm today') or ISO 8601. Fires a notification at that time."},
-                    "index": {"type": "integer", "description": "Checklist item index (for toggle_item, 0-based)"},
+                    "index": {"type": "integer", "description": "Required for toggle_item: 0-based checklist item index. Use view if unknown."},
                     "done": {"type": "boolean", "description": "For toggle_item: target checked state; omit to toggle."}
                 },
                 "required": ["action"]
@@ -1490,12 +1522,13 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "edit_image",
-            "description": "Create an edited copy of a gallery image by upscaling it or removing its background. If the requested edit reports a missing optional dependency or unavailable backend, report that limitation directly; do not install packages or substitute Bash, Python, SVG, or another tool.",
+            "description": "Edit an existing gallery image, preserving it as the source. For follow-ups such as adding an object or changing colors, use action=prompt with the previous tool result's image_id and the edit instructions. This sends the actual image plus prompt to the configured image model and saves a new copy. Also supports upscale and rembg. Report a missing optional dependency or unavailable editing directly; do not install packages or substitute a new text-only generation or shell commands.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "image_id": {"type": "string", "description": "Gallery image ID"},
-                    "action": {"type": "string", "enum": ["upscale", "rembg"], "description": "Edit action"},
+                    "image_id": {"type": "string", "description": "Gallery image ID or supplied odysseus://attachment/ID reference for an owned upload"},
+                    "action": {"type": "string", "enum": ["prompt", "upscale", "rembg"], "description": "Edit action"},
+                    "prompt": {"type": "string", "description": "For action=prompt: requested changes, preserving the rest of the source image"},
                     "scale": {"type": "number", "description": "For upscale: scale factor (default 2)"},
                 },
                 "required": ["image_id", "action"]
@@ -1665,7 +1698,7 @@ FUNCTION_TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Topic, person, sender, or phrase to find"},
-                    "folder": {"type": "string", "description": "IMAP folder (default: INBOX)"},
+                    "folder": {"type": "string", "description": "Limit search to this IMAP folder; omit to search across mailbox folders"},
                     "max_results": {"type": "integer", "description": "Maximum matching messages to return (default: 20)"},
                     "days_back": {"type": "integer", "description": "Optional positive lookback window in days; omit to search the available mailbox history"},
                     "account": {"type": "string", "description": "Optional account name/email/id from list_email_accounts"},
@@ -1694,7 +1727,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "download_attachment",
-            "description": "Open/download an email attachment by UID and attachment index from read_email. For fixture mail this returns readable attachment text inline, so use it when the user asks what an attached PDF/text/CSV says.",
+            "description": "Read/download an email attachment using the UID, index, account and folder from read_email. Returns extracted PDF, DOCX, XLSX and text contents inline. Open relevant attachments when the email body does not answer the question. Reports extraction limitations explicitly.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -2219,8 +2252,9 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
             for edit in edits:
                 if not isinstance(edit, dict):
                     continue
+                marker = "REPLACE_ALL" if edit.get("replace_all") is True else "REPLACE"
                 blocks.append(
-                    f'<<<FIND>>>\n{edit.get("find", "")}\n<<<REPLACE>>>\n{edit.get("replace", "")}\n<<<END>>>'
+                    f'<<<FIND>>>\n{edit.get("find", "")}\n<<<{marker}>>>\n{edit.get("replace", "")}\n<<<END>>>'
                 )
             content = "\n".join(blocks)
     elif tool_type == "suggest_document":
@@ -2324,24 +2358,8 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         elif action == "set_theme":
             content = f"set_theme {value or name}"
         elif action == "create_theme":
-            colors = args.get("colors", {})
-            theme_name = name or value or "custom"
-            bg = colors.get("bg", "#282c34")
-            fg = colors.get("fg", "#9cdef2")
-            panel = colors.get("panel", "#111111")
-            border = colors.get("border", "#355a66")
-            accent = colors.get("accent", "#e06c75")
-            content = f"create_theme {theme_name} {bg} {fg} {panel} {border} {accent}"
-            # Append advanced overrides as key=value
-            adv_keys = [
-                "userBubbleBg", "aiBubbleBg", "bubbleBorder", "sidebarBg",
-                "sectionAccent", "brandColor", "inputBg", "inputBorder",
-                "sendBtnBg", "sendBtnHover", "codeBg", "codeFg",
-                "toggleBg", "toggleActive", "accentPrimary", "accentError",
-            ]
-            for ak in adv_keys:
-                if colors.get(ak):
-                    content += f" {ak}={colors[ak]}"
+            content = json.dumps({"action": action, "name": name or value or "custom",
+                                  "colors": args.get("colors", {}), "background": args.get("background")})
         else:
             content = action
     elif tool_type in ("manage_tasks", "manage_skills", "api_call",

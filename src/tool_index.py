@@ -108,6 +108,7 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "host_shell": "Run shell commands on the TUI host through an explicitly advertised host bridge, not in the backend Docker container. Use for LAN, local IP, subnet, mDNS, Tailscale fallback, SSH target discovery, arp/nmap/ip route diagnostics when backend runtime is container-limited.",
     "python": "Execute Python code for computation, data processing, math, scripting, and parsing. Not for writing code for the user. Prefer a dedicated tool for reading, writing, or searching files; use python only for what no dedicated tool covers. Do not use for web lookup/search; use web_search or web_fetch when web tools are available.",
     "web_search": "Private quick web lookup through Odysseus' configured search backend, normally SearXNG. Use for facts, current events, latest/current information, and ordinary 'search the web/look up/find online' requests. Use this instead of browser navigation to Google/DuckDuckGo/Bing or bash/curl/python/requests scraping. NOT for 'research X' / 'do research on X' requests — those are deep-research jobs (use trigger_research). web_search = one query; trigger_research = a full researched report in the sidebar.",
+    "get_weather": "Get current weather and a three-day forecast for a city or place from Open-Meteo without an API key. Use for weather lookups before web_search.",
     "web_fetch": "Fetch and read the text content of a specific URL/website the user names (e.g. 'check example.com', 'open this link'). Use when you have a concrete URL; for open-ended lookups use web_search instead.",
     "pdf_extract": "Extract focused, source-attributed passages and exact table values from an online PDF or task-local /workspace/*.pdf. Use for arXiv papers, reports, manuals, PDF tables, evaluation metrics, and multi-document PDF extraction. Prefer this over Python requests, curl, downloading, pdftotext, or guessing. Include target model names, metrics, and table headings in query.",
     "youtube_tool": "Read YouTube-specific data without fighting the JS page: video comments, transcripts, metadata, or latest video from a channel. Use for YouTube comments/transcript/channel latest-video tasks; use private_browser only for visual site interaction.",
@@ -488,7 +489,7 @@ class ToolIndex:
                    "find info", "find information", "online about",
                    "on the internet", "google", "latest", "current", "news",
                    "weather", "forecast", "stock price", "price of"}):
-            {"web_search", "web_fetch"},
+            {"web_search", "web_fetch", "get_weather"},
         frozenset({"research", "reserach", "reasearch", "look into", "investigate",
                    "deep dive", "deep research", "find out about", "study up on",
                    "report on", "do research", "look up everything"}):

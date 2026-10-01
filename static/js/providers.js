@@ -153,6 +153,8 @@ export function providerLabel(endpointUrl) {
   if (/^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(host)) {
     return "Local";
   }
+  // Shared-address space used by local overlay networks such as Tailscale.
+  if (/^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host)) return "Local";
   for (const [re, label] of _ENDPOINT_LABELS) {
     if (re.test(host)) return label;
   }

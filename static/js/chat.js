@@ -63,6 +63,7 @@ import { invalidateSettings } from './appConfig.js';
   let _contextHeaderData = null;
   let _contextHeaderBound = false;
   let _contextHeaderAnchorEl = null;
+  let _contextHeaderPopupCleanup = null;
   let _pendingToolApproval = null;
   let _lastPrivateBrowserUrl = '';
   function _isPrivateBrowserTool(tool) {
@@ -330,6 +331,15 @@ import { invalidateSettings } from './appConfig.js';
   }
 
   function _closeContextHeaderPopup() {
+    _contextHeaderPopupCleanup?.();
+    _contextHeaderPopupCleanup = null;
+    const effort = document.getElementById('reasoning-effort-wrap');
+    const effortHome = document.getElementById('reasoning-effort-home');
+    if (effort && effortHome) {
+      effort.querySelector('#reasoning-effort-menu')?.classList.add('hidden');
+      effort.querySelector('#reasoning-effort-btn')?.setAttribute('aria-expanded', 'false');
+      effortHome.appendChild(effort);
+    }
     document.querySelectorAll('.chat-context-popup').forEach(el => el.remove());
     const pill = document.getElementById('chat-context-pill');
     if (pill) pill.classList.remove('open');
@@ -488,8 +498,11 @@ import { invalidateSettings } from './appConfig.js';
     thinkingToggle.type = 'button';
     thinkingToggle.className = `chat-context-toggle${thinkingOn ? ' active' : ''}`;
     thinkingToggle.setAttribute('role', 'switch');
+    thinkingToggle.setAttribute('aria-label', 'Thinking for this chat');
     thinkingToggle.setAttribute('aria-checked', thinkingOn ? 'true' : 'false');
-    thinkingToggle.addEventListener('click', async () => {
+    thinkingToggle.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      thinkingToggle.disabled = true;
       const next = !thinkingToggle.classList.contains('active');
       if (await _saveChatGenerationSettings({ thinking_mode: next ? 'on' : 'off' })) {
         thinkingToggle.classList.toggle('active', next);
@@ -497,10 +510,14 @@ import { invalidateSettings } from './appConfig.js';
         thinkingRow.querySelector('.chat-context-toggle-state').textContent = next ? 'On' : 'Off';
         uiModule.showToast(`Thinking ${next ? 'on' : 'off'} for this chat`);
       }
+      thinkingToggle.disabled = false;
     });
     thinkingRow.appendChild(thinkingToggle);
     popup.appendChild(thinkingRow);
     }
+
+    const effort = document.getElementById('reasoning-effort-wrap');
+    if (effort) popup.appendChild(effort);
 
     const addGenerationSlider = (label, value, min, max, step, formatter, key) => {
       const row = document.createElement('div');
@@ -596,21 +613,23 @@ import { invalidateSettings } from './appConfig.js';
     _contextHeaderAnchorEl?.classList?.add('open');
     _positionContextHeaderPopup(popup, _contextHeaderAnchorEl);
     setTimeout(() => {
+      if (!popup.isConnected) return;
       const closeOnEscape = (ev) => {
         if (ev.key !== 'Escape') return;
         ev.preventDefault();
         ev.stopPropagation();
-        document.removeEventListener('keydown', closeOnEscape, true);
         _closeContextHeaderPopup();
       };
       document.addEventListener('keydown', closeOnEscape, true);
       const close = (ev) => {
         if (popup.contains(ev.target) || pill.contains(ev.target) || _contextHeaderAnchorEl?.contains?.(ev.target)) return;
-        document.removeEventListener('pointerdown', close, true);
-        document.removeEventListener('keydown', closeOnEscape, true);
         _closeContextHeaderPopup();
       };
       document.addEventListener('pointerdown', close, true);
+      _contextHeaderPopupCleanup = () => {
+        document.removeEventListener('pointerdown', close, true);
+        document.removeEventListener('keydown', closeOnEscape, true);
+      };
     }, 0);
   }
 
@@ -743,6 +762,12 @@ import { invalidateSettings } from './appConfig.js';
       const res = await fetch(`/api/session/${encodeURIComponent(sid)}/generation-settings`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(next) });
       if (!res.ok) throw new Error(await res.text());
       _contextHeaderData = { ..._contextHeaderData, ...await res.json() };
+      const session = _liveSessionModule()?.getSessions?.().find(item => item.id === sid);
+      if (session) Object.assign(session, {
+        thinking_mode: _contextHeaderData.thinking_mode,
+        temperature_override: _contextHeaderData.temperature_override,
+        max_tokens_override: _contextHeaderData.max_tokens_override,
+      });
       return true;
     } catch (err) { uiModule.showError(`Could not save chat settings: ${err.message || err}`); return false; }
   }
@@ -2138,6 +2163,7 @@ import { invalidateSettings } from './appConfig.js';
     let holder = null;
     let finalMeta = null;
     let _canonicalTerminalSaved = false;
+    let _streamSawDone = false;
     let spinner = null;
     let timedOut = false;
     let processingProbeTimer = null;
@@ -2163,7 +2189,12 @@ import { invalidateSettings } from './appConfig.js';
     let firstTokenWaitTimers = [];
     let _ttftDisplayTimer = null;
     let _clientTtftSeconds = null;
+    let _editorProgress = null;
     const _ttftLabel = (elapsed) => {
+      if (_editorProgress) {
+        const proposed = Number(_editorProgress.proposed) || 0;
+        return `${proposed > 0 ? `${proposed} proposed` : 'Reviewing'} · ${elapsed.toFixed(1)}s`;
+      }
       if (elapsed >= 120) return `Still waiting for first token · ${elapsed.toFixed(1)}s`;
       if (elapsed >= 60) return `Model pre-filling context · ${elapsed.toFixed(1)}s`;
       if (elapsed >= 20) return `Waiting for first token · ${elapsed.toFixed(1)}s`;
@@ -2172,7 +2203,7 @@ import { invalidateSettings } from './appConfig.js';
     const _startTtftDisplay = () => {
       if (_ttftDisplayTimer) clearInterval(_ttftDisplayTimer);
       const update = () => {
-        if (!spinner || !spinner.element || _clientTtftSeconds != null) return;
+        if (!spinner || !spinner.element || (_clientTtftSeconds != null && !_editorProgress)) return;
         spinner.updateMessage(_ttftLabel((performance.now() - _ttftStartedAt) / 1000));
       };
       update();
@@ -2817,6 +2848,39 @@ import { invalidateSettings } from './appConfig.js';
       let roundReplyText = null;      // Reply-only text after a thinking transition
       let currentToolBubble = null;   // Current tool execution bubble
       let lastToolThread = null;      // Visible tool timeline for tool-only turns
+      let finishEditorButton = null;
+      const clearFinishEditorButton = () => {
+        finishEditorButton?.remove();
+        finishEditorButton = null;
+      };
+      const offerFinishEditorTurn = () => {
+        if (finishEditorButton || !lastToolThread || !_streamRunIds.get(streamSessionId)) return;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'continue-btn resume-btn agent-finish-editor';
+        button.textContent = 'Finish with these';
+        button.title = 'Stop generating after the completed document work; keep the saved edits and suggestions';
+        button.addEventListener('click', async () => {
+          const runId = _streamRunIds.get(streamSessionId);
+          if (!runId) return;
+          button.disabled = true;
+          button.textContent = 'Finishing…';
+          try {
+            const response = await fetch(`${API_BASE}/api/chat/finish/${encodeURIComponent(streamSessionId)}`, {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'X-Odysseus-Run-Id': runId },
+            });
+            const result = await response.json();
+            if (!response.ok || !result.accepted) throw new Error('The run has already finished or changed');
+          } catch (error) {
+            button.disabled = false;
+            button.textContent = 'Finish with these';
+            uiModule?.showError?.(error.message || 'Could not finish this run');
+          }
+        });
+        lastToolThread.appendChild(button);
+        finishEditorButton = button;
+      };
       let roundFinalized = false;     // Whether current round's text is finalized
       let terminalFinalResponseRendered = false; // final_response already rendered the canonical bubble
       let roundFinalization = null;   // Terminal owner/result for the current round
@@ -3218,20 +3282,23 @@ import { invalidateSettings } from './appConfig.js';
         _showThinkingSpinner(label);
       }
 
-      // Auto-show thinking spinner after text stops streaming
-      let _textPauseTimer = null;
-      function _scheduleThinkingSpinner() {
-        if (_textPauseTimer) clearTimeout(_textPauseTimer);
-        _textPauseTimer = setTimeout(() => {
+      // Show waiting feedback only between tool rounds, never infer thinking
+      // from a text pause (which also occurs while a finished reply is saved).
+      let _toolPauseTimer = null;
+      function _scheduleToolWaitSpinner() {
+        if (_toolPauseTimer) clearTimeout(_toolPauseTimer);
+        _toolPauseTimer = setTimeout(() => {
           const active = _activeStreams.get(streamSessionId);
           const isVisible = !(sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId() !== streamSessionId);
-          if (active && isVisible && !_thinkingSpinnerEl) {
+          _toolPauseTimer = null;
+          if (active?.abortCtrl === abortCtrl && !abortCtrl?.signal?.aborted
+              && !_streamSawDone && isVisible && !_thinkingSpinnerEl) {
             _showThinkingSpinner(_thinkingLabel());
           }
         }, 400);
       }
       _cancelThinkingTimer = () => {
-        if (_textPauseTimer) { clearTimeout(_textPauseTimer); _textPauseTimer = null; }
+        if (_toolPauseTimer) { clearTimeout(_toolPauseTimer); _toolPauseTimer = null; }
       };
 
       // Document streaming state (text-fence detection)
@@ -3455,9 +3522,7 @@ import { invalidateSettings } from './appConfig.js';
           _liveThinkTokenCount = 0;
           _liveThinkToggle = null;
           _liveThinkDomId = null;
-          if (spinner && spinner.element) spinner.destroy();
           _renderStream({ knownNormal: true, displayText: _roundDisplayProjector.current() });
-          _scheduleThinkingSpinner();
           return;
         }
 
@@ -3579,6 +3644,13 @@ import { invalidateSettings } from './appConfig.js';
           || /^Latest emails? with attachments\b/i.test(s);
       }
 
+      // Keep processing visible through whitespace/control-only deltas. Swap
+      // it out only after replacement content is in the DOM, in the same paint.
+      function _finishProcessingWhenVisible(content) {
+        if (content && (content.textContent.trim() || content.querySelector('img, svg, canvas'))
+            && spinner && spinner.element) spinner.destroy();
+      }
+
       // Direct render helper for streaming text
       _renderStream = ({ knownNormal = false, displayText = null, replyText = null } = {}) => {
         if (
@@ -3606,6 +3678,7 @@ import { invalidateSettings } from './appConfig.js';
               hljs: window.hljs,
             }));
           renderer.update(visiblePersonaText);
+          _finishProcessingWhenVisible(contentEl);
           uiModule.scrollHistory();
           return;
         }
@@ -3663,6 +3736,7 @@ import { invalidateSettings } from './appConfig.js';
                 hljs: window.hljs,
               }));
             r.update(replyTrimmed);
+            _finishProcessingWhenVisible(liveReply);
           }
           // Reply empty or not — preserve thinking bar, don't fall through to full re-render
           uiModule.scrollHistory();
@@ -3686,6 +3760,7 @@ import { invalidateSettings } from './appConfig.js';
           contentEl.innerHTML =
             '<div class="thinking-section"><div class="thinking-header"><div class="thinking-header-left">Thinking' +
             (lines > 1 ? ` (${lines} lines)` : '') + '</div></div></div>';
+          _finishProcessingWhenVisible(contentEl);
           // The stream renderer self-heals when it next sees this overwritten
           // container (streamingRenderer.js), so no explicit reset is needed here.
           uiModule.scrollHistory();
@@ -3699,6 +3774,7 @@ import { invalidateSettings } from './appConfig.js';
         // See streamingRenderer.js / streamingSegmenter.js.
         if (_docFenceOpened && !dt.trim()) {
           _showDocumentWritingStatus(contentEl);
+          _finishProcessingWhenVisible(contentEl);
           uiModule.scrollHistory();
           return;
         }
@@ -3708,11 +3784,11 @@ import { invalidateSettings } from './appConfig.js';
             hljs: window.hljs,
           }));
         renderer.update(dt);
+        _finishProcessingWhenVisible(contentEl);
         uiModule.scrollHistory();
       };
 
       let _nextIsError = false;
-      let _streamSawDone = false;
       let _streamTerminalError = null;
       let _firstVisibleOutputSeen = false;
       const markFirstVisibleOutput = () => {
@@ -3723,6 +3799,7 @@ import { invalidateSettings } from './appConfig.js';
         clearFirstTokenWaitTimers();
       };
 
+      streamReadLoop:
       while (true) {
         const { done, value } = await reader.read();
         _touchStreamActivity(streamSessionId);
@@ -3770,6 +3847,11 @@ import { invalidateSettings } from './appConfig.js';
 
             if (data === '[DONE]') {
               _streamSawDone = true;
+              // DONE completes the protocol even if the HTTP connection stays
+              // open for server cleanup. Do not wait for another network read.
+              void reader.cancel().catch(() => {});
+              _cancelThinkingTimer();
+              _removeThinkingSpinner();
               const _completedStreamState = _activeStreams.get(streamSessionId);
               const _completedWhileAway = document.visibilityState !== 'visible' || !!_completedStreamState?.wasAway;
               _closeOpenThinkingMarkup(_isBg);
@@ -3799,7 +3881,7 @@ import { invalidateSettings } from './appConfig.js';
                 }
                 // Don't do foreground final render — the checkBackgroundStream poll
                 // will detect 'completed' and reload history cleanly
-                break;
+                break streamReadLoop;
               }
               if (_completedWhileAway && sessionModule && sessionModule.markStreamComplete) {
                 sessionModule.markStreamComplete(streamSessionId, { force: true });
@@ -3844,11 +3926,15 @@ import { invalidateSettings } from './appConfig.js';
                 if (_liveThinkToggle) _liveThinkToggle.id = _thinkIdDone + '-toggle';
               }
               // Normal foreground completion — metrics will be displayed in the final render block below
-              break;
+              break streamReadLoop;
             }
             try {
               const json = JSON.parse(data);
-              if (['stable', 'complete', 'error', 'agent_terminal', 'chat_terminal'].includes(json.type)) _settleTurnRendering();
+              if (['stable', 'complete', 'error', 'agent_terminal', 'chat_terminal'].includes(json.type)) {
+                _cancelThinkingTimer();
+                _removeThinkingSpinner();
+                _settleTurnRendering();
+              }
               if (
                 (typeof json.delta === 'string' && json.delta.length > 0)
                 || (json.type === 'final_response' && String(json.content || json.delta || '').length > 0)
@@ -3863,7 +3949,7 @@ import { invalidateSettings } from './appConfig.js';
                 if (spinner && spinner.element) spinner.destroy();
                 break;
               }
-              if (json.delta || json.type === 'final_response' || json.type === 'agent_prep' || json.type === 'tool_approval_resolved' || json.type === 'generated_image' || json.type === 'tool_start' || json.type === 'tool_output' || json.type === 'tool_progress' || json.type === 'agent_step' || json.type === 'loop_breaker_triggered' || json.type === 'intent_nudge_exhausted' || json.type === 'doc_stream_open' || json.type === 'doc_stream_delta' || json.type === 'research_progress') {
+              if (json.delta || json.type === 'final_response' || json.type === 'agent_prep' || json.type === 'tool_approval_resolved' || json.type === 'generated_image' || json.type === 'tool_start' || json.type === 'tool_output' || json.type === 'tool_progress' || json.type === 'editor_progress' || json.type === 'agent_step' || json.type === 'loop_breaker_triggered' || json.type === 'intent_nudge_exhausted' || json.type === 'doc_stream_open' || json.type === 'doc_stream_delta' || json.type === 'research_progress') {
                 clearResponseTimeout();
                 clearProcessingProbe();
                 clearFirstTokenWaitTimers();
@@ -3882,7 +3968,9 @@ import { invalidateSettings } from './appConfig.js';
               if (json.type === 'agent_prep') {
                 if (!_isBg) {
                   _cancelThinkingTimer();
-                  _replaceThinkingSpinner('Preparing agent');
+                  // The existing processing row already owns this wait. Do
+                  // not create a second status bubble beside it.
+                  if (!spinner?.element) _replaceThinkingSpinner('Preparing agent');
                 }
                 continue;
               }
@@ -3895,6 +3983,8 @@ import { invalidateSettings } from './appConfig.js';
                 continue;
               }
               if (json.type === 'final_response') {
+                _editorProgress = null;
+                clearFinishEditorButton();
                 try {
                   window.dispatchEvent(new CustomEvent('odysseus:agent-final-response', { detail: json }));
                 } catch (_) {}
@@ -4019,7 +4109,6 @@ import { invalidateSettings } from './appConfig.js';
                   if (isThinking) {
                     _queueLiveThinking(roundText);
                   } else {
-                    if (spinner && spinner.element) spinner.destroy();
                     if (roundReplyText !== null) {
                       roundReplyText += _delta;
                       const replyDisplayText = _replyDisplayProjector.append(_delta, roundReplyText);
@@ -4027,7 +4116,6 @@ import { invalidateSettings } from './appConfig.js';
                     } else {
                       _renderStream({ knownNormal: true, displayText: _roundDisplayProjector.current() });
                     }
-                    _scheduleThinkingSpinner();
                     if (streamingTTS) window.aiTTSManager.streamingUpdate(roundText);
                   }
                   continue;
@@ -4141,8 +4229,7 @@ import { invalidateSettings } from './appConfig.js';
                 } else if (!hasUnclosedThink && isThinking) {
                   _finishLiveThinkingTransition();
                 } else {
-                  // Normal streaming
-                  if (spinner && spinner.element) spinner.destroy();
+                  // Normal streaming: retain processing until the renderer has visible content.
                   if (roundReplyText !== null) {
                     roundReplyText += _delta;
                     const replyDisplayText = _replyDisplayProjector.append(_delta, roundReplyText);
@@ -4150,7 +4237,6 @@ import { invalidateSettings } from './appConfig.js';
                   } else {
                     _renderStream({ knownNormal: true, displayText: _roundDisplayProjector.current() });
                   }
-                  _scheduleThinkingSpinner();
                   // Feed streaming TTS with accumulated text
                   if (streamingTTS) window.aiTTSManager.streamingUpdate(roundText);
                 }
@@ -4571,6 +4657,7 @@ import { invalidateSettings } from './appConfig.js';
                 if (holder && json.id) holder.dataset.dbId = json.id;
 
               } else if (json.type === 'tool_start') {
+                _editorProgress = null;
                 // A tool call is the model's first completed output for this
                 // round, even though it is rendered as a structured card
                 // rather than prose. Stop the initial TTFT ticker here so
@@ -4673,6 +4760,11 @@ import { invalidateSettings } from './appConfig.js';
                   el2.textContent = s < 60 ? `${s.toFixed(2)}s` : `${Math.floor(s / 60)}m ${(s % 60).toFixed(2).padStart(5, '0')}s`;
                 }, 50);
                 uiModule.scrollHistory();
+
+              } else if (json.type === 'editor_progress') {
+                if (_isBg) continue;
+                _editorProgress = json;
+                if (spinner?.element) _startTtftDisplay();
 
               } else if (json.type === 'tool_progress') {
                 // Long-running subprocess (bash, python) is still in
@@ -4874,7 +4966,7 @@ import { invalidateSettings } from './appConfig.js';
 
                 // Schedule a thinking spinner between tool rounds (short delay so
                 // agent_step in the same SSE chunk can cancel it before it shows)
-                _scheduleThinkingSpinner();
+                _scheduleToolWaitSpinner();
                 uiModule.scrollHistory();
 
               } else if (json.type === 'doc_stream_open') {
@@ -4905,15 +4997,25 @@ import { invalidateSettings } from './appConfig.js';
               } else if (json.type === 'doc_update') {
                 // doc_update means the server already saved the doc to DB.
                 if (_isBg) continue;
+                _editorProgress = null;
                 if (documentModule) {
                   documentModule.handleDocUpdate(json);
                 }
+                offerFinishEditorTurn();
 
               } else if (json.type === 'doc_suggestions') {
                 if (_isBg) continue;
+                _editorProgress = null;
                 if (documentModule && documentModule.handleDocSuggestions) {
                   documentModule.handleDocSuggestions(json);
                 }
+                offerFinishEditorTurn();
+
+              } else if (json.type === 'email_open') {
+                if (_isBg) continue;
+                import('./emailLibrary.js?v=20260915trashmove2').then(mod =>
+                  mod.openEmailFromTool(json, () => sessionModule.getCurrentSessionId() === streamSessionId)
+                ).catch(err => uiModule.showToast(`Could not open email: ${err.message}`));
 
               } else if (json.type === 'ui_control') {
                 if (_isBg) continue;
@@ -4938,7 +5040,8 @@ import { invalidateSettings } from './appConfig.js';
               } else if (json.type === 'agent_step') {
                 if (!_turnRendering.accepts(json)) continue;
                 if (!startsContinuationRound(json)) {
-                  if (spinner && spinner.element) spinner.updateMessage('Generating response');
+                  // Keep the current label stable; the TTFT ticker owns it
+                  // until visible output arrives.
                   continue;
                 }
                 _closeOpenThinkingMarkup(_isBg);
@@ -5333,9 +5436,9 @@ import { invalidateSettings } from './appConfig.js';
         // Attach footer to the last visible bubble (roundHolder for multi-round agent, holder for single)
         const footerTarget = (roundHolder && roundHolder !== holder && roundHolder.style.display !== 'none') ? roundHolder : holder;
         if (!footerTarget.querySelector('.msg-footer')) {
-          footerTarget.appendChild(createMsgFooter(footerTarget));
+          footerTarget.appendChild(createMsgFooter(footerTarget, { animate: true }));
         }
-        if (_generatedImagesForTurn.length && !_isBg) {
+        if (_generatedImagesForTurn.length && !_isBgFinal) {
           _generatedImagesForTurn.forEach(imgData => _appendGeneratedImageBubble(imgData, streamSessionId));
         }
         // Add "View Report" link for completed research
@@ -5704,6 +5807,8 @@ import { invalidateSettings } from './appConfig.js';
         }
       }
     } finally {
+      _editorProgress = null;
+      document.querySelectorAll('.agent-finish-editor').forEach(button => button.remove());
       _settleTurnRendering();
       _cancelLiveThinkingWork();
       clearResponseTimeout();
@@ -5718,6 +5823,14 @@ import { invalidateSettings } from './appConfig.js';
       // reader session id, research marker, UI — to the replacement.
       const _ownsStreamState =
         _streamGenerations.get(streamSessionId) === streamGeneration;
+      if (_ownsStreamState && sessionModule.getCurrentSessionId() === streamSessionId) {
+        documentModule?.streamDocFinalize?.();
+      }
+      if (_ownsStreamState && _streamSawDone) {
+        sessionModule.markStreamComplete?.(streamSessionId);
+      } else if (_ownsStreamState && abortCtrl?._reason === 'user-stop') {
+        sessionModule.clearStreaming?.(streamSessionId);
+      }
       const _finallyRegistered = _activeStreams.get(streamSessionId);
       if (!_finallyRegistered || _finallyRegistered.abortCtrl === abortCtrl) {
         _activeStreams.delete(streamSessionId);
@@ -6435,7 +6548,7 @@ import { invalidateSettings } from './appConfig.js';
                 progress.textContent = String(json.tail || json.message || '');
               }
             } else if (json.type === 'agent_step') {
-              if (replayRendering.accepts(json)) startReplayRound();
+              if (replayRendering.accepts(json) && startsContinuationRound(json)) startReplayRound();
             }
           }
         }

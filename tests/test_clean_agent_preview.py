@@ -2386,6 +2386,8 @@ def test_skill_renderer_applies_one_global_limit_across_status_groups():
     assert rendered.count("\n- ") == 4  # three rows plus one overflow row
     assert "one" in rendered and "two" in rendered and "three" in rendered
     assert "four" not in rendered
+    assert "[one](#skill-one)" in rendered
+    assert "[three](#skill-three)" in rendered
 
 
 def test_skill_renderer_reports_search_hits_from_structured_result():
@@ -2399,6 +2401,7 @@ def test_skill_renderer_reports_search_hits_from_structured_result():
     assert rendered.startswith("Skill matches (2):")
     assert "artifact-completion" in rendered
     assert "reviewable-external-draft" in rendered
+    assert "[artifact-completion](#skill-artifact-completion)" in rendered
     assert "no saved skill lookup" not in rendered
 
 
@@ -2781,8 +2784,8 @@ def test_skill_repeat_applies_new_cap_to_json_wrapped_tool_payload():
         )})},
     ]
     rendered = prior_collection_repeat_answer('again, cap at three', history)
-    assert '- Alpha (general)' in rendered
-    assert '- Gamma' in rendered
+    assert '- [Alpha](#skill-Alpha) (general)' in rendered
+    assert '- [Gamma](#skill-Gamma)' in rendered
     assert '- Delta' not in rendered
 
 
@@ -3032,6 +3035,17 @@ def test_broad_briefing_requires_substance_and_clickable_source_links():
         substantial + ' https://example.org/report', 'AI news'
     )
     assert not incomplete_broad_web_answer('Short answer.', 'What is Python?')
+
+
+@pytest.mark.parametrize('attempts', [1, 2, 3])
+def test_broad_briefing_quality_repair_cannot_restart_again(attempts):
+    from src.clean_agent_preview import incomplete_broad_web_answer
+
+    short = 'One headline. https://example.org/news'
+    assert incomplete_broad_web_answer(short, 'Latest Sweden news?')
+    assert not incomplete_broad_web_answer(
+        short, 'Latest Sweden news?', recovery_attempts=attempts,
+    )
 
 
 def test_bounded_web_evidence_answer_preserves_sources_without_claiming_synthesis():
@@ -3438,10 +3452,12 @@ def test_every_compactly_offered_preview_tool_has_valid_policy_permitted_call():
             'ask_teacher': ({'problem': 'Check whether this claim is grounded'}, 'ask the teacher model to review this claim'),
         'extract_text': ({'path': 'odysseus://attachment/fixture.png'}, 'OCR this image'),
         'edit_image': ({'image_id': 'owned-image', 'action': 'upscale', 'scale': 2}, 'upscale this image 2x'),
+        'generate_image': ({'prompt': 'A city'}, 'Make an image of a city'),
         'bash': ({'command': 'pwd'}, 'run this shell command'),
         'create_document': ({'title': 'x', 'content': 'y'}, 'create a document'),
             'edit_document': ({'edits': [{'find': 'x', 'replace': 'y'}]}, 'edit my document'),
-            'draft_email': ({'to': 'a@example.com', 'subject': 'Review', 'body': 'Draft'}, 'draft an email to a@example.com for review'),
+                'draft_email': ({'to': 'a@example.com', 'subject': 'Review', 'body': 'Draft'}, 'draft an email to a@example.com for review'),
+                'resolve_contact': ({'name': 'Jon'}, 'Write an email to Jon'),
             'draft_email_reply': ({'uid': '1', 'body': 'Thursday suits better'}, 'draft a reply to email UID 1 for review'),
                 'download_attachment': ({'uid': '1', 'index': 0}, 'open attachment 0 on email UID 1'),
                 'manage_email_state': ({'action': 'list_blocked'}, 'show my blocked senders list'),
@@ -3520,6 +3536,7 @@ def test_every_compactly_offered_preview_tool_has_valid_policy_permitted_call():
                         'tail_serve_output',
                     }
                 else {'image_editing'} if name == 'edit_image'
+                else {'image_generation'} if name == 'generate_image'
                 else frozenset()
             ),
             contract_required_tools={name},
@@ -4388,7 +4405,7 @@ def test_v3_ui_schema_advertises_only_policy_executable_client_local_actions():
         'switch_model',
     ]
     assert 'enum' not in parameters['properties']['name']
-    assert set(parameters['properties']) == {'action', 'name', 'view', 'colors'}
+    assert set(parameters['properties']) == {'action', 'name', 'view', 'colors', 'background'}
     assert 'calendar' in parameters['properties']['view']['description']
 
 
@@ -4514,6 +4531,41 @@ async def test_stream_emits_incremental_text_and_persistable_history(monkeypatch
     metrics = next(e['data'] for e in events if e.get('type') == 'metrics')
     assert metrics['clean_v3_turn'] == [{'role': 'assistant', 'content': 'Hello there'}]
     assert raw[-1] == 'data: [DONE]\n\n'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('provider_error', [
+    "'Qwen3_5MTPDraftModel' object has no attribute 'language_model'",
+    {'message': "'Qwen3_5MTPDraftModel' object has no attribute 'language_model'"},
+])
+async def test_preview_provider_stream_error_is_terminal_not_empty_answer(monkeypatch, provider_error):
+    import src.clean_agent_preview as module
+
+    class Response:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def raise_for_status(self): pass
+        async def aiter_lines(self):
+            yield 'data: ' + json.dumps({'error': provider_error})
+
+    class Client:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def stream(self, *args, **kwargs): return Response()
+
+    monkeypatch.setattr(module.httpx, 'AsyncClient', Client)
+    contract = resolve_full_inventory_contract(schemas=[], policy=ToolPolicy())
+    raw = [chunk async for chunk in stream_preview(
+        endpoint_url='http://test', model='test',
+        messages=[{'role': 'user', 'content': 'hi'}], headers={},
+        turn_contract=contract, session_id='test', owner='test',
+        disabled_tools=set(), tool_policy=ToolPolicy(),
+    )]
+    assert raw[-1].startswith('event: error\ndata: ')
+    assert 'Qwen3_5MTPDraftModel' in raw[-1]
+    assert all('returned no answer' not in chunk for chunk in raw)
+    assert all('"type": "metrics"' not in chunk for chunk in raw)
 
 
 @pytest.mark.asyncio

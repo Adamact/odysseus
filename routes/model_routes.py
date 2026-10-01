@@ -1507,7 +1507,7 @@ def setup_model_routes(model_discovery):
     # opens from starting duplicate /models probes, and gives slow/offline
     # providers a cooldown after failures.
     _refresh_state: Dict[str, Dict[str, Any]] = {}
-    _refresh_inflight = {"v": False}  # coarse single-flight guard
+    _refresh_inflight = {"v": False, "done": None}  # coarse single-flight guard
     _REFRESH_FAILURE_BASE = 300.0
     _REFRESH_FAILURE_MAX = 3600.0
 
@@ -1581,7 +1581,9 @@ def setup_model_routes(model_discovery):
         endpoints are skipped unless explicitly forced."""
         import threading
         if _refresh_inflight["v"]:
-            return  # already running
+            return _refresh_inflight["done"]  # already running
+        done = threading.Event()
+        _refresh_inflight["done"] = done
         _refresh_inflight["v"] = True
 
         def _do():
@@ -1649,7 +1651,9 @@ def setup_model_routes(model_discovery):
                 for st in _refresh_state.values():
                     st["inflight"] = False
                 _refresh_inflight["v"] = False
+                done.set()
         threading.Thread(target=_do, daemon=True).start()
+        return done
 
     def _fetch_models(owner: str = "", is_admin: bool = False):
         """Return model list from cached data (instant). Background refresh keeps caches fresh.
@@ -1740,7 +1744,8 @@ def setup_model_routes(model_discovery):
         return {"hosts": [], "items": items}
 
     @router.get("/models")
-    def api_models(request: Request, refresh: bool = False, background: bool = False):
+    def api_models(request: Request, refresh: bool = False, background: bool = False,
+                   wait_refresh: bool = False):
         """Get available models — per-user (caller sees only their endpoints +
         legacy/shared null-owner rows). Cached per-user for 30s."""
         # Require auth; "" is the unconfigured single-user mode, treated as
@@ -1786,7 +1791,15 @@ def setup_model_routes(model_discovery):
         # Page boot can opt out with background=false so opening Odysseus does
         # not start endpoint probes against slow/offline model servers.
         if background or refresh:
-            _refresh_caches_bg(force=refresh)
+            done = _refresh_caches_bg(force=refresh)
+            if refresh and wait_refresh and done is not None:
+                done.wait(timeout=15)
+                refreshed = _models_cache.get(_cache_key)
+                if refreshed is not None:
+                    result = refreshed["data"]
+                else:
+                    result = _fetch_models(owner=owner, is_admin=_is_admin)
+                    _models_cache[_cache_key] = {"data": result, "time": _time.time()}
         return result
 
     # Brief cache for local-probe results so picker-open doesn't hammer

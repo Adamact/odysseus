@@ -38,6 +38,68 @@ def tokyo_offset():
         set_user_tz_offset(None)
 
 
+@pytest.mark.parametrize('structured', [False, True])
+@pytest.mark.parametrize('zone,start,end,expected_start,expected_end', [
+    ('Asia/Tokyo', '2026-10-06T18:00:00', '2026-10-06T18:30:00',
+     '2026-10-06T09:00:00Z', '2026-10-06T09:30:00Z'),
+    ('+05:30', '2026-10-06T00:15:00', '2026-10-06T00:45:00',
+     '2026-10-05T18:45:00Z', '2026-10-05T19:15:00Z'),
+])
+async def test_mutation_results_report_saved_times(zone, start, end, expected_start, expected_end, structured):
+    from src.tools.calendar import do_manage_calendar
+
+    owner = 'saved-times-' + uuid.uuid4().hex
+    args = dict(action='create_event', summary='Call', timezone=zone,
+                dtstart=start, dtend=end)
+    if structured:
+        for source, target in [('dtstart', 'local_start'), ('dtend', 'local_end')]:
+            day, clock = args.pop(source).split('T')
+            args[target] = {'date': day, 'time': clock}
+    created = await do_manage_calendar(json.dumps(args), owner=owner)
+    assert created.get('exit_code') == 0, created
+    duplicate = await do_manage_calendar(json.dumps(args), owner=owner)
+    assert duplicate.get('duplicate') is True, duplicate
+    updated = await do_manage_calendar(json.dumps({
+        **args, 'action': 'update_event', 'uid': created['uid'],
+    }), owner=owner)
+    for result in (created, duplicate, updated):
+        assert result['dtstart'] == expected_start
+        assert result['dtend'] == expected_end
+        assert result['is_utc'] is True
+    with _TS() as db:
+        events = db.query(CalendarEvent).filter(CalendarEvent.uid == created['uid']).all()
+        assert len(events) == 1
+        assert events[0].dtstart.isoformat() + 'Z' == expected_start
+        assert events[0].dtend.isoformat() + 'Z' == expected_end
+
+
+@pytest.mark.parametrize('start,zone', [
+    ('2027-03-14T02:30:00', 'America/New_York'),
+    ('2027-11-07T01:30:00', 'America/New_York'),
+    ('2027-07-06T10:00:00', 'Not/AZone'),
+])
+async def test_invalid_explicit_zone_time_does_not_mutate_event(start, zone):
+    from src.tools.calendar import do_manage_calendar
+
+    owner = 'invalid-zone-' + uuid.uuid4().hex
+    created = await do_manage_calendar(json.dumps({
+        'action': 'create_event', 'summary': 'Original',
+        'dtstart': '2027-07-06T10:00:00', 'timezone': 'UTC',
+    }), owner=owner)
+    assert created['exit_code'] == 0
+    for action in ('create_event', 'update_event'):
+        result = await do_manage_calendar(json.dumps({
+            'action': action, 'uid': created['uid'] if action == 'update_event' else '',
+            'summary': 'Changed', 'dtstart': start, 'timezone': zone,
+        }), owner=owner)
+        assert result.get('exit_code') == 1, result
+    with _TS() as db:
+        events = db.query(CalendarEvent).join(cdb.CalendarCal).filter(cdb.CalendarCal.owner == owner).all()
+        assert len(events) == 1
+        assert events[0].summary == 'Original'
+        assert events[0].dtstart.isoformat() == '2027-07-06T10:00:00'
+
+
 async def test_update_event_dtstart_anchored_to_user_tz(tokyo_offset):
     from src.tool_implementations import do_manage_calendar
 

@@ -53,6 +53,14 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
         "remove": "delete",
     }
     action = _NOTE_ACTION_ALIASES.get(action, action)
+    if action == "add" and any(args.get(key) for key in ("id", "note_id", "noteId")):
+        return {
+            "error": 'Nothing saved. add creates a new note and cannot take an existing note ID. '
+                     'To fill or change that note, retry with action="update", id set to the existing '
+                     'note ID, and checklist_items plus note_type="checklist" for a to-do list. '
+                     'Do not create another note.',
+            "exit_code": 1,
+        }
     if action == "remove_item":
         return {
             "error": "To remove a checklist item, use update with id and the complete remaining checklist_items, preserving their done states. No item was changed.",
@@ -267,6 +275,29 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                 items_raw = args.get("items")
             items_json = json.dumps(items_raw) if items_raw is not None else None
             note_type = args.get("note_type", "checklist" if items_raw else "note")
+            if not title and note_type in {"checklist", "todo", "goal"}:
+                from src.user_time import now_user_local
+                title = f"To-do - {now_user_local().date().isoformat()}"
+            if note_type in {"checklist", "todo", "goal"} and not isinstance(items_raw, list):
+                return {
+                    "error": 'Nothing saved. Checklist creation requires checklist_items as an array of '
+                             '{"text":"task including any stated time","done":false}. '
+                             'Put each task in its own item, not in title. Use a short title only; '
+                             'do not include explanations or timezone calculations. Retry with the structured items. '
+                             'Use [] only when the user explicitly requested an empty checklist.',
+                    "exit_code": 1,
+                }
+            if items_raw is not None and (
+                not isinstance(items_raw, list)
+                or any(not isinstance(item, dict)
+                       or not isinstance(item.get("text"), str)
+                       or not item["text"].strip()
+                       or not isinstance(item.get("done", False), bool)
+                       for item in items_raw)
+            ):
+                return {"error": 'Nothing saved. checklist_items must be an array of objects with '
+                                 'nonempty text and an optional boolean done. Retry with corrected items.',
+                        "exit_code": 1}
             # Accept natural-language due_date ("tomorrow at 1pm") in
             # addition to ISO. Use the user-tz-aware parser so the LLM's
             # naive times ("today at 9pm") are anchored to the USER's clock,
@@ -451,7 +482,9 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             if "archived" in args:
                 note.archived = args["archived"]
             db.commit()
-            return {"response": f"Note updated: \"{note.title or '(untitled)'}\"", "exit_code": 0}
+            return {"response": f"Note updated: \"{note.title or '(untitled)'}\"",
+                    "note_id": note.id, "note_title": note.title or "",
+                    "open_url": f"/#open=notes&note={note.id}", "exit_code": 0}
 
         elif action == "delete":
             note_id = _note_id_arg()
@@ -494,7 +527,9 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
 
         elif action == "toggle_item":
             note_id = _note_id_arg()
-            index = args.get("index", 0)
+            index = args.get("index")
+            if not isinstance(index, int) or isinstance(index, bool):
+                return {"error": "toggle_item requires an explicit integer index (0-based). Use view to inspect item indices if unknown; no change made.", "exit_code": 1}
             note = _note_by_prefix(note_id)
             if not note:
                 return {"error": f"Note '{note_id}' not found", "exit_code": 1}

@@ -103,11 +103,13 @@ def test_narrow_lookups_are_not_misclassified_as_broad_briefings(prompt):
 
 
 def resolve(capabilities=(), *, schemas=FUNCTION_TOOL_SCHEMAS, policy=None, required_tools=(),
-            required_capabilities=None, selected_tools=None, warm_tools=(), message=None):
+            required_capabilities=None, selected_tools=None, always_available_tools=(),
+            warm_tools=(), message=None):
     return resolve_turn_contract(capabilities=capabilities, schemas=schemas,
                                  policy=policy or ToolPolicy(), required_tools=required_tools,
                                  required_capabilities=required_capabilities,
                                  selected_tools=selected_tools,
+                                 always_available_tools=always_available_tools,
                                  warm_tools=warm_tools, message=message)
 
 
@@ -376,7 +378,8 @@ def test_email_and_document_are_independent_actions():
 def test_explicit_session_lifecycle_operations_select_session_tool(prompt, tool):
     expected_family = "memory" if tool == "search_chats" else "sessions"
     assert requested_capabilities(prompt) == {expected_family}
-    assert selected_tools_for_request(prompt) == {tool}
+    expected_tools = {tool, 'list_sessions'} if tool == 'manage_session' else {tool}
+    assert selected_tools_for_request(prompt) == expected_tools
 
 
 @pytest.mark.parametrize("prompt,tool", [
@@ -1672,10 +1675,22 @@ def test_missing_supplemental_inventory_is_explicit(family):
 
 @pytest.mark.parametrize("policy", [ToolPolicy(), ToolPolicy(block_all_tool_calls=True)])
 def test_empty_selection_means_no_tools(policy):
-    contract = resolve(policy=policy)
+    contract = resolve(policy=policy, selected_tools=())
     assert contract.offered == contract.required == contract.unavailable == frozenset()
     assert contract.schemas() == []
     assert not contract.permits("manage_calendar")
+
+
+@pytest.mark.parametrize('policy', [
+    ToolPolicy(disabled_tools=frozenset({'bash', 'python', 'read_file'})),
+    ToolPolicy(block_all_tool_calls=True),
+])
+def test_unclassified_recovery_tools_respect_explicit_denials(policy):
+    contract = resolve(policy=policy)
+    assert not {'bash', 'python', 'read_file'} & contract.offered
+    assert not any(policy.blocks(name) for name in contract.offered)
+    if policy.block_all_tool_calls:
+        assert not contract.offered
 
 
 @pytest.mark.parametrize("policy", [
@@ -4193,6 +4208,37 @@ def test_non_editor_selection_is_not_expanded_by_visible_document():
         {"web_search"},
         active_document=True,
     ) == {"web_search"}
+
+
+@pytest.mark.parametrize("message, selected, expected_other_tool", [
+    ("Search for the latest AI news.", {"web_search"}, "web_search"),
+    ("Here is my entire essay for review: " + "A paragraph. " * 600, {"web_search"}, None),
+    ("Hello", None, None),
+])
+def test_open_editor_tools_survive_request_narrowing(message, selected, expected_other_tool):
+    requested = requested_capabilities(message, active_document=True)
+    contract = resolve(
+        set(requested) | {"documents"},
+        required_capabilities=requested,
+        selected_tools=selected,
+        always_available_tools=FAMILY_TOOLS["documents"],
+        message=message,
+    )
+    assert FAMILY_TOOLS["documents"] <= contract.offered
+    if expected_other_tool:
+        assert expected_other_tool in contract.offered
+
+
+def test_open_editor_tools_still_obey_disabled_tool_policy():
+    contract = resolve(
+        {"search_browser", "documents"},
+        required_capabilities={"search_browser"},
+        selected_tools={"web_search"},
+        always_available_tools=FAMILY_TOOLS["documents"],
+        policy=ToolPolicy(disabled_tools=frozenset(FAMILY_TOOLS["documents"])),
+    )
+    assert not (FAMILY_TOOLS["documents"] & contract.offered)
+    assert "web_search" in contract.offered
 
 
 def test_discourse_prefixed_personal_family_switch_routes_normally():

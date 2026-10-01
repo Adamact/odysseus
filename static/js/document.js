@@ -9,6 +9,7 @@
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import sessionModule from './sessions.js';
 import emojiPicker from './emojiPicker.js';
+import { readEmailReplyResponse } from './emailReplyStream.js';
 import markdownModule from './markdown.js';
 import codeRunnerModule from './codeRunner.js?v=20260831richtexttools91';
 import { langIcon } from './langIcons.js?v=20260831richtexttools91';
@@ -3579,10 +3580,6 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     catch (_) { return _emailPlainTextToHtml(raw); }
   }
 
-  function _richTextContentToPlain(content) {
-    return _normalizeRichStatsText(_emailHtmlToPlainText(_richTextContentToHtml(content)));
-  }
-
   function _emailQuoteMarkerMatch(text) {
     const raw = String(text || '');
     return raw.match(/(?:<p[^>]*>\s*)?-{5,}\s*Previous message\s*-{5,}(?:\s*<\/p>)?/i)
@@ -4191,7 +4188,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       _normalizeRichInlineCode(rich);
       _syncEmailRichbody(rich);
       _scheduleEmailRichbodySave();
-      if (_selections.length) clearSelection();
+      if (_selections.length) clearSelection({ preserveCaret: true });
       const findBar = document.getElementById('doc-find-bar');
       const findInput = document.getElementById('doc-find-input');
       if (findBar?.style.display !== 'none' && findInput?.value) {
@@ -6700,6 +6697,10 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     });
   }
 
+  export async function generateEmailReply(opts = {}) {
+    return _aiReply(opts);
+  }
+
   async function _aiReply(opts = {}) {
     const { mode = 'auto', noteHint = '', contextKey = '' } = (opts || {});
     const to = document.getElementById('doc-email-to')?.value?.trim() || '';
@@ -6729,8 +6730,10 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         .trim();
     };
     const splitCurrent = _splitEmailReplyQuote(currentBody);
-    const ownText = String(splitCurrent.body || '').trim();
-    const isReplaceableDraft = !ownText || /^(\[AI reply draft will appear here\]|Drafting AI reply)/i.test(ownText);
+    const ownBody = document.createElement('div');
+    ownBody.innerHTML = String(splitCurrent.body || '');
+    const ownText = (ownBody.textContent || '').trim();
+    const isReplaceableDraft = (!ownText && !ownBody.querySelector('img,video,audio,iframe,table')) || /^(\[AI reply draft will appear here\]|Drafting AI reply)/i.test(ownText);
     if (!isReplaceableDraft) {
       if (uiModule) uiModule.showToast('Reply already has text');
       return;
@@ -6741,14 +6744,28 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     // the user typed while it was in flight.
     const generationId = ++_emailAiReplyGeneration;
     const generationDocId = activeDocId;
-    const generationBody = currentBody;
+    let generationBody = currentBody;
     const generationRich = _emailRichbodyActive();
-    const generationRichHtml = generationRich?.innerHTML || '';
+    const richDraftSnapshot = () => {
+      if (!generationRich) return '';
+      const clone = generationRich.cloneNode(true);
+      // Focusing an empty reply inserts a caret slot, not a user edit.
+      clone.querySelectorAll('.email-reply-edit-slot').forEach(slot => {
+        if (!slot.textContent.trim() && !slot.querySelector('img,video,audio,iframe,table')) slot.remove();
+      });
+      return clone.innerHTML;
+    };
+    let generationRichHtml = richDraftSnapshot();
+    let manuallyEdited = false;
+    const markEdited = () => { manuallyEdited = true; };
+    textarea.addEventListener('input', markEdited);
+    generationRich?.addEventListener('input', markEdited);
     const draftStillUnchanged = () => (
       generationId === _emailAiReplyGeneration &&
+      !manuallyEdited &&
       activeDocId === generationDocId &&
       textarea.value === generationBody &&
-      (!generationRich || generationRich.innerHTML === generationRichHtml)
+      (!generationRich || richDraftSnapshot() === generationRichHtml)
     );
 
     // Use the current chat model
@@ -6771,7 +6788,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       // Empty-compose path: if there's no original body, send a placeholder
       // so the backend's "no body" guard doesn't fail. The user_hint carries
       // the user's compose intent; the model uses To/Subject + that hint.
-      const bodyForApi = currentBody || (noteHint ? '(no prior email — compose a new message based on the To, Subject, and user instructions)' : currentBody);
+      const bodyForApi = opts.originalBody || splitCurrent.quote || currentBody || (noteHint ? '(no prior email -- compose from the user instructions)' : '');
       const res = await fetch(`${API_BASE}/api/email/ai-reply`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -6779,17 +6796,25 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
           to: to,
           subject: subject,
           original_body: bodyForApi,
+          stream: true,
           model: currentModel,
           session_id: currentSessionId,
           message_id: inReplyTo,
           uid: sourceUid,
           folder: sourceFolder,
           account_id: sourceAccountId,
-          fast: mode === 'ai-reply-fast',
+          fast: mode !== 'ai-reply-full',
           user_hint: noteHint || '',
         }),
       });
-      const data = await res.json().catch(() => ({}));
+      const data = await readEmailReplyResponse(res, text => {
+        if (!draftStillUnchanged()) return false;
+        const quote = splitCurrent.quote || '';
+        _setEmailBodyText(textarea, text + (quote ? `\n\n${quote}` : ''));
+        generationBody = textarea.value;
+        generationRichHtml = richDraftSnapshot();
+        return true;
+      });
       if (!res.ok) {
         throw new Error(data.error || `AI reply service returned HTTP ${res.status}`);
       }
@@ -6807,9 +6832,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         cleanReply = cleanReply.replace(/\n*On\b[\s\S]*?\bwrote:[\s\S]*$/m, '').trim();
         const quote = splitCurrent.quote || '';
         const newBody = cleanReply + (quote ? `\n\n${quote}` : '');
-        // Insert in one guarded operation. Streaming here used to write a
-        // frame at a time, which could erase newly typed text after the user
-        // had started editing the draft.
+        // Reconcile the final body only while this generation still owns the draft.
         if (!draftStillUnchanged()) {
           if (uiModule) uiModule.showToast('AI reply ready, but draft was edited', { aiReplyResult: true });
           return;
@@ -6817,7 +6840,9 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         _setEmailBodyText(textarea, newBody);
         _clearDocAiReplyContext(contextKey || _docAiReplyContextKey());
         if (uiModule) uiModule.showToast(`AI draft inserted (${data.model_used || 'AI'})`, { aiReplyResult: true });
+        return true;
       } else {
+        if (draftStillUnchanged()) _setEmailBodyText(textarea, currentBody);
         const rawMsg = data.error || 'Failed to generate reply';
         const msg = /empty response/i.test(rawMsg)
           ? 'AI reply failed: AI returned empty response.'
@@ -6825,8 +6850,11 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         if (uiModule) uiModule.showError(msg);
       }
     } catch (e) {
+      if (draftStillUnchanged()) _setEmailBodyText(textarea, currentBody);
       if (uiModule) uiModule.showError(`AI reply failed: ${e?.message || 'Unable to reach the AI reply service'}`);
     } finally {
+      textarea.removeEventListener('input', markEdited);
+      generationRich?.removeEventListener('input', markEdited);
       if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="color:var(--accent, var(--red));flex-shrink:0;position:relative;top:-1px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg><span style="font-size:11px;margin-left:4px;">Reply</span>'; }
     }
   }
@@ -8712,7 +8740,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     if (ta && pre) {
       ta.addEventListener('input', () => {
         // Typing invalidates any pinned selection highlight
-        if (_selections.length) clearSelection();
+        if (_selections.length) clearSelection({ preserveCaret: true });
         // Auto-create a document if user types/pastes with no active doc.
         // Skip while a createDocument POST is in flight — otherwise typing
         // during the round-trip spawns a duplicate untitled doc.
@@ -11183,9 +11211,9 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
   ];
 
   const _AI_WRITING_ACTIONS = Object.freeze({
-    proofread: 'Proofread the open document for spelling and grammar. Create inline suggestions only; do not apply changes.',
+    proofread: 'Fix spelling and grammar in the open document. Apply corrections directly using targeted edits. Preserve the meaning, voice, and formatting; do not rewrite for style. Keep already-correct sentences unchanged. Use each affected paragraph as an exact unique FIND anchor and change only the spelling or grammar errors in its replacement. Check every paragraph, including repeated errors. Do not just list corrections in chat.',
     improve: 'Review the open document and create inline suggestions for clarity, wording, structure, and readability. Do not apply changes.',
-    concise: 'Review the open document and suggest concise wording improvements. Create inline suggestions only; do not apply changes.',
+    concise: 'Make the open document more concise by proposing one concrete, shorter replacement per affected paragraph. Each REPLACE must actually shorten the prose, not merely correct spelling or grammar. Each FIND must quote the entire original paragraph exactly, including any HTML tags. Keep distinct paragraphs separate and preserve their facts and meaning. Create inline suggestions only; do not apply changes.',
     style: 'Rewrite the open document to match my configured Writing Style setting. Preserve the meaning and create inline suggestions only; do not apply changes.',
     sources: 'Check factual claims in the open document using web research. For each claim, verify it, suggest a source link/citation when valid, or clearly mark it as unverified when you cannot find reliable evidence. Create inline suggestions only; do not apply changes.',
   });
@@ -11330,8 +11358,8 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
           ? `\n\nUse this configured writing style as the source of truth:\n---\n${configuredStyle.slice(0, 8000)}\n---`
           : '';
         const scopedPrompt = selectedText
-          ? `${prompt}${styleContext}\n\nImportant scope: work only on this selected passage and do not suggest changes elsewhere in the document. Use the exact matching text from the active document as the FIND target even if the editor stores formatting markup around it. Selected passage:\n---\n${selectedText.slice(0, 12000)}\n---`
-          : `${prompt}${styleContext}\n\nThere is no text selection, so review the whole open document.`;
+          ? `${prompt}${styleContext}\n\nImportant scope: work only on this selected passage and do not change or suggest changes elsewhere in the document. Use the exact matching text from the active document as the FIND target even if the editor stores formatting markup around it. Selected passage:\n---\n${selectedText.slice(0, 12000)}\n---`
+          : `${prompt}${styleContext}\n\nThere is no text selection, so work on the whole open document.`;
         // Desktop reveals the chat beside the document before dispatching the
         // writing request. On mobile the document is already a fixed sheet;
         // toggling its fullscreen class here reflows the sheet as the prompt is
@@ -12038,9 +12066,10 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     // populates it. Do not call switchToDoc synchronously here: it saves the
     // previously active doc and can re-enter the email draft path while a reply
     // document is still being injected.
-    requestAnimationFrame(() => {
+    return new Promise(resolve => requestAnimationFrame(() => {
       if (docs.has(doc.id)) switchToDoc(doc.id);
-    });
+      resolve();
+    }));
   }
 
   export async function replaceEmailReplyBody(docId, replyText, { force = false } = {}) {
@@ -12570,6 +12599,10 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     // hljs has no 'svg' grammar — highlight it as xml (the dropdown value stays
     // 'svg' so the preview/run routing still treats it as renderable markup).
     const _hlLang = lang === 'svg' ? 'xml' : lang;
+    const syntaxEnabled = !!(window.hljs?.getLanguage(_hlLang || '')
+      && !['markdown', 'text', 'plaintext', 'email', 'richtext'].includes(lang));
+    document.getElementById('doc-editor-wrap')?.classList.toggle('doc-code-syntax', syntaxEnabled);
+    textarea.wrap = syntaxEnabled ? 'off' : 'soft';
     codeEl.className = _hlLang ? `language-${_hlLang}` : '';
     if (window.hljs && _hlLang) {
       codeEl.removeAttribute('data-highlighted');
@@ -13318,7 +13351,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
   }
 
   /** Clear all selections, badge, and highlights */
-  function clearSelection() {
+  function clearSelection({ preserveCaret = false } = {}) {
     _selections = [];
     try { CSS.highlights?.delete(_richSelectionHighlightName); } catch (_) {}
     document.querySelectorAll('.doc-selection-rich-clear').forEach(el => el.remove());
@@ -13328,7 +13361,9 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     // after the badge's X has cleared the actual AI-edit context.
     const rich = _emailRichbodyActive();
     const browserSelection = window.getSelection?.();
-    if (rich && browserSelection?.rangeCount
+    // Input already placed the caret after the edit. Clearing pinned AI
+    // context must not discard that live insertion point.
+    if (!preserveCaret && rich && browserSelection?.rangeCount
         && (rich.contains(browserSelection.anchorNode) || rich.contains(browserSelection.focusNode))) {
       browserSelection.removeAllRanges();
     }
@@ -13545,12 +13580,13 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
 
     const hadPending = _activeSuggestions.length > 0;
     const existingIds = new Set(_activeSuggestions.map(s => s.id));
+    const existingFinds = new Set(_activeSuggestions.map(s => s.find));
 
     // Append new suggestions, skipping any IDs already in the queue so a
     // re-sent batch doesn't duplicate.
     let added = 0;
     for (const sugg of data.suggestions) {
-      if (existingIds.has(sugg.id)) continue;
+      if (existingIds.has(sugg.id) || existingFinds.has(sugg.find)) continue;
       _activeSuggestions.push({
         id: sugg.id,
         find: sugg.find,
@@ -13558,6 +13594,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         reason: sugg.reason,
         cardEl: null,
       });
+      existingFinds.add(sugg.find);
       added++;
     }
     _suggestionTotal = (_suggestionTotal || 0) + added;
@@ -13622,6 +13659,19 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
 
     // Position card next to the highlighted text
     function _positionCard(card) {
+      card.style.zIndex = String(Math.max(topPortalZ(), (parseInt(getComputedStyle(pane).zIndex, 10) || 0) + 1));
+      if (window.innerWidth <= 768) {
+        const viewport = window.visualViewport;
+        const top = viewport?.offsetTop || 0;
+        const height = viewport?.height || window.innerHeight;
+        card.style.position = 'fixed';
+        card.style.left = ((viewport?.offsetLeft || 0) + 8) + 'px';
+        card.style.right = 'auto';
+        card.style.width = Math.max(0, (viewport?.width || window.innerWidth) - 16) + 'px';
+        card.style.maxHeight = Math.max(0, height - 16) + 'px';
+        card.style.top = Math.max(top + 8, top + height - card.offsetHeight - 8) + 'px';
+        return;
+      }
       if (!textarea) return;
       const text = textarea.value;
       const idx = text.indexOf(sugg.find);
@@ -13670,8 +13720,8 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       <div class="doc-suggestion-reason">${_esc(sugg.reason)}</div>
       <div class="doc-suggestion-actions">
         <button class="doc-suggestion-accept">Accept</button>
+        <button class="doc-suggestion-accept-all" title="Apply all ${remaining} pending suggestions" aria-label="Accept all ${remaining} pending suggestions">Accept All</button>
         <button class="doc-suggestion-dismiss">Skip</button>
-        ${remaining > 1 ? '<button class="doc-suggestion-accept-all"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg><span>Accept All</span></button>' : ''}
       </div>
     `;
 
@@ -13696,7 +13746,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       _showCurrentSuggestion();
     });
     card.querySelector('.doc-suggestion-accept').addEventListener('click', () => {
-      _applySuggestion(sugg);
+      if (!_applySuggestions([sugg]).length) return;
       _activeSuggestions.shift();
       _animateNext();
     });
@@ -13707,8 +13757,9 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     const acceptAllBtn = card.querySelector('.doc-suggestion-accept-all');
     if (acceptAllBtn) {
       acceptAllBtn.addEventListener('click', () => {
-        for (const s of _activeSuggestions) _applySuggestion(s);
-        _activeSuggestions = [];
+        const applied = new Set(_applySuggestions(_activeSuggestions));
+        if (!applied.size) return;
+        _activeSuggestions = _activeSuggestions.filter(s => !applied.has(s.id));
         _animateNext();
       });
     }
@@ -13723,10 +13774,14 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     const _reposition = () => { if (card.isConnected) _positionCard(card); };
     if (textarea) textarea.addEventListener('scroll', _reposition);
     window.addEventListener('resize', _reposition);
+    window.visualViewport?.addEventListener('resize', _reposition);
+    window.visualViewport?.addEventListener('scroll', _reposition);
     // Store cleanup refs on the card
     card._cleanup = () => {
       if (textarea) textarea.removeEventListener('scroll', _reposition);
       window.removeEventListener('resize', _reposition);
+      window.visualViewport?.removeEventListener('resize', _reposition);
+      window.visualViewport?.removeEventListener('scroll', _reposition);
     };
   }
 
@@ -14142,7 +14197,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
   }
 
   /** Exit diff mode and apply resolved changes */
-  function exitDiffMode(discard) {
+  function exitDiffMode(discard, { persist = true } = {}) {
     if (!_diffModeActive) return;
     _diffModeActive = false;
     const acceptedAnyDiffChunk = !discard && _diffChunks.some(chunk => chunk && chunk.resolved && chunk.accepted);
@@ -14208,7 +14263,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
 
     syncHighlighting();
     updateLineNumbers(textarea ? textarea.value : '');
-    saveDocument({ silent: true });
+    if (persist) saveDocument({ silent: true });
     if (acceptedAnyDiffChunk) {
       const lang = ((docs.get(activeDocId)?.language) || document.getElementById('doc-language-select')?.value || '').toLowerCase();
       if (lang === 'markdown') {
@@ -14227,14 +14282,41 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
   const _origHandleDocSuggestions = handleDocSuggestions;
   // (total is set inside handleDocSuggestions before _showCurrentSuggestion)
 
-  /** Apply a single suggestion edit without removing from queue */
-  function _applySuggestion(sugg) {
-    const textarea = document.getElementById('doc-editor-textarea');
-    if (textarea && sugg.find && textarea.value.includes(sugg.find)) {
-      textarea.value = textarea.value.replace(sugg.find, sugg.replace);
-      syncHighlighting();
-      saveDocument({ silent: true });
+  /** Apply exact suggestion matches to the active editor surface, then save once. */
+  function _applySuggestions(suggestions) {
+    if (!activeDocId || !docs.has(activeDocId)) return [];
+    // The textarea is only a hidden mirror for rich-text and email documents.
+    // Capture the visible editor first, then replace in the document source.
+    saveCurrentToMap();
+    const doc = docs.get(activeDocId);
+    let content = doc.content || '';
+    const applied = [];
+    for (const sugg of suggestions) {
+      if (!sugg.find || content.split(sugg.find).length !== 2) continue;
+      content = content.replace(sugg.find, sugg.replace || '');
+      applied.push(sugg.id);
     }
+    if (!applied.length) {
+      uiModule?.showError?.('Suggestion no longer matches the document. Refresh suggestions to review it.');
+      return [];
+    }
+    doc.content = content;
+    const textarea = document.getElementById('doc-editor-textarea');
+    if (_isRichTextLang(doc.language)) {
+      _showRichTextEditor(doc);
+    } else if (doc.language === 'email') {
+      _showEmailFields(doc, { applyLocalDraft: false, forceHeaderFields: true });
+    } else if (textarea) {
+      textarea.value = content;
+      syncHighlighting();
+      _refreshMarkdownPreviewIfVisible(doc.id, content);
+      if (_htmlPreviewActive && _isRenderLang(doc.language)) {
+        const iframe = document.getElementById('doc-html-preview');
+        if (iframe) iframe.srcdoc = _themedRenderSrcdoc(content, doc.language);
+      }
+    }
+    saveDocument({ silent: true });
+    return applied;
   }
 
   /** Animate transition to next suggestion */
@@ -16620,6 +16702,8 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     _syncDocIndicator();
 
     if (!isOpen) openPanel();
+    // A previous SVG preview must not hide the next document's live code.
+    exitHtmlPreview();
 
     // Force doc button visible
     const toggleBtn = document.getElementById('overflow-doc-btn');
@@ -16664,71 +16748,6 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
 
   /** Simulate streaming effect for doc edits */
   let _editAnimFrame = null;
-  let _richEditDiffTimer = null;
-
-  /** Show AI changes over the visible rich editor without exposing stored HTML. */
-  function _animateRichTextEdit(oldContent, newContent, updatedDoc) {
-    _showRichTextEditor(updatedDoc);
-    const rich = _emailRichbodyActive();
-    if (!rich) return;
-
-    const oldText = _richTextContentToPlain(oldContent);
-    const newText = _richTextContentToPlain(newContent);
-    const diff = lineDiff(oldText, newText);
-    if (!diff || !diff.some(line => line.type !== 'same')) return;
-
-    clearTimeout(_richEditDiffTimer);
-    document.querySelectorAll('.doc-rich-diff-overlay').forEach(node => node.remove());
-
-    const overlay = document.createElement('div');
-    overlay.className = 'doc-diff-overlay doc-rich-diff-overlay';
-    overlay.setAttribute('aria-label', 'Document changes');
-    const deleted = diff.filter(line => line.type === 'del').length;
-    const added = diff.filter(line => line.type === 'add').length;
-    const stats = document.createElement('div');
-    stats.className = 'doc-diff-stats';
-    stats.innerHTML = `<span class="diff-stat-del">−${deleted}</span><span class="diff-stat-add">+${added}</span>`;
-    overlay.appendChild(stats);
-
-    const content = document.createElement('div');
-    content.className = 'doc-diff-content';
-    let skipped = 0;
-    diff.forEach((line, index) => {
-      const nearChange = line.type !== 'same'
-        || diff.slice(Math.max(0, index - 2), index + 3).some(item => item.type !== 'same');
-      if (!nearChange) { skipped++; return; }
-      if (skipped) {
-        const separator = document.createElement('div');
-        separator.className = 'doc-diff-sep';
-        separator.textContent = `⋯ ${skipped} unchanged`;
-        content.appendChild(separator);
-        skipped = 0;
-      }
-      const row = document.createElement('div');
-      row.className = `doc-diff-line ${line.type}`;
-      row.textContent = line.type === 'del'
-        ? `− ${line.text || '\u00a0'}`
-        : line.type === 'add'
-          ? `+ ${line.text || '\u00a0'}`
-          : (line.text || '\u00a0');
-      content.appendChild(row);
-    });
-    overlay.appendChild(content);
-
-    const pane = rich.closest('.doc-editor-pane') || rich.parentElement;
-    if (!pane) return;
-    overlay.style.top = `${rich.offsetTop}px`;
-    overlay.style.right = `${Math.max(0, pane.clientWidth - rich.offsetLeft - rich.offsetWidth)}px`;
-    overlay.style.bottom = `${Math.max(0, pane.clientHeight - rich.offsetTop - rich.offsetHeight)}px`;
-    overlay.style.left = `${rich.offsetLeft}px`;
-    pane.appendChild(overlay);
-    requestAnimationFrame(() => overlay.classList.add('visible'));
-    _richEditDiffTimer = setTimeout(() => {
-      overlay.classList.remove('visible');
-      overlay.classList.add('fading');
-      setTimeout(() => overlay.remove(), 400);
-    }, 2500);
-  }
 
   function _animateDocEdit(textarea, newContent) {
     if (_editAnimFrame) cancelAnimationFrame(_editAnimFrame);
@@ -16846,6 +16865,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
    *  Returns the old _streamDocId so handleDocUpdate can migrate temp→real. */
   export function streamDocFinalize() {
     const oldId = _streamDocId;
+    if (!oldId) return null;
     const finishingDoc = oldId ? docs.get(oldId) : null;
     if (oldId === activeDocId && (finishingDoc?.language || '').toLowerCase() === 'email') {
       const fields = _parseEmailHeader(finishingDoc.content || '');
@@ -16914,7 +16934,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     // the previously-active doc here, so exitDiffMode(true) restores and saves
     // THAT doc before we reassign activeDocId below — mirroring switchToDoc()
     // and enterDiffMode().
-    if (_diffModeActive) exitDiffMode(true);
+    if (_diffModeActive) exitDiffMode(true, { persist: data.doc_id !== activeDocId });
     let docId = data.doc_id;
     let newContent = data.content || '';
 
@@ -17075,27 +17095,20 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     const isRichTextUpdate = _isRichTextLang(docLang);
     const markdownPreviewWasVisible = _isMarkdownPreviewVisible();
 
-    // Animate content update for edits; apply directly for creates/streaming
+    // The server has already saved doc_update. Show its current content now;
+    // a temporary diff or typing animation makes a completed edit look pending.
     const isEdit = !isEmailUpdate && !isRichTextUpdate && isExistingDoc && oldContent && oldContent !== newContent && !streamingId;
     const updatedDocForRichText = isRichTextUpdate ? docs.get(docId) : null;
     if (isRichTextUpdate && updatedDocForRichText) {
-      _animateRichTextEdit(oldContent, newContent, updatedDocForRichText);
+      _showRichTextEditor(updatedDocForRichText);
     } else if (isEdit && textarea) {
-      // Count changed lines to decide between animation and diff mode
-      const oldLines = oldContent.split('\n');
-      const newLines = newContent.split('\n');
-      let changedLines = 0;
-      const maxLen = Math.max(oldLines.length, newLines.length);
-      for (let li = 0; li < maxLen; li++) {
-        if (oldLines[li] !== newLines[li]) changedLines++;
-      }
-      if (changedLines >= DIFF_MODE_THRESHOLD) {
-        if (markdownPreviewWasVisible) _setMarkdownPreviewActive(false, { remember: false });
-        enterDiffMode(oldContent, newContent);
-      } else if (markdownPreviewWasVisible && _refreshMarkdownPreviewIfVisible(docId, newContent)) {
-        // Preview is the visible surface, so refresh it instead of animating a hidden editor.
+      // This event reports an already-saved edit. Do not turn it into a
+      // pending accept/reject diff that can later restore the old content.
+      if (markdownPreviewWasVisible && _refreshMarkdownPreviewIfVisible(docId, newContent)) {
+        // Keep the visible preview synchronized with the saved document.
       } else {
-        _animateDocEdit(textarea, newContent);
+        textarea.value = newContent;
+        syncHighlighting();
       }
     } else {
       if (isEmailUpdate) {
@@ -17115,7 +17128,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
 
     // Flash the editor wrap to indicate content was updated
     const wrap = document.getElementById('doc-editor-wrap');
-    if (wrap && !isEdit) {
+    if (wrap) {
       wrap.classList.remove('doc-updated-flash');
       void wrap.offsetWidth; // force reflow
       wrap.classList.add('doc-updated-flash');
@@ -17142,7 +17155,18 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     if (mdToolbar) mdToolbar.style.display = '';
     // Auto-show table view for CSV after streaming
     const finalLangLower = (finalLang || '').toLowerCase();
-    if (finalLangLower === 'csv') {
+    if (finalLangLower === 'svg') {
+      requestAnimationFrame(() => {
+        if (activeDocId !== docId || !isOpen) return;
+        // Idempotent: doc_update and the tool-output fallback may both arrive.
+        // SVG uses the existing sandboxed preview, never the server code runner.
+        if (!_htmlPreviewActive) toggleHtmlPreview();
+        else {
+          const iframe = document.getElementById('doc-html-preview');
+          if (iframe) iframe.srcdoc = _themedRenderSrcdoc(docs.get(docId)?.content || '', 'svg');
+        }
+      });
+    } else if (finalLangLower === 'csv') {
       requestAnimationFrame(() => {
         const csvPreview = document.getElementById('doc-csv-preview');
         if (csvPreview && csvPreview.style.display === 'none') toggleCsvPreview();
@@ -17536,6 +17560,7 @@ const documentModule = {
   replaceEmailReplyBody,
   ensureEmailDraftEnvelope,
   openEmailDraft,
+  generateEmailReply,
   ensurePaneMounted: _ensureDocPaneMounted,
   loadSessionDocs,
   ensureDocPanel,

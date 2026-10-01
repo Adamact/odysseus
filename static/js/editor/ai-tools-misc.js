@@ -31,6 +31,7 @@
  * @returns {{ addEmptyLayer: () => void }}
  */
 import { state } from './state.js';
+import { beginAIOperation, decodeAIImage } from './ai-operation.js';
 
 export function wireAIToolsMisc({
   apiBase, buildLayerBodyMask, buildSeamMask, applyImageTool,
@@ -104,7 +105,7 @@ export function wireAIToolsMisc({
   document.getElementById('ge-upscale-ai')?.addEventListener('click', async () => {
     const btn = document.getElementById('ge-upscale-ai');
     const origHTML = btn.innerHTML;
-    btn.disabled = true;
+    const operation = beginAIOperation(btn, () => uiModule?.showToast('Upscale cancelled'));
     let upWp = null;
     try {
       upWp = spinnerModule.createWhirlpool(14);
@@ -119,6 +120,7 @@ export function wireAIToolsMisc({
       const flat = flatten();
       const imageB64 = flat.toDataURL('image/png').split(',')[1];
       const res = await fetch('/api/image/upscale-local', {
+        signal: operation.signal,
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image: imageB64, scale: 2 }),
@@ -126,8 +128,9 @@ export function wireAIToolsMisc({
       if (!res.ok) throw new Error('Server returned ' + res.status);
       const data = await res.json();
       if (data.image) {
-        const img = new Image();
-        img.onload = () => {
+        const img = await decodeAIImage(data.image, operation.signal);
+        operation.signal.throwIfAborted();
+        {
           if (!state.editorOpen) return;
           saveState();
           const newW = img.width, newH = img.height;
@@ -144,17 +147,18 @@ export function wireAIToolsMisc({
           composite();
           renderLayerPanel();
           uiModule.showToast(`AI upscaled to ${newW}×${newH}`);
-        };
-        img.src = 'data:image/png;base64,' + data.image;
+        }
       } else {
         throw new Error(data.error || 'No image returned');
       }
     } catch (e) {
-      uiModule.showToast('AI upscale failed: ' + e.message);
+      if (!operation.signal.aborted) uiModule.showToast('AI upscale failed: ' + e.message);
+    } finally {
+      operation.finish();
+      try { upWp?.destroy(); } catch (_) {}
+      btn.disabled = false;
+      btn.innerHTML = origHTML;
     }
-    try { upWp?.destroy(); } catch (_) {}
-    btn.disabled = false;
-    btn.innerHTML = origHTML;
   });
 
   // ── Style transfer ──
@@ -166,7 +170,9 @@ export function wireAIToolsMisc({
     const prompt = document.getElementById('ge-style-prompt').value.trim();
     if (!prompt) { uiModule.showToast('Enter a style prompt'); return; }
     const strength = parseInt(document.getElementById('ge-style-strength').value) / 100;
-    btn.disabled = true; btn.textContent = 'Applying...';
+    const originalHTML = btn.innerHTML;
+    const operation = beginAIOperation(btn, () => uiModule?.showToast('Style transfer cancelled'));
+    btn.textContent = 'Applying...';
     try {
       const flat = flatten();
       const blob = await new Promise(r => flat.toBlob(r, 'image/png'));
@@ -174,12 +180,13 @@ export function wireAIToolsMisc({
       fd.append('image', blob, 'style.png');
       fd.append('prompt', prompt);
       fd.append('strength', String(strength));
-      const res = await fetch(`${apiBase}/api/gallery/style-transfer`, { method: 'POST', credentials: 'same-origin', body: fd });
+      const res = await fetch(`${apiBase}/api/gallery/style-transfer`, { method: 'POST', credentials: 'same-origin', body: fd, signal: operation.signal });
       if (!res.ok) throw new Error('Server returned ' + res.status);
       const data = await res.json();
       if (data.image) {
-        const img = new Image();
-        img.onload = () => {
+        const img = await decodeAIImage(data.image, operation.signal);
+        operation.signal.throwIfAborted();
+        {
           if (!state.editorOpen) return;
           saveState();
           const layer = createLayer('Styled: ' + prompt.substring(0, 20), state.imgWidth, state.imgHeight);
@@ -189,15 +196,17 @@ export function wireAIToolsMisc({
           composite();
           renderLayerPanel();
           uiModule.showToast('Style applied');
-        };
-        img.src = 'data:image/png;base64,' + data.image;
+        }
       } else {
         throw new Error(data.error || 'No image returned');
       }
     } catch (e) {
-      uiModule.showToast('Style transfer failed: ' + e.message);
+      if (!operation.signal.aborted) uiModule.showToast('Style transfer failed: ' + e.message);
+    } finally {
+      operation.finish();
+      btn.disabled = false;
+      btn.innerHTML = originalHTML;
     }
-    btn.disabled = false; btn.textContent = 'Apply Style';
   });
 
   // ── Add empty layer (used by the layer-panel header button + the

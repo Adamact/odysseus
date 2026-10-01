@@ -13,6 +13,45 @@ from src.agent_tools.web_tools import (
 from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
 
 
+@pytest.mark.parametrize('snapshot,empty', [
+    ('- generic\n  - generic\n    - generic', True),
+    ('(empty page)', True),
+    ('- heading "No results found"', False),
+    ('- button "Accept cookies" [ref=e1]', False),
+    ('- generic "GameStop"', False),
+])
+def test_browser_distinguishes_loading_scaffolding_from_content(snapshot, empty):
+    observation = json.dumps([{'success': True, 'result': {'snapshot': snapshot}}])
+    assert PrivateBrowserTool._empty_dom_observation(observation) is empty
+
+
+def test_open_snapshot_batch_waits_for_loading_scaffolding(monkeypatch):
+    monkeypatch.setattr(web_tools.shutil, 'which', lambda name: '/usr/bin/agent-browser')
+    monkeypatch.setattr(PrivateBrowserTool, '_AUTO_SCREENSHOT_ACTIONS', set())
+    batches = []
+    class Proc:
+        returncode = 0
+        def __init__(self, kwargs):
+            self.kwargs = kwargs
+        async def communicate(self, stdin=None):
+            batches.append(json.loads(stdin))
+            snapshot = '- generic\n  - generic' if len(batches) == 1 else '- heading "Loaded results"'
+            output = json.dumps([{'success': True, 'result': {'snapshot': snapshot}}]).encode()
+            if self.kwargs['stdout'] != asyncio.subprocess.PIPE:
+                self.kwargs['stdout'].write(output)
+                return b'', b''
+            return output, b''
+    async def spawn(*command, **kwargs):
+        return Proc(kwargs)
+    monkeypatch.setattr(asyncio, 'create_subprocess_exec', spawn)
+    result = asyncio.run(PrivateBrowserTool().execute(json.dumps({
+        'action': 'batch', 'commands': [['open', 'https://example.com'], ['snapshot']],
+    }), {'session_id': 'loading-scaffolding'}))
+    assert 'Loaded results' in result['output']
+    assert len(batches) == 2
+    assert batches[1] == [['wait', '1000'], ['snapshot']]
+
+
 def test_private_browser_plain_url_defaults_to_read() -> None:
     args, err = PrivateBrowserTool()._parse_args("https://example.com")
 
@@ -593,8 +632,8 @@ def test_click_observes_empty_destination_with_bounded_read_only_retry(monkeypat
     result = asyncio.run(PrivateBrowserTool().execute(
         json.dumps({'action': 'click', 'target': '@e2'}), {'session_id': 'empty-destination'}))
     assert result['exit_code'] == 0, result
-    if mode == 'recent_model_choice' and outcome == 'populated':
-        assert 'heading "Destination" [ref=e7]' in result['output']
+    if outcome == 'populated':
+        assert 'Destination' in result['output'] and '[ref=e7]' in result['output']
         assert '(empty page)' not in result['output']
     else:
         assert '(empty page)' in result['output']
@@ -602,9 +641,8 @@ def test_click_observes_empty_destination_with_bounded_read_only_retry(monkeypat
     if outcome in {'timeout', 'invalid'}:
         assert 'fresh page snapshot could not be obtained' in result['output']
     assert bool(killed) is (outcome == 'timeout')
-    assert len(batches) == (2 if mode == 'recent_model_choice' else 1)
-    if mode == 'recent_model_choice':
-        assert 0 < deadlines[1] < deadlines[0] <= 20
+    assert len(batches) == 2
+    assert 0 < deadlines[1] < deadlines[0] <= 20
     assert sum('click' in command for command in commands) == 1
     assert all(command[0] in {'wait', 'snapshot'} for batch in batches for command in batch)
 
@@ -775,7 +813,7 @@ def test_fill_verification_is_truthful_without_dumping_input_values(monkeypatch,
         assert 'could not be verified' in result['error']
 
 
-@pytest.mark.parametrize('mode,observed', [('recent_model_choice', True), ('baseline', False)])
+@pytest.mark.parametrize('mode,observed', [('recent_model_choice', True), ('baseline', True)])
 @pytest.mark.parametrize('action', ['click', 'fill'])
 def test_failed_interaction_returns_current_refs_without_retrying_action(monkeypatch, mode, observed, action):
     from types import SimpleNamespace

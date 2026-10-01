@@ -30,8 +30,15 @@ test('round one reuses the initial bubble and later rounds start continuations',
     first: startsContinuationRound({ type: 'agent_step', round: 1 }),
     second: startsContinuationRound({ type: 'agent_step', round: 2 }),
     nonStep: startsContinuationRound({ type: 'tool_start', round: 2 }),
+    classification: startsContinuationRound({ type: 'agent_step', stage: 'email_task_scope' }),
+    providerStatus: startsContinuationRound({ type: 'agent_step', stage: 'provider_request', round: 2 }),
+    noRound: startsContinuationRound({ type: 'agent_step' }),
+    invalidRound: startsContinuationRound({ type: 'agent_step', round: 'unknown' }),
   }));
-  assert.deepEqual(result, { first: false, second: true, nonStep: false });
+  assert.deepEqual(result, {
+    first: false, second: true, nonStep: false, classification: false,
+    providerStatus: false, noRound: false, invalidRound: false,
+  });
 });
 
 test('plain streamed prose preserves node identity, selection and focus', async () => {

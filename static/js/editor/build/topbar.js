@@ -1,5 +1,5 @@
 /**
- * Build the editor's top bar (undo/redo/history, zoom group, Image
+ * Build the editor's top bar (undo/redo/history, Image
  * menu, Filter menu, Selection-edge menu, Shortcuts, Import, Save).
  *
  * Pure DOM — no module state, no event listeners. All wiring is done
@@ -30,28 +30,8 @@ export function buildTopbar() {
         <span class="ge-stacked-glyph"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"></path><path d="M5 7h14M5 17h14"></path></svg></span>
         <span class="ge-stacked-label">BEFORE</span>
       </button>
-      <span class="ge-topbar-sep"></span>
-      <button class="ge-btn ge-btn-sm" id="ge-zoom-out" title="Zoom out">&minus;</button>
-      <span class="ge-zoom-stack">
-        <span class="ge-zoom-glyph">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        </span>
-        <span class="ge-zoom-label">100%</span>
-      </span>
-      <button class="ge-btn ge-btn-sm" id="ge-zoom-in" title="Zoom in">+</button>
-      <span class="ge-topbar-sep"></span>
-      <button class="ge-btn ge-btn-sm ge-stacked-btn" id="ge-zoom-fit" title="Fit to view" aria-pressed="false">
-        <span class="ge-stacked-glyph"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 4 20 10 20"/><polyline points="20 10 20 4 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg></span>
-        <span class="ge-stacked-label">FIT</span>
-      </button>
-      <button class="ge-btn ge-btn-sm ge-stacked-btn" id="ge-zoom-100" title="Actual size" aria-pressed="false">
-        <span class="ge-stacked-glyph">1:1</span>
-        <span class="ge-stacked-label">SCALE</span>
-      </button>
-      <span class="ge-topbar-sep"></span>
     </div>
     <div class="ge-topbar-right">
-      <span class="ge-canvas-size" id="ge-canvas-size" title="Canvas size" hidden></span>
       <div class="ge-view-wrap">
         <button class="ge-btn ge-btn-sm ge-stacked-btn" id="ge-view-menu-btn" title="Canvas view" aria-haspopup="true">
           <span class="ge-stacked-glyph"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg><span class="ge-stacked-caret">▾</span></span>
@@ -73,7 +53,7 @@ export function buildTopbar() {
           <span class="ge-stacked-label">IMAGE</span>
         </button>
         <div class="ge-image-menu dropdown" id="ge-image-menu" hidden>
-          <button class="dropdown-item-compact" data-image-action="fill"><span>Fill selection / mask</span></button>
+          <button class="dropdown-item-compact" data-image-action="fill" title="Fill with foreground color (Alt+Backspace)"><span>Fill</span></button>
           <button class="dropdown-item-compact" data-image-action="canvas-size">
             <span class="dropdown-icon">⤢</span>
             <span>Canvas Size...</span>
@@ -110,7 +90,7 @@ export function buildTopbar() {
           <button class="dropdown-item-compact" data-selection-action="all"><span>Select All</span><span class="dropdown-shortcut">Ctrl+A</span></button>
           <button class="dropdown-item-compact" data-selection-action="deselect"><span>Deselect</span><span class="dropdown-shortcut">Ctrl+D</span></button>
           <button class="dropdown-item-compact" data-selection-action="reselect"><span>Reselect</span></button>
-          <button class="dropdown-item-compact" data-selection-action="invert"><span>Invert</span><span class="dropdown-shortcut">Ctrl+Alt+I</span></button>
+          <button class="dropdown-item-compact" data-selection-action="invert"><span>Invert</span><span class="dropdown-shortcut">Ctrl+Alt+Shift+I</span></button>
           <button class="dropdown-item-compact" data-selection-action="transform"><span>Transform Selection</span></button>
           <button class="dropdown-item-compact" data-selection-action="refine"><span>Refine Selection…</span></button>
           <div class="dropdown-section-divider"></div>
@@ -214,4 +194,23 @@ export function buildTopbar() {
     </div>
   `;
   return topBar;
+}
+
+export function buildZoomFooter() {
+  const footer = document.createElement('div');
+  footer.className = 'ge-editor-footer';
+  footer.innerHTML = `
+    <span class="ge-canvas-size" id="ge-canvas-size" title="Canvas size" hidden></span>
+    <div class="ge-footer-zoom" role="group" aria-label="Canvas zoom">
+      <button class="ge-btn ge-btn-sm" id="ge-zoom-out" title="Zoom out" aria-label="Zoom out">&minus;</button>
+      <span class="ge-zoom-stack" aria-live="off">
+        <span class="ge-zoom-glyph"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+        <span class="ge-zoom-label">100%</span>
+      </span>
+      <button class="ge-btn ge-btn-sm" id="ge-zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
+      <button class="ge-btn ge-btn-sm ge-stacked-btn" id="ge-zoom-100" title="Switch to actual size" aria-label="Fit view; switch to actual size" aria-pressed="false">
+        <span class="ge-stacked-glyph">1:1</span><span class="ge-stacked-label">FIT</span>
+      </button>
+    </div>`;
+  return footer;
 }

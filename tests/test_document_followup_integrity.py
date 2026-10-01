@@ -129,12 +129,124 @@ def test_valid_dispatch_delete_uses_its_target_and_matching_version(documents):
     assert read("foreign-document", "other-owner") == foreign_before
 
 
-def test_partial_multi_edit_reports_skipped_changes_without_claiming_all_applied(documents):
-    from src.tool_execution import format_tool_result
+def test_invalid_multi_edit_saves_only_exact_matches_and_reports_remainder(documents):
     result = asyncio.run(TOOL_HANDLERS["edit_document"](
         '<<<FIND>>>\nSecond: alpha\n<<<REPLACE>>>\nSecond: beta\n<<<END>>>\n'
         '<<<FIND>>>\nAbsent text\n<<<REPLACE>>>\nWrong\n<<<END>>>',
         {"owner": "fixture-owner", "doc_id": "owned-document"}))
-    assert result["applied"] == 1 and result["skipped"] == 1
-    assert '"skipped": 1' in format_tool_result('edit_document', result)
+    assert result['applied'] == 1 and result['partial'] is True
+    assert result['invalid_edits'][0]['number'] == 2
+    assert result['rejected'] == 1
     assert read()["document"]["content"] == "First: alpha\nSecond: beta\nKeep: violet-72"
+
+
+def test_batch_with_only_bad_anchors_reports_all_without_saving(documents):
+    blocks = [
+        ('Imagined sentence', 'Corrected sentence'),
+        ('alpha', 'gamma'),
+        ('vio', 'violet'),
+    ]
+    content = ''.join(f'<<<FIND>>>\n{find}\n<<<REPLACE>>>\n{replace}\n<<<END>>>\n'
+                      for find, replace in blocks)
+    before = read()
+    result = asyncio.run(TOOL_HANDLERS['edit_document'](content,
+        {'owner': 'fixture-owner', 'doc_id': 'owned-document'}))
+    assert result['invalid_edit_numbers'] == [1, 2, 3]
+    assert '#1 (0 matches)' in result['error']
+    assert '#2 (2 matches)' in result['error']
+    assert 'First: alpha' in result['error'] and 'Second: alpha' in result['error']
+    assert read() == before
+
+
+def test_long_proofreading_batch_saves_safe_matches_and_identifies_remainder(documents):
+    from src.clean_agent_preview import preview_tool_result_text
+    blocks = [(f'Keep: violet-{number}', f'Keep: violet-{number + 1}')
+              for number in range(72, 82)]
+    blocks.insert(4, ('Imagined sentence', 'Corrected sentence'))
+    content = ''.join(f'<<<FIND>>>\n{find}\n<<<REPLACE>>>\n{replace}\n<<<END>>>\n'
+                      for find, replace in blocks)
+    result = asyncio.run(TOOL_HANDLERS['edit_document'](content,
+        {'owner': 'fixture-owner', 'doc_id': 'owned-document'}))
+    assert result['partial'] is True
+    assert result['applied'] == 10 and result['rejected'] == 1
+    assert result['invalid_edits'][0]['number'] == 5
+    assert read()['document']['content'].endswith('Keep: violet-82')
+    feedback = preview_tool_result_text(result, 'edit_document', {})
+    assert 'Retry only the rejected FIND entries' in feedback
+    assert 'First: alpha' not in feedback
+
+
+def test_inline_suggestion_is_reviewable_then_applies_only_its_target(documents):
+    before = read()
+    result = asyncio.run(TOOL_HANDLERS['suggest_document'](
+        '<<<FIND>>>\nSecond: alpha\n<<<SUGGEST>>>\nSecond: beta\n<<<REASON>>>\nUse the corrected term.\n<<<END>>>',
+        {'owner': 'fixture-owner', 'doc_id': 'owned-document'}))
+    assert 'error' not in result
+    assert read() == before
+    suggestion = result['suggestions'][0]
+    applied = edit(suggestion['find'], suggestion['replace'], doc_id='owned-document')
+    assert applied['applied'] == 1
+    assert read()['document']['content'] == 'First: alpha\nSecond: beta\nKeep: violet-72'
+
+
+def test_whole_document_update_persists_exact_replacement(documents):
+    replacement = 'A complete rewritten document.\n\nWith a second paragraph.'
+    result = asyncio.run(TOOL_HANDLERS['update_document'](replacement,
+        {'owner': 'fixture-owner', 'doc_id': 'owned-document'}))
+    assert 'error' not in result
+    assert read()['document']['content'] == replacement
+    assert read('foreign-document', 'other-owner')['document']['content'] == 'Foreign alpha'
+
+
+@pytest.mark.parametrize('find,replacement', [('alpha', 'beta'), ('vio', 'new'), ('tha', 'that')])
+def test_ambiguous_or_partial_word_edits_do_not_mutate(documents, find, replacement):
+    if find == 'tha':
+        asyncio.run(TOOL_HANDLERS['update_document']('That is correct, and that stays.',
+            {'owner': 'fixture-owner', 'doc_id': 'owned-document'}))
+    before = read()
+    result = edit(find, replacement, doc_id='owned-document')
+    assert result['exit_code'] == 1
+    assert read() == before
+
+
+def test_explicit_replace_all_corrects_every_occurrence(documents):
+    from src.tool_schemas import function_call_to_tool_block
+    block = function_call_to_tool_block('edit_document', {'edits': [
+        {'find': 'alpha', 'replace': 'beta', 'replace_all': True}]})
+    result = asyncio.run(TOOL_HANDLERS['edit_document'](block.content,
+        {'owner': 'fixture-owner', 'doc_id': 'owned-document'}))
+    assert result.get('exit_code', 0) == 0 and not result.get('error')
+    assert read()['document']['content'] == 'First: beta\nSecond: beta\nKeep: violet-72'
+
+
+def test_replace_all_cannot_change_fragments_of_correct_words(documents):
+    asyncio.run(TOOL_HANDLERS['update_document']('that banana being',
+        {'owner': 'fixture-owner', 'doc_id': 'owned-document'}))
+    before = read()
+    result = asyncio.run(TOOL_HANDLERS['edit_document'](
+        '<<<FIND>>>\ntha\n<<<REPLACE_ALL>>>\nthat\n<<<END>>>',
+        {'owner': 'fixture-owner', 'doc_id': 'owned-document'}))
+    assert result['exit_code'] == 1
+    assert read() == before
+
+
+def test_ambiguous_suggestion_returns_exact_recovery_anchors(documents):
+    result = asyncio.run(TOOL_HANDLERS['suggest_document'](
+        '<<<FIND>>>\nalpha\n<<<SUGGEST>>>\nbeta\n<<<REASON>>>\nClarify.\n<<<END>>>',
+        {'owner': 'fixture-owner', 'doc_id': 'owned-document'}))
+    assert result['exit_code'] == 1
+    assert 'First: alpha' in result['error']
+    assert 'Second: alpha' in result['error']
+    assert read()['document']['content'] == 'First: alpha\nSecond: alpha\nKeep: violet-72'
+
+
+def test_mixed_suggestion_batch_queues_valid_items_and_reports_bad_anchors(documents):
+    before = read()
+    result = asyncio.run(TOOL_HANDLERS['suggest_document'](
+        '<<<FIND>>>\nFirst: alpha\n<<<SUGGEST>>>\nFirst: beta\n<<<REASON>>>\nClarify.\n<<<END>>>\n'
+        '<<<FIND>>>\nalpha\n<<<SUGGEST>>>\nbeta\n<<<REASON>>>\nClarify.\n<<<END>>>',
+        {'owner': 'fixture-owner', 'doc_id': 'owned-document'}))
+    assert result['count'] == 1 and result['partial'] is True
+    assert result['invalid_suggestions'][0]['reason'] == 'ambiguous'
+    assert result['suggestions'][0]['find'] == 'First: alpha'
+    assert read() == before
