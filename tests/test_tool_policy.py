@@ -17,6 +17,9 @@ from src.tool_policy import (
     web_search_enabled_for_turn,
 )
 from src.turn_contract import requested_capabilities
+from tests.runtime_evidence_helpers import server_authorized_executor
+
+execute_tool_block = server_authorized_executor(execute_tool_block)
 
 
 def _collect(gen):

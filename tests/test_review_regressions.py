@@ -14,9 +14,10 @@ from src.preset_manager import PresetManager
 
 async def _execute_without_run_context(execute_tool_block, *args, **kwargs):
     from src.tool_execution import NO_TOOL_SECURITY_CONTEXT
+    from tests.runtime_evidence_helpers import server_authorized_executor
 
     kwargs.setdefault("security_context", NO_TOOL_SECURITY_CONTEXT)
-    return await execute_tool_block(*args, **kwargs)
+    return await server_authorized_executor(execute_tool_block)(*args, **kwargs)
 
 
 class _FakeColumn:

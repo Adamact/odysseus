@@ -333,6 +333,7 @@ def test_external_tool_images_are_threaded_as_multimodal_evidence():
 
 
 def test_declared_external_call_reaches_scoped_bridge(monkeypatch):
+    from src.agent_runtime.authority import OperationGrant, RequestAuthority
     bridge_calls = []
     round_no = 0
     monkeypatch.setattr(agent_loop, "get_setting", lambda key, default=None: default)
@@ -367,6 +368,8 @@ def test_declared_external_call_reaches_scoped_bridge(monkeypatch):
             [{"role": "user", "content": "Perform the declared operation."}],
             max_rounds=2,
             owner="pewds",
+            request_authority=RequestAuthority("declared-fixture", "pewds", "", "",
+                (OperationGrant("inspect_state"),)),
             relevant_tools={"inspect_state"},
             forced_tools={"inspect_state"},
             fallbacks=[],
@@ -389,6 +392,7 @@ def test_declared_external_call_reaches_scoped_bridge(monkeypatch):
 
 
 def test_known_native_tool_reaches_scoped_bridge_without_redeclared_schema(monkeypatch):
+    from src.agent_runtime.authority import create_request_authority
     bridge_calls = []
     round_no = 0
     monkeypatch.setattr(agent_loop, "get_setting", lambda key, default=None: default)
@@ -435,6 +439,7 @@ def test_known_native_tool_reaches_scoped_bridge_without_redeclared_schema(monke
             [{"role": "user", "content": "Search email for Project Alpha."}],
             max_rounds=2,
             owner="public-user",
+            request_authority=create_request_authority("Search email for Project Alpha.", owner="public-user"),
             relevant_tools={"search_emails"},
             forced_tools={"search_emails"},
             fallbacks=[],

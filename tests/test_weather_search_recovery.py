@@ -10,6 +10,9 @@ from src.tool_policy import WEB_TOOL_NAMES, ToolPolicy
 from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
 from src.tool_types import ToolBlock
 from src.tool_execution import NO_TOOL_SECURITY_CONTEXT, execute_tool_block
+from tests.runtime_evidence_helpers import server_authorized_executor
+
+execute_tool_block = server_authorized_executor(execute_tool_block)
 from src.turn_contract import FAMILY_TOOLS
 
 

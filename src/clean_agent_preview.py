@@ -4984,6 +4984,10 @@ async def preview_lines_until_finish(response, finish_event=None):
         await asyncio.gather(finish_task, return_exceptions=True)
 
 
+from src.agent_runtime.authority import MISSING_AUTHORITY, with_request_authority
+
+
+@with_request_authority
 async def stream_preview(*, endpoint_url, model, messages, headers, turn_contract,
                          session_id, owner, disabled_tools, tool_policy,
                          history_session=None, external_untrusted_context_seen=False,
@@ -4991,7 +4995,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                          client_runtime_context=None, max_tokens=768, max_rounds=8,
                          max_tool_calls=0,
                          external_tool_schemas=None, temperature=0.0,
-                         **ignored):
+                         request_authority=MISSING_AUTHORITY, **ignored):
     from src.generation_sampling import validate_temperature
     temperature = validate_temperature(temperature)
     # This path sends requests directly with httpx and therefore bypasses

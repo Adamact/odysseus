@@ -777,6 +777,7 @@ class ScheduledTask(TimestampMixin, Base):
     owner          = Column(String, nullable=True, index=True)
     name           = Column(String, nullable=False, default="Untitled Task")
     prompt         = Column(Text, nullable=True)              # LLM prompt (for task_type="llm")
+    request_authority_json = Column(Text, nullable=True)       # server-only admitted request snapshot
     task_type      = Column(String, default="llm")            # "llm" | "action"
     action         = Column(String, nullable=True)            # builtin action name (for task_type="action")
     schedule       = Column(String, nullable=True)            # "once", "daily", "weekly", "monthly"
@@ -2335,6 +2336,15 @@ def _migrate_seed_email_account():
 # Any future migrations or schema changes that temporarily violate foreign-key
 # constraints will fail. To perform such operations, foreign_keys must be
 # temporarily disabled around the migration workflow.
+def _migrate_add_task_authority_column():
+    """Retain snapshots after legacy task-table rebuilds; support all DBs."""
+    from sqlalchemy import inspect
+    with engine.begin() as conn:
+        columns = {column["name"] for column in inspect(conn).get_columns("scheduled_tasks")}
+        if "request_authority_json" not in columns:
+            conn.execute(text("ALTER TABLE scheduled_tasks ADD COLUMN request_authority_json TEXT"))
+
+
 def init_db():
     """
     Initialize the database by creating all tables.
@@ -2412,6 +2422,7 @@ def init_db():
     _migrate_add_oauth_config()
     _migrate_add_email_oauth_columns()
     _migrate_add_task_automation_columns()
+    _migrate_add_task_authority_column()
     _migrate_add_disabled_tools()
     _migrate_add_mcp_oauth_tokens_column()
     _migrate_add_task_v2_columns()

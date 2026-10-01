@@ -1,5 +1,7 @@
 """Windows execution contract for the agent Bash tool."""
 
+import asyncio
+
 import pytest
 from types import SimpleNamespace
 
@@ -36,6 +38,84 @@ async def test_windows_bash_uses_git_bash_with_structural_cwd(monkeypatch):
     assert result is process
     assert captured["argv"] == (bash, "-c", "pwd; cat package.json")
     assert captured["kwargs"]["cwd"] == workspace
+
+
+@pytest.mark.asyncio
+async def test_windows_bash_captures_output_instead_of_inheriting_server_handles(monkeypatch):
+    captured = {}
+
+    monkeypatch.setattr(subprocess_tools, "IS_WINDOWS", True)
+    monkeypatch.setattr(
+        subprocess_tools, "find_bash", lambda: r"C:\Program Files\Git\bin\bash.exe"
+    )
+
+    async def fake_exec(*_argv, **kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(subprocess_tools.asyncio, "create_subprocess_exec", fake_exec)
+
+    await subprocess_tools._create_bash_subprocess("pwd", cwd=r"C:\Work")
+
+    assert captured["stdout"] == asyncio.subprocess.PIPE
+    assert captured["stderr"] == asyncio.subprocess.PIPE
+    assert captured["stdin"] == asyncio.subprocess.DEVNULL
+
+
+@pytest.mark.asyncio
+async def test_windows_bash_applies_the_subprocess_env(monkeypatch):
+    captured = {}
+    env = {"PATH": r"C:\Odysseus\venv\Scripts", "HOME": r"C:\Odysseus\data"}
+
+    monkeypatch.setattr(subprocess_tools, "IS_WINDOWS", True)
+    monkeypatch.setattr(
+        subprocess_tools, "find_bash", lambda: r"C:\Program Files\Git\bin\bash.exe"
+    )
+
+    async def fake_exec(*_argv, **kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(subprocess_tools.asyncio, "create_subprocess_exec", fake_exec)
+
+    await subprocess_tools._create_bash_subprocess("pwd", cwd=r"C:\Work", env=env)
+
+    assert captured["env"] == env
+
+
+@pytest.mark.asyncio
+async def test_windows_bash_tool_passes_ctx_env_through_to_the_child(monkeypatch):
+    captured = {}
+    env = {"PATH": r"C:\Odysseus\venv\Scripts", "VIRTUAL_ENV": r"C:\Odysseus\venv"}
+
+    monkeypatch.setattr(subprocess_tools, "IS_WINDOWS", True)
+    monkeypatch.setattr(
+        subprocess_tools, "find_bash", lambda: r"C:\Program Files\Git\bin\bash.exe"
+    )
+    monkeypatch.setattr("src.tool_execution.agent_cwd", lambda: r"D:\Workspaces\Project")
+
+    async def fake_exec(*argv, **kwargs):
+        captured["argv"] = argv
+        captured["kwargs"] = kwargs
+        return SimpleNamespace(pid=4242)
+
+    async def fake_stream(_process, **_kwargs):
+        return "ok", "", 0, False
+
+    monkeypatch.setattr(subprocess_tools.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(subprocess_tools, "_run_subprocess_streaming", fake_stream)
+
+    result = await subprocess_tools.BashTool().execute(
+        "pwd",
+        {"subproc_env": env, "session_id": "chat-1"},
+    )
+
+    assert result["output"] == "ok"
+    assert result["exit_code"] == 0
+    assert "containment" in result
+    assert captured["kwargs"]["env"] == env
+    assert captured["kwargs"]["stdout"] == asyncio.subprocess.PIPE
+    assert captured["kwargs"]["stderr"] == asyncio.subprocess.PIPE
 
 
 @pytest.mark.asyncio

@@ -75,7 +75,7 @@ The source tree reads **108** `ODYSSEUS_*` variables: 78 an operator may want to
 | `ODYSSEUS_MAX_VISUAL_EVIDENCE_FRAMES` | `'3'` | `src/agent_loop.py:15361` | How many video frames one tool result may contribute. Clamped to 1-8. |
 | `ODYSSEUS_MAX_VISUAL_EVIDENCE_IMAGES` | `'1'` | `src/agent_loop.py:15329` | How many images one tool result may contribute to the model turn. Clamped to 1-8. |
 | `ODYSSEUS_MCP_ALLOWED_COMMANDS` | `''` | `src/agent_tools/admin_tools.py:140` | Security-relevant. Comma-separated allowlist of MCP launcher basenames the agent may start. Empty by default, and the deny list still wins. |
-| `ODYSSEUS_PYTHON_TOOL_SITE_PACKAGES` | `''` | `src/agent_tools/subprocess_tools.py:1149` | Security-relevant. Absolute package roots, separated by the platform path separator, exposed to the sandboxed Python tool. Empty exposes none. |
+| `ODYSSEUS_PYTHON_TOOL_SITE_PACKAGES` | `''` | `src/agent_tools/subprocess_tools.py:1153` | Security-relevant. Absolute package roots, separated by the platform path separator, exposed to the sandboxed Python tool. Empty exposes none. |
 | `ODYSSEUS_SCRIPT_HOST` | `'localhost'` | `src/builtin_actions.py:919` | Default host for the run-script action. `localhost`, `127.0.0.1`, `local` and empty run locally; any other value runs over SSH. |
 | `ODYSSEUS_TOOL_APPROVAL_GATE` | `'0'` | `src/tool_capabilities.py:645` | Security-relevant. Truthy makes tool calls pass through the approval gate. Off by default. |
 
@@ -222,7 +222,7 @@ Listed for completeness. Setting one of these on a real install is either a no-o
 | `ODYSSEUS_QA_TEACHER_TIMEOUT` | `'120'` | `scripts/odysseus_conversation_qa.py:372` | Timeout in seconds for that call. Clamped to 15-120. |
 | `ODYSSEUS_RUNTIME_REVISION` | `''` | `routes/chat_helpers.py:198` (+1 more) | Revision string stamped into each captured SFT trace record, so a trace can be tied back to the build that produced it. |
 | `ODYSSEUS_SFT_DISABLE_WORKSPACE_TOOLS` | `'1'` | `src/agent_loop.py:7407` | On by default. Keeps synthetic personal-assistant fixtures out of workspace mode; set 0, false, no or off to let them through. |
-| `ODYSSEUS_SFT_FORCE_UTC_TIMEZONE` | `'0'` | `routes/chat_routes.py:2070` | Truthy forces `sft_` accounts to UTC for deterministic batch generation. Interactive accounts still follow the browser timezone. |
+| `ODYSSEUS_SFT_FORCE_UTC_TIMEZONE` | `'0'` | `routes/chat_routes.py:2080` | Truthy forces `sft_` accounts to UTC for deterministic batch generation. Interactive accounts still follow the browser timezone. |
 | `ODYSSEUS_SFT_TRACE_CAPTURE` | `'1'` | `routes/chat_helpers.py:161` (+1 more) | On by default, but only for owners whose name starts with `sft_`. Set 0, false, no or off to stop writing training traces. |
 | `ODYSSEUS_SFT_TRACE_DIR` | *unset* | `routes/chat_helpers.py:195` (+2 more) | Directory the SFT trace JSONL files are written to. Defaults to `sft_traces` under the data directory. |
 | `ODYSSEUS_SKIP_RUN_HINT` | *unset* | `setup.py:284` | Any non-empty value suppresses the `start the server with` hint at the end of setup. `start-macos.sh` sets it because it starts the server itself. |

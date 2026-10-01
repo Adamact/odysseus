@@ -17,6 +17,7 @@ import tempfile
 from types import SimpleNamespace
 
 import pytest
+from tests.runtime_evidence_helpers import server_authorized_executor
 
 from src.tool_execution import (
     NO_TOOL_SECURITY_CONTEXT,
@@ -29,6 +30,9 @@ from src.tool_execution import (
     execute_tool_block as _execute_tool_block,
     get_active_workspace,
 )
+
+
+_execute_tool_block = server_authorized_executor(_execute_tool_block)
 
 
 async def execute_tool_block(*args, **kwargs):

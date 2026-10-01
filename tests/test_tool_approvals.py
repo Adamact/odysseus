@@ -4,6 +4,14 @@ import time
 from collections import namedtuple
 
 import pytest
+from tests.runtime_evidence_helpers import server_authorized_executor
+
+
+@pytest.fixture(autouse=True)
+def standalone_dispatch_authority(monkeypatch):
+    from src import tool_execution
+    monkeypatch.setattr(tool_execution, "execute_tool_block",
+                        server_authorized_executor(tool_execution.execute_tool_block))
 
 from src.tool_approvals import ToolApprovalStore, document_content_digest
 from src.tool_capabilities import ToolRunSecurityContext, capabilities_for_action
@@ -325,6 +333,8 @@ def test_approved_document_version_guard_rejects_changed_target():
 
 @pytest.mark.asyncio
 async def test_missing_sealed_document_does_not_fall_back_to_another(monkeypatch):
+    import sys
+    from types import ModuleType
     import src.agent_tools.document_tools as document_tools
 
     class FakeDb:
@@ -334,7 +344,11 @@ async def test_missing_sealed_document_does_not_fall_back_to_another(monkeypatch
         def rollback(self):
             pass
 
-    monkeypatch.setattr("src.database.SessionLocal", lambda: FakeDb())
+    database = ModuleType("src.database")
+    database.SessionLocal = lambda: FakeDb()
+    database.Document = object
+    database.DocumentVersion = object
+    monkeypatch.setitem(sys.modules, "src.database", database)
     monkeypatch.setattr(
         document_tools,
         "_get_owned_document",
