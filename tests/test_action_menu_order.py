@@ -2,6 +2,7 @@ from pathlib import Path
 import subprocess
 
 from tests.helpers.stylesheets import app_css
+from tests.helpers.js_modules import email_library_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,13 +14,17 @@ def test_shared_action_menu_order_is_used_by_item_menus() -> None:
         "static/js/tasks.js": "orderActionMenuItems",
         "static/js/sessions.js": "orderActionMenuItems",
         "static/js/research/panel.js": "orderActionMenuItems",
-        "static/js/emailLibrary.js": "orderActionMenuItems",
         "static/js/memory.js": "orderActionMenuItems",
     }
     for relative_path, helper in expected_imports.items():
         source = (ROOT / relative_path).read_text(encoding="utf-8")
         assert "actionMenuOrder.js" in source
         assert helper in source
+    # The email library is a package, so the import and the call can sit in
+    # different modules of it.
+    email = email_library_source()
+    assert "actionMenuOrder.js" in email
+    assert "orderActionMenuItems" in email
 
 
 def test_common_action_order_matches_product_convention() -> None:
@@ -68,20 +73,20 @@ def test_dropdown_select_actions_use_the_canonical_icon() -> None:
         "static/js/sessions.js",
         "static/js/skills.js",
         "static/js/tasks.js",
-        "static/js/emailLibrary.js",
         "static/js/research/panel.js",
     ):
         module = (ROOT / relative_path).read_text(encoding="utf-8")
         assert "SELECT_MENU_ICON" in module
+    assert "SELECT_MENU_ICON" in email_library_source()
 
 
 def test_email_filter_menu_has_context_title() -> None:
-    source = (ROOT / "static/js/emailLibrary.js").read_text(encoding="utf-8")
+    source = email_library_source()
     assert 'email-filter-menu-title">Filter by...</div>' in source
 
 
 def test_email_setting_toggles_render_neutral_disabled_state() -> None:
-    source = (ROOT / "static/js/emailLibrary.js").read_text(encoding="utf-8")
+    source = email_library_source()
     style = app_css()
     assert 'email-settings-auto-reply-section' in source
     assert 'email-settings-display-enabled-state' in source
@@ -90,14 +95,14 @@ def test_email_setting_toggles_render_neutral_disabled_state() -> None:
 
 
 def test_email_search_options_menu_has_context_title() -> None:
-    source = (ROOT / "static/js/emailLibrary.js").read_text(encoding="utf-8")
+    source = email_library_source()
     menu_start = source.index('id="email-search-options-menu"')
     menu_end = source.index("</div>", menu_start) + len("</div>")
     assert 'email-search-options-title">Filter by...</div>' in source[menu_start:menu_end]
 
 
 def test_email_date_headers_mark_unexpected_timeline_gaps() -> None:
-    source = (ROOT / "static/js/emailLibrary.js").read_text(encoding="utf-8")
+    source = email_library_source()
     assert "function _emailTimelineGapThreshold(items)" in source
     assert "email-date-gap-break" in source
     assert "gapDays > 90 && gapDays > timelineGapThreshold" in source
@@ -107,7 +112,7 @@ def test_email_date_headers_mark_unexpected_timeline_gaps() -> None:
 
 
 def test_email_filters_and_card_favorite_toggle_are_wired() -> None:
-    source = (ROOT / "static/js/emailLibrary.js").read_text(encoding="utf-8")
+    source = email_library_source()
     assert '<option value="tag:action-needed">' not in source
     assert "filter:tag:action-needed" not in source
     assert "email-card-favorite" in source
@@ -132,7 +137,7 @@ def test_email_filters_and_card_favorite_toggle_are_wired() -> None:
 
 
 def test_email_auto_reply_start_date_seeds_today_when_picker_opens() -> None:
-    source = (ROOT / "static/js/emailLibrary.js").read_text(encoding="utf-8")
+    source = email_library_source()
     assert "function _todayDateInputValue()" in source
     assert "if (autoReplyStart && !autoReplyStart.value) autoReplyStart.value = _todayDateInputValue();" in source
     assert "autoReplyStart?.addEventListener('pointerdown', seedAutoReplyStartDate);" in source
@@ -140,7 +145,7 @@ def test_email_auto_reply_start_date_seeds_today_when_picker_opens() -> None:
 
 
 def test_email_auto_reply_syncs_one_calendar_event_per_account() -> None:
-    source = (ROOT / "static/js/emailLibrary.js").read_text(encoding="utf-8")
+    source = email_library_source()
     assert "function _syncAutoReplyCalendarEvent(cfg)" in source
     assert "summary: 'Email Auto Reply (away)'" in source
     assert "function _findAutoReplyCalendarEventUids(cfg, accountId)" in source
@@ -155,7 +160,7 @@ def test_email_auto_reply_syncs_one_calendar_event_per_account() -> None:
 
 
 def test_email_settings_show_away_account_and_compact_display_controls() -> None:
-    source = (ROOT / "static/js/emailLibrary.js").read_text(encoding="utf-8")
+    source = email_library_source()
     style = app_css()
     assert 'email-account-away-label">(AWAY)</span>' in source
     assert 'id="email-lib-auto-reply-badge"' in source
@@ -175,14 +180,14 @@ def test_email_settings_show_away_account_and_compact_display_controls() -> None
 
 
 def test_email_cleanup_uses_the_memory_tidy_star_icon() -> None:
-    source = (ROOT / "static/js/emailLibrary.js").read_text(encoding="utf-8")
+    source = email_library_source()
     cleanup = source[source.index("function _emailCleanupSettingsHtml"):source.index("function _emailDisplaySettingsHtml")]
     assert "email-settings-clean-btn" in cleanup
     assert "M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z" in cleanup
 
 
 def test_email_settings_escape_returns_to_email_list() -> None:
-    source = (ROOT / "static/js/emailLibrary.js").read_text(encoding="utf-8")
+    source = email_library_source()
     settings_guard = "if (modal.classList.contains('email-settings-mode'))"
     assert settings_guard in source
     assert source.index(settings_guard) < source.index("closeEmailLibrary();", source.index(settings_guard))
@@ -190,7 +195,7 @@ def test_email_settings_escape_returns_to_email_list() -> None:
 
 
 def test_email_select_escape_cancels_selection_without_closing_library() -> None:
-    source = (ROOT / "static/js/emailLibrary.js").read_text(encoding="utf-8")
+    source = email_library_source()
     select_guard = "if (state._selectMode) {"
     select_start = source.index(select_guard, source.index("if (e.key === 'Escape')"))
     assert "_setSelectBtnState(false);" in source[select_start:select_start + 260]
@@ -206,7 +211,7 @@ def test_chat_delete_actions_use_the_shared_trash_bin_icon() -> None:
 
 
 def test_agent_unsubscribe_uses_the_reviewed_target_without_rescanning() -> None:
-    source = (ROOT / "static/js/emailLibrary.js").read_text(encoding="utf-8")
+    source = email_library_source()
     start = source.index("function _askAgentToUnsubscribe")
     end = source.index("function _unsubscribeCandidateUids", start)
     prompt = source[start:end]
@@ -219,7 +224,7 @@ def test_agent_unsubscribe_uses_the_reviewed_target_without_rescanning() -> None
 
 
 def test_email_clean_always_forces_a_fresh_unsubscribe_scan() -> None:
-    source = (ROOT / "static/js/emailLibrary.js").read_text(encoding="utf-8")
+    source = email_library_source()
     start = source.index("function _bindEmailSettingsPageControls")
     end = source.index("function _setUnsubButtonBusy", start)
     controls = source[start:end]
@@ -228,7 +233,7 @@ def test_email_clean_always_forces_a_fresh_unsubscribe_scan() -> None:
 
 
 def test_unsubscribe_duplicate_badge_is_lowered() -> None:
-    frontend = (ROOT / "static/js/emailLibrary.js").read_text(encoding="utf-8")
+    frontend = email_library_source()
     stylesheet = app_css()
     assert "email-unsub-duplicate-badge" in frontend
     start = stylesheet.index(".email-unsub-duplicate-badge {")
@@ -236,7 +241,7 @@ def test_unsubscribe_duplicate_badge_is_lowered() -> None:
 
 
 def test_unsubscribe_scan_status_sits_before_clean_action() -> None:
-    frontend = (ROOT / "static/js/emailLibrary.js").read_text(encoding="utf-8")
+    frontend = email_library_source()
     stylesheet = app_css()
     start = frontend.index("function _emailCleanupSettingsHtml")
     end = frontend.index("function _emailDisplaySettingsHtml", start)
@@ -257,7 +262,7 @@ def test_unsubscribe_scan_status_sits_before_clean_action() -> None:
 
 
 def test_unsubscribe_success_removes_messages_before_the_next_scan() -> None:
-    frontend = (ROOT / "static/js/emailLibrary.js").read_text(encoding="utf-8")
+    frontend = email_library_source()
     backend = (ROOT / "routes/email/email_routes.py").read_text(encoding="utf-8")
     mcp = (ROOT / "mcp_servers/email_server.py").read_text(encoding="utf-8")
     assert "async function _deleteAfterUnsubscribe" in frontend
@@ -271,7 +276,7 @@ def test_unsubscribe_success_removes_messages_before_the_next_scan() -> None:
 
 
 def test_agent_email_mutations_reconcile_bulk_single_and_mailto_results() -> None:
-    source = (ROOT / "static/js/emailLibrary.js").read_text(encoding="utf-8")
+    source = email_library_source()
     start = source.index("function _agentDeletedEmailUids")
     end = source.index("function _handleAgentEmailToolOutput", start)
     resolver = source[start:end]
@@ -282,7 +287,7 @@ def test_agent_email_mutations_reconcile_bulk_single_and_mailto_results() -> Non
 
 
 def test_browser_agent_unsubscribe_cleans_sender_after_positive_confirmation() -> None:
-    source = (ROOT / "static/js/emailLibrary.js").read_text(encoding="utf-8")
+    source = email_library_source()
     start = source.index("function _agentBrowserUnsubscribeSucceeded")
     end = source.index("function _agentDeletedEmailUids", start)
     browser_flow = source[start:end]
@@ -321,7 +326,7 @@ def test_unsubscribe_cleanup_can_remove_same_sender_unsubscribe_messages() -> No
 
 
 def test_unsubscribe_review_marks_handled_cards_and_offers_scan_further() -> None:
-    source = (ROOT / "static" / "js" / "emailLibrary.js").read_text()
+    source = email_library_source()
     start = source.index("function _markUnsubscribeCardDone")
     end = source.index("async function _runUnsubscribeCleanup", start)
     card = source[start:end]
@@ -331,7 +336,7 @@ def test_unsubscribe_review_marks_handled_cards_and_offers_scan_further() -> Non
 
 
 def test_unsubscribe_review_can_ignore_a_candidate_without_deleting_it() -> None:
-    source = (ROOT / "static" / "js" / "emailLibrary.js").read_text()
+    source = email_library_source()
     styles = app_css()
     assert "email-unsub-ignore-btn" in source
     assert "_rememberUnsubscribeIgnored(c)" in source
@@ -340,7 +345,7 @@ def test_unsubscribe_review_can_ignore_a_candidate_without_deleting_it() -> None
 
 
 def test_email_settings_sections_use_static_headers() -> None:
-    source = (ROOT / "static" / "js" / "emailLibrary.js").read_text()
+    source = email_library_source()
     styles = app_css()
     assert 'class="email-unsub-accent-icon"' in source
     assert 'M12 0L14.59 8.41' in source

@@ -1,5 +1,6 @@
 from pathlib import Path
 from tests.helpers.stylesheets import app_css
+from tests.helpers.js_modules import email_library_paths
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,14 +33,17 @@ def test_library_chat_card_menu_uses_standard_anchor_gap():
 
 
 def test_card_menus_use_the_same_anchor_gap():
-    for relative_path in (
-        "static/js/sessions.js",
-        "static/js/documentLibrary.js",
-        "static/js/emailLibrary.js",
-        "static/js/memory.js",
-        "static/js/tasks.js",
-        "static/js/skills.js",
-    ):
-        source = (ROOT / relative_path).read_text(encoding="utf-8")
-        assert "rect.bottom + 2" not in source, relative_path
-        assert "r.bottom + 2" not in source, relative_path
+    modules = [
+        ROOT / relative_path
+        for relative_path in (
+            "static/js/sessions.js",
+            "static/js/documentLibrary.js",
+            "static/js/memory.js",
+            "static/js/tasks.js",
+            "static/js/skills.js",
+        )
+    ] + email_library_paths(include_wrapper=True)
+    for module in modules:
+        source = module.read_text(encoding="utf-8")
+        assert "rect.bottom + 2" not in source, module
+        assert "r.bottom + 2" not in source, module

@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v654-css-split-3';
+const CACHE_NAME = 'odysseus-v655-email-library-split';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -101,9 +101,19 @@ const PRECACHE = [
   '/static/js/slashCommands.js?v=20260921chatgptusage1',
   '/static/js/research/jobs.js?v=20260910researcherrorpersist1',
   '/static/js/emailInbox.js?v=20260914aireply4',
+  '/static/js/emailLibrary/index.js',
+  '/static/js/emailLibrary/aiReply.js',
+  '/static/js/emailLibrary/attachments.js',
+  '/static/js/emailLibrary/bodyRender.js',
+  '/static/js/emailLibrary/menus.js',
+  '/static/js/emailLibrary/reader.js',
+  '/static/js/emailLibrary/settingsPage.js',
+  '/static/js/emailLibrary/unsubscribe.js',
   '/static/js/emailLibrary/utils.js',
   '/static/js/emailLibrary/signatureFold.js',
   '/static/js/emailLibrary/state.js',
+  // emailInbox.js has always imported this one; it was never precached.
+  '/static/js/emailLibrary/replyRecipients.js',
   '/static/js/notes.js?v=20260911notesselectioncancel1',
   '/static/js/tasks.js?v=20260914taskmodel1',
   '/static/js/calendar.js?v=20260914emailsource11',

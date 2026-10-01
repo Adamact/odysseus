@@ -2,6 +2,7 @@ from pathlib import Path
 import re
 
 from tests.helpers.stylesheets import app_css, stylesheet_cache_version
+from tests.helpers.js_modules import email_library_source
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -71,7 +72,7 @@ def test_drawing_edits_mark_notes_dirty_and_keep_one_gallery_image():
 
 
 def test_calendar_email_attachments_have_a_calendar_import_action():
-    email = (ROOT / "static" / "js" / "emailLibrary.js").read_text(encoding="utf-8")
+    email = email_library_source()
     calendar = (ROOT / "static" / "js" / "calendar.js").read_text(encoding="utf-8")
 
     assert "email-attachment-calendar-open" in email
