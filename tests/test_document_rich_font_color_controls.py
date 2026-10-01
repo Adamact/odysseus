@@ -6,10 +6,12 @@ import subprocess
 from pathlib import Path
 
 from tests.helpers.stylesheets import app_css
+from tests.helpers.stylesheets import stylesheet_link_tags
+from tests.helpers.document_source import document_source, function_body
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+DOC_JS = document_source()
 STYLE = app_css()
 
 
@@ -47,8 +49,8 @@ def test_horizontal_rule_is_ordered_after_clear_formatting():
 
 
 def test_image_options_are_hidden_until_a_rich_image_is_selected():
-    clear_fn = DOC_JS.split("function _clearRichImageSelection()", 1)[1].split("function _selectRichImage", 1)[0]
-    select_fn = DOC_JS.split("function _selectRichImage", 1)[1].split("function _selectedRichImage", 1)[0]
+    clear_fn = function_body("_clearRichImageSelection")
+    select_fn = function_body("_selectRichImage")
     assert "imageButton.style.display = 'none';" in clear_fn
     assert "imageButton.style.display = '';" in select_fn
 
@@ -94,7 +96,7 @@ def test_numeric_font_size_and_custom_colors_work_on_desktop_and_mobile():
       async function exercise(viewport, suffix) {
         const page = await browser.newPage({ viewport });
         await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentStats.js`);
-        await page.setContent('<link rel="stylesheet" href="/static/style.css?v=20260831richtexttools91"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
+        await page.setContent('__ODY_STYLESHEETS__<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
         await page.evaluate(async suffix => {
           const mod = await import(`/static/js/document.js?v=20260831richtexttools91&font-color=${suffix}`);
           mod.init('/api');
@@ -190,6 +192,7 @@ def test_numeric_font_size_and_custom_colors_work_on_desktop_and_mobile():
       console.log(JSON.stringify({ desktop, mobile }));
       await browser.close();
     """
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=ROOT,

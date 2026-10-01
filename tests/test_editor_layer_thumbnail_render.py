@@ -1,4 +1,5 @@
 from pathlib import Path
+from tests.helpers.stylesheets import app_css
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,7 +50,7 @@ def test_group_rows_support_keyboard_selection():
 
 
 def test_keyboard_focus_is_visible_for_layer_and_group_rows():
-    styles = (ROOT / "static/style.css").read_text()
+    styles = app_css()
 
     assert ".ge-layer-item:focus-visible," in styles
     assert ".ge-layer-group-row:focus-visible" in styles

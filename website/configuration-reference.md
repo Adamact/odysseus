@@ -33,18 +33,18 @@ The source tree reads **98** `ODYSSEUS_*` variables: 78 an operator may want to 
 
 | Variable | Default | Read in | What it does |
 |---|---|---|---|
-| `ODYSSEUS_ADMIN_PASSWORD` | `''` | `setup.py:102` (+3 more) | Password for the admin account created on first run. Setup refuses a value shorter than its minimum length rather than silently falling back. |
-| `ODYSSEUS_ADMIN_USER` | `''` | `setup.py:101` (+1 more) | Username for the admin account created on first run. Setup uses env vars first, then an interactive prompt, then a random password. |
+| `ODYSSEUS_ADMIN_PASSWORD` | `''` | `setup.py:102` (+4 more) | Password for the admin account created on first run. Setup refuses a value shorter than its minimum length rather than silently falling back. |
+| `ODYSSEUS_ADMIN_USER` | `''` | `setup.py:101` (+2 more) | Username for the admin account created on first run. Setup uses env vars first, then an interactive prompt, then a random password. |
 | `ODYSSEUS_ALLOW_OLLAMA_CLI_SCAN` | *unset* | `routes/cookbook_helpers.py:544` (+1 more) | On Windows only, set truthy to let the Cookbook dependency probe shell out to `ollama list`. Ignored on other platforms, where the scan always runs. |
-| `ODYSSEUS_CONTAINER_NETWORK_MODE` | `''` | `app.py:1021` (+1 more) | Declares the container's Docker network mode. Set to `host` to skip host-gateway probing when discovering local model endpoints. |
+| `ODYSSEUS_CONTAINER_NETWORK_MODE` | `''` | `app.py:1022` (+1 more) | Declares the container's Docker network mode. Set to `host` to skip host-gateway probing when discovering local model endpoints. |
 | `ODYSSEUS_ENABLE_HOST_DOCKER` | `''` | `src/host_docker_access.py:41` | Security-relevant. Must be exactly `true` before tools may use a mounted host Docker socket, and the socket itself must exist. |
-| `ODYSSEUS_INPROCESS_POLLERS` | `'1'` | `routes/email_pollers.py:1722` | The same off switch for the in-process email pollers, when `odysseus-mail poll-scheduled` is the sole external driver. |
-| `ODYSSEUS_INPROCESS_TASKS` | `'1'` | `app.py:1310` | Set to 0, false, no or off to stop the in-process scheduled-task runner, for deployments where an external worker drives task firing. |
-| `ODYSSEUS_MODEL_KEEPALIVE` | `''` | `app.py:1217` | Opt-in periodic model keep-alive pings. Off by default: the ping path runs model discovery, so stale LAN endpoints add background pressure. |
+| `ODYSSEUS_INPROCESS_POLLERS` | `'1'` | `routes/email/email_pollers.py:1722` | The same off switch for the in-process email pollers, when `odysseus-mail poll-scheduled` is the sole external driver. |
+| `ODYSSEUS_INPROCESS_TASKS` | `'1'` | `app.py:1311` | Set to 0, false, no or off to stop the in-process scheduled-task runner, for deployments where an external worker drives task firing. |
+| `ODYSSEUS_MODEL_KEEPALIVE` | `''` | `app.py:1218` | Opt-in periodic model keep-alive pings. Off by default: the ping path runs model discovery, so stale LAN endpoints add background pressure. |
 | `ODYSSEUS_REQUIRE_TOOL_INDEX_READY` | `''` | `src/readiness.py:61` | Set truthy to make semantic tool-index readiness gate startup. Off by default so an install stays available on deterministic tool selection. |
 | `ODYSSEUS_SKIP_ADMIN_PROMPT` | *unset* | `setup.py:112` | Any non-empty value suppresses the interactive admin-credential prompt even on a TTY, for unattended installs. |
 | `ODYSSEUS_SLOW_REQUEST_LOG_SECONDS` | `'0.75'` | `app.py:239` | Request duration in seconds above which the middleware logs a slow-request warning. |
-| `ODYSSEUS_STARTUP_WARMUPS` | `''` | `app.py:1191` | Opt-in startup pings of the configured model endpoints. Off by default because they compete with the first seconds of UI use. |
+| `ODYSSEUS_STARTUP_WARMUPS` | `''` | `app.py:1192` | Opt-in startup pings of the configured model endpoints. Off by default because they compete with the first seconds of UI use. |
 | `ODYSSEUS_TOOL_INDEX_PREWARM` | `'1'` | `src/tool_index.py:771` | Set to 0, false, no or off to skip background initialization of semantic tool retrieval at startup. |
 
 ### Data directories and paths
@@ -105,7 +105,7 @@ The source tree reads **98** `ODYSSEUS_*` variables: 78 an operator may want to 
 | Variable | Default | Read in | What it does |
 |---|---|---|---|
 | `ODYSSEUS_DOCUMENT_OWNER` | `''` | `mcp_servers/email_server.py:208` | Owner stamped on documents the email MCP server creates. Stdio MCP tools get no authenticated user, so without this a draft is invisible. |
-| `ODYSSEUS_IMAP_TIMEOUT_SECONDS` | *unset* | `routes/email_helpers.py:1163` | IMAP socket timeout in seconds, clamped to 5-300. A non-numeric value falls back to 30 rather than failing. |
+| `ODYSSEUS_IMAP_TIMEOUT_SECONDS` | *unset* | `routes/email/email_helpers.py:1163` | IMAP socket timeout in seconds, clamped to 5-300. A non-numeric value falls back to 30 rather than failing. |
 
 ### Calendar, notes and single-user mode
 

@@ -33,6 +33,8 @@ the sub-area. The `area_*` names are registered in `pyproject.toml`; the dynamic
 `sub_*` names are registered before collection by `pytest_configure` in
 `tests/conftest.py`, so unknown-mark warnings still flag genuine typos.
 
+The full suite does not come back clean on every machine. [KNOWN_FAILURES.md](KNOWN_FAILURES.md) lists which failures are expected, which are test bugs worth fixing, and the prerequisites a clean run needs; anything not on that list is a regression until shown otherwise.
+
 For common focused runs, use `tests/run_focus.py`. It validates area and
 sub-area names, accepts sub-areas with or without the `sub_` prefix, and passes
 extra pytest arguments after `--`:
@@ -140,7 +142,7 @@ swallowed.
 ## CSS computed-style snapshot
 
 `tests/test_css_computed_style_snapshot.py` pins the rendered result of
-`static/style.css` - one 51k-line file whose behavior depends on source order -
+the shipped ordered stylesheet cascade, whose behavior depends on source order,
 by hashing `getComputedStyle` over a fixed element inventory across pages,
 viewports, themes and density modes. Any PR that moves CSS has to produce an
 identical digest or explain why it did not.
@@ -155,6 +157,31 @@ The inventory, the baseline and the capture live in `tests/css_snapshot/`;
 `tests/css_snapshot/README.md` documents what is covered, what is deliberately
 not, and how to find the property that moved when it fails. The run takes about
 21 seconds and skips when `npm ci` has not been run.
+
+## Release smoke suite
+
+`tests/smoke/` drives every advertised feature area once, end to end,
+against a real instance - the safety net the unit suite does not provide
+for a route move or a module split. One command boots the worktree and
+runs it:
+
+```bash
+scripts/odysseus-smoke              # boot, run every area, stop again
+scripts/odysseus-smoke --keep-up    # leave the instance running
+scripts/odysseus-smoke --areas      # the coverage table, without booting
+```
+
+It reads its target instance out of the environment (`APP_PORT` through
+`internal_api_base()`, plus the dev admin account), so under a plain
+`pytest` with nothing booted every scenario skips with the reason and
+the full suite stays green. Models are served by a deterministic
+loopback stub, never a live endpoint; email uses the repo's existing
+`ODYSSEUS_EMAIL_FIXTURE` path.
+
+The report is a per-area table that also prints the areas the suite
+deliberately does not cover, so it cannot be read as coverage of
+everything it omits. `tests/smoke/README.md` documents what is in each
+list and why.
 
 ## Core principles
 
@@ -178,14 +205,13 @@ Use when a test asserts on a CSS rule.
 
 - Returns every app stylesheet concatenated in the order `static/index.html`
   loads them, which is the order the cascade actually has.
-- Panel styles no longer all live in `static/style.css`; reading that file
-  alone ties the test to whichever file a rule sits in today, so it goes red
+- App styles live across an ordered cascade; reading one fragment alone ties
+  the test to whichever file a rule sits in today, so it goes red
   when a rule moves without the rendered page changing.
 - `stylesheet_paths()` and `stylesheet_urls()` are there when a test needs the
   files or the request URLs rather than their contents.
   `stylesheet_link_tags()` returns the `<link>` markup for a synthetic page
-  driven through Playwright, so it gets the whole cascade instead of only
-  `style.css`.
+  driven through Playwright, so it gets the whole shipped cascade.
 - All of them fail loudly if `index.html` links a stylesheet that is missing.
 - Not for vendored CSS under `static/lib/`, which they deliberately skip.
 

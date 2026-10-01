@@ -1,11 +1,17 @@
 from pathlib import Path
+from tests.helpers.stylesheets import app_css
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_image_settings_only_list_online_served_image_models():
-    settings = (ROOT / "static/js/settings.js").read_text(encoding="utf-8")
+    # The image panel moved into static/js/settings/imageModels.js; read the
+    # whole settings surface so this pins behaviour rather than a filename.
+    settings = "\n".join(
+        p.read_text(encoding="utf-8")
+        for p in [ROOT / "static/js/settings.js", *sorted((ROOT / "static/js/settings").glob("*.js"))]
+    )
 
     assert "fetch('/api/model-endpoints'" in settings
     assert "!endpoint.is_enabled || !endpoint.online" in settings
@@ -15,7 +21,7 @@ def test_image_settings_only_list_online_served_image_models():
 
 
 def test_deep_research_fields_are_constrained_to_their_card():
-    styles = (ROOT / "static/style.css").read_text(encoding="utf-8")
+    styles = app_css()
 
     rule = styles[styles.index("/* Deep Research uses long labels"):]
     assert ".admin-card:has(#set-researchSearch) .settings-row { min-width: 0; }" in rule

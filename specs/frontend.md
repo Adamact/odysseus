@@ -97,6 +97,8 @@ Current major frontend areas include:
 - image editor integration in `static/js/galleryEditor.js` plus leaves under `static/js/editor/`;
 - gallery, email inbox/library, calendar, research panel/jobs/synapse, notes/tasks, assistant, memory/skills, Cookbook/HW Fit, workspace picker, provider device flow, composer ArrowUp recall, theme, modal/window utilities, storage, and accessibility helpers.
 
+`static/js/emailLibrary/` is the one JS package with module-graph coverage: `tests/test_email_library_module_graph_js.py` pins the wrapper's public surface against the entry module's exports, evaluates every module on its own in a browser so an import cycle cannot hide a temporal-dead-zone read, and requires each module to be in the `sw.js` precache. Assertions about its source go through `tests/helpers/js_modules.py`, which reads the whole package, for the same reason `tests/helpers/stylesheets.py` reads the whole cascade.
+
 Coordinator ownership:
 
 - `static/app.js` owns late orchestration, global fetch 401 redirects, sidebar/tool route wiring, and many `window.*` compatibility bridges;
@@ -153,7 +155,7 @@ Missing coverage includes:
 ## Current Gaps
 
 - `static/style.css` and large coordinators remain high-risk owners: `static/js/document.js`, `static/js/settings.js`, `static/js/chat.js`, and `static/app.js`.
-- There is no build-time type checking, module graph validation, or script-order validation. Service-worker precache validation exists for stylesheets only.
+- There is no build-time type checking, module graph validation, or script-order validation. Service-worker precache validation exists for stylesheets, and for the `static/js/emailLibrary/` package only.
 - Frontend state is mostly module/global/localStorage driven, so cross-session and cross-user behavior needs explicit care.
 - `window.*` compatibility bridges remain widespread.
 - PWA/static-serving behavior may deserve a separate spec if service worker, manifests, route-specific icons, and cache policy keep growing.
