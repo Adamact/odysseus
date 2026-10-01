@@ -1,6 +1,7 @@
 """Shell routes — user-facing command execution endpoint."""
 
 import asyncio
+import contextlib
 import importlib
 import json
 import logging
@@ -8,6 +9,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import uuid
 import tempfile
@@ -49,6 +51,7 @@ from core.platform_compat import (
     detached_popen_kwargs,
     find_bash,
     git_bash_path,
+    pid_alive,
 )
 
 
@@ -558,6 +561,20 @@ STREAM_TIMEOUT = 120  # default for short commands
 MAX_OUTPUT = 200_000  # truncate limit
 TMUX_LOG_DIR = Path(tempfile.gettempdir()) / "odysseus-tmux"
 PTY_UNSUPPORTED_ERROR = "pty_unsupported"
+# PTY teardown. The PTY child leads its own session (os.setsid), so killing it
+# has to signal the whole process group and then confirm the group is gone —
+# see _terminate_pty_session.
+# ``signal.SIGKILL`` does not exist on native Windows, and this module is
+# imported unconditionally by app.py, so resolve the escalation defensively
+# rather than at the cost of the whole app failing to start there.
+PTY_KILL_ESCALATION = tuple(
+    sig
+    for sig in (getattr(signal, "SIGTERM", None), getattr(signal, "SIGKILL", None))
+    if sig is not None
+)
+PTY_KILL_GRACE = 1.0  # seconds a signalled session gets to exit
+PTY_KILL_POLL_INTERVAL = 0.05  # re-check interval while waiting for it
+PTY_KILL_FAILED_HINT = "; processes it started survived the kill and are still running"
 
 
 class ShellExecRequest(BaseModel):
@@ -662,6 +679,131 @@ async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> Dict[str, An
         return {"stdout": "", "stderr": str(e), "exit_code": -1}
 
 
+def _session_pgid(pid: int) -> int | None:
+    """Process-group id of the session ``pid`` leads, or None if unavailable.
+
+    Read this *before* the leader is reaped: once it is, ``getpgid`` fails and
+    the group id can no longer be recovered from the pid.
+    """
+    getpgid = getattr(os, "getpgid", None)
+    if getpgid is None:  # no process groups (native Windows)
+        return None
+    try:
+        return getpgid(pid)
+    except OSError:
+        return None
+
+
+def _signal_session(pgid: int | None, pid: int, sig: int) -> bool:
+    """Send ``sig`` to the whole process group, or to the lone process.
+
+    Returns whether anything was signalled, so a caller can tell "the session
+    is already gone" from "the signal landed". The single-pid fallback
+    matters: if ``setsid`` did not take effect, or the platform has no process
+    groups, teardown must still reach the child rather than do nothing.
+    """
+    killpg = getattr(os, "killpg", None)
+    if pgid is not None and killpg is not None:
+        try:
+            killpg(pgid, sig)
+            return True
+        except ProcessLookupError:
+            return False
+        except OSError:
+            pass  # group signalling refused — fall through to the single pid
+    try:
+        os.kill(pid, sig)
+        return True
+    except OSError:
+        return False
+
+
+def _session_alive(pgid: int | None, pid: int) -> bool:
+    """True while any member of the process group still exists.
+
+    An unreaped zombie is still signallable, so a True here can also mean the
+    leader has exited but not yet been collected. Without a group id this can
+    only speak for the child itself, not for anything it spawned.
+    """
+    killpg = getattr(os, "killpg", None)
+    if pgid is not None and killpg is not None:
+        try:
+            killpg(pgid, 0)
+        except ProcessLookupError:
+            return False  # ESRCH — no member of the group is left
+        except OSError:
+            # Anything else (EPERM when the group holds a process we may not
+            # signal, EINVAL) answers the probe without proving the group is
+            # gone. Only ESRCH does that, so treat the rest as still running:
+            # reporting a surviving session as contained is the one outcome
+            # teardown must never produce.
+            return True
+        return True
+    return pid_alive(pid)
+
+
+async def _await_session_exit(proc, pgid: int | None, pid: int) -> bool:
+    """Wait up to the grace period for the leader and its group to go away."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + PTY_KILL_GRACE
+    while True:
+        remaining = deadline - loop.time()
+        if proc.returncode is None and remaining > 0:
+            # Reap the leader, otherwise its own zombie keeps the group alive
+            # and the liveness probe below can never come back clean.
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(proc.wait(), remaining)
+        if not _session_alive(pgid, pid):
+            return True
+        if loop.time() >= deadline:
+            return False
+        await asyncio.sleep(PTY_KILL_POLL_INTERVAL)
+
+
+async def _terminate_pty_session(proc) -> bool:
+    """Kill the PTY child and every process in the session it leads.
+
+    The child is spawned under ``os.setsid``, so it leads its own session and
+    process group. Signalling only the leader is strictly worse than never
+    calling ``setsid`` at all: the descendants are detached from the server's
+    group too, so nothing will ever reach them, while the caller reports the
+    command as terminated. Signal the group instead, escalate to SIGKILL if it
+    outlives the grace period, and return whether the session is actually gone
+    so the caller can say so rather than assume it.
+    """
+    pid = getattr(proc, "pid", None)
+    if pid is None:
+        return True
+    pgid = _session_pgid(pid)
+
+    for sig in PTY_KILL_ESCALATION:
+        if not _signal_session(pgid, pid, sig):
+            break  # nothing left to signal
+        if await _await_session_exit(proc, pgid, pid):
+            return True
+    return not _session_alive(pgid, pid)
+
+
+async def _terminate_pty_session_quietly(proc) -> None:
+    """Best-effort :func:`_terminate_pty_session` for paths with no reader.
+
+    The client-disconnect and exception paths have nowhere left to report a
+    containment failure to, so they log it instead of raising over the top of
+    whatever is already going wrong.
+    """
+    pid = getattr(proc, "pid", None)
+    try:
+        contained = await _terminate_pty_session(proc)
+    except Exception:
+        logger.exception("PTY session teardown failed for pid %s", pid)
+        return
+    if not contained:
+        logger.warning(
+            "PTY session for pid %s survived teardown; it may still be running",
+            pid,
+        )
+
+
 async def _generate_pty(cmd: str, timeout: int, request: Request):
     """Run command in a pseudo-TTY so tqdm/progress bars work natively."""
     if not PTY_SUPPORTED:
@@ -702,16 +844,17 @@ async def _generate_pty(cmd: str, timeout: int, request: Request):
     try:
         while not process_done.is_set():
             if deadline and loop.time() > deadline:
-                proc.kill()
-                await proc.wait()
-                yield f"data: {json.dumps({'stream': 'stderr', 'data': f'Command timed out after {timeout}s'})}\n\n"
+                contained = await _terminate_pty_session(proc)
+                msg = f"Command timed out after {timeout}s"
+                if not contained:
+                    msg += PTY_KILL_FAILED_HINT
+                yield f"data: {json.dumps({'stream': 'stderr', 'data': msg})}\n\n"
                 yield f"data: {json.dumps({'exit_code': -1})}\n\n"
                 return
 
             # Check client disconnect
             if await request.is_disconnected():
-                proc.kill()
-                await proc.wait()
+                await _terminate_pty_session_quietly(proc)
                 return
 
             # Read available data from PTY
@@ -773,11 +916,7 @@ async def _generate_pty(cmd: str, timeout: int, request: Request):
         yield f"data: {json.dumps({'exit_code': proc.returncode})}\n\n"
 
     except Exception as e:
-        try:
-            proc.kill()
-            await proc.wait()
-        except ProcessLookupError:
-            pass
+        await _terminate_pty_session_quietly(proc)
         yield f"data: {json.dumps({'stream': 'stderr', 'data': str(e)})}\n\n"
         yield f"data: {json.dumps({'exit_code': -1})}\n\n"
     finally:
