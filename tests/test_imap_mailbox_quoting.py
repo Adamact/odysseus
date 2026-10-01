@@ -86,7 +86,7 @@ def test_known_imap_mailbox_call_sites_are_quoted():
     assert 'conn.uid("MOVE", _b(uid), dest_folder)' not in mcp
     assert 'conn.uid("COPY", _b(uid), dest_folder)' not in mcp
 
-    pollers = Path("routes/email_pollers.py").read_text()
+    pollers = Path("routes/email/email_pollers.py").read_text()
     assert "conn.select(sent_name" not in pollers
     assert "imap.append(sent_folder" not in pollers
 

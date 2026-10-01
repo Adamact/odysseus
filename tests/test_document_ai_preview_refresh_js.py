@@ -2,13 +2,13 @@
 
 import re
 from pathlib import Path
+from tests.helpers.document_source import document_source
 
 
-SRC = Path(__file__).resolve().parent.parent / "static/js/document.js"
 
 
 def _function_body(name: str) -> str:
-    text = SRC.read_text(encoding="utf-8")
+    text = document_source()
     match = re.search(rf"\n\s*(?:export\s+)?(?:async\s+)?function\s+{name}\([^)]*\)\s*\{{", text)
     assert match, f"{name} not found"
 

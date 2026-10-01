@@ -2,6 +2,7 @@ from pathlib import Path
 import re
 
 from tests.helpers.stylesheets import app_css
+from tests.helpers.js_modules import email_library_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -285,13 +286,10 @@ def test_calendar_tool_guidance_preserves_manual_tags_on_unrelated_updates():
 
 def test_calendar_visual_asset_versions_are_bumped():
     versions = []
-    for rel in (
-        "static/app.js",
-        "static/js/chatRenderer.js",
-        "static/js/emailInbox.js",
-        "static/js/emailLibrary.js",
-    ):
-        src = (ROOT / rel).read_text()
+    for src in [
+        (ROOT / rel).read_text()
+        for rel in ("static/app.js", "static/js/chatRenderer.js", "static/js/emailInbox.js")
+    ] + [email_library_source()]:
         match = re.search(r"calendar\.js\?v=([A-Za-z0-9_-]+)", src)
         assert match
         versions.append(match.group(1))

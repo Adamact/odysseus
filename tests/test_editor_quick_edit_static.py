@@ -1,9 +1,10 @@
 from pathlib import Path
+from tests.helpers.stylesheets import app_css
 
 
 ROOT = Path(__file__).resolve().parents[1]
 EDITOR = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
-STYLE = (ROOT / "static/style.css").read_text(encoding="utf-8")
+STYLE = app_css()
 
 
 def test_quick_edit_has_persistent_expanded_identity_and_labeled_input():

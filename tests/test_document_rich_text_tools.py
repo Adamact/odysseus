@@ -3,10 +3,11 @@
 from pathlib import Path
 
 from tests.helpers.stylesheets import app_css
+from tests.helpers.document_source import document_source, function_body
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+DOC_JS = document_source()
 STYLE = app_css()
 
 
@@ -84,9 +85,7 @@ def test_rich_text_commands_sync_and_schedule_save():
 
 
 def test_rich_text_paste_uses_document_allowlist_and_drops_embedded_media():
-    paste_cleaner = DOC_JS.split("function _cleanRichTextPasteHtml", 1)[1].split(
-        "function _wireEmailRichbody", 1
-    )[0]
+    paste_cleaner = function_body("_cleanRichTextPasteHtml")
 
     assert "const allowedTags = new Set" in paste_cleaner
     assert "'TABLE'" in paste_cleaner
@@ -154,9 +153,7 @@ def test_table_mutations_are_undoable_and_restore_the_caret():
 
 
 def test_temporary_table_tokens_are_not_persisted():
-    sanitizer = DOC_JS.split("function _sanitizedRichTextHtml", 1)[1].split(
-        "function _richTextContentToHtml", 1
-    )[0]
+    sanitizer = function_body("_sanitizedRichTextHtml")
 
     assert "data-editor-(?:table|checklist|image|inline-code|link)-token" in sanitizer
     assert ".replace(" in sanitizer
@@ -176,9 +173,7 @@ def test_rich_text_checklists_support_conversion_and_checked_state():
 
 
 def test_checklist_interactions_cover_pointer_and_keyboard_users():
-    rich_wiring = DOC_JS.split("function _wireEmailRichbody", 1)[1].split(
-        "function _emailRichbodyActive", 1
-    )[0]
+    rich_wiring = function_body("_wireEmailRichbody")
 
     assert "rich.addEventListener('pointerdown'" in rich_wiring
     assert "mod && key === 'enter'" in rich_wiring
@@ -186,9 +181,7 @@ def test_checklist_interactions_cover_pointer_and_keyboard_users():
 
 
 def test_checklist_markup_survives_paste_save_and_export():
-    paste_cleaner = DOC_JS.split("function _cleanRichTextPasteHtml", 1)[1].split(
-        "function _wireEmailRichbody", 1
-    )[0]
+    paste_cleaner = function_body("_cleanRichTextPasteHtml")
 
     assert "keepChecklistClass" in paste_cleaner
     assert "keepChecklistState" in paste_cleaner
@@ -239,9 +232,7 @@ def test_rich_text_image_insertion_and_edits_are_undoable():
 
 
 def test_rich_text_image_selection_markers_are_not_persisted():
-    sanitizer = DOC_JS.split("function _sanitizedRichTextHtml", 1)[1].split(
-        "function _richTextContentToHtml", 1
-    )[0]
+    sanitizer = function_body("_sanitizedRichTextHtml")
 
     assert "(?:table|checklist|image|inline-code|link)-token" in sanitizer
     assert "data-editor-image-selected" in sanitizer
@@ -258,9 +249,7 @@ def test_rich_text_image_styles_are_available_in_editor_and_export():
 
 
 def test_existing_figure_wrapped_images_are_normalized_on_load():
-    normalizer = DOC_JS.split("function _normalizeRichTextImages", 1)[1].split(
-        "function _clearRichImageSelection", 1
-    )[0]
+    normalizer = function_body("_normalizeRichTextImages")
 
     assert "figure.richtext-image" in normalizer
     assert "image.classList.add('richtext-image')" in normalizer
@@ -293,9 +282,7 @@ def test_inline_code_supports_selection_toggle_and_future_typing():
 
 
 def test_inline_code_live_marker_is_saved_as_semantic_code():
-    sanitizer = DOC_JS.split("function _sanitizedRichTextHtml", 1)[1].split(
-        "function _richTextContentToHtml", 1
-    )[0]
+    sanitizer = function_body("_sanitizedRichTextHtml")
 
     assert "_isRichInlineCodeMarker(span)" in sanitizer
     assert "document.createElement('code')" in sanitizer
@@ -303,9 +290,7 @@ def test_inline_code_live_marker_is_saved_as_semantic_code():
 
 
 def test_rich_code_shortcuts_and_active_state_are_wired():
-    rich_wiring = DOC_JS.split("function _wireEmailRichbody", 1)[1].split(
-        "function _emailRichbodyActive", 1
-    )[0]
+    rich_wiring = function_body("_wireEmailRichbody")
 
     assert "action = 'codeblock'" in rich_wiring
     assert "action = 'code'" in rich_wiring
@@ -339,12 +324,8 @@ def test_rich_links_validate_protocols_during_paste_save_and_editing():
     normalizer = DOC_JS.split("function _normalizeRichLinkUrl", 1)[1].split(
         "function _promptLink", 1
     )[0]
-    sanitizer = DOC_JS.split("function _sanitizedRichTextHtml", 1)[1].split(
-        "function _richTextContentToHtml", 1
-    )[0]
-    paste_cleaner = DOC_JS.split("function _cleanRichTextPasteHtml", 1)[1].split(
-        "function _wireEmailRichbody", 1
-    )[0]
+    sanitizer = function_body("_sanitizedRichTextHtml")
+    paste_cleaner = function_body("_cleanRichTextPasteHtml")
 
     assert "https?:|mailto:|tel:" in normalizer
     assert "https:${url}" in normalizer
@@ -370,9 +351,7 @@ def test_rich_link_edits_and_removal_use_native_undoable_commands():
 
 
 def test_link_toolbar_toggles_link_when_selection_is_already_linked():
-    rich_wiring = DOC_JS.split("function _wireEmailRichbody", 1)[1].split(
-        "function _emailRichbodyActive", 1
-    )[0]
+    rich_wiring = function_body("_wireEmailRichbody")
 
     assert "const currentLink = _richLinkAtRange(rich, selectionRange)" in rich_wiring
     assert "set('[data-md=\"link\"]', !!currentLink)" in rich_wiring
