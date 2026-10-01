@@ -10,6 +10,7 @@ of the other tests in this suite.
 """
 import re
 from pathlib import Path
+from tests.helpers.stylesheets import app_css
 
 _REPO = Path(__file__).resolve().parent.parent
 _INDEX = (_REPO / "static" / "index.html").read_text(encoding="utf-8")
@@ -47,7 +48,7 @@ def test_styled_confirm_and_prompt_are_modal_dialogs():
 
 
 def test_styled_confirm_cancel_or_close_label_is_shifted_without_moving_button():
-    css = (_REPO / "static" / "style.css").read_text(encoding="utf-8")
+    css = app_css()
 
     assert "cancelLabel.textContent = cancelText;" in _UI
     assert "cancelBtn.appendChild(cancelLabel);" in _UI

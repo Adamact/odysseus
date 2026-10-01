@@ -1,7 +1,7 @@
-"""Computed-style snapshot regression for ``static/style.css``.
+"""Computed-style snapshot regression for the shipped app CSS cascade.
 
-The stylesheet is one 51k-line file whose result depends on source order, so an
-extraction that "looks fine" can still change which declaration wins. These
+The stylesheet is an ordered multi-file cascade whose result depends on source
+order, so a move that "looks fine" can still change which declaration wins. These
 tests capture ``getComputedStyle`` over a fixed element inventory across pages,
 viewports, themes and density modes, and compare the hash against
 ``tests/css_snapshot/baseline.json``.
@@ -38,7 +38,7 @@ def static_origin() -> str:
 
 # One conflicting selector used to prove the harness is actually sensitive to
 # source order. `.attach-strip` is declared three times at the top level of
-# style.css with different margin, min-height and padding, so swapping the
+# cascade with different margin, min-height and padding, so swapping the
 # first two changes which declaration wins without changing a single byte of
 # any individual rule.
 CONFLICTING_SELECTOR = ".attach-strip"

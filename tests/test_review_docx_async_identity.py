@@ -1,10 +1,11 @@
 """Execute the actual DOCX handlers with deferred network responses."""
 import subprocess
 from pathlib import Path
+from tests.helpers.document_source import document_source
 
 
 def test_docx_responses_do_not_overwrite_new_tabs_or_hidden_previews():
-    source = (Path(__file__).resolve().parents[1] / "static/js/document.js").read_text()
+    source = document_source()
     handlers = source.split("  let _docxPreviewRequest = 0;", 1)[1].split("  /** Parse CSV", 1)[0]
     script = r'''
 import assert from 'node:assert/strict';
