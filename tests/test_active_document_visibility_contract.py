@@ -1,20 +1,24 @@
 from pathlib import Path
 import re
+from tests.helpers.document_source import document_source, function_body
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOCUMENT_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+DOCUMENT_JS = document_source()
 CHAT_JS = (ROOT / "static/js/chat.js").read_text(encoding="utf-8")
 APP_JS = (ROOT / "static/app.js").read_text(encoding="utf-8")
-SETTINGS_JS = (ROOT / "static/js/settings.js").read_text(encoding="utf-8")
+# The writing-style panel moved into static/js/settings/writingStyle.js; read
+# the whole settings surface so this pins behaviour rather than a filename.
+SETTINGS_JS = "\n".join(
+    p.read_text(encoding="utf-8")
+    for p in [ROOT / "static/js/settings.js", *sorted((ROOT / "static/js/settings").glob("*.js"))]
+)
 INDEX_HTML = (ROOT / "static/index.html").read_text(encoding="utf-8")
 CHAT_ROUTE = (ROOT / "routes/chat_routes.py").read_text(encoding="utf-8")
 
 
 def test_visible_or_minimized_linked_document_is_sent_as_chat_context():
-    function = DOCUMENT_JS.split("export function getChatDocumentId()", 1)[1].split(
-        "export function getActiveEmailComposerContext()", 1
-    )[0]
+    function = function_body("getChatDocumentId")
     assert "pane?.isConnected" in function
     assert "document.body.classList.contains('doc-view')" not in function
     assert "style?.display !== 'none'" in function

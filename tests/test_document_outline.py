@@ -3,11 +3,13 @@
 import json
 import subprocess
 from pathlib import Path
-
+from tests.helpers.stylesheets import app_css
+from tests.helpers.stylesheets import stylesheet_link_tags
+from tests.helpers.document_source import document_source
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
-STYLE = (ROOT / "static/style.css").read_text(encoding="utf-8")
+DOC_JS = document_source()
+STYLE = app_css()
 
 
 def _run_node(script: str):
@@ -41,7 +43,7 @@ def test_markdown_outline_parses_structure_and_ignores_fenced_code():
           '#### Final `code` section',
         ].join('\n');
         console.log(JSON.stringify(parseMarkdownOutline(source)));
-        """
+        """.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     )
     assert [(entry["level"], entry["text"]) for entry in data] == [
         (1, "Overview"),
@@ -71,7 +73,7 @@ def test_outline_jumps_in_markdown_and_rich_text_and_fits_mobile():
         const browser = await chromium.launch({ headless: true });
         const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
         await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentOutline.js`);
-        await page.setContent('<link rel="stylesheet" href="/static/style.css?v=20260831richtexttools91"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
+        await page.setContent('__ODY_STYLESHEETS__<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
         await page.evaluate(async () => {
           const mod = await import('/static/js/document.js?v=20260831richtexttools91&outline-test=1');
           mod.init('/api');
@@ -126,7 +128,7 @@ def test_outline_jumps_in_markdown_and_rich_text_and_fits_mobile():
 
         console.log(JSON.stringify({ markdownLabels, selected, liveLabels, mobileBox, richLabels, richCaretHeading }));
         await browser.close();
-        """
+        """.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     )
     assert data["markdownLabels"] == ["Intro", "Details", "End"]
     assert data["selected"] == "## Details"

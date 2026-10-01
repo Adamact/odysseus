@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from tests.helpers.document_source import document_source
 
 
 _REPO = Path(__file__).resolve().parent.parent
@@ -120,7 +121,7 @@ def test_library_reply_open_carries_immutable_mailbox_context():
 
 
 def test_attachment_warning_only_checks_authored_reply_text():
-    source = (_REPO / "static/js/document.js").read_text(encoding="utf-8")
+    source = document_source()
     helper = source[source.index("function _bodyMentionsAttachment"):source.index("\n\n  function _clearMissingAttachmentWarnings", source.index("function _bodyMentionsAttachment"))]
 
     assert "_emailReplyOwnText(text)" in helper
@@ -128,7 +129,7 @@ def test_attachment_warning_only_checks_authored_reply_text():
 
 
 def test_email_send_saves_recovery_draft_before_send_and_retains_it_on_failure():
-    source = (_REPO / "static/js/document.js").read_text(encoding="utf-8")
+    source = document_source()
     send = source[source.index("async function _sendEmail"):source.index("\n\n  async function _saveDraft", source.index("async function _sendEmail"))]
 
     assert "async function _saveEmailDraftForRecovery" in source

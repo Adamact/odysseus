@@ -43,7 +43,7 @@ from src.constants import DATA_DIR
 from src.llm_core import llm_call_async
 from src.upload_limits import read_upload_limited, EMAIL_COMPOSE_UPLOAD_MAX_BYTES
 
-from routes.email_helpers import (
+from .email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, require_owner, require_user, _assert_owns_account,
     _account_visible_to_owner,
     _q, _attach_compose_uploads, _cleanup_compose_uploads,
@@ -64,7 +64,7 @@ from routes.email_helpers import (
     ATTACHMENTS_DIR, COMPOSE_UPLOADS_DIR, SCHEDULED_DB,
     attachment_extract_dir, _email_cache_owner_clause, email_translation_body_hash,
 )
-from routes.email_pollers import _start_poller
+from .email_pollers import _start_poller
 
 logger = logging.getLogger(__name__)
 
@@ -444,7 +444,7 @@ def _record_email_received_events(owner: str, account_id: str | None, folder: st
 
                 async def _run_away_reply_check():
                     try:
-                        from routes.email_pollers import _auto_summarize_pass
+                        from .email_pollers import _auto_summarize_pass
                         result = await _auto_summarize_pass(
                             days_back=1,
                             account_id=account_id,

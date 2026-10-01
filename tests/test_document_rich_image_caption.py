@@ -5,20 +5,18 @@ import subprocess
 from pathlib import Path
 
 from tests.helpers.stylesheets import app_css
+from tests.helpers.stylesheets import stylesheet_link_tags
+from tests.helpers.document_source import document_source, function_body
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+DOC_JS = document_source()
 STYLE = app_css()
 
 
 def test_image_caption_uses_semantic_figure_and_structured_export_paths():
-    caption = DOC_JS.split("async function _editRichImageCaption", 1)[1].split(
-        "function _applyRichImageAction", 1
-    )[0]
-    converter = DOC_JS.split("function _docxFigureBlocks", 1)[1].split(
-        "function _docxBlocksFromNodes", 1
-    )[0]
+    caption = function_body("_editRichImageCaption")
+    converter = function_body("_docxFigureBlocks")
 
     assert "function _promptImageCaption" in DOC_JS
     assert "function _replaceRichImageFigure" in DOC_JS
@@ -36,7 +34,7 @@ def test_mobile_image_caption_survives_resize_history_and_empty_removal():
       const browser = await chromium.launch({ headless: true });
       const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
       await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentStats.js`);
-      await page.setContent('<link rel="stylesheet" href="/static/style.css?v=20260831richtexttools91"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
+      await page.setContent('__ODY_STYLESHEETS__<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
       await page.evaluate(async () => {
         const mod = await import('/static/js/document.js?v=20260831richtexttools91&image-caption=1');
         mod.init('/api');
@@ -116,6 +114,7 @@ def test_mobile_image_caption_survives_resize_history_and_empty_removal():
       console.log(JSON.stringify({ added, undone, redone, resized, removed, removalUndone, menuRect, overflow }));
       await browser.close();
     """
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=ROOT,

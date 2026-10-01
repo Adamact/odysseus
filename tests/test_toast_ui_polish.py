@@ -1,6 +1,7 @@
 """Regression coverage for transient toast polish and accurate welcome tips."""
 
 from pathlib import Path
+from tests.helpers.stylesheets import app_css
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -9,7 +10,7 @@ ROOT = Path(__file__).resolve().parent.parent
 def test_notification_history_does_not_clutter_navigation_or_capture_toasts():
     html = (ROOT / "static/index.html").read_text(encoding="utf-8")
     ui = (ROOT / "static/js/ui.js").read_text(encoding="utf-8")
-    css = (ROOT / "static/style.css").read_text(encoding="utf-8")
+    css = app_css()
 
     assert 'id="rail-notifications"' not in html
     assert 'id="sidebar-notifications-btn"' not in html
@@ -32,7 +33,7 @@ def test_action_hint_is_part_of_action_button_and_close_is_grouped_beside_it():
 
 def test_welcome_tips_are_plain_and_brief():
     html = (ROOT / "static/index.html").read_text(encoding="utf-8")
-    css = (ROOT / "static/style.css").read_text(encoding="utf-8")
+    css = app_css()
 
     assert "Tip: Ctrl+K searches chats." in html
     assert "Tip: Ctrl+Alt+B toggles the sidebar." in html

@@ -31,7 +31,7 @@ from email.mime.multipart import MIMEMultipart
 
 from src.task_endpoint import resolve_task_candidates, task_llm_call_async
 
-from routes.email_helpers import (
+from .email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, _load_settings, _save_settings, _get_email_config,
     _send_smtp_message,
     _imap_connect, _imap, _decode_header,

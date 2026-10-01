@@ -1,22 +1,20 @@
 /* Email, calendar, notes and tasks panels.
  *
- * Split out of style.css for maintainability, not for performance: this file
- * is loaded eagerly from index.html immediately after style.css, so the rules
- * land in the cascade in exactly the order they had inside the single file.
- * Nothing here is lazy-loaded.
+ * This is an eagerly loaded tail segment of the app stylesheet cascade. The
+ * former static/style.css now lives in the numbered 00-17 fragments; these
+ * three pre-existing panel files follow those fragments without changing
+ * their relative order. Nothing here is lazy-loaded.
  *
- * LOAD ORDER IS PART OF THE CONTRACT. The <link> tags in static/index.html and
- * the PRECACHE list in static/sw.js must both list the stylesheets in this
- * order:
- *   1. static/style.css
+ * LOAD ORDER IS PART OF THE CONTRACT. static/index.html and the PRECACHE list
+ * in static/sw.js must agree:
+ *   1. static/css/00-tokens.css through static/css/17-research.css,
+ *      in numeric order
  *   2. static/css/documents-gallery-editor.css
  *   3. static/css/email-calendar-notes-tasks.css
  *   4. static/css/cookbook-research-memory-settings.css
  *
- * Rules were moved verbatim. A rule stays in style.css when its selector group
- * covers more than one panel, when the class is shared design language used by
- * modules outside this panel, or when moving it would change which of two
- * equally specific rules wins.
+ * Rules in this file retain their existing cascade position. Shared rules
+ * formerly kept in static/style.css now live in the numbered fragments.
  */
 
 @keyframes email-notif-breathe {

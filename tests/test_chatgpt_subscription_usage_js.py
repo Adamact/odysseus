@@ -6,11 +6,12 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from tests.helpers.stylesheets import app_css
 
 _REPO = Path(__file__).resolve().parent.parent
 _MODULE = _REPO / "static" / "js" / "chatgptSubscriptionUsage.js"
 _ADMIN = (_REPO / "static" / "js" / "admin.js").read_text(encoding="utf-8")
-_STYLE = (_REPO / "static" / "style.css").read_text(encoding="utf-8")
+_STYLE = app_css()
 pytestmark = pytest.mark.skipif(not shutil.which("node"), reason="node not on PATH")
 
 
@@ -269,7 +270,7 @@ def test_refresh_and_reconnect_handlers_target_only_the_clicked_account():
 
 def test_admin_renders_chatgpt_usage_collapsible_and_styled():
     admin_source = (_REPO / "static" / "js" / "admin.js").read_text(encoding="utf-8")
-    style_source = (_REPO / "static" / "style.css").read_text(encoding="utf-8")
+    style_source = app_css()
     load_block = admin_source[admin_source.index("async function loadEndpoints()"):admin_source.index("function initEndpointForm()")]
     assert "adm-chatgpt-controls" in load_block
     assert "adm-chatgpt-usage-toggle" in load_block
