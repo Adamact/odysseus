@@ -21,12 +21,21 @@ def _test_utcnow():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _stub_heavy():
+def _stub_heavy(monkeypatch):
+    """Stub the heavy modules ``task_scheduler`` imports, for this test only.
+
+    Registered through ``monkeypatch.setitem`` so every entry is removed at
+    teardown. A bare ``sys.modules[name] = ...`` leaves an empty module behind
+    for the rest of the session, and any later test that imports the real one
+    silently gets the stub instead - a failure that only shows up under a
+    different collection order.
+    """
     for name in [
         "src.builtin_actions", "src.ai_interaction", "src.endpoint_resolver",
         "src.agent_loop", "src.session_manager",
     ]:
-        sys.modules.setdefault(name, types.ModuleType(name))
+        if name not in sys.modules:
+            monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
 
 
 def _setup_isolated_db():
@@ -74,7 +83,7 @@ def test_scheduler_utcnow_preserves_naive_utc_contract():
 
 def _drive_scheduler(monkeypatch, pre_start_setup=None):
     """Build a TaskScheduler bypassing __init__ and run start() + two polls."""
-    _stub_heavy()
+    _stub_heavy(monkeypatch)
     cd, ScheduledTask, TaskRun = _setup_isolated_db()
 
     from src.task_scheduler import TaskScheduler

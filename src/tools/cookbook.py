@@ -17,6 +17,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
+from core import platform_compat
 from routes._validators import validate_remote_host, validate_ssh_port
 
 from src.tools._common import _parse_tool_args
@@ -676,17 +677,17 @@ def _scan_running_model_processes() -> List[Dict[str, Any]]:
     a dict shaped like a cookbook task so the caller can merge cleanly.
     """
     import os
-    if not os.path.isdir("/proc"):
+    if not platform_compat.has_procfs():
         return []
+    proc_root = platform_compat.PROC_ROOT
     out: List[Dict[str, Any]] = []
     seen_keys = set()
     try:
-        for pid_dir in os.listdir("/proc"):
+        for pid_dir in os.listdir(proc_root):
             if not pid_dir.isdigit():
                 continue
             try:
-                with open(f"/proc/{pid_dir}/cmdline", "rb") as f:
-                    raw = f.read()
+                raw = (proc_root / pid_dir / "cmdline").read_bytes()
             except (OSError, PermissionError):
                 continue
             if not raw:
@@ -1124,12 +1125,16 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
             import signal
             tracked_cmd = str((matched.get("payload") or {}).get("_cmd") or "").strip()
             matched_pids: list[int] = []
-            if tracked_cmd:
-                for pid_name in os.listdir("/proc"):
+            # No procfs means no way to match a survivor by its command line.
+            # The tmux kill above already stopped the session, so skip the
+            # sweep instead of failing a stop that worked.
+            if tracked_cmd and platform_compat.has_procfs():
+                proc_root = platform_compat.PROC_ROOT
+                for pid_name in os.listdir(proc_root):
                     if not pid_name.isdigit() or int(pid_name) == os.getpid():
                         continue
                     try:
-                        raw = open(f"/proc/{pid_name}/cmdline", "rb").read()
+                        raw = (proc_root / pid_name / "cmdline").read_bytes()
                         process_cmd = raw.replace(b"\x00", b" ").decode("utf-8", errors="replace").strip()
                     except (OSError, PermissionError):
                         continue

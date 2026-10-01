@@ -1,9 +1,8 @@
 from pathlib import Path
+from tests.helpers.document_source import document_source
 
 
-SCRIPT = (
-    Path(__file__).resolve().parents[1] / "static/js/document.js"
-).read_text(encoding="utf-8")
+SCRIPT = document_source()
 
 
 def test_email_send_requires_actual_send_button_event_target():

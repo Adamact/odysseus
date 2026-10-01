@@ -1,5 +1,6 @@
 from pathlib import Path
 import re
+from tests.helpers.stylesheets import app_css
 
 
 def test_tool_approval_bypasses_polymorphic_send_button_actions():
@@ -22,7 +23,7 @@ def test_tool_approval_bypasses_polymorphic_send_button_actions():
 def test_ask_user_card_has_no_close_button_and_chat_scale_text():
     root = Path(__file__).resolve().parents[1]
     renderer = (root / "static/js/chatRenderer.js").read_text(encoding="utf-8")
-    styles = (root / "static/style.css").read_text(encoding="utf-8")
+    styles = app_css()
 
     assert "closeBtn.className = 'modal-close ask-user-close';" not in renderer
     assert "closeBtn.setAttribute('aria-label', 'Dismiss question');" not in renderer
@@ -64,7 +65,7 @@ def test_ask_user_card_has_no_close_button_and_chat_scale_text():
 def test_scroll_bottom_button_uses_dropdown_caret_glyph():
     root = Path(__file__).resolve().parents[1]
     html = (root / "static/index.html").read_text(encoding="utf-8")
-    styles = (root / "static/style.css").read_text(encoding="utf-8")
+    styles = app_css()
 
     assert 'class="scroll-nav-caret"' in html
     assert "&#9662;" in html

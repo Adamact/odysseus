@@ -1,8 +1,9 @@
 from pathlib import Path
+from tests.helpers.document_source import document_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOCUMENT_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+DOCUMENT_JS = document_source()
 
 
 def test_format_change_clears_stale_run_output() -> None:
