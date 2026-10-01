@@ -57,6 +57,9 @@ async def supervise(payload: dict) -> None:
             output = "\n…[output truncated by containment capture limit]…\n"
     except BaseException as exc:
         record = containment._load_records().get(grant.id, {})
+        if not record.get("pid") and not record.get("release"):
+            containment.release(grant, grace_s=0)
+            record = containment._load_records().get(grant.id, {})
         output, code = f"background execution failed: {type(exc).__name__}: {exc}\n", 1
         report = {"containment": grant.to_dict(), "teardown": record.get("release") or {"dead": False},
                   "output_truncated": False}
@@ -66,8 +69,12 @@ async def supervise(payload: dict) -> None:
         if isinstance(exc, containment.ContainmentUnavailable):
             report.update(containment.unavailable_tool_result(exc, tool="bash"))
     if output:
-        with open(payload["log_path"], "a", encoding="utf-8") as log:
-            log.write(output)
+        try:
+            with open(payload["log_path"], "a", encoding="utf-8") as log:
+                log.write(output)
+        except OSError:
+            # A failed log initialization must not hide completion metadata.
+            sys.stderr.write(output)
     atomic_write_json(payload["result_path"], report)
     # Publish completion last: refresh must never see an exit without metadata.
     atomic_write_text(payload["exit_path"], str(code if code is not None else 1))

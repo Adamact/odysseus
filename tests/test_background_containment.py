@@ -52,6 +52,37 @@ def test_detached_execution_owns_boundary_and_reports_death(jobs):
     assert result["teardown"]["dead"] is True
 
 
+def test_supervisor_setup_failure_closes_unstarted_grant(jobs):
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+    path, _ = jobs
+    spec = containment.agent_spec(str(path), dict(os.environ), 5)
+    grant = containment.acquire(spec, owner="failed-supervisor")
+    payload = {
+        "store_path": str(containment._store_path()),
+        "grant": {**grant.to_dict(), "owner": grant.owner},
+        "spec": {"workspace": str(path), "env": dict(spec.env), "wall_clock_s": 5,
+                 "required": sorted(spec.required)},
+        "command": "printf effect > must-not-exist",
+        "log_path": str(path / "missing-directory" / "job.log"),
+        "result_path": str(path / "result.json"), "exit_path": str(path / "exit"),
+    }
+    worker = Path(containment.__file__).with_name("containment_worker.py")
+    result = subprocess.run([sys.executable, str(worker)], input=json.dumps(payload),
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0  # Supervisor publishes the failed job result.
+    assert "FileNotFoundError" in result.stderr
+    assert not (path / "must-not-exist").exists()
+    assert containment.active_grants() == []
+    assert (path / "exit").read_text() == "1"
+    report = json.loads((path / "result.json").read_text())
+    assert report["containment"]["executed"] is False
+    assert report["containment"]["contained"] is False
+    assert report["teardown"]["dead"] is True
+
+
 async def test_bg_marker_refuses_without_spawning_and_authority_still_gates(jobs, monkeypatch):
     path, _ = jobs
     monkeypatch.setattr(containment, "CONTAINMENT_MODE", containment.MODE_ENFORCING)
