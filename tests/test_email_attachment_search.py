@@ -1,5 +1,7 @@
 import sqlite3
 from email.message import EmailMessage
+from tests.helpers.document_source import document_source
+from tests.helpers.js_modules import email_library_source
 
 
 def test_attachment_filename_is_part_of_ui_index_search(tmp_path, monkeypatch):
@@ -80,7 +82,7 @@ def test_remote_search_explicitly_checks_mime_filename_headers():
 
 def test_forwarding_filters_signature_assets_and_mobile_export_stops_bubbling():
     inbox = open("static/js/emailInbox.js", encoding="utf-8").read()
-    document = open("static/js/document.js", encoding="utf-8").read()
+    document = document_source()
 
     assert "const forwardedAttachments = mode === 'forward'" in inbox
     assert "forwardedAttachments.map" in inbox
@@ -89,7 +91,7 @@ def test_forwarding_filters_signature_assets_and_mobile_export_stops_bubbling():
 
 
 def test_attachment_open_spins_icon_only():
-    library = open("static/js/emailLibrary.js", encoding="utf-8").read()
+    library = email_library_source()
     start = library.index("reader.querySelectorAll('.email-attachment-open')")
     end = library.index("reader.querySelectorAll('.email-attachment-download')", start)
     handler = library[start:end]
@@ -99,7 +101,7 @@ def test_attachment_open_spins_icon_only():
 
 
 def test_move_document_creates_destination_before_adopting_it():
-    document = open("static/js/document.js", encoding="utf-8").read()
+    document = document_source()
     start = document.index("async function moveActiveDocumentToNewChat()")
     end = document.index("\n  function showDocTabMenu", start)
     handler = document[start:end]
@@ -109,7 +111,7 @@ def test_move_document_creates_destination_before_adopting_it():
 
 
 def test_deferred_attachment_check_shows_feedback_and_repairs_stale_card_icon():
-    library = open("static/js/emailLibrary.js", encoding="utf-8").read()
+    library = email_library_source()
     start = library.index("function _loadDeferredAttachmentsIntoReader")
     end = library.index('\n// "Open in new tab"', start)
     loader = library[start:end]
@@ -159,7 +161,7 @@ def test_attachment_cache_backfill_preserves_message_id(tmp_path, monkeypatch):
 
 
 def test_single_email_tag_has_no_more_control():
-    library = open("static/js/emailLibrary.js", encoding="utf-8").read()
+    library = email_library_source()
     group = library[library.index("function _emailTagGroupHtml("):library.index("function _fitEmailCardTags(")]
     assert "if (visible.length === 1) return visible[0];" in group
     assert "if (visible.length === 2) return visible.join('');" in group
@@ -167,7 +169,7 @@ def test_single_email_tag_has_no_more_control():
 
 
 def test_email_folder_and_filter_pickers_treat_their_buttons_as_inside_clicks():
-    library = open("static/js/emailLibrary.js", encoding="utf-8").read()
+    library = email_library_source()
 
     assert library.count(
         "bindMenuDismiss(menu, finishClose, e => !picker.contains(e.target))"
@@ -177,7 +179,7 @@ def test_email_folder_and_filter_pickers_treat_their_buttons_as_inside_clicks():
 
 def test_empty_reply_has_two_editable_rows_and_reply_survives_compact_toolbar():
     inbox = open("static/js/emailInbox.js", encoding="utf-8").read()
-    library = open("static/js/emailLibrary.js", encoding="utf-8").read()
+    library = email_library_source()
 
     assert "<p><br></p><p><br></p>\\n" in inbox
     fit_start = library.index("function _fitReaderActions")
@@ -188,7 +190,7 @@ def test_empty_reply_has_two_editable_rows_and_reply_survives_compact_toolbar():
 
 
 def test_email_toolbar_places_attachment_before_link():
-    document = open("static/js/document.js", encoding="utf-8").read()
+    document = document_source()
     toolbar_start = document.index('<div class="md-toolbar-items"')
     toolbar_end = document.index('</div>', toolbar_start)
     toolbar = document[toolbar_start:toolbar_end]

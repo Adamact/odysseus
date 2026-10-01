@@ -1,11 +1,12 @@
 from pathlib import Path
+from tests.helpers.stylesheets import app_css
 
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_sidebar_chat_list_uses_content_height_when_collapsed():
-    css = (ROOT / "static/style.css").read_text(encoding="utf-8")
+    css = app_css()
     desktop = css.split("#sessions-section #session-list {", 1)[1].split("}", 1)[0]
     mobile = css.split("#sessions-section #session-list {", 2)[2].split("}", 1)[0]
 

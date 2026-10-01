@@ -1,11 +1,11 @@
 """Read the app's CSS the way the browser does.
 
-``static/style.css`` no longer holds every rule: panel styles live in separate
-files that ``static/index.html`` loads eagerly, in a fixed order, right after
-it. The cascade is the concatenation of those files in that order.
+The former ``static/style.css`` is now an ordered set of numbered fragments,
+followed by the existing panel stylesheets. ``static/index.html`` loads the
+complete cascade eagerly in the order the browser must apply it.
 
-A test that asserts on a rule must therefore look at all of them. Reading
-``static/style.css`` alone ties the test to whichever file a rule happens to
+A test that asserts on a rule must therefore look at the complete cascade.
+Reading one fragment alone ties the test to whichever file a rule happens to
 sit in today, so it goes red the next time a rule moves without anything about
 the rendered page having changed.
 """
@@ -53,11 +53,32 @@ def stylesheet_urls() -> list[str]:
 
 
 def stylesheet_link_tags() -> str:
-    """The <link> tags to drop into a synthetic page so it gets the whole
-    cascade, not just style.css."""
+    """The <link> tags for a synthetic page that needs the whole cascade."""
     return "".join(f'<link rel="stylesheet" href="{u}">' for u in stylesheet_urls())
 
 
 def app_css() -> str:
     """The whole cascade as one string, in load order."""
     return "\n".join(p.read_text(encoding="utf-8") for p in stylesheet_paths())
+
+
+def stylesheet_cache_version() -> str:
+    """The single ``?v=`` token every app stylesheet link carries.
+
+    The stylesheet is split across several files that must be busted together:
+    shipping one fragment under a stale token serves a browser half of an old
+    cascade and half of a new one. Tests ask for the shared version here instead of deriving it from one
+    stylesheet filename, so they keep checking the invariant
+    rather than a filename.
+    """
+    versions = set()
+    for url in stylesheet_urls():
+        m = re.search(r"\?v=([^&]+)$", url)
+        if not m:
+            raise AssertionError(f"app stylesheet has no cache-bust token: {url}")
+        versions.add(m.group(1))
+    if len(versions) != 1:
+        raise AssertionError(
+            f"app stylesheets disagree on their cache-bust token: {sorted(versions)}"
+        )
+    return versions.pop()
