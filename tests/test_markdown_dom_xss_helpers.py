@@ -1,6 +1,7 @@
 """Regression guards for markdown raw-HTML sanitizer helpers."""
 
 from pathlib import Path
+from tests.helpers.document_source import document_source
 
 
 _REPO = Path(__file__).resolve().parent.parent
@@ -27,7 +28,7 @@ def test_markdown_raw_html_sanitizer_strips_scriptable_css():
 
 def test_email_rich_body_render_path_reuses_raw_html_sanitizer():
     markdown_src = (_REPO / "static" / "js" / "markdown.js").read_text(encoding="utf-8")
-    document_src = (_REPO / "static" / "js" / "document.js").read_text(encoding="utf-8")
+    document_src = document_source()
     email_body_helper = document_src.split("function _emailBodyToHtml(text)", 1)[1].split(
         "  // Mirror the rich body's plain text", 1
     )[0]

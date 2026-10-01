@@ -6,20 +6,17 @@ from pathlib import Path
 
 from tests.helpers.stylesheets import app_css
 from tests.helpers.stylesheets import stylesheet_link_tags
+from tests.helpers.document_source import document_source, function_body
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+DOC_JS = document_source()
 STYLE = app_css()
 
 
 def test_image_caption_uses_semantic_figure_and_structured_export_paths():
-    caption = DOC_JS.split("async function _editRichImageCaption", 1)[1].split(
-        "function _applyRichImageAction", 1
-    )[0]
-    converter = DOC_JS.split("function _docxFigureBlocks", 1)[1].split(
-        "function _docxBlocksFromNodes", 1
-    )[0]
+    caption = function_body("_editRichImageCaption")
+    converter = function_body("_docxFigureBlocks")
 
     assert "function _promptImageCaption" in DOC_JS
     assert "function _replaceRichImageFigure" in DOC_JS

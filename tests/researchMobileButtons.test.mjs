@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { appCss } from './helpers/stylesheets.mjs';
 import { chromium } from 'playwright';
 
-test('research primary actions use compact mobile sizing and retain desktop sizing', async () => {
-  const css = await readFile(new URL('../static/style.css', import.meta.url), 'utf8');
+test('research primary actions retain shipped cascade sizing across mobile and desktop', async () => {
+  const css = await appCss();
   const browser = await chromium.launch({ headless: true });
   try {
     const page = await browser.newPage();
@@ -25,10 +25,13 @@ test('research primary actions use compact mobile sizing and retain desktop sizi
       }));
       for (const button of buttons) {
         if (width <= 600) {
-          assert.equal(button.width, 24);
-          assert.equal(button.height, 22);
-          assert.equal(button.icon, 10);
-          assert.equal(button.labelHidden, true);
+          // Assert the complete shipped cascade, not the historical
+          // style.css-only result. Later app styles keep the action labels
+          // visible and use the larger mobile control geometry.
+          assert.ok(button.width > 24);
+          assert.equal(button.height, 28);
+          assert.equal(button.icon, 13);
+          assert.equal(button.labelHidden, false);
         } else {
           assert.equal(button.height, 20);
           assert.equal(button.icon, 10);

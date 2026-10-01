@@ -4,16 +4,15 @@ import json
 import subprocess
 from pathlib import Path
 from tests.helpers.stylesheets import stylesheet_link_tags
+from tests.helpers.document_source import document_source, function_body
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+DOC_JS = document_source()
 
 
 def test_find_index_inserts_boundaries_without_flattening_inline_spans():
-    section = DOC_JS.split("function _buildRichFindRanges", 1)[1].split(
-        "function _renderRichFindRanges", 1
-    )[0]
+    section = function_body("_buildRichFindRanges")
     assert "const blockSelector = 'p,div,h1,h2,h3,h4,h5,h6,li,blockquote,pre,td,th'" in section
     assert "block !== previousBlock" in section
     assert "between.cloneContents().querySelector?.('br')" in section

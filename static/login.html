@@ -106,7 +106,7 @@
 <style>
   @font-face { font-family: 'Fira Code'; font-weight: 400; font-style: normal; font-display: swap; src: url('static/fonts/FiraCode-Regular.woff2') format('woff2'); }
   @font-face { font-family: 'Fira Code'; font-weight: 600; font-style: normal; font-display: swap; src: url('static/fonts/FiraCode-SemiBold.woff2') format('woff2'); }
-  /* Mirror the main app's :root defaults (static/style.css ~line 18) so an
+  /* Mirror the main app's :root defaults from the stylesheet cascade so an
      uncustomized theme — or a fresh browser with no `odysseus-theme` in
      localStorage — renders the login page in the same palette as the rest
      of the app instead of a different greys+offwhite scheme. */
@@ -115,7 +115,7 @@
     --red: #e06c75; --green: #50fa7b;
     --bg-effect-intensity: 1;
   }
-  /* Background patterns — mirrors static/style.css "Background Patterns"
+  /* Background patterns — mirrors the main app "Background Patterns" styles
      block so the theme's chosen bgPattern renders on login too. The
      canvas-based effects (rain, constellations, perlin-flow, petals,
      sparkles, embers) are spawned by the deferred theme.js import below;
@@ -157,7 +157,7 @@
     font-size: 2rem; font-weight: 600;
     letter-spacing: 0.04em;
     /* Same gradient as the main app's welcome-screen "Odysseus" title
-       (static/style.css #welcome-screen .welcome-name) so the brand
+       (the main cascade's #welcome-screen .welcome-name) so the brand
        wordmark is consistent across login + first-launch screens. */
     background: linear-gradient(135deg, var(--brand-color, var(--red)), color-mix(in srgb, var(--brand-color, var(--red)) 60%, var(--fg)));
     -webkit-background-clip: text;
@@ -175,7 +175,7 @@
   /* On touch devices keep inputs at >=16px so iOS Safari doesn't zoom the whole
      page when a field is focused (it auto-zooms any focused input under 16px).
      This page has its own inline styles, so it doesn't inherit the main app's
-     equivalent rule in static/style.css; mirror it here. !important also lifts
+     equivalent rule in the main stylesheet cascade; mirror it here. !important also lifts
      the dynamically-inserted 2FA input, which pins font-size:14px inline. */
   @media (hover: none) and (pointer: coarse) {
     input:not(.remember-check) { font-size: 16px !important; }
