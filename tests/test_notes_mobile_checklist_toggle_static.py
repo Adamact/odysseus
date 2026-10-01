@@ -1,7 +1,7 @@
 from pathlib import Path
 import re
 
-from tests.helpers.stylesheets import app_css
+from tests.helpers.stylesheets import app_css, stylesheet_cache_version
 from tests.helpers.js_modules import email_library_source
 
 
@@ -55,9 +55,8 @@ def test_notes_mobile_checklist_asset_versions_are_bumped():
 
     assert re.search(r"notes\.js\?v=[A-Za-z0-9_-]+", app)
     app_versions = re.findall(r"/static/app\.js\?v=([A-Za-z0-9_-]+)", html)
-    style_version = re.search(r"/static/style\.css\?v=([A-Za-z0-9_-]+)", html)
     assert app_versions and len(set(app_versions)) == 1
-    assert style_version and style_version.group(1) == app_versions[0]
+    assert stylesheet_cache_version() == app_versions[0]
 
 
 def test_drawing_edits_mark_notes_dirty_and_keep_one_gallery_image():

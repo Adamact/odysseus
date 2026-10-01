@@ -263,7 +263,7 @@ def test_unsubscribe_scan_status_sits_before_clean_action() -> None:
 
 def test_unsubscribe_success_removes_messages_before_the_next_scan() -> None:
     frontend = email_library_source()
-    backend = (ROOT / "routes/email_routes.py").read_text(encoding="utf-8")
+    backend = (ROOT / "routes/email/email_routes.py").read_text(encoding="utf-8")
     mcp = (ROOT / "mcp_servers/email_server.py").read_text(encoding="utf-8")
     assert "async function _deleteAfterUnsubscribe" in frontend
     assert "action: 'delete'" in frontend[frontend.index("async function _deleteAfterUnsubscribe"):]
@@ -316,7 +316,7 @@ def test_email_mutation_tool_events_include_exact_arguments() -> None:
 
 
 def test_unsubscribe_cleanup_can_remove_same_sender_unsubscribe_messages() -> None:
-    source = (ROOT / "routes" / "email_routes.py").read_text()
+    source = (ROOT / "routes" / "email" / "email_routes.py").read_text()
     cleanup = source[source.index('@router.post("/unsubscribe/cleanup")'):source.index('@router.get("/contacts")')]
     assert 'scope == "sender_unsubscribe"' in cleanup
     assert "_unsubscribe_sender_uids_sync" in cleanup
@@ -377,7 +377,7 @@ def test_email_settings_sections_use_static_headers() -> None:
 
 
 def test_unsubscribe_scan_defaults_to_bounded_page_in_api_and_tool_prompt() -> None:
-    backend = (ROOT / "routes" / "email_routes.py").read_text()
+    backend = (ROOT / "routes" / "email" / "email_routes.py").read_text()
     schema = (ROOT / "src" / "tool_schemas.py").read_text()
     agent = (ROOT / "src" / "agent_loop.py").read_text()
     scan_start = backend.index('@router.get("/unsubscribe/scan")')

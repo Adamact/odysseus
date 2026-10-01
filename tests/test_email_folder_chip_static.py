@@ -1,4 +1,5 @@
 from pathlib import Path
+from tests.helpers.stylesheets import app_css
 from tests.helpers.js_modules import email_library_source
 
 
@@ -7,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_folder_chip_stays_with_date_and_moves_down():
     source = email_library_source()
-    css = (ROOT / "static" / "style.css").read_text()
+    css = app_css()
 
     assert 'class="email-meta-date-group"' in source
     group_markup = source[source.index('class="email-meta-date-group"'):][:180]

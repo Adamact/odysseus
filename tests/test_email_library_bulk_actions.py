@@ -1,9 +1,10 @@
 from pathlib import Path
+from tests.helpers.document_source import document_source
 from tests.helpers.js_modules import email_library_source, js_function_source
 
 
 _REPO = Path(__file__).resolve().parents[1]
-_EMAIL_ROUTES = _REPO / "routes" / "email_routes.py"
+_EMAIL_ROUTES = _REPO / "routes" / "email" / "email_routes.py"
 _EMAIL_MCP_SERVER = _REPO / "mcp_servers" / "email_server.py"
 _EMAIL_FIXTURE_HELPER = _REPO / "scripts" / "ody_eval_email_fixture.py"
 
@@ -155,8 +156,7 @@ def test_email_client_cache_drops_fixture_rows():
 
 def test_email_compose_can_attach_gallery_images():
     """Compose attachments should support local files, documents, and Gallery images."""
-    frontend = _REPO / "static" / "js" / "document.js"
-    frontend_text = frontend.read_text(encoding="utf-8")
+    frontend_text = document_source()
     backend = _EMAIL_ROUTES.read_text(encoding="utf-8")
 
     assert "Upload from computer" in frontend_text

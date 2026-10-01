@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import functools
 import io
 import json
 from pathlib import Path
@@ -18,6 +19,28 @@ from src.agent_tools.media_tools import (
 )
 from src.tool_execution import _active_workspace
 from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
+
+
+@functools.lru_cache(maxsize=None)
+def _ffmpeg_has_encoder(name: str) -> bool:
+    """Whether the ffmpeg on PATH was built with the named encoder.
+
+    Codec support is a build option, not something the project requires. The
+    Homebrew ffmpeg on macOS ships without libwebp, for instance, so a test
+    that asserts a successful `.webp` export there fails on the build rather
+    than on the tool.
+    """
+    if not shutil.which("ffmpeg"):
+        return False
+    listed = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-encoders"],
+        check=False, capture_output=True, text=True,
+    )
+    return any(
+        line.split()[1:2] == [name] or f"(codec {name})" in line
+        for line in listed.stdout.splitlines()
+        if line.strip()
+    )
 
 
 def test_media_timestamp_parser_accepts_units_and_four_field_timecodes():
@@ -491,13 +514,16 @@ def test_inspect_media_exports_final_decodable_frame_at_exact_duration(tmp_path:
         result = asyncio.run(InspectMediaTool().execute(json.dumps({
             "path": "/workspace/video.mp4",
             "timestamp": "end",
-            "output_path": "/workspace/final.webp",
+            # PNG, not WebP: this asserts that the *final* frame is decodable at
+            # the exact duration, so it must not also depend on an optional
+            # ffmpeg encoder. WebP export is covered separately below.
+            "output_path": "/workspace/final.png",
         }), {}))
     finally:
         _active_workspace.reset(token)
 
     assert result["exit_code"] == 0, result
-    assert (tmp_path / "final.webp").stat().st_size > 0
+    assert (tmp_path / "final.png").stat().st_size > 0
 
     token = _active_workspace.set(str(tmp_path))
     try:
@@ -512,6 +538,67 @@ def test_inspect_media_exports_final_decodable_frame_at_exact_duration(tmp_path:
         _active_workspace.reset(token)
     assert high_detail["exit_code"] == 0
     assert Image.open(io.BytesIO(base64.b64decode(high_detail["images"][0]["data"]))).size == (768, 432)
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg") or not shutil.which("ffprobe"), reason="ffmpeg required")
+@pytest.mark.skipif(not _ffmpeg_has_encoder("webp"), reason="ffmpeg built without a webp encoder")
+def test_inspect_media_exports_a_webp_still(tmp_path: Path):
+    """A `.webp` output_path is passed straight through to ffmpeg.
+
+    Guarded on the encoder rather than asserted unconditionally: WebP is a
+    build option (Homebrew's macOS ffmpeg omits it) and the project does not
+    require it. When the encoder is missing the tool reports ffmpeg's failure
+    with `exit_code` 1, which is covered by
+    `test_inspect_media_reports_a_missing_encoder_instead_of_crashing`.
+    """
+    video = tmp_path / "video.mp4"
+    subprocess.run([
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+        "-i", "testsrc2=size=320x180:rate=4:duration=2", "-pix_fmt", "yuv420p",
+        "-y", str(video),
+    ], check=True)
+    token = _active_workspace.set(str(tmp_path))
+    try:
+        result = asyncio.run(InspectMediaTool().execute(json.dumps({
+            "path": "/workspace/video.mp4",
+            "timestamp": "end",
+            "output_path": "/workspace/final.webp",
+        }), {}))
+    finally:
+        _active_workspace.reset(token)
+
+    assert result["exit_code"] == 0, result
+    assert Image.open(tmp_path / "final.webp").format == "WEBP"
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg") or not shutil.which("ffprobe"), reason="ffmpeg required")
+@pytest.mark.skipif(_ffmpeg_has_encoder("webp"), reason="needs an ffmpeg built without webp")
+def test_inspect_media_reports_a_missing_encoder_instead_of_crashing(tmp_path: Path):
+    """An export in a format this ffmpeg cannot encode fails as a tool error.
+
+    The tool does not probe the encoder list, so the only contract it can keep
+    is to surface ffmpeg's own failure rather than raise or write a truncated
+    file. Asserted only on builds that actually lack the encoder.
+    """
+    video = tmp_path / "video.mp4"
+    subprocess.run([
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+        "-i", "testsrc2=size=320x180:rate=4:duration=2", "-pix_fmt", "yuv420p",
+        "-y", str(video),
+    ], check=True)
+    token = _active_workspace.set(str(tmp_path))
+    try:
+        result = asyncio.run(InspectMediaTool().execute(json.dumps({
+            "path": "/workspace/video.mp4",
+            "timestamp": "end",
+            "output_path": "/workspace/final.webp",
+        }), {}))
+    finally:
+        _active_workspace.reset(token)
+
+    assert result["exit_code"] == 1
+    assert "ffmpeg still extraction failed" in result["error"]
+    assert not (tmp_path / "final.webp").exists()
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg") or not shutil.which("ffprobe"), reason="ffmpeg required")

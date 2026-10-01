@@ -1,4 +1,5 @@
 from pathlib import Path
+from tests.helpers.stylesheets import app_css
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -7,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_tool_header_has_semantic_icons_for_live_and_saved_calls():
     chat = (ROOT / "static/js/chat.js").read_text(encoding="utf-8")
     renderer = (ROOT / "static/js/chatRenderer.js").read_text(encoding="utf-8")
-    css = (ROOT / "static/style.css").read_text(encoding="utf-8")
+    css = app_css()
 
     assert "manage_calendar" in renderer
     assert "manage_memory" in renderer

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers.document_source import document_source
 from tests.helpers.js_modules import email_library_paths
 import src.tool_capabilities as tool_capabilities
 from src.tool_capabilities import (
@@ -1404,12 +1405,17 @@ def test_frontend_tool_approval_uses_opaque_id_and_fixed_decisions():
             "static/js/chat.js",
             "static/js/chatRenderer.js",
             "static/js/chatStream.js",
-            "static/js/document.js",
             "static/js/emailInbox.js",
             "static/js/settings.js",
             "static/js/slashCommands.js",
         )
-    ] + [p.read_text() for p in email_library_paths(include_wrapper=True)]
+    ]
+    # Both the document editor and email library are module sets.
+    approval_module_sources.append(document_source())
+    approval_module_sources.extend(
+        p.read_text()
+        for p in email_library_paths(include_wrapper=True)
+    )
     assert all(
         "20260722emailfastindex1" not in source
         for source in approval_module_sources

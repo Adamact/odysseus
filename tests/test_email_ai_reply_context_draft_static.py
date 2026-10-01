@@ -1,4 +1,5 @@
 from pathlib import Path
+from tests.helpers.document_source import document_source
 from tests.helpers.js_modules import email_library_source
 
 
@@ -28,7 +29,7 @@ def test_email_ai_reply_context_only_clears_after_draft_opens():
 
 
 def test_document_ai_reply_does_not_overwrite_an_edited_draft():
-    source = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+    source = document_source()
     start = source.index("  async function _aiReply(")
     end = source.index("  async function _scheduleSend(", start)
     function = source[start:end]
@@ -47,7 +48,7 @@ def test_document_ai_reply_does_not_overwrite_an_edited_draft():
 
 
 def test_replacing_an_email_reply_checks_the_visible_draft_first():
-    source = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+    source = document_source()
     start = source.index("  export async function replaceEmailReplyBody(")
     end = source.index("  export async function ensureEmailDraftEnvelope(", start)
     function = source[start:end]

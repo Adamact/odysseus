@@ -1,5 +1,6 @@
 import sqlite3
 from email.message import EmailMessage
+from tests.helpers.document_source import document_source
 from tests.helpers.js_modules import email_library_source
 
 
@@ -81,7 +82,7 @@ def test_remote_search_explicitly_checks_mime_filename_headers():
 
 def test_forwarding_filters_signature_assets_and_mobile_export_stops_bubbling():
     inbox = open("static/js/emailInbox.js", encoding="utf-8").read()
-    document = open("static/js/document.js", encoding="utf-8").read()
+    document = document_source()
 
     assert "const forwardedAttachments = mode === 'forward'" in inbox
     assert "forwardedAttachments.map" in inbox
@@ -100,7 +101,7 @@ def test_attachment_open_spins_icon_only():
 
 
 def test_move_document_creates_destination_before_adopting_it():
-    document = open("static/js/document.js", encoding="utf-8").read()
+    document = document_source()
     start = document.index("async function moveActiveDocumentToNewChat()")
     end = document.index("\n  function showDocTabMenu", start)
     handler = document[start:end]
@@ -189,7 +190,7 @@ def test_empty_reply_has_two_editable_rows_and_reply_survives_compact_toolbar():
 
 
 def test_email_toolbar_places_attachment_before_link():
-    document = open("static/js/document.js", encoding="utf-8").read()
+    document = document_source()
     toolbar_start = document.index('<div class="md-toolbar-items"')
     toolbar_end = document.index('</div>', toolbar_start)
     toolbar = document[toolbar_start:toolbar_end]

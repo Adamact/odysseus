@@ -1,5 +1,6 @@
 from pathlib import Path
 import re
+from tests.helpers.stylesheets import app_css
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -102,7 +103,7 @@ def test_markdown_flattens_legacy_notes_more_details():
 
 def test_markdown_expands_note_and_skill_more_links_without_details():
     markdown_src = (ROOT / "static/js/markdown.js").read_text()
-    style_src = (ROOT / "static/style.css").read_text()
+    style_src = app_css()
 
     assert "function extractMoreListPayloads" in markdown_src
     assert "ody-more-(notes|skills|memories|events|sessions)" in markdown_src
@@ -119,7 +120,7 @@ def test_markdown_expands_note_and_skill_more_links_without_details():
 
 def test_terminal_skill_listing_uses_clickable_bounded_formatter():
     agent_src = (ROOT / "src/agent_loop.py").read_text()
-    style_src = (ROOT / "static/style.css").read_text()
+    style_src = app_css()
 
     assert "_qwen_skills_terminal_summary = _skills_list_summary_from_tool_output(" in agent_src
     assert '.msg-ai .body a[href^="#skill-"]' in style_src
@@ -127,7 +128,7 @@ def test_terminal_skill_listing_uses_clickable_bounded_formatter():
 
 
 def test_list_links_share_compact_typography():
-    style_src = (ROOT / "static/style.css").read_text()
+    style_src = app_css()
 
     assert 'a.chat-link[href^="#events-more-"]' in style_src
     assert "font-size: 11px;" in style_src
@@ -145,7 +146,7 @@ def test_open_skills_also_persists_skill_list():
 
 def test_memory_deeplink_scrolls_and_flashes_even_when_filtered():
     memory_src = (ROOT / "static/js/memory.js").read_text()
-    style_src = (ROOT / "static/style.css").read_text()
+    style_src = app_css()
 
     assert "function _resetMemoryDeepLinkFilters()" in memory_src
     assert "activeCategory = 'all';" in memory_src
@@ -158,7 +159,7 @@ def test_memory_deeplink_scrolls_and_flashes_even_when_filtered():
 
 
 def test_skill_and_memory_links_use_polished_chat_link_style():
-    style_src = (ROOT / "static/style.css").read_text()
+    style_src = app_css()
 
     assert '.msg-ai .body a[href^="#skill-"]' in style_src
     assert '.msg-ai .body a[href^="#memory-"]' in style_src
