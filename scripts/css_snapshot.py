@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Computed-style snapshot harness for ``static/style.css``.
+"""Computed-style snapshot harness for the shipped app CSS cascade.
 
-``static/style.css`` is a single 51k-line stylesheet whose rendered result
-depends on source order: hundreds of selectors are declared more than once and
+The app CSS is an ordered multi-file cascade whose rendered result depends
+on source order: hundreds of selectors are declared more than once and
 ``!important`` is used throughout. Any restructuring - extracting a block into
 its own file, reordering ``<link>`` tags, moving an ``@media`` rule - can
 silently change which declaration wins, and nothing else in the suite would

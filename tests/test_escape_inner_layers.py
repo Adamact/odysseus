@@ -3,6 +3,7 @@
 import json
 import subprocess
 from pathlib import Path
+from tests.helpers.stylesheets import stylesheet_link_tags
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,7 +15,7 @@ def test_rich_escape_closes_toolbar_then_selection_badge() -> None:
       const browser = await chromium.launch({ headless: true });
       const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
       await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentStats.js`);
-      await page.setContent('<link rel="stylesheet" href="/static/style.css"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
+      await page.setContent('__ODY_STYLESHEETS__<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
       await page.evaluate(async () => {
         const mod = await import('/static/js/document.js?v=escape-regression-1');
         mod.init('/api');
@@ -55,6 +56,7 @@ def test_rich_escape_closes_toolbar_then_selection_badge() -> None:
       console.log(JSON.stringify({ before, afterOne, afterTwo }));
       await browser.close();
     '''
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     result = subprocess.run(
         ['node', '--input-type=module', '-e', script],
         cwd=ROOT,
@@ -114,6 +116,7 @@ def test_email_escape_closes_inner_states_without_closing_library() -> None:
       console.log(JSON.stringify({ settings, select, reading }));
       await browser.close();
     '''
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     result = subprocess.run(
         ['node', '--input-type=module', '-e', script],
         cwd=ROOT,

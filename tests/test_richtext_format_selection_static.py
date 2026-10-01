@@ -1,11 +1,12 @@
 from pathlib import Path
+from tests.helpers.document_source import document_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_richtext_toolbar_preserves_selection_before_formatting():
-    source = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+    source = document_source()
 
     assert "let _savedFormatTextareaSelection = null;" in source
     assert "let _savedFormatRichRange = null;" in source

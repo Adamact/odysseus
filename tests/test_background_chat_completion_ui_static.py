@@ -1,10 +1,11 @@
 from pathlib import Path
+from tests.helpers.stylesheets import app_css
 
 
 ROOT = Path(__file__).resolve().parents[1]
 CHAT = (ROOT / "static/js/chat.js").read_text()
 SESSIONS = (ROOT / "static/js/sessions.js").read_text()
-CSS = (ROOT / "static/style.css").read_text()
+CSS = app_css()
 
 
 def test_queued_prompts_are_persisted_per_session_and_restored_on_return():

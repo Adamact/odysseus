@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v654-css-split-3';
+const CACHE_NAME = 'odysseus-v655-email-library-split';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -39,11 +39,28 @@ const KATEX_FONTS = [
 // exact URL the browser requests, query string included.
 const PRECACHE = [
   '/',
-  '/static/style.css?v=20260921chatgptusage2',
-  '/static/css/documents-gallery-editor.css?v=20260923csssplit1',
-  '/static/css/email-calendar-notes-tasks.css?v=20260923csssplit2',
-  '/static/css/cookbook-research-memory-settings.css?v=20260923csssplit3',
-  '/static/app.js?v=20260921chatgptusage2',
+  '/static/css/00-tokens.css?v=20260929csssplit',
+  '/static/css/01-agent-chat.css?v=20260929csssplit',
+  '/static/css/02-compare.css?v=20260929csssplit',
+  '/static/css/03-agent-chat.css?v=20260929csssplit',
+  '/static/css/04-memory.css?v=20260929csssplit',
+  '/static/css/05-documents.css?v=20260929csssplit',
+  '/static/css/06-admin-settings.css?v=20260929csssplit',
+  '/static/css/07-documents.css?v=20260929csssplit',
+  '/static/css/08-skills.css?v=20260929csssplit',
+  '/static/css/09-gallery.css?v=20260929csssplit',
+  '/static/css/10-cookbook.css?v=20260929csssplit',
+  '/static/css/11-tasks.css?v=20260929csssplit',
+  '/static/css/12-gallery.css?v=20260929csssplit',
+  '/static/css/13-image-editor.css?v=20260929csssplit',
+  '/static/css/14-email.css?v=20260929csssplit',
+  '/static/css/15-notes.css?v=20260929csssplit',
+  '/static/css/16-calendar.css?v=20260929csssplit',
+  '/static/css/17-research.css?v=20260929csssplit',
+  '/static/css/documents-gallery-editor.css?v=20260929csssplit',
+  '/static/css/email-calendar-notes-tasks.css?v=20260929csssplit',
+  '/static/css/cookbook-research-memory-settings.css?v=20260929csssplit',
+  '/static/app.js?v=20260929csssplit',
   '/static/js/storage.js',
   '/static/js/appConfig.js',
   '/static/js/ui.js?v=20260916largetoolscroll1',
@@ -78,15 +95,25 @@ const PRECACHE = [
   '/static/js/theme.js?v=20260911organsrain1',
   '/static/js/censor.js',
   '/static/js/settings.js?v=20260912writingstyle3',
-  '/static/js/admin.js?v=20260921chatgptusage2',
+  '/static/js/admin.js?v=20260929csssplit',
   '/static/js/chatgptSubscriptionUsage.js',
   '/static/js/init.js?v=20260829chatstyle12',
   '/static/js/slashCommands.js?v=20260921chatgptusage1',
   '/static/js/research/jobs.js?v=20260910researcherrorpersist1',
   '/static/js/emailInbox.js?v=20260914aireply4',
+  '/static/js/emailLibrary/index.js',
+  '/static/js/emailLibrary/aiReply.js',
+  '/static/js/emailLibrary/attachments.js',
+  '/static/js/emailLibrary/bodyRender.js',
+  '/static/js/emailLibrary/menus.js',
+  '/static/js/emailLibrary/reader.js',
+  '/static/js/emailLibrary/settingsPage.js',
+  '/static/js/emailLibrary/unsubscribe.js',
   '/static/js/emailLibrary/utils.js',
   '/static/js/emailLibrary/signatureFold.js',
   '/static/js/emailLibrary/state.js',
+  // emailInbox.js has always imported this one; it was never precached.
+  '/static/js/emailLibrary/replyRecipients.js',
   '/static/js/notes.js?v=20260911notesselectioncancel1',
   '/static/js/tasks.js?v=20260914taskmodel1',
   '/static/js/calendar.js?v=20260914emailsource11',

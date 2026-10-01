@@ -19,9 +19,10 @@ browser-coupled and not importable in pytest.
 """
 
 from pathlib import Path
+from tests.helpers.document_source import document_source
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text()
+DOC_JS = document_source()
 
 GUARD = "if (_diffModeActive) exitDiffMode(true);"
 

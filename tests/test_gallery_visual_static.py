@@ -1,7 +1,7 @@
 from pathlib import Path
 import re
 
-from tests.helpers.stylesheets import app_css
+from tests.helpers.stylesheets import app_css, stylesheet_cache_version
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -49,7 +49,7 @@ def test_gallery_static_cache_key_bumped():
     app = _read("static/app.js")
     service_worker = _read("static/sw.js")
 
-    assert re.search(r"/static/style\.css\?v=[A-Za-z0-9_-]+", html)
+    assert stylesheet_cache_version()
     html_version = re.search(r"/static/js/gallery\.js\?v=([A-Za-z0-9_-]+)", html)
     app_version = re.search(r"gallery\.js\?v=([A-Za-z0-9_-]+)", app)
     sw_version = re.search(r"/static/js/gallery\.js\?v=([A-Za-z0-9_-]+)", service_worker)
