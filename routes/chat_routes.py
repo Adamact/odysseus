@@ -2893,6 +2893,26 @@ def setup_chat_routes(
             allowed_models=_allowed_models_for_request(request),
         )
 
+        # A compact (clean v3) turn resolves its typed context window once,
+        # here, with the session's provider credentials. History shaping below
+        # and the compact runtime both reuse this exact object, so the turn
+        # neither probes twice nor mixes the legacy untyped lookup into it.
+        # The predicate mirrors ``_clean_v3_preview`` below; the native
+        # workspace term cannot veto a requested clean route.
+        _compact_context_resolution = None
+        if _clean_v3_route_requested and _turn_contract_enabled(
+            exact_tool_approval=exact_tool_approval,
+            runtime_surface=str((client_runtime_context or {}).get("surface") or ""),
+            native_workspace_contract=False,
+            clean_v3_route=True,
+            full_schema_route=(_effective_tool_schema_mode == "full"),
+        ):
+            from src.agent_runtime.context_resolution import resolve_effective_context
+            _compact_context_resolution = await resolve_effective_context(
+                sess.endpoint_url, sess.model, headers=sess.headers,
+                client_runtime_context=client_runtime_context,
+            )
+
         # Build shared context (stream path uses enhanced_message for context preface)
         ctx = await build_chat_context(
             sess, request, chat_handler, chat_processor,
@@ -2923,6 +2943,7 @@ def setup_chat_routes(
                 else None
             ),
             persist_user_message=not tool_approval_continuation and not is_internal_tool_request(request),
+            context_resolution=_compact_context_resolution,
             interaction_mode=chat_mode,
             auto_escalated=auto_escalated,
         )
@@ -4459,6 +4480,9 @@ def setup_chat_routes(
                         client_runtime_context=client_runtime_context,
                         thinking_mode=thinking_mode,
                         reasoning_effort=reasoning_effort,
+                        context_resolution=(
+                            _compact_context_resolution if _clean_v3_preview else None
+                        ),
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:

@@ -5254,8 +5254,10 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     calendar_create_confirmation = ''
     # Resolve the effective window once, before any model request, so the
     # turn budgets against it and metrics report exactly what it ran under.
-    # Terminal metrics must never start this discovery themselves.
-    if context_resolution is None:
+    # The chat route prepares it; only callers arriving without one (or with
+    # one for a different route) resolve here. Terminal metrics must never
+    # start this discovery themselves.
+    if context_resolution is None or not context_resolution.applies_to(endpoint_url, model):
         from src.agent_runtime.context_resolution import resolve_effective_context
         context_resolution = await resolve_effective_context(
             endpoint_url, model, headers=headers,

@@ -481,12 +481,17 @@ async def maybe_compact(
     persist: bool = True,
     compaction_state: Optional[Dict[str, Any]] = None,
     deterministic: bool = False,
+    context_length: Optional[int] = None,
 ) -> tuple:
     """Check context usage and compact if above threshold.
 
+    ``context_length`` lets a caller that already resolved the turn's window
+    supply it, so this helper does not query the endpoint a second time.
+
     Returns (messages, context_length, was_compacted).
     """
-    context_length = get_context_length(endpoint_url, model)
+    if context_length is None:
+        context_length = get_context_length(endpoint_url, model)
     used = estimate_tokens(messages)
     pct = (used / context_length) * 100 if context_length else 0
     threshold = auto_compact_threshold_percent()

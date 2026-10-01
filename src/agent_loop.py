@@ -20425,6 +20425,7 @@ async def stream_agent_loop(
     reasoning_effort: Optional[str] = None,
     _parent_run_id: Optional[str] = None,
     request_authority=MISSING_AUTHORITY,
+    context_resolution=None,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
 
@@ -20477,6 +20478,9 @@ async def stream_agent_loop(
             max_rounds=max_rounds,
             max_tool_calls=max_tool_calls,
             temperature=temperature,
+            # The route's prepared, typed context window; the compact runtime
+            # must not resolve it a second time.
+            context_resolution=context_resolution,
         ):
             yield chunk
         return

@@ -89,13 +89,14 @@ class _FakeNetwork:
         self.get_error = get_error
         self.calls = []
         self.requests = []
+        self.client_kwargs = []
 
     def client_factory(self):
         network = self
 
         class Client:
             def __init__(self, **kwargs):
-                pass
+                network.client_kwargs.append(kwargs)
 
             async def __aenter__(self):
                 return self
@@ -511,3 +512,110 @@ async def test_compact_turn_proceeds_when_metadata_probe_times_out(monkeypatch):
     assert resolution["probe_errors"] == ["models:timeout"]
     assert metrics["context_length"] == 65536
     assert resolution["evidence"] == "operator_declared"
+
+
+# ---------------------------------------------------------------------------
+# Credential scoping (adversarial)
+# ---------------------------------------------------------------------------
+
+def _models_at(monkeypatch, models_url, resolved=None):
+    monkeypatch.setattr("src.endpoint_resolver.build_models_url", lambda base: models_url)
+    monkeypatch.setattr(
+        "src.endpoint_resolver.resolve_url", lambda url: url if resolved is None else resolved,
+    )
+
+
+async def _forwarded_headers(monkeypatch, endpoint_url, models_url, resolved=None):
+    network = _install(monkeypatch, _FakeNetwork({"/models": _catalog("acme-model", max_model_len=8192)}))
+    _models_at(monkeypatch, models_url, resolved)
+    await resolve_effective_context(endpoint_url, "acme-model", headers=AUTH)
+    [(kind, url, headers)] = network.calls
+    assert url == models_url
+    return headers
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("models_url", [
+    "https://provider.test/v1/models",
+    "https://PROVIDER.test:443/v1/models",
+])
+async def test_credentials_reach_the_configured_provider_origin(monkeypatch, models_url):
+    headers = await _forwarded_headers(
+        monkeypatch, "https://provider.test/v1/chat/completions", models_url,
+    )
+    assert headers == {"Authorization": "Bearer secret-token"}
+
+
+@pytest.mark.asyncio
+async def test_credentials_reach_only_the_server_resolved_form_of_the_provider(monkeypatch):
+    endpoint = "http://gpu-box:8000/v1/chat/completions"
+    resolved = "http://100.64.0.9:8000/v1/chat/completions"
+    assert await _forwarded_headers(
+        monkeypatch, endpoint, "http://100.64.0.9:8000/v1/models", resolved,
+    ) == {"Authorization": "Bearer secret-token"}
+    cr.clear_probe_cache()
+    # The same address is not trusted when the server resolver did not
+    # produce it for this endpoint.
+    assert await _forwarded_headers(
+        monkeypatch, endpoint, "http://100.64.0.9:8000/v1/models",
+    ) == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("models_url", [
+    "http://provider.test/v1/models",               # scheme downgrade
+    "https://provider.test:8443/v1/models",         # other port
+    "https://provider.test.evil.example/v1/models", # lookalike host
+    "https://evil.example/provider.test/v1/models", # host in path
+    "https://provider.test@evil.example/v1/models", # host in userinfo
+    "/v1/models",                                   # no origin at all
+])
+async def test_unrelated_models_url_receives_no_credentials(monkeypatch, models_url):
+    assert await _forwarded_headers(
+        monkeypatch, "https://provider.test/v1/chat/completions", models_url,
+    ) == {}
+
+
+@pytest.mark.asyncio
+async def test_probe_client_never_follows_redirects(monkeypatch):
+    network = _install(monkeypatch, _FakeNetwork({"/models": _Response(302, None)}))
+    resolution = await resolve_effective_context(REMOTE, "acme-model", headers=AUTH)
+    assert network.client_kwargs and all(
+        kwargs.get("follow_redirects") is False for kwargs in network.client_kwargs
+    )
+    assert resolution.probe_errors == ("models:http_302",)
+    assert len(network.calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [
+    _FakeNetwork(get_error=httpx.ConnectError(
+        "connect to https://user:pw-secret@provider.test/v1/models?api_key=query-secret failed")),
+    _FakeNetwork(get_error=httpx.ReadTimeout("Bearer secret-token timed out")),
+    _FakeNetwork({"/models": _Response(401, None)}),
+    _FakeNetwork({"/models": _Response(200, ValueError("api_key=query-secret"))}),
+    _FakeNetwork(get_error=RuntimeError("Authorization: Bearer secret-token")),
+])
+async def test_probe_errors_never_expose_credentials_or_urls(monkeypatch, caplog, failure):
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    endpoint = "https://user:pw-secret@provider.test/v1/chat/completions?api_key=query-secret"
+    _install(monkeypatch, failure)
+    resolution = await resolve_effective_context(endpoint, "acme-model", headers=AUTH)
+    assert resolution.probe_errors
+    exposed = json.dumps(resolution.to_dict()) + caplog.text + json.dumps(
+        context_metrics(resolution, 10),
+    )
+    for secret in ("secret-token", "pw-secret", "query-secret", "provider.test", "Authorization"):
+        assert secret not in exposed
+
+
+@pytest.mark.asyncio
+async def test_bound_endpoint_url_stays_out_of_repr_and_metrics(monkeypatch):
+    _install(monkeypatch, _FakeNetwork({"/models": _Response(503, None)}))
+    endpoint = "https://user:pw-secret@provider.test/v1/chat/completions?api_key=query-secret"
+    resolution = await resolve_effective_context(endpoint, "acme-model", headers=AUTH)
+    assert resolution.applies_to(endpoint, "acme-model")
+    for rendered in (repr(resolution), str(resolution), json.dumps(resolution.to_dict())):
+        assert "pw-secret" not in rendered and "query-secret" not in rendered

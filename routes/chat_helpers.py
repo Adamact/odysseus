@@ -1027,11 +1027,15 @@ async def build_chat_context(
     persist_user_message: bool = True,
     interaction_mode: str | None = None,
     auto_escalated: bool = False,
+    context_resolution=None,
 ) -> ChatContext:
     """Build the full context (preface + messages) for an LLM call.
 
     This is the shared logic between /chat and /chat_stream — preset extraction,
     message preprocessing, memory/RAG/web injection, compaction, normalization.
+
+    ``context_resolution`` is the turn's already resolved context window. When
+    supplied, history shaping sizes against it instead of probing the endpoint.
     """
     # Preset
     preset = extract_preset(chat_handler, preset_id)
@@ -1225,12 +1229,20 @@ async def build_chat_context(
     # for every candidate. Running selected-model compaction here would mutate
     # session history before we know which route can answer and would make a
     # later larger-context candidate unable to recover discarded history.
+    if context_resolution is not None:
+        prepared_window = {"context_length": context_resolution.shaping_window}
+    else:
+        prepared_window = {}
     if defer_context_shaping:
-        context_length = get_context_length(sess.endpoint_url, sess.model)
+        context_length = (
+            prepared_window.get("context_length")
+            or get_context_length(sess.endpoint_url, sess.model)
+        )
         was_compacted = False
     else:
         messages, context_length, was_compacted = await maybe_compact(
             sess, sess.endpoint_url, sess.model, messages, sess.headers, owner=user,
+            **prepared_window,
         )
     _before_trim_messages = len(messages)
     _before_trim_tokens = estimate_tokens(messages)

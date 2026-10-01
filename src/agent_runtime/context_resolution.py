@@ -24,7 +24,7 @@ Context sizing is not authority: nothing here grants or denies an operation.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
 import hashlib
 import json
@@ -90,6 +90,11 @@ class ContextResolution:
     provider_io: bool = False
     cached: bool = False
     probe_errors: tuple[str, ...] = ()
+    # The route this resolution describes. Empty for resolutions built
+    # directly from observations by internal callers. The URL can carry
+    # credentials, so it stays out of repr() and to_dict().
+    endpoint_url: str = field(default="", repr=False)
+    model: str = ""
 
     @property
     def mismatch(self) -> bool:
@@ -99,6 +104,25 @@ class ContextResolution:
     def budget_limit(self) -> int:
         """Window the runtime may budget against; 0 means budget reactively."""
         return self.effective if self.evidence is not ContextEvidence.UNKNOWN else 0
+
+    @property
+    def shaping_window(self) -> int:
+        """Window for the legacy history compaction/trim helpers.
+
+        Those helpers predate typed evidence and always size against some
+        window, using DEFAULT_CONTEXT when none is known. This only feeds them
+        a number; it never creates provenance for that number.
+        """
+        if self.budget_limit:
+            return self.budget_limit
+        from src.model_context import DEFAULT_CONTEXT
+        return DEFAULT_CONTEXT
+
+    def applies_to(self, endpoint_url: str, model: str) -> bool:
+        """Whether this resolution may be reused for the given route."""
+        if not self.endpoint_url and not self.model:
+            return True
+        return self.endpoint_url == endpoint_url and self.model == model
 
     def observe_runtime_limit(self, limit: Any, source: str = "provider_rejection") -> "ContextResolution":
         """Fold a limit the provider stated during this turn. Performs no I/O."""
@@ -117,6 +141,8 @@ class ContextResolution:
             provider_io=self.provider_io,
             cached=self.cached,
             probe_errors=self.probe_errors,
+            endpoint_url=self.endpoint_url,
+            model=self.model,
         )
 
     def to_dict(self) -> dict:
@@ -209,14 +235,40 @@ def clear_probe_cache() -> None:
     _probe_cache.clear()
 
 
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
 def _origin(url: str) -> tuple[str, str, Optional[int]]:
     parsed = urlparse(url or "")
-    return (parsed.scheme.lower(), (parsed.hostname or "").lower(), parsed.port)
+    scheme = parsed.scheme.lower()
+    try:
+        port = parsed.port
+    except ValueError:
+        return ("", "", None)
+    return (scheme, (parsed.hostname or "").lower(), port or _DEFAULT_PORTS.get(scheme))
+
+
+def _http_client(timeout: float):
+    # Credentials must never follow a redirect to another location.
+    return httpx.AsyncClient(timeout=timeout, follow_redirects=False)
+
+
+def _provider_urls(endpoint_url: str) -> tuple[Optional[str], str]:
+    """Models catalog URL and the server-resolved form of the endpoint.
+
+    Both come from the existing endpoint resolver, which may rewrite an
+    unresolvable host to its Tailscale address. Blocking (DNS, subprocess);
+    call it off the event loop.
+    """
+    from src.endpoint_resolver import build_models_url, resolve_url
+
+    return build_models_url(endpoint_url), resolve_url(endpoint_url)
 
 
 def _probe_headers(trusted_origins, target_url: str, headers: Optional[Mapping[str, Any]]) -> dict:
     """Forward the turn's provider credentials only to the provider's origin."""
-    if not headers or _origin(target_url) not in trusted_origins:
+    origin = _origin(target_url)
+    if not headers or not origin[1] or origin not in trusted_origins:
         return {}
     return {
         str(name): str(value) for name, value in headers.items()
@@ -268,11 +320,12 @@ def _positive_int(value) -> int:
 
 async def _probe(endpoint_url, model, headers, is_local, observations, errors, timeout):
     from src.copilot import is_copilot_base
-    from src.endpoint_resolver import build_models_url, resolve_url
     from src.model_context import _model_ctx_from_entry
 
+    # Credentials go only to the configured provider's origin, or to the
+    # form of that same endpoint the server-owned resolver produced.
     trusted = {_origin(endpoint_url)}
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with _http_client(timeout) as client:
         if is_local:
             base = _serving_base(endpoint_url)
             slots = await _get_json(
@@ -303,13 +356,12 @@ async def _probe(endpoint_url, model, headers, is_local, observations, errors, t
             errors.append("models:unsupported_endpoint")
             return
         # URL building may resolve the host (DNS, tailscale lookup); keep that
-        # off the event loop and inside the probe deadline. The resolved host
-        # is the same provider the chat request reaches.
-        models_url = await asyncio.to_thread(build_models_url, endpoint_url)
+        # off the event loop and inside the probe deadline.
+        models_url, resolved_endpoint = await asyncio.to_thread(_provider_urls, endpoint_url)
         if not models_url:
             errors.append("models:unsupported_endpoint")
             return
-        trusted.add(_origin(await asyncio.to_thread(resolve_url, endpoint_url)))
+        trusted.add(_origin(resolved_endpoint))
         payload = await _get_json(
             client, models_url, _probe_headers(trusted, models_url, headers),
             errors, "models",
@@ -440,7 +492,10 @@ async def resolve_effective_context(
     if known:
         observations.append(ContextObservation(ContextEvidence.KNOWN_TABLE, int(known), "known_table"))
     resolution = combine_observations(observations)
-    resolution = replace(resolution, provider_io=provider_io, cached=cached, probe_errors=errors)
+    resolution = replace(
+        resolution, provider_io=provider_io, cached=cached, probe_errors=errors,
+        endpoint_url=endpoint_url or "", model=model or "",
+    )
     if resolution.mismatch:
         logger.info(
             "Context window sources disagree for %s: %s",
