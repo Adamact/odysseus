@@ -4694,7 +4694,11 @@ async function initUnifiedIntegrations() {
         fd.append('transport', transport);
         if (transport === 'stdio') {
           fd.append('command', el('uf-mcp-cmd').value);
-          let args = '[]'; try { args = JSON.stringify(JSON.parse(el('uf-mcp-args').value || '[]')); } catch (_) {}
+          // Unlike env below, an unparseable args value is not silently
+          // defaulted: it would spawn the subprocess with an empty argv.
+          let args;
+          try { args = JSON.stringify(JSON.parse(el('uf-mcp-args').value || '[]')); }
+          catch (_) { el('uf-mcp-msg').textContent = 'Args must be valid JSON, e.g. ["-y", "pkg"]'; return; }
           let env  = '{}'; try { env  = JSON.stringify(JSON.parse(el('uf-mcp-env').value  || '{}')); } catch (_) {}
           fd.append('args', args);
           fd.append('env', env);
@@ -4716,7 +4720,12 @@ async function initUnifiedIntegrations() {
           } else if (r.ok) {
             el('uf-mcp-msg').textContent = 'Saved'; formEl.style.display = 'none'; await renderList();
           } else {
-            el('uf-mcp-msg').textContent = `Failed (${r.status})`;
+            // Surface the server's reason. The Args validation above rejects
+            // unparseable JSON, but `"x"` and `{}` parse and are refused by
+            // routes/mcp/mcp_routes.py with a message naming the expected
+            // shape; a bare status code sends the user looking in the wrong
+            // place. Matches what admin.js shows for the same endpoint.
+            el('uf-mcp-msg').textContent = data.detail || `Failed (${r.status})`;
           }
         } catch (_) { el('uf-mcp-msg').textContent = 'Failed'; }
         finally { _setBtnLoading(saveBtn, false, _origLabel); if (cancelBtn) cancelBtn.disabled = false; }

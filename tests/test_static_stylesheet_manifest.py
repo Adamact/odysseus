@@ -55,14 +55,23 @@ def _local_path(url):
     return ROOT / url.split("?", 1)[0].lstrip("/")
 
 
+# HTML outside static/ that still links app stylesheets by URL. The snapshot
+# bench is one: it is not shipped, but a dead link there renders the bench
+# unstyled and every computed-style measurement taken from it is worthless.
+_UNSHIPPED_HTML = ("tests/css_snapshot/bench.html",)
+
+
 def test_every_stylesheet_referenced_by_shipped_html_exists():
     checked = 0
-    for html_path in sorted((ROOT / "static").glob("*.html")):
+    html_files = sorted((ROOT / "static").glob("*.html"))
+    html_files += [ROOT / rel for rel in _UNSHIPPED_HTML]
+    for html_path in html_files:
         for href in _stylesheet_hrefs(html_path):
             if not href.startswith("/"):
                 continue  # external or relative-to-page; not ours to resolve
             assert _local_path(href).is_file(), (
-                f"{html_path.name} links {href}, which does not exist on disk"
+                f"{html_path.relative_to(ROOT)} links {href}, "
+                "which does not exist on disk"
             )
             checked += 1
     assert checked, "no app stylesheet links found - the parser or the markup moved"

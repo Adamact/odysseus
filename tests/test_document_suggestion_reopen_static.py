@@ -1,7 +1,8 @@
 from pathlib import Path
+from tests.helpers.document_source import document_source
 
 
-SOURCE = Path("static/js/document.js").read_text()
+SOURCE = document_source()
 
 
 def test_newly_mounted_document_pane_cannot_save_before_binding():

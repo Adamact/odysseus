@@ -1,10 +1,26 @@
 /** Card layout and reconciliation against the served assets; no user mutations. */
 import { chromium } from 'playwright';
+
+const ORIGIN = 'http://127.0.0.1:7011';
+
+/** The `<link rel="stylesheet">` tags the app shell ships, in shell order. */
+async function shellStylesheets() {
+  const response = await fetch(`${ORIGIN}/static/index.html`);
+  if (!response.ok) throw new Error(`static/index.html returned ${response.status}`);
+  const links = (await response.text()).match(/<link\b[^>]*rel=["']stylesheet["'][^>]*>/gi) || [];
+  if (!links.length) throw new Error('no stylesheet links found in static/index.html');
+  return links.join('');
+}
+
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
-  await page.goto('http://127.0.0.1:7011/static/test-fixtures/browser-catalog.html');
-  await page.setContent('<link rel="stylesheet" href="/static/style.css"><main style="padding:16px"><div id="chat-history"><p>Existing conversation</p></div></main>');
+  await page.goto(`${ORIGIN}/static/test-fixtures/browser-catalog.html`);
+  // Read the shell's stylesheets out of index.html rather than naming one
+  // here. style.css is now a set of ordered fragments, and a hardcoded link
+  // to a file that has moved does not fail - it renders unstyled and the
+  // layout checks below pass against nothing.
+  await page.setContent(`${await shellStylesheets()}<main style="padding:16px"><div id="chat-history"><p>Existing conversation</p></div></main>`);
   const checks = await page.evaluate(async () => {
     const { renderResearchCards } = await import('/static/js/backgroundToolJobs.js');
     const box = document.querySelector('#chat-history');

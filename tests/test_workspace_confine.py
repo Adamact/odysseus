@@ -225,8 +225,13 @@ async def test_glob_confined_e2e(ws, admin):
     assert ws not in r["output"]
     assert "/workspace/found.py" in r["output"]
 
-    # a secret outside the workspace must not be discoverable via glob
-    outside = tempfile.mkdtemp()
+    # a secret outside the workspace must not be discoverable via glob.
+    # realpath so this directory and os.path.realpath(ws) below sit in the same
+    # resolved tree. On macOS /tmp is a symlink to /private/tmp, and mixing a
+    # resolved workspace with an unresolved secret makes relpath emit
+    # "../../../../tmp/<abs path>", which trivially contains the absolute path
+    # the assertion is checking for.
+    outside = os.path.realpath(tempfile.mkdtemp())
     secret = os.path.join(outside, "secret.txt")
     with open(secret, "w") as f:
         f.write("nope")

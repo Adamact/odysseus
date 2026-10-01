@@ -1,6 +1,6 @@
 # Computed-style snapshot harness
 
-`static/style.css` is 51,425 lines in one file. Hundreds of selectors are
+The app CSS is an ordered multi-file cascade. Hundreds of selectors are
 declared more than once and `!important` appears throughout, so the rendered
 result is a function of **source order**. Extracting a block into its own file,
 reordering `<link>` tags, or moving an `@media` rule can silently change which
@@ -29,7 +29,7 @@ so the measurements stay independent.
 
 The **bench** page measures one synthesised element per selector, built from
 the selector itself. Its selector list is evidence-driven: every selector
-declared **more than once** in `style.css` that can be expressed as a static
+declared **more than once** in the app cascade that can be expressed as a static
 compound chain (551 of them), plus a curated set covering chat, documents,
 email, notes, calendar, settings, cookbook and gallery. Redeclared selectors
 are the ones a reorder can actually flip, so they are the ones worth benching.

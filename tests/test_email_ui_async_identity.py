@@ -1,4 +1,5 @@
 from pathlib import Path
+from tests.helpers.document_source import document_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,7 +15,7 @@ def test_card_delete_waits_for_durable_success_and_uses_email_identity():
 
 
 def test_finished_send_does_not_close_whichever_library_opened_later():
-    source = (ROOT / "static/js/document.js").read_text()
+    source = document_source()
     start = source.index("async function _sendEmail()")
     end = source.index("async function _saveDraft()", start)
     send = source[start:end]

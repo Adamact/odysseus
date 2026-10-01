@@ -3,16 +3,16 @@
 import json
 import subprocess
 from pathlib import Path
+from tests.helpers.stylesheets import stylesheet_link_tags
+from tests.helpers.document_source import document_source, function_body
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+DOC_JS = document_source()
 
 
 def test_heading_enter_uses_single_native_history_commands():
-    helper = DOC_JS.split("function _handleRichHeadingEnter", 1)[1].split(
-        "let _richInlineCodeTypingArmed", 1
-    )[0]
+    helper = function_body("_handleRichHeadingEnter")
 
     assert "selection.isCollapsed" in helper
     assert "h1, h2, h3, h4, h5, h6" in helper
@@ -29,7 +29,7 @@ def test_mobile_heading_enter_exits_cleanly_and_is_one_step_undoable():
       const browser = await chromium.launch({ headless: true });
       const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
       await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentStats.js`);
-      await page.setContent('<link rel="stylesheet" href="/static/style.css?v=20260831richtexttools91"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
+      await page.setContent('__ODY_STYLESHEETS__<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
       await page.evaluate(async () => {
         const mod = await import('/static/js/document.js?v=20260831richtexttools91&heading-enter=1');
         mod.init('/api');
@@ -73,6 +73,7 @@ def test_mobile_heading_enter_exits_cleanly_and_is_one_step_undoable():
       console.log(JSON.stringify({ entered, undone, redone }));
       await browser.close();
     """
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=ROOT,
@@ -152,6 +153,7 @@ def test_heading_enter_preserves_shift_middle_and_empty_heading_semantics():
       console.log(JSON.stringify(state));
       await browser.close();
     """
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=ROOT,

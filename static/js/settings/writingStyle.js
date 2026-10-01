@@ -40,7 +40,7 @@ export async function initDocumentWritingStyle() {
     if (msg) {
       msg.replaceChildren();
       try {
-        const spinner = window.spinnerModule || (await import('./spinner.js')).default;
+        const spinner = window.spinnerModule || (await import('../spinner.js')).default;
         whirlpool = spinner.createWhirlpool(14);
         whirlpool.element.style.cssText = 'display:inline-flex;width:14px;height:14px;margin-right:7px;';
         const label = document.createElement('span');
