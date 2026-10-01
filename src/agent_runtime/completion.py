@@ -181,8 +181,9 @@ def with_completion_gate(func):
         trusted_workspace = vet_workspace(bound.get('workspace')) if bound.get('workspace') else ''
         requirements = replace(requirements, workspace_root=trusted_workspace or '')
         parent = current_journal()
-        journal = parent if parent is not None and parent.workspace == requirements.workspace_root else ActionJournal(
-            workspace=requirements.workspace_root, observed_artifacts=requirements.required_artifacts)
+        journal = ActionJournal(
+            workspace=requirements.workspace_root, observed_artifacts=requirements.required_artifacts,
+            parent_run_id=bound.get('_parent_run_id') or (parent.run_id if parent is not None else None))
         answer_events: list[dict] = []
         metrics_events: list[dict] = []
         answer = ''
@@ -308,7 +309,8 @@ def with_completion_gate(func):
             for event in metrics_events:
                 metadata = event.setdefault('data', {})
                 metadata.update(completion_decision=decision.to_dict(), evidence_events=ledger.to_list(),
-                                action_receipts=journal.to_list(), completion_requirements=requirements.to_dict())
+                                action_receipts=journal.to_list(), completion_requirements=requirements.to_dict(),
+                                run_id=journal.run_id, parent_run_id=journal.parent_run_id)
                 metadata['completion_gate'] = {
                     'buffer_seconds': released_at - first_answer_at if first_answer_at is not None else 0,
                     'first_visible_answer_seconds': released_at - started,

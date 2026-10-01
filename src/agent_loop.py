@@ -84,6 +84,7 @@ from src.tool_types import ToolBlock
 from src.turn_contract import selected_tools_for_request, with_turn_contract
 from src.agent_runtime.journal import propose_action, execute_action
 from src.agent_runtime.completion import with_completion_gate
+from src.teacher_escalation import with_teacher_takeover, request_teacher_takeover
 from src.tool_utils import _truncate, get_mcp_manager
 from src.agent_tools import (
     parse_tool_blocks,
@@ -20326,6 +20327,7 @@ def _blocks_before_inference(turn_contract) -> bool:
 
 
 @with_turn_contract
+@with_teacher_takeover
 @with_completion_gate
 async def stream_agent_loop(
     endpoint_url: str,
@@ -20368,6 +20370,7 @@ async def stream_agent_loop(
     thinking_mode: Optional[str] = None,
     suppress_skills: bool = False,
     reasoning_effort: Optional[str] = None,
+    _parent_run_id: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
 
@@ -37239,29 +37242,25 @@ async def stream_agent_loop(
     )
     yield f"data: {json.dumps({'type': 'metrics', 'data': metrics})}\n\n"
 
-    # Teacher-escalation: inline takeover visible in the chat stream.
-    # The student just finished; if Tier 1 flags failure, the teacher
-    # gets a turn (with its own tool calls forwarded to the user) and
-    # a skill is saved ONLY if the teacher actually succeeds. Skipped
-    # when we ARE the teacher to avoid recursion.
+    # Queue the existing teacher hook. The outer adapter executes it only
+    # after this invocation's completion gate and action context have closed.
     if not _is_teacher_run and not guide_only and not _awaiting_user:
-        try:
-            from src.teacher_escalation import run_teacher_inline
-            async for evt in run_teacher_inline(
-                student_endpoint_url=endpoint_url,
-                student_messages=messages,
-                student_tool_events=tool_events,
-                student_reply=full_response,
-                owner=owner,
-                session_id=session_id,
-                workspace=workspace,
-                disabled_tools=disabled_tools,
-                tool_policy=tool_policy,
-                active_document=active_document,
-                active_email=active_email,
-            ):
-                yield evt
-        except Exception as _esc_err:
-            logger.warning(f"teacher escalation hook failed: {_esc_err}", exc_info=True)
+        request_teacher_takeover(
+            student_endpoint_url=endpoint_url,
+            student_messages=messages,
+            student_tool_events=tool_events,
+            student_reply=full_response,
+            owner=owner,
+            session_id=session_id,
+            workspace=workspace,
+            disabled_tools=disabled_tools,
+            tool_policy=tool_policy,
+            active_document=active_document,
+            active_email=active_email,
+            turn_contract=turn_contract,
+            external_untrusted_context_seen=run_security.external_untrusted_context_seen,
+            client_runtime_context=client_runtime_context,
+            plan_mode=plan_mode,
+        )
 
     yield "data: [DONE]\n\n"

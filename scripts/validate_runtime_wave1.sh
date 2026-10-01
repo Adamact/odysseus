@@ -9,6 +9,7 @@ export ODYSSEUS_DATA_DIR="${ODYSSEUS_DATA_DIR:-/tmp/odysseus-runtime-decompositi
 exec "${ODYSSEUS_TEST_PYTHON:-python3}" -m pytest -q -p no:cacheprovider \
   tests/test_runtime_evidence_contract.py tests/test_agent_evidence.py \
   tests/test_completion_boundary.py \
+  tests/test_nested_invocation_ownership.py \
   tests/test_agent_evidence_loop.py tests/test_agent_render_ownership.py \
   tests/test_agent_runs_terminal_order.py tests/test_agent_loop.py \
   tests/test_tool_task_cancelled_on_disconnect.py tests/test_turn_contract.py \

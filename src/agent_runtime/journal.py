@@ -66,6 +66,7 @@ class ActionJournal:
     actions: list[ActionReceipt] = field(default_factory=list)
     workspace: str = ''
     observed_artifacts: tuple[str, ...] = ()
+    parent_run_id: str | None = None
 
     def capture_versions(self, action: ActionReceipt) -> None:
         if self.workspace:
@@ -111,9 +112,11 @@ _ACTION: ContextVar[ActionReceipt | None] = ContextVar('runtime_current_action',
 @contextmanager
 def bind_journal(journal: ActionJournal):
     token = _JOURNAL.set(journal)
+    action_token = _ACTION.set(None)
     try:
         yield journal
     finally:
+        _ACTION.reset(action_token)
         _JOURNAL.reset(token)
 
 
