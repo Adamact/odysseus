@@ -92,13 +92,8 @@ def _current_run_claims(statement: str, *, execution_required: bool) -> list[tup
     return claims
 
 
-def completion_answer(text: str, ledger: EvidenceLedger, decision: CompletionDecision) -> tuple[str, str]:
-    """Keep explanatory prose; remove unsupported assertions and attach facts.
-
-    Exit status proves neither test counts nor coverage. A bad assertion is
-    removed at statement boundaries instead of erasing an entire explanation.
-    The execution outcome remains separate from a discarded model assertion.
-    """
+def _supported_prose(text: str, ledger: EvidenceLedger, decision: CompletionDecision) -> tuple[str, str]:
+    """Remove unsupported assertions at statement boundaries; add no notice."""
     incomplete = decision.reason if not decision.can_complete and decision.status != CompletionStatus.AWAITING_USER else ''
     execution_required = _execution_obligation(ledger.requirements)
     kept = []
@@ -128,6 +123,19 @@ def completion_answer(text: str, ledger: EvidenceLedger, decision: CompletionDec
         else:
             kept.append(statement)
     prose = ''.join(kept).strip() if removed else text
+    return prose, removed
+
+
+def completion_answer(text: str, ledger: EvidenceLedger, decision: CompletionDecision) -> tuple[str, str]:
+    """Keep explanatory prose; remove unsupported assertions and attach facts.
+
+    Exit status proves neither test counts nor coverage. A bad assertion is
+    removed at statement boundaries instead of erasing an entire explanation.
+    The execution outcome remains separate from a discarded model assertion.
+    """
+    incomplete = decision.reason if not decision.can_complete and decision.status != CompletionStatus.AWAITING_USER else ''
+    execution_required = _execution_obligation(ledger.requirements)
+    prose, removed = _supported_prose(text, ledger, decision)
     if incomplete or (removed and execution_required and decision.status in {CompletionStatus.UNVERIFIED, CompletionStatus.AWAITING_USER}):
         reason = incomplete or removed
         missing = (' Missing artifacts: ' + ', '.join(decision.missing_artifacts) + '.'
@@ -336,6 +344,13 @@ def with_completion_gate(func):
                     if not provider_error:
                         metadata['round_texts'] = [safe_answer]
                     metadata['completion_gate_reason'] = reason or unsafe_draft or 'receipt_summary'
+                if provider_error and isinstance(metadata.get('round_texts'), list):
+                    # Failed rounds stay as per-round diagnostics, but they are
+                    # rendered again on reload. Apply the same statement filter
+                    # as the live answer so a rejected claim cannot reappear.
+                    metadata['round_texts'] = [
+                        _supported_prose(text, ledger, presentation_decision)[0] if isinstance(text, str) else text
+                        for text in metadata['round_texts']]
                 if isinstance(metadata.get('thinking'), str):
                     _, unsafe_thinking = completion_answer(metadata['thinking'], ledger,
                         replace(presentation_decision, can_complete=True))

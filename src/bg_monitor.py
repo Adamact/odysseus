@@ -42,6 +42,7 @@ async def _drain_agent(sess, messages):
     saves, so the frontend rebuilds them as standard agent-thread tool cards."""
     from src.agent_loop import stream_agent_loop
     full = ""
+    final_replaced = False
     tool_events = []
     round_num = 1
     async for chunk in stream_agent_loop(
@@ -68,7 +69,17 @@ async def _drain_agent(sess, messages):
             if isinstance(delta, str):
                 if d.get("thinking"):
                     continue
+                if final_replaced:
+                    # A later answer supersedes the replacement, as the
+                    # completion gate treats it.
+                    full = ""
+                    final_replaced = False
                 full += delta
+        elif d.get("type") == "final_response":
+            # The completion gate may present its sanitized answer as one
+            # replacement instead of deltas.
+            full = str(d.get("content") or "")
+            final_replaced = True
         elif d.get("type") == "agent_step":
             round_num = d.get("round", round_num)
         elif d.get("type") == "tool_output":

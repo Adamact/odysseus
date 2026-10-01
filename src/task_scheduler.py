@@ -1976,6 +1976,7 @@ class TaskScheduler:
         except Exception:
             pass
         full_text = ""
+        final_text_replaced = False
         tool_results = []
         approval_pause = None
 
@@ -1997,62 +1998,75 @@ class TaskScheduler:
             )[1:]
         except Exception:
             _task_fallbacks = []
-        async for event_str in stream_agent_loop(
-            endpoint_url=endpoint_url,
-            model=model,
-            messages=messages,
-            max_rounds=_task_max_rounds,
-            session_id=session_id,
-            owner=task.owner,
-            headers=headers,
-            disabled_tools=disabled_tools,
-            relevant_tools=relevant_tools,
-            fallbacks=_task_fallbacks,
-            workload="background",
-        ):
-            if event_str.startswith("data: ") and not event_str.startswith("data: [DONE]"):
-                try:
-                    data = json.loads(event_str[6:])
-                    # Capture text from all event types, not just delta
-                    if "delta" in data:
-                        if data.get("thinking"):
-                            continue
-                        full_text += data["delta"]
-                    elif data.get("type") == "tool_output":
-                        # Tool results — capture summary so we have SOMETHING even
-                        # if the model never produces a final text response
-                        tool_summary = data.get("stdout") or data.get("output") or data.get("result") or ""
-                        if isinstance(tool_summary, str) and tool_summary.strip():
-                            tool_results.append(f"[{data.get('tool', '?')}] {tool_summary[:500]}")
-                        approval = data.get("ask_user")
-                        if (
-                            isinstance(approval, dict)
-                            and approval.get("kind") == "tool_approval"
-                        ):
-                            approval_pause = {
-                                "tool": data.get("tool") or "tool",
-                                "approval_id": approval.get("approval_id"),
-                            }
-                            # Scheduled tasks have no interactive surface that
-                            # can safely resume a one-use grant. Retire the
-                            # record immediately instead of leaving it pending
-                            # and report an explicit manual-action boundary.
-                            try:
-                                from src.tool_approvals import tool_approval_store
-                                tool_approval_store.consume(
-                                    approval_pause["approval_id"],
-                                    decision="deny",
-                                    owner=task.owner,
-                                    session_id=session_id,
-                                )
-                            except Exception:
-                                logger.debug(
-                                    "Could not retire scheduled-task approval",
-                                    exc_info=True,
-                                )
-                            break
-                except (json.JSONDecodeError, KeyError):
-                    pass
+        # Close the stream in this task on every exit, including the
+        # approval-pause break, so the agent run's context state unwinds here.
+        async with contextlib.aclosing(stream_agent_loop(
+                endpoint_url=endpoint_url,
+                model=model,
+                messages=messages,
+                max_rounds=_task_max_rounds,
+                session_id=session_id,
+                owner=task.owner,
+                headers=headers,
+                disabled_tools=disabled_tools,
+                relevant_tools=relevant_tools,
+                fallbacks=_task_fallbacks,
+                workload="background",
+        )) as agent_stream:
+            async for event_str in agent_stream:
+                if event_str.startswith("data: ") and not event_str.startswith("data: [DONE]"):
+                    try:
+                        data = json.loads(event_str[6:])
+                        # Capture text from all event types, not just delta
+                        if "delta" in data:
+                            if data.get("thinking"):
+                                continue
+                            if final_text_replaced:
+                                # A later answer supersedes the replacement,
+                                # as the completion gate treats it.
+                                full_text = ""
+                                final_text_replaced = False
+                            full_text += data["delta"]
+                        elif data.get("type") == "final_response":
+                            # The completion gate may present its sanitized
+                            # answer as one replacement instead of deltas.
+                            full_text = str(data.get("content") or "")
+                            final_text_replaced = True
+                        elif data.get("type") == "tool_output":
+                            # Tool results — capture summary so we have SOMETHING even
+                            # if the model never produces a final text response
+                            tool_summary = data.get("stdout") or data.get("output") or data.get("result") or ""
+                            if isinstance(tool_summary, str) and tool_summary.strip():
+                                tool_results.append(f"[{data.get('tool', '?')}] {tool_summary[:500]}")
+                            approval = data.get("ask_user")
+                            if (
+                                isinstance(approval, dict)
+                                and approval.get("kind") == "tool_approval"
+                            ):
+                                approval_pause = {
+                                    "tool": data.get("tool") or "tool",
+                                    "approval_id": approval.get("approval_id"),
+                                }
+                                # Scheduled tasks have no interactive surface that
+                                # can safely resume a one-use grant. Retire the
+                                # record immediately instead of leaving it pending
+                                # and report an explicit manual-action boundary.
+                                try:
+                                    from src.tool_approvals import tool_approval_store
+                                    tool_approval_store.consume(
+                                        approval_pause["approval_id"],
+                                        decision="deny",
+                                        owner=task.owner,
+                                        session_id=session_id,
+                                    )
+                                except Exception:
+                                    logger.debug(
+                                        "Could not retire scheduled-task approval",
+                                        exc_info=True,
+                                    )
+                                break
+                    except (json.JSONDecodeError, KeyError):
+                        pass
 
         if approval_pause is not None:
             return (

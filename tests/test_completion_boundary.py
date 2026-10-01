@@ -219,7 +219,9 @@ async def test_failed_terminal_diagnostics_survive_answer_replacement(terminal_k
     chunks = [chunk async for chunk in stream([])]
     terminal = next(data['data'] for event, data in _frames(chunks)
                     if event == 'message' and data.get('type') == terminal_kind)
-    assert terminal['round_texts'] == diagnostics
+    # Diagnostics and the failure note survive; the rejected claim does not,
+    # because round_texts are rendered again when the turn is reloaded.
+    assert terminal['round_texts'] == ['Earlier tool failure and retry', '[Agent stopped: HTTP 504]']
     assert terminal['round_models'] == ['first-model', 'failed-model']
     assert terminal['failure'] == {'status': 504, 'message': 'Model request failed'}
     assert terminal['failed'] is True
@@ -227,6 +229,42 @@ async def test_failed_terminal_diagnostics_survive_answer_replacement(terminal_k
     assert terminal['completion_gate']['answer_replaced'] is True
     assert terminal['completion_gate']['additional_provider_calls'] == 0
     assert _labels(chunks).index(terminal_kind) < _labels(chunks).index('error')
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_round_texts_cannot_replay_removed_claim_after_reload():
+    claim = 'I created report.md and all tests passed.'
+    note = '[Agent stopped: Model request failed (HTTP 504)]'
+
+    @with_completion_gate
+    async def stream(messages):
+        yield _event({'type': 'tool_start', 'tool': 'read_file'})
+        yield _event({'delta': 'Inspected the layout. ' + claim})
+        yield ERROR
+        yield _event({'type': 'agent_terminal', 'data': {
+            'failed': True, 'failure': {'status': 504, 'message': 'Model request failed'},
+            'tool_events': [{'round': 1, 'tool': 'read_file'}],
+            'round_texts': ['Inspected the layout. ' + claim, 'Retrying the build.\n\n' + note],
+        }})
+        yield DONE
+
+    chunks = [chunk async for chunk in stream([{'role': 'user', 'content': 'create report.md and run the tests'}])]
+    assert _labels(chunks) == [
+        'tool_start', 'final_response', 'completion_decision', 'agent_terminal', 'error',
+    ], _labels(chunks)
+    assert DONE not in chunks
+    live = next(data['content'] for event, data in _frames(chunks)
+                if event == 'message' and data.get('type') == 'final_response')
+    terminal = next(data['data'] for event, data in _frames(chunks)
+                    if event == 'message' and data.get('type') == 'agent_terminal')
+    # The chat route persists this metadata and the renderer rebuilds one bubble
+    # per round from it, so every persisted round is presentation.
+    persisted = terminal['round_texts']
+    assert persisted == ['Inspected the layout.', 'Retrying the build.\n\n' + note]
+    for text in [live, *persisted]:
+        assert 'tests passed' not in text and 'created report.md' not in text
+    assert 'Inspected the layout.' in live
+    assert terminal['completion_decision']['status'] == 'failed'
 
 
 @pytest.mark.asyncio
