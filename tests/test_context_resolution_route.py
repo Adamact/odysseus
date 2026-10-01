@@ -399,3 +399,114 @@ async def test_offline_guard_replaces_only_io_edges(context_probe_ledger):
     assert first.probe_errors == ("models:transport_error",)
     assert (first.evidence, first.effective) == (ContextEvidence.KNOWN_TABLE, 128000)
     assert second.cached and not second.provider_io
+
+
+# ---------------------------------------------------------------------------
+# Route preparation and agent-loop dispatch share one compact decision
+# ---------------------------------------------------------------------------
+
+class _RegularPath(Exception):
+    pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case, model, mode, privileges, surface, configured, image_generation, expected, regular_loop",
+    [
+        ("compact_agent", COMPACT_MODEL, "agent", None, None, "", False, True, False),
+        ("compact_chat_escalates", COMPACT_MODEL, "chat", None, None, "", False, True, False),
+        ("regular_model", "selected-model", "agent", None, None, "", False, False, True),
+        ("configured_compact", "selected-model", "agent", None, None, "compact", False, True, False),
+        ("configured_full", COMPACT_MODEL, "agent", None, None, "full", False, False, True),
+        # Plain chat and image generation leave before the agent loop.
+        ("agent_privilege_denied", COMPACT_MODEL, "agent", {"can_use_agent": False}, None, "", False, False, False),
+        ("agent_privilege_granted", COMPACT_MODEL, "agent", {"can_use_agent": True}, None, "", False, True, False),
+        ("tui_surface", COMPACT_MODEL, "agent", None, "odysseus-tui", "", False, False, True),
+        ("image_generation", COMPACT_MODEL, "agent", None, None, "", True, False, False),
+    ],
+)
+async def test_route_preparation_and_compact_dispatch_cannot_diverge(
+    monkeypatch, context_probe_ledger,
+    case, model, mode, privileges, surface, configured, image_generation, expected, regular_loop,
+):
+    from routes import chat_routes
+    import src.agent_loop as agent_loop
+
+    seen = _spy(monkeypatch)
+    _install_model(monkeypatch)
+    captured = {}
+    endpoint = _chat_stream_endpoint(
+        monkeypatch, mode, captured, capture_context=True, session_model=model,
+    )
+    monkeypatch.setattr(
+        chat_routes, "coerce_message_and_session", lambda *args, **kwargs: ("hello", "session-1"),
+    )
+    monkeypatch.setattr(
+        chat_routes, "_configured_model_tool_surface", lambda *args, **kwargs: configured,
+    )
+    monkeypatch.setattr(
+        chat_routes, "_is_image_generation_session", lambda *args, **kwargs: image_generation,
+    )
+    # Real agent loop: the compact branch reaches the recorded stream_preview;
+    # the regular branch stops at its first step.
+    regular = []
+
+    def stop_regular(*args, **kwargs):
+        regular.append(True)
+        raise _RegularPath()
+
+    monkeypatch.setattr(agent_loop, "_contract_allows_single_action_terminal", stop_regular)
+    monkeypatch.setattr(chat_routes, "stream_agent_loop", agent_loop.stream_agent_loop)
+
+    request = _RouteRequest(mode, privileges=privileges)
+    request._form.update({"message": "hello", "compare_mode": "false"})
+    if surface:
+        request._form["client_runtime_context"] = json.dumps({"surface": surface})
+    response = await endpoint(request)
+    try:
+        async for _ in response.body_iterator:
+            pass
+    except _RegularPath:
+        pass
+
+    prepared = captured["build_context"].get("context_resolution")
+    dispatched_compact = bool(seen["preview_kwargs"])
+    assert (prepared is not None) == dispatched_compact == expected, case
+    if expected:
+        # One resolution, prepared by the route and reused by dispatch.
+        assert len(seen["resolutions"]) == 1 and len(context_probe_ledger) == 1
+        assert seen["preview_kwargs"][0]["context_resolution"] is prepared
+    else:
+        assert seen["resolutions"] == [] and context_probe_ledger == []
+    # The case really reached the dispatch point it claims to exercise.
+    assert bool(regular) == regular_loop, case
+
+
+def test_compact_selection_rule_and_contract_stamp():
+    from src.agent_runtime.runtime_selection import (
+        COMPACT_PREVIEW_MODE, is_compact_preview_contract, uses_compact_preview_runtime,
+    )
+    from src.clean_agent_preview import MODE
+    from routes.chat_routes import _turn_contract_enabled
+    from types import SimpleNamespace
+
+    facts = dict(
+        clean_route_requested=True, turn_contract_enabled=True,
+        agent_mode=True, agent_permitted=True, image_generation=False,
+    )
+    assert uses_compact_preview_runtime(**facts)
+    for name, value in (
+        ("clean_route_requested", False), ("turn_contract_enabled", False),
+        ("agent_mode", False), ("agent_permitted", False), ("image_generation", True),
+    ):
+        assert not uses_compact_preview_runtime(**{**facts, name: value}), name
+    # An exact tool approval opts the turn out through the contract policy.
+    assert not uses_compact_preview_runtime(**{**facts, "turn_contract_enabled": _turn_contract_enabled(
+        exact_tool_approval=object(), runtime_surface="", native_workspace_contract=False,
+        clean_v3_route=True,
+    )})
+    # The route stamps contracts with the same constant the loop checks.
+    assert MODE == COMPACT_PREVIEW_MODE
+    assert is_compact_preview_contract(SimpleNamespace(selection_mode=MODE))
+    assert not is_compact_preview_contract(SimpleNamespace(selection_mode="routed"))
+    assert not is_compact_preview_contract(None)

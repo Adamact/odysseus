@@ -21,6 +21,7 @@ import httpx
 import jsonschema
 
 from src.context_compactor import prune_multimodal_images, trim_for_context
+from src.agent_runtime.runtime_selection import COMPACT_PREVIEW_MODE
 from src import agent_runs
 from src.agent_evidence import command_has_mutation_effect, workspace_artifact_is_usable
 from src.tool_capabilities import ToolEffect, ToolRunSecurityContext, capabilities_for_action
@@ -47,7 +48,7 @@ from src.model_profiles import (
 )
 
 ENDPOINT_ID = 'cleanv3'
-MODE = 'clean_compact_v3_preview'
+MODE = COMPACT_PREVIEW_MODE
 
 
 class ProviderStreamError(Exception):

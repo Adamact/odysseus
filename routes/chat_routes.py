@@ -87,6 +87,7 @@ from src.model_profiles import (
 )
 from src.tool_execution import AgentExecutionBridge, bind_execution_bridge
 from src.agent_runtime.authority import is_internal_tool_request, request_authority_for_http
+from src.agent_runtime.runtime_selection import uses_compact_preview_runtime
 from src.turn_contract import (
     FAMILY_TOOLS, bind_turn_contract, preserve_bound_editor_selected_tools,
     requested_capabilities, resolve_turn_contract,
@@ -143,6 +144,14 @@ def _turn_contract_enabled(*, exact_tool_approval, runtime_surface,
         and not full_schema_route
         and (not native_workspace_contract or clean_v3_route)
     )
+
+
+def _request_privileges(request, user) -> Dict[str, Any]:
+    """Per-user privileges from the app's auth manager; empty when unmanaged."""
+    auth_manager = getattr(request.app.state, "auth_manager", None)
+    if not user or not auth_manager:
+        return {}
+    return auth_manager.get_privileges(user) or {}
 
 
 def _native_runtime_requires_local_browser(client_runtime_context):
@@ -2893,20 +2902,32 @@ def setup_chat_routes(
             allowed_models=_allowed_models_for_request(request),
         )
 
-        # A compact (clean v3) turn resolves its typed context window once,
-        # here, with the session's provider credentials. History shaping below
-        # and the compact runtime both reuse this exact object, so the turn
-        # neither probes twice nor mixes the legacy untyped lookup into it.
-        # The predicate mirrors ``_clean_v3_preview`` below; the native
-        # workspace term cannot veto a requested clean route.
+        # Decide once whether this turn runs on the compact (clean v3)
+        # runtime. Every input is final here; the native workspace term of
+        # the contract policy cannot veto a requested clean route. This one
+        # value prepares the turn below and stamps its contract later, and
+        # the agent loop dispatches on that stamp.
+        _compact_preview_turn = uses_compact_preview_runtime(
+            clean_route_requested=_clean_v3_route_requested,
+            turn_contract_enabled=_turn_contract_enabled(
+                exact_tool_approval=exact_tool_approval,
+                runtime_surface=str((client_runtime_context or {}).get("surface") or ""),
+                native_workspace_contract=False,
+                clean_v3_route=_clean_v3_route_requested,
+                full_schema_route=(_effective_tool_schema_mode == "full"),
+            ),
+            agent_mode=(chat_mode == "agent"),
+            agent_permitted=_request_privileges(
+                request, effective_user(request),
+            ).get("can_use_agent", True),
+            image_generation=image_generation_session,
+        )
+        # A compact turn resolves its typed context window once, here, with
+        # the session's provider credentials. History shaping below and the
+        # compact runtime both reuse this exact object, so the turn neither
+        # probes twice nor mixes the legacy untyped lookup into it.
         _compact_context_resolution = None
-        if _clean_v3_route_requested and _turn_contract_enabled(
-            exact_tool_approval=exact_tool_approval,
-            runtime_surface=str((client_runtime_context or {}).get("surface") or ""),
-            native_workspace_contract=False,
-            clean_v3_route=True,
-            full_schema_route=(_effective_tool_schema_mode == "full"),
-        ):
+        if _compact_preview_turn:
             from src.agent_runtime.context_resolution import resolve_effective_context
             _compact_context_resolution = await resolve_effective_context(
                 sess.endpoint_url, sess.model, headers=sess.headers,
@@ -3143,7 +3164,9 @@ def setup_chat_routes(
             # pasted revision request. This only offers permitted schemas;
             # it never requires or performs a document mutation.
             _turn_capabilities = _turn_capabilities | {"documents"}
-        _clean_v3_preview = bool(_use_turn_contract and _clean_v3_route_requested)
+        # Same decision that prepared the turn; it only stamps the contract
+        # inside the agent-contract branch below.
+        _clean_v3_preview = _compact_preview_turn
         # requested_capabilities already inherits a typed, recently executed
         # family for referential follow-ups. Do not additionally union stale
         # families into an explicit new request: that inflated regular-model
@@ -3288,13 +3311,11 @@ def setup_chat_routes(
             })
 
         # Enforce per-user privileges
-        _privs = {}
         # Bearer clients enter the agent loop as the sandboxed ``api`` user,
         # but their token is owned by the real account. Use that owner here so
         # a permitted TUI/WebUI client does not inherit api's default denial.
         _user = effective_user(request)
-        if _user and hasattr(request.app.state, 'auth_manager') and request.app.state.auth_manager:
-            _privs = request.app.state.auth_manager.get_privileges(_user)
+        _privs = _request_privileges(request, _user)
         if _privs:
             if not _privs.get("can_use_bash", True):
                 disabled_tools.update(FAMILY_TOOLS["shell_files"])
