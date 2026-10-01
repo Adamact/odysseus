@@ -211,7 +211,7 @@ class ResearchNavigator:
             self._progress({"phase": "navigating", "url": url, "title": url})
         tool = PrivateBrowserTool()
         result = await tool.execute(
-            json.dumps({"action": "read", "url": url, "timeout": timeout}),
+            json.dumps({"action": "read", "url": url, "timeout_ms": int(timeout * 1000)}),
             {"session_id": self.session_id or "research"},
         )
         output = str(result.get("output") or "").strip()
