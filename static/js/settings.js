@@ -4,6 +4,11 @@
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import searchModule from './search.js';
 import { byId } from './settings/dom.js';
+import { postSettings as _postSettings } from './settings/api.js';
+import { initTtsSettings, initSttSettings } from './settings/speech.js';
+import { initDocumentWritingStyle } from './settings/writingStyle.js';
+import { initImageSettings } from './settings/imageModels.js';
+import { initAgentSettings } from './settings/agent.js';
 import {
   getSettingsRegistryIssues,
   isAdminManagedSettingsTab,
@@ -45,18 +50,6 @@ let _authPolicy = { password_min_length: 8 };
  * Reads in this file deliberately stay direct fetches: this panel is the writer
  * and edits what it reads, so it must see the authoritative state, not a cache.
  */
-async function _postSettings(body) {
-  try {
-    return await fetch('/api/auth/settings', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-  } finally {
-    invalidateSettings();
-  }
-}
 
 const el = byId;
 function esc(s) { return uiModule.esc(s); }
@@ -602,56 +595,6 @@ async function initTeacherModel() {
 }
 
 /* ── Image Generation ── */
-async function initImageSettings() {
-  const modelSel = el('set-imgModelSelect');
-  const qualSel = el('set-imgQualitySelect');
-  const msg = el('set-imgSettingsMsg');
-  const enabledToggle = el('set-imgEnabledToggle');
-  const configWrap = modelSel ? modelSel.closest('div[style*="flex-direction"]') : null;
-  try {
-    const endpointsRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
-    const endpoints = await endpointsRes.json();
-    const imageModels = new Set();
-    (Array.isArray(endpoints) ? endpoints : []).forEach(endpoint => {
-      if (!endpoint.is_enabled || !endpoint.online || String(endpoint.model_type || '').toLowerCase() !== 'image') return;
-      (Array.isArray(endpoint.models) ? endpoint.models : []).forEach(modelId => {
-        if (modelId) imageModels.add(String(modelId));
-      });
-    });
-    sortModelIds(Array.from(imageModels)).forEach(mid => {
-      const opt = document.createElement('option');
-      opt.value = mid;
-      opt.textContent = mid;
-      modelSel.appendChild(opt);
-    });
-  } catch (e) { console.warn('Failed to load models for image settings', e); }
-  try {
-    const settingsRes = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    const settings = await settingsRes.json();
-    if (settings.image_model) modelSel.value = settings.image_model;
-    if (settings.image_quality) qualSel.value = settings.image_quality;
-    if (enabledToggle) enabledToggle.checked = settings.image_gen_enabled === true;
-  } catch (e) { console.warn('Failed to load settings', e); }
-
-  function syncImgDisabled() {
-    var off = enabledToggle && !enabledToggle.checked;
-    var card = enabledToggle ? enabledToggle.closest('.admin-card') : null;
-    if (card) card.style.opacity = off ? '0.45' : '';
-    if (configWrap) configWrap.style.pointerEvents = off ? 'none' : '';
-  }
-  syncImgDisabled();
-
-  async function saveSettings() {
-    try {
-      const res = await _postSettings({ image_gen_enabled: enabledToggle ? enabledToggle.checked : false, image_model: modelSel.value, image_quality: qualSel.value });
-      if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
-      msg.textContent = 'Saved'; msg.style.color = 'var(--fg)'; setTimeout(() => { msg.textContent = ''; }, 2000);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
-  }
-  modelSel.addEventListener('change', saveSettings);
-  qualSel.addEventListener('change', saveSettings);
-  if (enabledToggle) enabledToggle.addEventListener('change', function() { syncImgDisabled(); saveSettings(); });
-}
 
 /* ── Vision ── */
 async function initVisionSettings() {
@@ -733,246 +676,8 @@ async function initVisionSettings() {
 /* ── Face Recognition ── */
 
 /* ── Text to Speech ── */
-async function initTtsSettings() {
-  var provSel = el('set-ttsProviderSelect');
-  var modelSelect = el('set-ttsModelSelect');
-  var modelInput = el('set-ttsModelInput');
-  var voiceSelect = el('set-ttsVoiceSelect');
-  var voiceInput = el('set-ttsVoiceInput');
-  var modelRow = el('set-ttsModelRow');
-  var voiceRow = el('set-ttsVoiceRow');
-  var speedSelect = el('set-ttsSpeedSelect');
-  var speedRow = el('set-ttsSpeedRow');
-  var ttsMsg = el('set-ttsSettingsMsg');
-  var ttsEnabledToggle = el('set-ttsEnabledToggle');
-  var ttsConfigWrap = provSel ? provSel.closest('div[style*="flex-direction"]') : null;
-
-  function isEndpoint() { return provSel.value.startsWith('endpoint:'); }
-  function getModel() { return isEndpoint() ? modelSelect.value : modelInput.value; }
-  function getVoice() { return isEndpoint() ? voiceSelect.value : voiceInput.value; }
-
-  function updateVisibility() {
-    var prov = provSel.value;
-    modelRow.style.display = prov.startsWith('endpoint:') ? 'flex' : 'none';
-    voiceRow.style.display = prov === 'disabled' ? 'none' : 'flex';
-    speedRow.style.display = prov === 'disabled' ? 'none' : 'flex';
-    if (isEndpoint()) {
-      modelSelect.style.display = ''; modelInput.style.display = 'none';
-      voiceSelect.style.display = ''; voiceInput.style.display = 'none';
-    } else {
-      modelSelect.style.display = 'none'; modelInput.style.display = '';
-      voiceSelect.style.display = 'none'; voiceInput.style.display = prov === 'disabled' ? 'none' : '';
-    }
-  }
-
-  var ttsKeywords = ['tts', 'audio'];
-  try {
-    var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
-    var endpoints = await epRes.json();
-    endpoints.forEach(function(ep) {
-      if (!ep.is_enabled) return;
-      var hasTTS = (ep.models || []).some(m => ttsKeywords.some(kw => m.toLowerCase().includes(kw)));
-      if (!hasTTS) return;
-      var opt = document.createElement('option'); opt.value = 'endpoint:' + ep.id; opt.textContent = ep.name + ' (API)'; provSel.appendChild(opt);
-    });
-  } catch (e) { console.warn('Failed to load endpoints for TTS', e); }
-
-  try {
-    var settingsRes = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    var settings = await settingsRes.json();
-    if (settings.tts_provider) provSel.value = settings.tts_provider;
-    if (settings.tts_model) { modelSelect.value = settings.tts_model; modelInput.value = settings.tts_model; }
-    if (settings.tts_voice) { voiceSelect.value = settings.tts_voice; voiceInput.value = settings.tts_voice; }
-    if (settings.tts_speed) { speedSelect.value = settings.tts_speed; }
-    if (ttsEnabledToggle) ttsEnabledToggle.checked = settings.tts_enabled !== false;
-  } catch (e) { console.warn('Failed to load TTS settings', e); }
-
-  function syncTtsDisabled() {
-    var off = ttsEnabledToggle && !ttsEnabledToggle.checked;
-    var card = ttsEnabledToggle ? ttsEnabledToggle.closest('.admin-card') : null;
-    if (card) card.style.opacity = off ? '0.45' : '';
-    if (ttsConfigWrap) ttsConfigWrap.style.pointerEvents = off ? 'none' : '';
-  }
-  syncTtsDisabled();
-  updateVisibility();
-
-  async function saveTTS() {
-    try {
-      await _postSettings({ tts_enabled: ttsEnabledToggle ? ttsEnabledToggle.checked : true, tts_provider: provSel.value, tts_model: getModel() || 'tts-1', tts_voice: getVoice() || 'alloy', tts_speed: speedSelect.value || '1' });
-      ttsMsg.textContent = 'Saved'; ttsMsg.style.color = 'var(--fg)'; setTimeout(() => { ttsMsg.textContent = ''; }, 2000);
-      if (window.aiTTSManager) window.aiTTSManager.checkAvailability();
-    } catch (e) { ttsMsg.textContent = 'Failed to save'; ttsMsg.style.color = 'var(--red)'; }
-  }
-
-  async function saveAndClearCache() {
-    await saveTTS();
-    fetch('/api/tts/clear-cache', { method: 'POST', credentials: 'same-origin' }).catch(function(){});
-  }
-
-  provSel.addEventListener('change', function() {
-    var prov = provSel.value;
-    if (prov === 'local') voiceInput.value = 'af_heart';
-    else if (isEndpoint()) { voiceSelect.value = 'alloy'; modelSelect.value = 'tts-1'; }
-    else if (prov === 'browser') { voiceInput.value = ''; voiceInput.placeholder = 'OS default voice'; }
-    updateVisibility();
-    saveTTS();
-  });
-  modelSelect.addEventListener('change', saveAndClearCache);
-  modelInput.addEventListener('change', saveTTS);
-  voiceSelect.addEventListener('change', saveAndClearCache);
-  voiceInput.addEventListener('change', saveTTS);
-  speedSelect.addEventListener('change', saveAndClearCache);
-  if (ttsEnabledToggle) ttsEnabledToggle.addEventListener('change', function() { syncTtsDisabled(); saveTTS(); });
-
-  // Preview / test button
-  var previewBtn = el('set-ttsPreviewBtn');
-  if (previewBtn) {
-    var previewAudio = null;
-    var previewPlaying = false;
-    function resetPreview() { previewPlaying = false; previewBtn.textContent = 'Preview'; previewBtn.style.borderColor = ''; }
-
-    previewBtn.addEventListener('click', async function() {
-      if (previewPlaying) {
-        if (previewAudio) { previewAudio.pause(); previewAudio = null; }
-        window.speechSynthesis.cancel();
-        resetPreview(); return;
-      }
-      var prov = provSel.value;
-      if (prov === 'disabled') {
-        ttsMsg.textContent = 'Select a provider first'; ttsMsg.style.color = 'var(--red, #e55)';
-        setTimeout(function() { ttsMsg.textContent = ''; }, 2000); return;
-      }
-      var testText = 'Hello, this is a test of text to speech.';
-      previewPlaying = true; previewBtn.textContent = 'Loading...';
-      try {
-        if (prov === 'browser') {
-          if (!('speechSynthesis' in window)) throw new Error('Browser TTS not supported');
-          var utt = new SpeechSynthesisUtterance(testText);
-          var voiceVal = getVoice();
-          if (voiceVal) {
-            var voices = window.speechSynthesis.getVoices();
-            var target = voiceVal.toLowerCase();
-            var match = voices.find(function(v) { return v.name.toLowerCase() === target; }) ||
-                        voices.find(function(v) { return v.name.toLowerCase().includes(target); });
-            if (match) utt.voice = match;
-          }
-          utt.rate = parseFloat(speedSelect.value) || 1;
-          previewBtn.textContent = 'Stop'; previewBtn.style.borderColor = 'var(--red, #e55)';
-          await new Promise(function(resolve, reject) {
-            utt.onend = resolve;
-            utt.onerror = function(e) { reject(new Error('Browser TTS: ' + e.error)); };
-            window.speechSynthesis.speak(utt);
-          });
-        } else {
-          var res = await fetch('/api/tts/synthesize', {
-            method: 'POST', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: testText, format: 'audio' })
-          });
-          if (!res.ok) { var err = await res.json().catch(function() { return {}; }); throw new Error(err.detail?.message || 'Synthesis failed'); }
-          var blob = await res.blob();
-          var url = URL.createObjectURL(blob);
-          previewAudio = new Audio(url);
-          previewBtn.textContent = 'Stop'; previewBtn.style.borderColor = 'var(--red, #e55)';
-          await new Promise(function(resolve, reject) {
-            previewAudio.onended = function() { URL.revokeObjectURL(url); previewAudio = null; resolve(); };
-            previewAudio.onerror = function() { URL.revokeObjectURL(url); previewAudio = null; reject(new Error('Playback failed')); };
-            previewAudio.play().catch(reject);
-          });
-        }
-      } catch (e) {
-        ttsMsg.textContent = 'Preview failed: ' + e.message; ttsMsg.style.color = 'var(--red, #e55)';
-        setTimeout(function() { ttsMsg.textContent = ''; }, 3000);
-      } finally {
-        resetPreview();
-      }
-    });
-  }
-}
 
 /* ── Speech to Text ── */
-async function initSttSettings() {
-  var provSel = el('set-sttProviderSelect');
-  var modelSelect = el('set-sttModelSelect');
-  var modelInput = el('set-sttModelInput');
-  var modelRow = el('set-sttModelRow');
-  var langRow = el('set-sttLangRow');
-  var langInput = el('set-sttLangInput');
-  var sttMsg = el('set-sttSettingsMsg');
-  var sttEnabledToggle = el('set-sttEnabledToggle');
-  var sttConfigWrap = el('set-sttConfigWrap');
-  // STT was removed from AI Defaults — bail if the UI isn't present.
-  if (!provSel) return;
-
-  function isEndpoint() { return provSel.value.startsWith('endpoint:'); }
-  function getModel() { return isEndpoint() ? modelInput.value : modelSelect.value; }
-
-  function updateVisibility() {
-    var prov = provSel.value;
-    var showModel = prov === 'local' || prov.startsWith('endpoint:');
-    var showLang = prov !== 'disabled';
-    modelRow.style.display = showModel ? 'flex' : 'none';
-    langRow.style.display = showLang ? 'flex' : 'none';
-    if (isEndpoint()) {
-      modelSelect.style.display = 'none'; modelInput.style.display = '';
-    } else {
-      modelSelect.style.display = ''; modelInput.style.display = 'none';
-    }
-  }
-
-  function syncSttDisabled() {
-    var off = sttEnabledToggle && !sttEnabledToggle.checked;
-    var card = sttEnabledToggle ? sttEnabledToggle.closest('.admin-card') : null;
-    if (card) card.style.opacity = off ? '0.45' : '';
-    if (sttConfigWrap) sttConfigWrap.style.pointerEvents = off ? 'none' : '';
-  }
-
-  // Effective provider: if toggle is off, treat as disabled regardless of provider select
-  function effectiveProvider() {
-    if (sttEnabledToggle && !sttEnabledToggle.checked) return 'disabled';
-    return provSel.value;
-  }
-
-  // Add API endpoints that might support STT
-  try {
-    var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
-    var endpoints = await epRes.json();
-    endpoints.forEach(function(ep) {
-      if (!ep.is_enabled) return;
-      var opt = document.createElement('option'); opt.value = 'endpoint:' + ep.id; opt.textContent = ep.name + ' (API)'; provSel.appendChild(opt);
-    });
-  } catch (e) { console.warn('Failed to load endpoints for STT', e); }
-
-  // Load saved settings
-  try {
-    var settingsRes = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    var settings = await settingsRes.json();
-    if (settings.stt_provider) provSel.value = settings.stt_provider;
-    if (settings.stt_model) { modelSelect.value = settings.stt_model; modelInput.value = settings.stt_model; }
-    if (settings.stt_language) langInput.value = settings.stt_language;
-    if (sttEnabledToggle) sttEnabledToggle.checked = settings.stt_enabled !== false;
-  } catch (e) { console.warn('Failed to load STT settings', e); }
-
-  syncSttDisabled();
-  updateVisibility();
-
-  async function saveSTT() {
-    try {
-      var enabled = sttEnabledToggle ? sttEnabledToggle.checked : false;
-      await _postSettings({ stt_enabled: enabled, stt_provider: provSel.value, stt_model: getModel() || 'base', stt_language: langInput.value.trim() });
-      sttMsg.textContent = 'Saved'; sttMsg.style.color = 'var(--fg)'; setTimeout(() => { sttMsg.textContent = ''; }, 2000);
-      // Notify voiceRecorder of effective provider and update send button icon
-      if (window.voiceRecorderModule) window.voiceRecorderModule._sttProvider = effectiveProvider();
-      if (window._updateSendBtnIcon) window._updateSendBtnIcon();
-    } catch (e) { sttMsg.textContent = 'Failed to save'; sttMsg.style.color = 'var(--red)'; }
-  }
-
-  provSel.addEventListener('change', function() { updateVisibility(); saveSTT(); });
-  modelSelect.addEventListener('change', saveSTT);
-  modelInput.addEventListener('change', saveSTT);
-  langInput.addEventListener('change', saveSTT);
-  if (sttEnabledToggle) sttEnabledToggle.addEventListener('change', function() { syncSttDisabled(); saveSTT(); });
-}
 
 /* ═══════════════════════════════════════════
    SEARCH TAB
@@ -1494,56 +1199,6 @@ async function initResearchSearchSettings() {
 }
 
 /* ── Agent Settings (AI tab) ── */
-async function initAgentSettings() {
-  var toolsInput = el('set-agentMaxTools');
-  var roundsInput = el('set-agentMaxRounds');
-  var supInput = el('set-agentSupervisorLadder');
-  var msg = el('set-agentMsg');
-  if (!toolsInput) return;
-
-  try {
-    var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    var settings = await res.json();
-    if (settings.agent_max_tool_calls) toolsInput.value = settings.agent_max_tool_calls;
-    if (roundsInput && settings.agent_max_rounds) roundsInput.value = settings.agent_max_rounds;
-    if (supInput) supInput.checked = !!settings.agent_supervisor_ladder;
-  } catch (e) {}
-
-  // Clamp + coerce a raw input to an int in [lo, hi]; falls back to `dflt`
-  // when blank/non-numeric. Mirrors the server-side validation.
-  function clampInt(raw, lo, hi, dflt) {
-    var n = parseInt(raw, 10);
-    if (isNaN(n)) return dflt;
-    return Math.max(lo, Math.min(n, hi));
-  }
-
-  async function save() {
-    var tools = clampInt(toolsInput.value, 0, 1000, 0);
-    var rounds = roundsInput ? clampInt(roundsInput.value, 1, 200, 20) : null;
-    toolsInput.value = tools;                       // reflect the clamped value
-    if (roundsInput) roundsInput.value = rounds;
-    var payload = { agent_max_tool_calls: tools };
-    if (rounds != null) payload.agent_max_rounds = rounds;
-    if (supInput) payload.agent_supervisor_ladder = !!supInput.checked;
-    try {
-      await _postSettings(payload);
-      msg.textContent = (tools > 0 ? 'Limit: ' + tools + ' tool calls' : 'Unlimited tool calls') +
-        (rounds != null ? ' · ' + rounds + ' steps/message' : '') +
-        (supInput && supInput.checked ? ' · supervisor on' : '');
-      msg.style.color = 'var(--fg)';
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
-  }
-
-  toolsInput.addEventListener('change', save);
-  if (roundsInput) roundsInput.addEventListener('change', save);
-  if (supInput) supInput.addEventListener('change', save);
-  var cur = parseInt(toolsInput.value, 10) || 0;
-  var curR = roundsInput ? (parseInt(roundsInput.value, 10) || 20) : null;
-  msg.textContent = (cur > 0 ? 'Limit: ' + cur + ' tool calls' : 'Unlimited tool calls') +
-    (curR != null ? ' · ' + curR + ' steps/message' : '') +
-    (supInput && supInput.checked ? ' · supervisor on' : '');
-
-}
 
 /* ═══════════════════════════════════════════
    APPEARANCE TAB
@@ -2196,69 +1851,6 @@ function initAll() {
   initDocumentWritingStyle();
 }
 
-async function initDocumentWritingStyle() {
-  const styleEl = el('set-document-style');
-  const saveBtn = el('set-document-style-save');
-  const extractBtn = el('set-document-style-extract');
-  const fileEl = el('set-document-style-file');
-  const msg = el('set-document-style-msg');
-  if (!styleEl || !saveBtn) return;
-  try {
-    const res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    const data = await res.json();
-    styleEl.value = String(data.document_writing_style || '');
-  } catch (_) {
-    if (msg) msg.textContent = 'Failed to load';
-  }
-  saveBtn.addEventListener('click', async () => {
-    if (msg) msg.textContent = 'Saving...';
-    try {
-      const res = await _postSettings({ document_writing_style: styleEl.value });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      if (msg) msg.textContent = '✓ Saved';
-    } catch (_) {
-      if (msg) msg.textContent = 'Failed to save';
-    }
-    setTimeout(() => { if (msg) msg.textContent = ''; }, 3000);
-  });
-  extractBtn?.addEventListener('click', () => fileEl?.click());
-  fileEl?.addEventListener('change', async () => {
-    const file = fileEl.files?.[0];
-    if (!file) return;
-    extractBtn.disabled = true;
-    let whirlpool = null;
-    if (msg) {
-      msg.replaceChildren();
-      try {
-        const spinner = window.spinnerModule || (await import('./spinner.js')).default;
-        whirlpool = spinner.createWhirlpool(14);
-        whirlpool.element.style.cssText = 'display:inline-flex;width:14px;height:14px;margin-right:7px;';
-        const label = document.createElement('span');
-        label.textContent = 'Analyzing...';
-        msg.append(whirlpool.element, label);
-      } catch (_) {
-        msg.textContent = 'Analyzing...';
-      }
-    }
-    try {
-      const body = new FormData();
-      body.append('file', file);
-      const res = await fetch('/api/auth/settings/document-style/extract', {
-        method: 'POST', credentials: 'same-origin', body,
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.style) throw new Error(data.detail || data.error || 'Extraction failed');
-      styleEl.value = String(data.style);
-      if (msg) msg.textContent = '✓ Extracted — review and save';
-    } catch (error) {
-      if (msg) msg.textContent = error.message || 'Extraction failed';
-    } finally {
-      whirlpool?.destroy?.();
-      extractBtn.disabled = false;
-      fileEl.value = '';
-    }
-  });
-}
 
 function notifyIntegrationsChanged() {
   try {
