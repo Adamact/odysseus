@@ -53,13 +53,16 @@ def _argv(workspace, **kwargs):
     import shutil as _shutil
 
     original = _shutil.which
+    original_available = containment._bwrap_available
     try:
+        containment._bwrap_available = lambda: True
         _shutil.which = lambda name, *a, **kw: (
             "/usr/bin/bwrap" if name == "bwrap" else original(name, *a, **kw)
         )
         wrapped = subprocess_tools._wrap_workspace_namespace("true", workspace, **kwargs)
     finally:
         _shutil.which = original
+        containment._bwrap_available = original_available
     assert wrapped is not None, "forced bwrap should produce a namespace argv"
     return shlex.split(wrapped)
 
@@ -174,6 +177,7 @@ def test_fallback_reports_that_filesystem_containment_did_not_hold(
 def test_the_fallback_mechanism_is_not_named_like_a_mechanism(workspace, monkeypatch):
     """A string rewrite reported as "bubblewrap" or "none" is the same silence
     with extra steps. It gets its own name so a reader cannot mistake it."""
+    monkeypatch.setattr(containment, "CONTAINMENT_MODE", containment.MODE_REPORT_ONLY)
     monkeypatch.setattr(
         subprocess_tools, "_wrap_workspace_namespace",
         lambda *args, **kwargs: None,

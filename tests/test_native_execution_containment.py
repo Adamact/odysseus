@@ -29,8 +29,8 @@ async def test_native_bash_owns_and_releases_its_child(native_boundary):
     assert result["output"] == "captured"
     assert result["exit_code"] == 0
     assert result["teardown"]["dead"] is True
-    assert result["containment"]["enforced"] == ["process_tree", "wall_clock"]
-    assert result["containment"]["unenforced_required"] == ["filesystem"]
+    assert result["containment"]["enforced"] == ["wall_clock"]
+    assert result["containment"]["unenforced_required"] == ["filesystem", "process_tree"]
     assert result["containment"]["network"] == "inherit"
     assert containment.active_grants() == []
 
@@ -42,7 +42,7 @@ async def test_native_bash_refuses_before_spawn_when_required_boundary_missing(m
     monkeypatch.setattr(asyncio, "create_subprocess_exec", forbidden)
     result = await subprocess_tools.BashTool().execute("echo hello", {})
     assert result["containment"]["executed"] is False
-    assert result["containment"]["unenforced_required"] == ["filesystem"]
+    assert result["containment"]["unenforced_required"] == ["filesystem", "process_tree"]
 
 
 async def test_failed_spawn_releases_unstarted_grant(native_boundary, monkeypatch):

@@ -39,7 +39,7 @@ Token granularity, stated because it bounds the guarantee
 ======== ============================= ===============
 Host     Source                        Resolution
 ======== ============================= ===============
-Linux    ``/proc/<pid>/stat`` field 22 ~10 ms (1 tick)
+Linux    boot ID + stat field 22       ~10 ms (1 tick)
 macOS    ``ps -o lstart=``             1 s
 Windows  ``GetProcessTimes``           100 ns
 ======== ============================= ===============
@@ -145,9 +145,18 @@ def _procfs_token(pid: int) -> Optional[str]:
     _, _, rest = raw.rpartition(")")
     fields = rest.split()
     try:
-        return f"procfs:{fields[_PROC_STAT_STARTTIME_INDEX]}"
+        ticks = fields[_PROC_STAT_STARTTIME_INDEX]
     except IndexError:
         raise InspectionUnavailable(f"/proc/{pid}/stat (unexpected layout)") from None
+    try:
+        boot = (PROC_ROOT / "sys/kernel/random/boot_id").read_text(encoding="ascii").strip()
+    except OSError as exc:
+        raise InspectionUnavailable(f"boot identity ({exc})") from exc
+    if not boot:
+        raise InspectionUnavailable("boot identity (empty)")
+    # A persisted PID/start-tick pair can recur after reboot. Bind it to the
+    # boot as well; older receipts cannot authorize a signal on a new boot.
+    return f"procfs:{boot}:{ticks}"
 
 
 def _ps_token(pid: int) -> Optional[str]:

@@ -60,8 +60,8 @@ async def supervise(payload: dict) -> None:
         output, code = f"background execution failed: {type(exc).__name__}: {exc}\n", 1
         report = {"containment": grant.to_dict(), "teardown": record.get("release") or {"dead": False},
                   "output_truncated": False}
-        report["containment"]["executed"] = bool(record.get("pid"))
-        if not record.get("pid"):
+        report["containment"]["executed"] = bool(record.get("execution_started"))
+        if not record.get("containment_ready"):
             report["containment"].update(contained=False, enforced=[])
         if isinstance(exc, containment.ContainmentUnavailable):
             report.update(containment.unavailable_tool_result(exc, tool="bash"))

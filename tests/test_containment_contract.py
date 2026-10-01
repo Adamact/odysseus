@@ -349,10 +349,8 @@ def test_the_two_modes_differ_only_in_whether_the_shortfall_refuses(monkeypatch,
     assert frozenset(reported.unenforced_required) == caught.value.missing
 
 
-def test_report_only_is_the_shipped_default():
-    """Pinned deliberately: merging this must not change behaviour on a host
-    without bubblewrap. Flipping it is a one-line diff, reviewed as one."""
-    assert containment.CONTAINMENT_MODE == containment.MODE_REPORT_ONLY
+def test_enforcement_is_the_shipped_default():
+    assert containment.CONTAINMENT_MODE == containment.MODE_ENFORCING
 
 
 # ── Spec validation: caller bugs raise in both modes ────────────────────────

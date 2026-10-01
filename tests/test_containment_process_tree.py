@@ -56,12 +56,12 @@ def workspace(tmp_path):
 
 
 def tree_spec(workspace, **kwargs):
-    """A spec requiring exactly what a process group can give."""
+    """Exercise group teardown without claiming prevention of session escape."""
     kwargs.setdefault("env", {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"})
     kwargs.setdefault("wall_clock_s", 1)
     return containment.ContainmentSpec(
         workspace=workspace,
-        required=frozenset({containment.PROCESS_TREE, containment.WALL_CLOCK}),
+        required=frozenset({containment.WALL_CLOCK}),
         **kwargs,
     )
 
@@ -312,7 +312,7 @@ async def test_a_process_count_limit_is_applied_to_the_child(workspace):
         env={"PATH": "/usr/bin:/bin"},
         wall_clock_s=10,
         required=frozenset({
-            containment.PROCESS_TREE, containment.WALL_CLOCK, containment.PROCESS_COUNT,
+            containment.WALL_CLOCK, containment.PROCESS_COUNT,
         }),
         max_processes=64,
     )
@@ -341,7 +341,7 @@ async def test_a_memory_limit_is_claimed_only_where_it_can_be_applied(workspace)
         workspace=workspace,
         env={"PATH": "/usr/bin:/bin"},
         wall_clock_s=10,
-        required=frozenset({containment.PROCESS_TREE, containment.WALL_CLOCK}),
+        required=frozenset({containment.WALL_CLOCK}),
         max_memory_bytes=limit,
     )
     grant = containment.acquire(spec, owner="session-9")
@@ -369,7 +369,7 @@ def test_an_unenforceable_required_limit_refuses_instead_of_crashing_the_spawn(w
         env={"PATH": "/usr/bin:/bin"},
         wall_clock_s=10,
         required=frozenset({
-            containment.PROCESS_TREE, containment.WALL_CLOCK, containment.MEMORY,
+            containment.WALL_CLOCK, containment.MEMORY,
         }),
         max_memory_bytes=2 * 1024 * 1024 * 1024,
     )

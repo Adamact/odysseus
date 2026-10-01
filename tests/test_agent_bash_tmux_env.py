@@ -38,7 +38,11 @@ def test_direct_bash_subprocess_has_closed_stdin(monkeypatch, tmp_path):
     result = asyncio.run(subprocess_tools.BashTool().execute("echo ok", {}))
 
     assert result["exit_code"] == 0
-    assert captured["kwargs"]["stdin"] is asyncio.subprocess.DEVNULL
+    if "ody-boundary" in captured["argv"]:
+        assert captured["kwargs"]["stdin"] is asyncio.subprocess.PIPE
+        assert captured["stdin_closed"] is True
+    else:
+        assert captured["kwargs"]["stdin"] is asyncio.subprocess.DEVNULL
     assert not (tmp_path / ".tmp").exists()
 
 

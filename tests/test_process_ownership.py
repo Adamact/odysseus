@@ -217,11 +217,17 @@ def test_the_procfs_token_reads_a_comm_containing_spaces_and_parens(monkeypatch,
     # each value equals its own field number.
     fields = " ".join(str(index) for index in range(4, 54))
     (procfs / "77" / "stat").write_text(f"77 (my (weird) prog) S {fields}\n")
+    boot_path = procfs / "sys/kernel/random/boot_id"
+    boot_path.parent.mkdir(parents=True)
+    boot_path.write_text("first-boot\n")
     monkeypatch.setattr(platform_compat, "PROC_ROOT", procfs)
     monkeypatch.setattr(po, "PROC_ROOT", procfs)
     monkeypatch.setattr(po, "IS_WINDOWS", False)
 
-    assert po.start_token(77) == "procfs:22"
+    assert po.start_token(77) == "procfs:first-boot:22"
+    token = po.start_token(77)
+    boot_path.write_text("second-boot\n")
+    assert po.start_token(77) != token
 
 
 # ── The process tree ────────────────────────────────────────────────────────

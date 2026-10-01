@@ -388,7 +388,7 @@ def _contained_command(
     comparable — one is a mount namespace, the other is a regex — and choosing
     the second silently means an uncontained host execution reads in the
     transcript exactly like a contained one. The fallback still happens under
-    report-only mode, which is what ships; the difference is that it is now
+    an explicit report-only diagnostic mode; the difference is that it is now
     recorded in the result.
 
     :raises containment.ContainmentUnavailable: filesystem containment could
@@ -399,7 +399,7 @@ def _contained_command(
         content, cwd, chdir=chdir, interpreter_prefix=interpreter_prefix,
     )
     # The probe's filesystem answer and the wrapper's None/not-None answer rest
-    # on the same condition (`not IS_WINDOWS and which("bwrap")`), so they agree
+    # on the same functional namespace probe, so they agree
     # by construction. `wrapped` is still what decides, because it is what
     # actually runs: a probe that said yes to a wrapper that declined would be
     # the same false claim in the other direction.
@@ -449,41 +449,9 @@ def _wrap_workspace_namespace(
     bubblewrap namespace preserves that public contract for each concurrent
     agent without creating a process-global /workspace symlink.
     """
-    if IS_WINDOWS or not shutil.which("bwrap"):
+    if IS_WINDOWS or not containment._bwrap_available():
         return None
-    args = [
-        "bwrap", "--die-with-parent", "--new-session", "--tmpfs", "/",
-        "--dir", "/usr", "--ro-bind", "/usr", "/usr",
-        "--symlink", "usr/bin", "/bin",
-        "--symlink", "usr/lib", "/lib",
-        "--symlink", "usr/lib64", "/lib64",
-        "--symlink", "usr/bin", "/sbin",
-        "--dir", "/etc", "--ro-bind", "/etc", "/etc",
-        # Read-only, not read-write. These two binds exist so a command can
-        # *read* host material it legitimately needs — a dataset under /mnt, a
-        # dotfile under /home. Binding them writable gave back most of what
-        # the namespace was for: a Linux host with working bubblewrap running
-        # this argv reaches outside the workspace and writes to the user's home
-        # directory, measured rather than inferred. The workspace bind below is
-        # the one writable path, which is what "workspace confinement" means.
-        "--dir", "/home", "--ro-bind", "/home", "/home",
-        "--dir", "/mnt", "--ro-bind", "/mnt", "/mnt",
-        "--dir", "/tmp", "--tmpfs", "/tmp",
-        "--dev-bind", "/dev", "/dev", "--proc", "/proc",
-        "--dir", WORKSPACE_MOUNT, "--bind", cwd, WORKSPACE_MOUNT,
-    ]
-    # The workspace stays writable at its real host path as well as at
-    # /workspace. A command can carry the absolute host path: BashTool's own
-    # /tmp redirect rewrites `/tmp/` to `<agent_cwd()>/.tmp/` before the
-    # namespace is built, so the command reaching bwrap already names the real
-    # path. Before /home and /mnt became read-only those writes landed only
-    # because the workspace happened to sit under one of them. Binding the
-    # workspace itself is the narrow version of what that accident provided:
-    # the same directory by either name, and nothing else writable.
-    real_cwd = os.path.realpath(cwd)
-    if real_cwd not in _NAMESPACE_RESERVED_DESTS and len(real_cwd.split(os.sep)) >= 3:
-        args.extend(_namespace_dir_chain(real_cwd))
-        args.extend(("--bind", real_cwd, real_cwd))
+    readonly = [path for path in ("/home", "/mnt") if os.path.isdir(path)]
     # setup-python installs interpreters under /opt, and local CI virtualenvs
     # can live under /tmp. Those paths are hidden by the private root/tmpfs.
     # Expose only the active interpreter environment, read-only, so Python
@@ -513,9 +481,14 @@ def _wrap_workspace_namespace(
             and os.path.isdir(prefix)
             and has_environment_layout
         ):
-            args.extend(_namespace_dir_chain(prefix))
-            args.extend(("--ro-bind", prefix, prefix))
-    args.extend(("--chdir", chdir, "/bin/bash", "-lc", content))
+            readonly.append(prefix)
+    spec = containment.ContainmentSpec(
+        workspace=cwd, env={}, wall_clock_s=DEFAULT_BASH_TIMEOUT,
+        readonly_extra=tuple(readonly),
+    )
+    args = containment._bwrap_prefix(spec)
+    args[-1] = chdir
+    args.extend(("/bin/bash", "-lc", content))
     return shlex.join(args)
 
 
@@ -524,7 +497,8 @@ def _owned_spec(cwd: str, env: Optional[dict], timeout: int, readonly_extra: tup
     readonly = []
     for prefix in (sys.prefix, sys.base_prefix):
         prefix = os.path.realpath(prefix)
-        if not _namespace_visible_without_bind(prefix) and prefix not in _NAMESPACE_RESERVED_DESTS:
+        visible = any(prefix == root or prefix.startswith(root + os.sep) for root in ("/usr", "/etc"))
+        if not visible and prefix not in _NAMESPACE_RESERVED_DESTS:
             readonly.append(prefix)
     return containment.agent_spec(
         cwd, dict(os.environ if env is None else env), timeout,
@@ -551,8 +525,12 @@ async def _run_owned_command(command, ctx: dict, *, tool: str, timeout: int, arg
     except containment.ContainmentUnavailable as exc:
         return containment.unavailable_tool_result(exc, tool=tool)
     except (OSError, RuntimeError, ValueError) as exc:
+        boundary = grant.to_dict() if grant else {}
+        boundary["executed"] = bool(getattr(exc, "containment_executed", False))
+        if not getattr(exc, "containment_established", False):
+            boundary.update(contained=False, enforced=[])
         return {"error": f"{tool}: execution failed: {exc}", "exit_code": 1,
-                "containment": grant.to_dict() if grant else {"contained": False, "executed": False}}
+                "containment": boundary}
 
     boundary = result.grant.to_dict()
     boundary["executed"] = True

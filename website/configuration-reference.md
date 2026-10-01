@@ -75,7 +75,7 @@ The source tree reads **108** `ODYSSEUS_*` variables: 78 an operator may want to
 | `ODYSSEUS_MAX_VISUAL_EVIDENCE_FRAMES` | `'3'` | `src/agent_loop.py:15361` | How many video frames one tool result may contribute. Clamped to 1-8. |
 | `ODYSSEUS_MAX_VISUAL_EVIDENCE_IMAGES` | `'1'` | `src/agent_loop.py:15329` | How many images one tool result may contribute to the model turn. Clamped to 1-8. |
 | `ODYSSEUS_MCP_ALLOWED_COMMANDS` | `''` | `src/agent_tools/admin_tools.py:140` | Security-relevant. Comma-separated allowlist of MCP launcher basenames the agent may start. Empty by default, and the deny list still wins. |
-| `ODYSSEUS_PYTHON_TOOL_SITE_PACKAGES` | `''` | `src/agent_tools/subprocess_tools.py:857` (+1 more) | Security-relevant. Absolute package roots, separated by the platform path separator, exposed to the sandboxed Python tool. Empty exposes none. |
+| `ODYSSEUS_PYTHON_TOOL_SITE_PACKAGES` | `''` | `src/agent_tools/subprocess_tools.py:835` (+1 more) | Security-relevant. Absolute package roots, separated by the platform path separator, exposed to the sandboxed Python tool. Empty exposes none. |
 | `ODYSSEUS_SCRIPT_HOST` | `'localhost'` | `src/builtin_actions.py:919` | Default host for the run-script action. `localhost`, `127.0.0.1`, `local` and empty run locally; any other value runs over SSH. |
 | `ODYSSEUS_TOOL_APPROVAL_GATE` | `'0'` | `src/tool_capabilities.py:645` | Security-relevant. Truthy makes tool calls pass through the approval gate. Off by default. |
 

@@ -232,15 +232,18 @@ def reap_legacy_agent_tmux() -> Dict[str, Any]:
                 if process_ownership.verify(pid, identities[pid]) != process_ownership.OWNED:
                     continue
                 spec = containment.ContainmentSpec(workspace=os.getcwd(), env={}, wall_clock_s=1,
-                                                   required=frozenset({containment.PROCESS_TREE}))
+                                                   required=frozenset())
                 grant = containment.ContainmentGrant(
                     id=uuid.uuid4().hex[:12], mechanism="process_group", workspace=spec.workspace,
-                    enforced=frozenset({containment.PROCESS_TREE}), degraded=(), unenforced_required=(),
+                    enforced=frozenset(), degraded=(containment.FILESYSTEM, containment.PROCESS_TREE), unenforced_required=(),
                     owner=f"legacy-tmux:{session_id}", mode=containment.MODE_ENFORCING,
                     spec=spec, pid=pid, pgid=containment._pgid_of(pid),
                 )
                 containment._write_record(grant)
                 containment._update_record(grant.id, lifetime="cleanup", start_token=identities[pid])
+                receipt = containment._load_records().get(grant.id, {})
+                if receipt.get("start_token") != identities[pid] or receipt.get("lifetime") != "cleanup":
+                    raise RuntimeError("legacy tmux cleanup receipt was not persisted")
                 tracked.append((grant, identities[pid]))
             dead = True
             for grant, token in tracked:
