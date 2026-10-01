@@ -16,6 +16,7 @@ import json
 
 import pytest
 
+from core import platform_compat
 import src.agent_loop as al
 import src.agent_tools.web_tools as al_web
 
@@ -259,7 +260,7 @@ def test_chrome_sweep_kills_only_this_runtimes_profile(monkeypatch, tmp_path):
     _pid("303", "chrome --user-data-dir=/tmp/other-worktree/agent-browser-chrome-x")
     (proc / "self").mkdir()
 
-    monkeypatch.setattr(al_web, "_PROC_ROOT", proc)
+    monkeypatch.setattr(platform_compat, "PROC_ROOT", proc)
     killed = []
     monkeypatch.setattr(al_web.os, "kill", lambda pid, sig: killed.append(pid))
 
