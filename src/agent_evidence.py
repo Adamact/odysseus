@@ -200,12 +200,12 @@ _VALIDATION_COMMAND_RE = re.compile(
 def command_is_validation(command: str) -> bool:
     """Return whether a shell command provides executable verification evidence."""
     value = str(command or "")
-    return is_validation_command(value)
+    return is_validation_command(_command_text(value))
 
 
 def command_is_test(command: str) -> bool:
     """Return whether a shell command executes a recognized test runner."""
-    return is_test_command(str(command or ""))
+    return is_test_command(_command_text(str(command or "")))
 
 
 def _clean_path(value: str) -> str:
@@ -521,6 +521,13 @@ def _explicit_tool_paths(tool: str, command: str) -> list[str]:
         path = str(args.get("path") or "").strip() if isinstance(args, dict) else ""
         return [path] if path else []
     if tool == "apply_patch":
+        try:
+            args = json.loads(command or "{}")
+        except (TypeError, json.JSONDecodeError):
+            args = None
+        if isinstance(args, Mapping):
+            patch = args.get("patch")
+            command = patch if isinstance(patch, str) else ""
         return [
             match.group(1).strip()
             for match in re.finditer(r"^\*\*\* (?:Add|Update|Delete) File:\s*(.+)$", command or "", re.MULTILINE)
@@ -990,6 +997,11 @@ class EvidenceLedger:
             latest_validation_index, latest_validation = matching_validations[-1]
             latest_artifact_mutation_index = max(matching_mutation_indices, default=-1)
             if latest_validation_index < latest_artifact_mutation_index:
+                # A pre-edit inspection cannot invalidate executable checks
+                # that passed against the later mutation. It still cannot
+                # stand in for current verification when no such check exists.
+                if latest_verifier_index > latest_artifact_mutation_index:
+                    continue
                 return CompletionDecision(
                     CompletionStatus.BLOCKED,
                     False,

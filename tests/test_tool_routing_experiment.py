@@ -52,7 +52,7 @@ def test_web_subject_followup_does_not_offer_shell_or_private_stores():
     assert capabilities == {'search_browser'}
     assert result.offered
     assert {schema.rsplit('__', 1)[-1] for schema in result.offered} <= {
-        'web_search', 'web_fetch', 'private_browser', 'youtube_tool',
+        'web_search', 'web_fetch', 'get_weather', 'private_browser', 'youtube_tool',
         'search_hf_models', 'pdf_extract',
     }
     assert not result.offered.intersection({

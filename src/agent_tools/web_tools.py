@@ -18,6 +18,7 @@ import urllib.request
 from pathlib import Path
 from typing import Dict, Any
 
+from core import platform_compat
 from src.constants import MAX_OUTPUT_CHARS
 
 PDF_EXTRACT_MAX_BYTES = 80_000_000
@@ -123,7 +124,42 @@ def _browser_pid_file_candidates(
 # Linux exposes one command line per pid under /proc; macOS and Windows do not.
 # Kept as a module attribute so the procfs-dependent paths stay testable on a
 # host that has no procfs, and on one that does.
-_PROC_ROOT = Path("/proc")
+
+
+def _process_command_line(pid: int) -> str | None:
+    """Command line of a running process, or ``None`` when it cannot be read.
+
+    ``None`` means "this host cannot tell", not "the process is gone". Off
+    Linux there is no procfs to read a command line from, so callers must not
+    treat it as proof that the process exited.
+    """
+
+    try:
+        return (platform_compat.PROC_ROOT / str(pid) / "cmdline").read_bytes().replace(
+            b"\0", b" "
+        ).decode("utf-8", errors="replace")
+    except (OSError, UnicodeError):
+        return None
+
+
+def _process_is_alive(pid: int) -> bool:
+    """Whether a pid currently exists.
+
+    Delegates to ``core.platform_compat.pid_alive`` rather than probing with
+    ``os.kill(pid, 0)`` directly. That probe is POSIX-only: CPython's Windows
+    ``os.kill`` calls ``TerminateProcess(handle, sig)`` for any signal other
+    than CTRL_C / CTRL_BREAK, so it would *kill* the daemon it is asked about.
+    Windows is also where there is no procfs, which is precisely when this
+    function gets called at all.
+
+    ``pid_alive`` reads False for a pid that ``os.kill`` reports with
+    ``PermissionError`` — a live process owned by another user. Neither caller
+    here wants a different answer: the sweep only unlinks a pid file it wrote
+    itself, and treating somebody else's pid as "not our daemon" is the safe
+    reading in both.
+    """
+
+    return platform_compat.pid_alive(pid)
 
 _SCHOLARLY_METADATA_CUE_RE = re.compile(
     r"\b(?:accept(?:ed|ance)?|publish(?:ed|ing|cation)?|venue|conference|"
@@ -328,6 +364,37 @@ class WebSearchTool:
                 "exit_code": 1,
                 "untrusted_content": True,
             }
+        from .weather_tools import WeatherTool, weather_location_from_query
+        weather_location = weather_location_from_query(query)
+        if not sources and time_filter and weather_location:
+            # A forecast or current fact need not live on a newly published page.
+            try:
+                text, sources = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        lambda: comprehensive_web_search(
+                            query, max_pages=max_pages, time_filter=None,
+                            return_sources=True,
+                        ),
+                    ),
+                    timeout=20,
+                )
+            except Exception:
+                pass
+        if not sources:
+            from src.turn_contract import active_turn_contract
+            contract = active_turn_contract()
+            policy = ctx.get("tool_policy") if isinstance(ctx, dict) else None
+            weather_allowed = (
+                weather_location
+                and "get_weather" not in (ctx.get("disabled_tools") or ())
+                and not (policy and policy.blocks("get_weather"))
+                and not (contract and not contract.permits("get_weather"))
+            )
+            if weather_allowed:
+                weather = await WeatherTool().execute(json.dumps({"location": weather_location}), ctx)
+                if weather.get("exit_code") == 0:
+                    return weather
         if progress_cb:
             await progress_cb({
                 "elapsed_s": 30,
@@ -675,7 +742,7 @@ class WebFetchTool:
         except Exception as e:
             return {"error": f"web_fetch: {url}: {e}", "exit_code": 1}
         err = result.get("error")
-        text = (result.get("content") or "").strip()
+        text = (result.get("linked_content") or result.get("content") or "").strip()
         title = result.get("title") or ""
 
         if not text:
@@ -717,7 +784,7 @@ class WebFetchTool:
                 "\n\n[...truncated; re-call web_fetch with query terms to retrieve matching passages]"
                 if not query else "\n\n[...truncated]"
             )
-        return {"output": output, "exit_code": 0}
+        return {"output": output, "exit_code": 0, "page_entries": result.get("page_entries") or []}
 
 
 class PdfExtractTool:
@@ -1846,7 +1913,6 @@ class YouTubeTool:
 
     async def execute(self, content: str, ctx: dict) -> dict:
         from services.youtube.youtube_handler import (
-            extract_youtube_id,
             extract_transcript_async,
             fetch_youtube_comments,
             init_youtube,
@@ -1884,11 +1950,29 @@ class YouTubeTool:
                 return await self._latest_channel_video(channel, max_results=max_results)
 
         url_or_id = str(args.get("url") or args.get("video_url") or args.get("video_id") or "").strip()
-        video_id = str(args.get("video_id") or "").strip()
-        if not video_id and url_or_id:
-            video_id = extract_youtube_id(url_or_id) or (url_or_id if _looks_like_youtube_video_id(url_or_id) else "")
-        if not video_id:
-            return {"error": f"youtube_tool {action}: provide a YouTube video URL or video_id", "exit_code": 1}
+        # The shared extractor accepts ID prefixes inside text. At the tool
+        # boundary require the complete target, not a truncated invented ID.
+        if url_or_id.startswith(('http://', 'https://')):
+            parsed = urllib.parse.urlparse(url_or_id)
+            host = (parsed.hostname or '').lower()
+            if host in {'youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com'}:
+                parts = parsed.path.strip('/').split('/')
+                candidate = (urllib.parse.parse_qs(parsed.query).get('v', [''])[0]
+                             if parsed.path == '/watch' else
+                             parts[1] if len(parts) == 2 and parts[0] in {'shorts', 'embed', 'live'} else '')
+            elif host in {'youtu.be', 'www.youtu.be'}:
+                candidate = parsed.path.strip('/')
+            else:
+                candidate = ''
+        else:
+            candidate = url_or_id
+        if (not re.fullmatch(r'[A-Za-z0-9_-]{11}', candidate)
+                or (args.get('video_id') and str(args['video_id']) != candidate)):
+            return {"error": f"youtube_tool {action}: invalid video target. Resolve the actual video URL "
+                    "from the user or an observed link. A title or channel page is not a video ID; "
+                    "open the referenced video in the browser or use latest_channel_video first.",
+                    "exit_code": 1, "failure_kind": "invalid_target"}
+        video_id = candidate
         url = url_or_id if url_or_id.startswith(("http://", "https://")) else f"https://www.youtube.com/watch?v={video_id}"
 
         if action == "comments":
@@ -1902,7 +1986,9 @@ class YouTubeTool:
                 joined = f"{fallback_error}"
                 if api_error:
                     joined = f"YouTube Data API unavailable: {api_error}; yt-dlp fallback failed: {fallback_error}"
-                return {"error": f"youtube_tool comments: {joined}", "exit_code": 1, "untrusted_content": True}
+                return {"error": f"youtube_tool comments: {joined}", "exit_code": 1,
+                        "failure_kind": "comments_unavailable", "video_url": url,
+                        "untrusted_content": True}
             return {"output": self._format_comments(comments_data, url), "exit_code": 0, "untrusted_content": True}
 
         if action == "transcript":
@@ -2322,14 +2408,14 @@ class PrivateBrowserTool:
         except OSError:
             return
         profile_prefix = str(tmpdir / "agent-browser-chrome-")
-        if not _PROC_ROOT.is_dir():
+        if not platform_compat.has_procfs():
             # Without procfs there is no way to match a reparented Chrome by
             # its command line, and the sweep is an optimisation rather than a
             # correctness requirement.  Leave those trees to the daemon's own
             # lifecycle instead of failing the whole shutdown path.
             return
         pids: list[int] = []
-        for entry in _PROC_ROOT.iterdir():
+        for entry in platform_compat.PROC_ROOT.iterdir():
             if not entry.name.isdigit():
                 continue
             try:
@@ -2359,16 +2445,18 @@ class PrivateBrowserTool:
         for pid_file in pid_files:
             try:
                 pid = int(pid_file.read_text().strip())
-                command_line = (Path("/proc") / str(pid) / "cmdline").read_bytes().replace(
-                    b"\0", b" "
-                ).decode("utf-8", errors="replace")
-            except FileNotFoundError:
-                # The daemon may have exited between writing its pid file and
-                # this cleanup pass.  The exact file is still ours to remove.
-                with contextlib.suppress(FileNotFoundError, PermissionError, OSError):
-                    pid_file.unlink()
+            except (OSError, ValueError):
                 continue
-            except (OSError, UnicodeError, ValueError):
+            command_line = _process_command_line(pid)
+            if command_line is None:
+                # Either the daemon exited between writing its pid file and
+                # this pass, or this host has no procfs to ask. Only the first
+                # justifies forgetting the pid file. Without procfs we cannot
+                # confirm the process is ours, so we neither kill it nor drop
+                # the record that would let a later pass find it.
+                if not _process_is_alive(pid):
+                    with contextlib.suppress(FileNotFoundError, PermissionError, OSError):
+                        pid_file.unlink()
                 continue
             if "agent-browser" in command_line:
                 with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
@@ -2395,10 +2483,17 @@ class PrivateBrowserTool:
         for pid_file in _browser_pid_file_candidates(runtime_dir, namespace, session_id):
             try:
                 pid = int(pid_file.read_text().strip())
-                command_line = (Path("/proc") / str(pid) / "cmdline").read_bytes().replace(
-                    b"\0", b" "
-                ).decode("utf-8", errors="replace")
-            except (FileNotFoundError, OSError, UnicodeError, ValueError):
+            except (OSError, ValueError):
+                continue
+            command_line = _process_command_line(pid)
+            if command_line is None:
+                # Without procfs we can only tell that something with this pid
+                # is alive, not that it is agent-browser. The pid file is our
+                # own namespaced one, so treat a live pid as a match: answering
+                # "no daemon" here is what lets `close` bootstrap a fresh one
+                # and wait on its browser forever.
+                if _process_is_alive(pid):
+                    return True
                 continue
             if "agent-browser" in command_line:
                 return True
@@ -2676,14 +2771,15 @@ class PrivateBrowserTool:
             if err_text:
                 combined = f"[stderr]\n{err_text}\n\n{combined}".strip()
         fill_error = ""
+        empty_observation = (proc.returncode or 0) == 0 and self._empty_dom_observation(out)
         observe_state_change = action in {"open", "fill", "press"} and model_choice
-        failed_interaction = action in {"click", "fill"} and model_choice and (proc.returncode or 0) != 0
-        if failed_interaction or ((action == "click" or observe_state_change) and (proc.returncode or 0) == 0):
+        failed_interaction = action in {"click", "fill"} and (proc.returncode or 0) != 0
+        if empty_observation or failed_interaction or ((action == "click" or observe_state_change) and (proc.returncode or 0) == 0):
             # A click can navigate, replace the DOM, or open a modal. Return
             # the settled post-click DOM in the same tool result so callers do
             # not race navigation with a separate immediate read and so the
             # next conversational turn receives current element refs. A failed
-            # model-choice interaction also needs refs for a covering dialog
+            # interaction also needs refs for a covering dialog
             # or changed DOM. A successful fill may run input handlers that
             # open a modal or replace the field: CLI success is not proof that
             # the intended value survived. Observe only; never retry an action.
@@ -2730,7 +2826,8 @@ class PrivateBrowserTool:
             if page_errors:
                 combined = f"{combined}\n\n[page errors]\n{page_errors}".strip()
         if len(combined) > MAX_OUTPUT_CHARS:
-            combined = combined[:MAX_OUTPUT_CHARS] + "\n\n[...truncated]"
+            from src.browser_observation import compact_browser_observation
+            combined = compact_browser_observation(combined, budget=MAX_OUTPUT_CHARS)
         shopping_hint = self._shopping_landing_hint(combined)
         if shopping_hint:
             combined = f"{combined}\n\n[{shopping_hint}]"
@@ -2792,7 +2889,7 @@ class PrivateBrowserTool:
         deadline = loop.time() + min(timeout_s, 20)
         text, observation_note = "", ""
         first_rows, rows = [], []
-        for attempt in range(2 if model_choice else 1):
+        for attempt in range(2):
             proc = None
             try:
                 async with asyncio.timeout(max(0, deadline - loop.time())):
@@ -2833,9 +2930,14 @@ class PrivateBrowserTool:
             text, rows = observed, observed_rows
             if not attempt:
                 first_rows = rows
-            if not snapshots or any(snapshot.strip() != '(empty page)' for snapshot in snapshots):
+            if not snapshots or not self._empty_dom_observation(observed):
                 break
             commands = [["wait", "1000"], ["snapshot"]]
+        if not observation_note and self._empty_dom_observation(text):
+            observation_note = (
+                "Browser observation incomplete: the page still has no readable content after waiting. "
+                "Navigation success is not evidence that results loaded. Do not infer page results."
+            )
         fill_error = ""
         if verify_fill:
             fill_error = unverified
@@ -2857,7 +2959,30 @@ class PrivateBrowserTool:
             text = self._snapshot_observation(text)
         if observation_note:
             text += '\n' + observation_note
-        return text[:MAX_OUTPUT_CHARS], fill_error
+        if len(text) > MAX_OUTPUT_CHARS:
+            from src.browser_observation import compact_browser_observation
+            text = compact_browser_observation(text, budget=MAX_OUTPUT_CHARS)
+        return text, fill_error
+
+    @staticmethod
+    def _empty_dom_observation(text: str) -> bool:
+        """Recognize empty accessibility scaffolding, not an actual no-results message."""
+        try:
+            payload = json.loads(text)
+        except (ValueError, TypeError):
+            payload = None
+        if isinstance(payload, list):
+            snapshots = [row['result']['snapshot'] for row in payload
+                if isinstance(row, dict) and row.get('success') is True
+                and isinstance(row.get('result'), dict)
+                and isinstance(row['result'].get('snapshot'), str)]
+        else:
+            snapshots = [text] if isinstance(text, str) and text.strip() else []
+        scaffolding = {'- generic', '- main', '- none', '- presentation', '(empty page)'}
+        return bool(snapshots) and all(
+            all(line.strip() in scaffolding for line in snapshot.splitlines() if line.strip())
+            for snapshot in snapshots
+        )
 
     @staticmethod
     def _dialog_first_snapshot(snapshot: str) -> str:

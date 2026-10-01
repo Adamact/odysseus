@@ -12,6 +12,7 @@ import { snapModalToZone } from './tileManager.js?v=20260910responsivebounds1';
 import { applyEdgeDock, clearDockSide } from './modalSnap.js';
 import { topToolWindowZ, topPortalZ } from './toolWindowZOrder.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
+import { bindTourHintDismiss } from './tourHintDismiss.js';
 
 const API_BASE = window.location.origin;
 let _open = false;
@@ -87,7 +88,7 @@ function _showNotesFirstOpenHint(pane) {
     return;
   }
 
-  document.getElementById('notes-first-open-hint')?.remove();
+  dismissOrRemove(document.getElementById('notes-first-open-hint'));
   const hint = document.createElement('div');
   hint.id = 'notes-first-open-hint';
   hint.className = 'tour-hint';
@@ -103,19 +104,16 @@ function _showNotesFirstOpenHint(pane) {
     hint.style.top = Math.max(12, r.top + 58) + 'px';
     hint.style.left = Math.min(window.innerWidth - hw - 12, Math.max(12, r.left + 18)) + 'px';
   };
-  const close = () => {
-    window.removeEventListener('resize', place);
-    hint.classList.add('tour-hint-out');
-    setTimeout(() => hint.remove(), 180);
-  };
-
   requestAnimationFrame(() => {
     place();
     hint.classList.add('tour-hint-in');
   });
   window.addEventListener('resize', place);
-  hint.querySelector('.tour-hint-dismiss')?.addEventListener('click', close);
-  setTimeout(close, 6500);
+  bindTourHintDismiss(hint, {
+    timeout: 6500,
+    fade: 180,
+    onDismiss: () => window.removeEventListener('resize', place),
+  });
 }
 
 function _notesFullscreenSafeRect() {
@@ -1917,20 +1915,10 @@ function _renderNotes() {
       for (let i = 0; i < note.items.length; i++) {
         const item = note.items[i];
         const doneClass = item.done ? ' done' : '';
-        const agentStatus = (item.agent_status || '').toLowerCase();
-        const agentDoneClass = agentStatus === 'stream_complete' ? ' is-agent-stream-complete' : '';
-        const agentTitle = agentStatus === 'stream_complete'
-          ? 'Agent stream finished for this todo'
-          : (agentStatus === 'running' ? 'Agent is working on this todo' : 'Solve this todo with the agent');
-        const agentSessionAttr = item.agent_session_id ? ` data-session-id="${_attrEsc(item.agent_session_id)}"` : '';
-        const agentMenuTitle = item.agent_session_title || `Agent: ${(item.text || '').slice(0, 40)}`;
         const indent = Math.min(item.indent || 0, 3);
         contentHtml += `<div class="note-checkbox${doneClass}" data-note-id="${note.id}" data-idx="${i}" style="padding-left:${indent * 16}px">
           <span class="note-check-dot" title="Mark done"></span>
           <span class="note-check-text">${_linkify(item.text)}</span>
-          <button class="note-checkbox-agent${agentDoneClass}" data-note-id="${_attrEsc(note.id)}" data-idx="${i}"${agentSessionAttr} data-agent-title="${_attrEsc(agentMenuTitle)}" title="${_attrEsc(agentTitle)}">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/></svg>
-          </button>
           <button class="note-checkbox-edit" data-note-id="${note.id}" data-idx="${i}" title="Edit item">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
           </button>
@@ -2333,7 +2321,7 @@ function _bindCardEvents(body) {
       }
     }, { passive: false });
     el.addEventListener('click', (e) => {
-      if (e.target.closest('.note-checkbox, .note-checkbox-rm, .note-checkbox-agent, .note-cl-quickadd, input')) return;
+      if (e.target.closest('.note-checkbox, .note-checkbox-rm, .note-cl-quickadd, input')) return;
       e.stopPropagation();
       tapToEditOrSelect(el.closest('.note-card'));
     });
@@ -2359,7 +2347,7 @@ function _bindCardEvents(body) {
   // title / content preview triggered edit, so padding + empty gutters were
   // dead zones that felt broken on mobile.
   if (_isNotesMobileMode() && !_selectMode) {
-    const _INTERACTIVE = 'button, a, input, label, .note-card-color-dot, .note-checkbox, .note-checkbox-rm, .note-checkbox-agent, .note-cl-quickadd, .note-agent-tag, .note-card-pin, .note-card-corner-trash, .note-card-corner-menu, .note-card-corner-unarchive, .note-card-edit-corner, .note-card-reminder, .note-card-cb';
+    const _INTERACTIVE = 'button, a, input, label, .note-card-color-dot, .note-checkbox, .note-checkbox-rm, .note-cl-quickadd, .note-agent-tag, .note-card-pin, .note-card-corner-trash, .note-card-corner-menu, .note-card-corner-unarchive, .note-card-edit-corner, .note-card-reminder, .note-card-cb';
     body.querySelectorAll('.note-card').forEach(card => {
       card.addEventListener('click', (e) => {
         if (e.target.closest(_INTERACTIVE)) return;
@@ -2726,18 +2714,6 @@ function _bindCardEvents(body) {
     });
   });
 
-  // Per-item agent solve (hover button next to the X). Scoped to one todo
-  // item — uses the note title as context if present, but only the single
-  // item's text as the work. Mirrors the per-note _agentSolveNote pattern.
-  body.querySelectorAll('.note-checkbox-agent').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (_selectMode) return;
-      _openTodoAgentMenu(btn);
-    });
-  });
-
   // Quick-add new checklist item (hover input at bottom of todo cards)
   body.querySelectorAll('.note-cl-quickadd-input').forEach(input => {
     input.addEventListener('click', (e) => e.stopPropagation());
@@ -2968,10 +2944,9 @@ function _bindCardEvents(body) {
 
 // ── Draft autosave ──────────────────────────────────────────────────
 // While a note is open in the editor, its form is snapshotted to
-// localStorage on every change (debounced). If the connection drops, the
+// localStorage on every change. If the connection drops, the
 // tab closes, or the page reloads before Save is hit, reopening that note
-// restores the unsaved text. Drafts are cleared on an explicit Save or
-// Cancel. Survives offline because it never touches the network.
+// restores the unsaved text. Clear only after confirmed persistence.
 const _DRAFT_PREFIX = 'odysseus-note-draft-';
 function _draftKey(id) { return _DRAFT_PREFIX + (id || '__new__'); }
 function _loadDraft(id) {
@@ -2980,7 +2955,7 @@ function _loadDraft(id) {
 function _clearDraft(id) { try { localStorage.removeItem(_draftKey(id)); } catch {} }
 function _collectFormDraft(form) {
   if (!form) return null;
-  const type = form.querySelector('.note-form-type-pill.active')?.dataset.type || 'note';
+  const type = form.querySelector('.note-form-type-pill.active')?.dataset.type || form.dataset.noteType || 'note';
   const d = {
     _ts: Date.now(),
     note_type: type,
@@ -3004,15 +2979,50 @@ function _isDraftEmpty(d) {
 }
 function _wireDraftAutosave(form, id) {
   let t = null;
+  let pending = Promise.resolve();
+  let stopped = false;
+  let warned = false;
   const save = () => {
     const d = _collectFormDraft(form);
-    if (_isDraftEmpty(d)) { _clearDraft(id); return; }
-    try { localStorage.setItem(_draftKey(id), JSON.stringify(d)); } catch {}
+    // An empty edit can be intentional: don't restore stale server text over it.
+    try { localStorage.setItem(_draftKey(id), JSON.stringify(d)); }
+    catch {
+      if (!warned) uiModule.showError('Draft backup unavailable. Keep this note open until saved.');
+      warned = true;
+    }
+    return d;
   };
-  form._flushDraft = () => { clearTimeout(t); save(); };
-  const sched = () => { clearTimeout(t); t = setTimeout(save, 600); };
+  const persist = (d) => {
+    if (!id || id === '__new__' || d.note_type === 'draw') return pending;
+    const { _ts, ...payload } = d;
+    payload.label = [...new Set(payload.label.split(/\s+/).map(s => s.replace(/^#+/, '')).filter(Boolean))].join(' ') || null;
+    pending = pending.then(async () => {
+      try {
+        await _patchNote(id, payload);
+        form._autosaveFailed = false;
+        const note = _notes.find(n => n.id === id);
+        if (note) Object.assign(note, payload);
+        if (localStorage.getItem(_draftKey(id)) === JSON.stringify(d)) _clearDraft(id);
+      } catch {
+        if (!form._autosaveFailed) uiModule.showError('Note not synced. Your edits are kept on this device; retry Save.');
+        form._autosaveFailed = true;
+      }
+    });
+    return pending;
+  };
+  form._flushDraft = () => { clearTimeout(t); return save(); };
+  form._stopDraftAutosave = () => { stopped = true; clearTimeout(t); return pending; };
+  const sched = () => {
+    const d = save();
+    if (stopped) return;
+    clearTimeout(t);
+    t = setTimeout(() => persist(d), 500);
+  };
   form.addEventListener('input', sched);
   form.addEventListener('change', sched);
+  form.addEventListener('click', (event) => {
+    if (event.target.closest('.note-cl-dot, .note-cl-rm')) sched();
+  });
 }
 
 // Commit whatever in-place editor is open (called when the panel closes
@@ -3028,7 +3038,7 @@ function _commitOpenInPlaceEditor() {
 // Merge a stored draft over a note so _buildForm renders the unsaved edits.
 function _applyDraftToNote(note, id) {
   const d = _loadDraft(id);
-  if (_isDraftEmpty(d)) return { note, restored: false };
+  if (!d) return { note, restored: false };
   const merged = { ...(note || {}) };
   ['note_type', 'color', 'title', 'label', 'due_date', 'repeat', 'content', 'items'].forEach(k => {
     if (d[k] !== undefined) merged[k] = d[k];
@@ -3040,12 +3050,13 @@ function _applyDraftToNote(note, id) {
 
 function _buildForm(note = null) {
   const isEdit = note && note.id;
-  const type = note?.note_type || 'note';
+  const type = note?.note_type === 'checklist' ? 'todo' : (note?.note_type || 'note');
   const color = note?.color || '';
   const items = note?.items || [{ id: _uid(), text: '', done: false }];
 
   const form = document.createElement('div');
   form.className = 'note-form';
+  form.dataset.noteType = type;
   form.dataset.noteColor = color || '';
   if (color && !_isBgImage(color)) form.classList.add('note-color-' + color);
   if (_isBgImage(color)) form.setAttribute('style', _customColorStyle(color));
@@ -3103,8 +3114,8 @@ function _buildForm(note = null) {
         </button>
         ` : ''}
         <span class="note-form-actions-spacer"></span>
-        <button class="note-form-cancel note-form-text-btn note-form-collapsible" title="Cancel">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg><span class="nft-label">Cancel</span>
+        <button class="note-form-cancel note-form-text-btn note-form-collapsible" title="Close (keep changes)">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg><span class="nft-label">Close</span>
         </button>
         <button class="note-form-save note-form-text-btn" title="${isEdit ? 'Update' : 'Save'}">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span class="nft-label">${isEdit ? 'Update' : 'Save'}</span>
@@ -3751,6 +3762,9 @@ function _buildForm(note = null) {
     }
     _saveBtn._saving = true; _saveBtn.disabled = true; _saveBtn.style.opacity = '0.5';
     try {
+    form._flushDraft?.();
+    await form._stopDraftAutosave?.();
+    form._flushDraft?.();
     const title = form.querySelector('.note-form-title').value.trim();
     // Normalize tag input: split on whitespace, strip leading #s, dedupe,
     // re-join with single spaces. Empty → null.
@@ -3814,7 +3828,8 @@ function _buildForm(note = null) {
     }
     // Optimistic update — update local state first, render, then save in background
     _editingId = null;
-    _clearDraft(isEdit ? note.id : '__new__');  // saved → discard the draft
+    const draftId = isEdit ? note.id : '__new__';
+    const submittedDraft = JSON.stringify(_loadDraft(draftId));
     if (isEdit) {
       const idx = _notes.findIndex(n => n.id === note.id);
       if (idx >= 0) _notes[idx] = { ..._notes[idx], ...payload };
@@ -3824,6 +3839,7 @@ function _buildForm(note = null) {
     _renderNotes();
     // Background save
     _saveNote(payload).then(saved => {
+      if (JSON.stringify(_loadDraft(draftId)) === submittedDraft) _clearDraft(draftId);
       if (!isEdit && saved && saved.id) {
         // Replace temp ID with real one from server. AND re-render — the
         // existing card's `data-note-id="tmp_xxx"` is stale after Object.assign
@@ -3884,7 +3900,7 @@ function _buildForm(note = null) {
   }
 
   // Cancel
-  form.querySelector('.note-form-cancel').addEventListener('click', () => { _clearDraft(isEdit ? note.id : '__new__'); _editingId = null; _renderNotes(); });
+  form.querySelector('.note-form-cancel').addEventListener('click', () => { form._flushDraft?.(); _editingId = null; _renderNotes(); });
 
   // Archive / Delete — edit-mode-only buttons, mirror the (now-hidden) card actions.
   form.querySelector('.note-form-archive-btn')?.addEventListener('click', () => {
@@ -4616,54 +4632,6 @@ function _openNoteCornerMenu(btn) {
   menu.querySelector('[data-act="agent"]').addEventListener('click', () => { close(); _agentSolveNote(id); });
 }
 
-function _positionNoteMenu(menu, btn, width = 196) {
-  document.body.appendChild(menu);
-  const r = btn.getBoundingClientRect();
-  let left = Math.min(r.right - width, window.innerWidth - width - 8);
-  left = Math.max(8, left);
-  const mh = menu.offsetHeight || 112;
-  const below = window.innerHeight - r.bottom;
-  const top = (below < mh + 8 && r.top > mh + 8) ? (r.top - mh - 4) : (r.bottom + 4);
-  menu.style.cssText += `position:fixed;z-index:${topPortalZ()};top:${Math.round(top)}px;left:${Math.round(left)}px;min-width:${width}px;`;
-  const close = (ev) => {
-    if (ev && menu.contains(ev.target)) return;
-    menu.remove();
-    document.removeEventListener('click', close, true);
-  };
-  setTimeout(() => document.addEventListener('click', close, true), 0);
-}
-
-function _openTodoAgentMenu(btn) {
-  document.querySelectorAll('.note-corner-menu-dropdown').forEach(d => d.remove());
-  const noteId = btn.dataset.noteId;
-  const idx = parseInt(btn.dataset.idx);
-  const sid = btn.dataset.sessionId || '';
-  const menu = document.createElement('div');
-  menu.className = 'note-corner-menu-dropdown note-agent-item-menu';
-  menu.innerHTML = `
-    ${sid ? `<button type="button" class="ncm-item" data-act="open">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14L21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
-      <span>Open</span>
-    </button>` : ''}
-    <button type="button" class="ncm-item" data-act="run">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/></svg>
-      <span>${sid ? 'Run again' : 'Run Agent'}</span>
-    </button>`;
-  _positionNoteMenu(menu, btn);
-  const openBtn = menu.querySelector('[data-act="open"]');
-  if (openBtn) {
-    openBtn.addEventListener('click', () => {
-      menu.remove();
-      const _sm = window.sessionModule;
-      if (sid && _sm && _sm.selectSession) { closePanel(); _sm.selectSession(sid); }
-    });
-  }
-  menu.querySelector('[data-act="run"]').addEventListener('click', () => {
-    menu.remove();
-    _agentSolveTodoItem(noteId, idx);
-  });
-}
-
 // Build the prompt the agent gets from a note: title + body, plus any
 // not-yet-done checklist items.
 function _noteToAgentPrompt(note) {
@@ -4731,86 +4699,6 @@ async function _agentSolveNote(id) {
       .catch(() => {});
 
     uiModule.showToast('Agent working in background — tap the Agent tag when ready');
-  } catch (e) {
-    uiModule.showError('Agent failed: ' + (e.message || e));
-  }
-}
-
-// Per-item version of _agentSolveNote. Scoped to a single checklist item;
-// the note title (if any) is included as context, but only this one item's
-// text is the work the agent is asked to do. agent_session_id is set on the
-// PARENT note (latest-wins) so the Agent tag still surfaces the most recent
-// run from this note — same UX as a per-note solve.
-async function _agentSolveTodoItem(noteId, idx) {
-  const note = _notes.find(n => n.id === noteId);
-  if (!note || !Array.isArray(note.items)) return;
-  const item = note.items[idx];
-  const itemText = (item && (item.text || '').trim()) || '';
-  if (!itemText) {
-    uiModule.showToast('Nothing to solve — item is empty');
-    return;
-  }
-  const titleCtx = (note.title || '').trim();
-  const prompt = titleCtx
-    ? `Context (from note "${titleCtx}").\n\nHelp me with this todo: ${itemText}\n\nThe source note is read-only. Do not edit, replace, or update it.`
-    : `Help me with this todo: ${itemText}\n\nThe source note is read-only. Do not edit, replace, or update it.`;
-  try {
-    const dc = await (await fetch(`${API_BASE}/api/default-chat`, { credentials: 'same-origin' })).json();
-    if (!dc.endpoint_url || !dc.model) { uiModule.showError('No default chat model configured'); return; }
-
-    const label = itemText.slice(0, 40);
-    const csFd = new FormData();
-    csFd.append('name', 'Agent: ' + label);
-    csFd.append('endpoint_url', dc.endpoint_url);
-    csFd.append('model', dc.model);
-    if (dc.endpoint_id) csFd.append('endpoint_id', dc.endpoint_id);
-    csFd.append('skip_validation', 'true');
-    const csRes = await fetch(`${API_BASE}/api/session`, { method: 'POST', credentials: 'same-origin', body: csFd });
-    if (!csRes.ok) { uiModule.showError('Could not create agent session'); return; }
-    const sess = await csRes.json();
-    const sid = sess.id;
-    const sessionTitle = 'Agent: ' + label;
-
-    const n = _notes.find(x => x.id === noteId);
-    if (n) {
-      n.agent_session_id = sid;
-      if (Array.isArray(n.items) && n.items[idx]) {
-        n.items[idx].agent_session_id = sid;
-        n.items[idx].agent_session_title = sessionTitle;
-        n.items[idx].agent_status = 'running';
-        n.items[idx].agent_stream_completed_at = '';
-      }
-    }
-    _renderNotes();
-    _patchNote(noteId, { items: n && Array.isArray(n.items) ? n.items : note.items, agent_session_id: sid }).catch(() => {});
-
-    const fd = new FormData();
-    fd.append('message', prompt);
-    fd.append('session', sid);
-    fd.append('mode', 'agent');
-    fd.append('disabled_tools', JSON.stringify(['manage_notes']));
-    fetch(`${API_BASE}/api/chat_stream`, { method: 'POST', credentials: 'same-origin', body: fd })
-      .then(async (res) => {
-        if (!res.ok || !res.body) return;
-        const reader = res.body.getReader();
-        while (true) { const { done } = await reader.read(); if (done) break; }
-        if (window.sessionModule && window.sessionModule.markStreamComplete) {
-          try { window.sessionModule.markStreamComplete(sid); } catch {}
-        }
-        const doneNote = _notes.find(x => x.id === noteId);
-        if (doneNote && Array.isArray(doneNote.items) && doneNote.items[idx]) {
-          doneNote.agent_session_id = sid;
-          doneNote.items[idx].agent_session_id = sid;
-          doneNote.items[idx].agent_session_title = sessionTitle;
-          doneNote.items[idx].agent_status = 'stream_complete';
-          doneNote.items[idx].agent_stream_completed_at = new Date().toISOString();
-          _renderNotes();
-          _patchNote(noteId, { items: doneNote.items, agent_session_id: sid }).catch(() => {});
-        }
-      })
-      .catch(() => {});
-
-    uiModule.showToast('Agent working on this item — tap the Agent tag when ready');
   } catch (e) {
     uiModule.showError('Agent failed: ' + (e.message || e));
   }
@@ -5129,6 +5017,7 @@ function _openMobileFullscreenEdit(id, fromCard) {
 function _closeMobileFullscreenEdit(opts = {}) {
   if (!_mobileFsOverlay) return;
   const overlay = _mobileFsOverlay;
+  overlay.querySelector('.note-form')?._flushDraft?.();
   _mobileFsOverlay = null;
   // If the form has a Save button, click it on close so edits aren't lost
   // when the user uses the back arrow instead of an explicit Save.

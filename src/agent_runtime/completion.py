@@ -267,6 +267,21 @@ def with_completion_gate(func):
             if provider_error and not answer_events and not metrics_events:
                 yield provider_error
                 return
+            presentation_replaced = False
+            if not provider_error and not has_final and requirements.required_artifacts:
+                terminal_texts = next((event.get('data', {}).get('round_texts')
+                                       for event in reversed(metrics_events)
+                                       if isinstance(event.get('data', {}).get('round_texts'), list)
+                                       and all(isinstance(text, str) for text in event['data']['round_texts'])), None)
+                if terminal_texts is not None:
+                    terminal_answer = '\n\n'.join(text for text in terminal_texts if text.strip())
+                    if terminal_answer != answer:
+                        # The loop can retract a rejected round while retaining
+                        # its live deltas. Do not resurrect those buffered drafts
+                        # after recovery. Terminal prose still passes this gate.
+                        presentation_replaced = True
+                        answer = terminal_answer
+                        answer_events = [event for event in answer_events if event.get('thinking') is True]
             ledger = EvidenceLedger.from_tool_events(journal.evidence_events(), requirements)
             decision = ledger.evaluate(exhausted=exhausted, awaiting_user=awaiting)
             if provider_error:
@@ -291,7 +306,7 @@ def with_completion_gate(func):
             released_at = perf_counter()
             if not provider_error:
                 yield _event({'type': 'completion_decision', 'data': decision.to_dict()})
-            replaced_answer = bool(reason or unsafe_draft or safe_answer != answer)
+            replaced_answer = bool(presentation_replaced or reason or unsafe_draft or safe_answer != answer)
             if replaced_answer:
                 reasoning = [event for event in answer_events if event.get('thinking') is True]
                 _, unsafe_reasoning = completion_answer(

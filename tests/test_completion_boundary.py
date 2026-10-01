@@ -17,6 +17,67 @@ ERROR = 'event: error\ndata: {"status": 504, "error": {"message": "stream timeou
 DONE = 'data: [DONE]\n\n'
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('terminal_texts', [[], ['', ''], ['Recovered answer with literal [DONE] text.']])
+async def test_terminal_round_retraction_does_not_resurrect_buffered_drafts(terminal_texts):
+    @with_completion_gate
+    async def stream(messages):
+        yield _event({'delta': 'Considering the next step.', 'thinking': True})
+        yield _event({'delta': 'Now I need to execute the rejected draft.'})
+        yield _event({'type': 'metrics', 'data': {'round_texts': terminal_texts}})
+        yield DONE
+
+    chunks = [chunk async for chunk in stream([{'role': 'user', 'content': 'Create answer.txt.'}])]
+    assert 'rejected draft' not in ''.join(chunks)
+    assert any('Considering the next step.' in chunk for chunk in chunks)
+    if terminal_texts and terminal_texts[0]:
+        assert any(terminal_texts[0] in chunk for chunk in chunks)
+    assert chunks.count(DONE) == 1
+
+
+@pytest.mark.asyncio
+async def test_terminal_round_text_cannot_override_an_explicit_final_response():
+    @with_completion_gate
+    async def stream(messages):
+        yield _event({'type': 'final_response', 'content': 'The explicit final answer.'})
+        yield _event({'type': 'metrics', 'data': {'round_texts': ['Earlier draft.']}})
+        yield DONE
+
+    chunks = [chunk async for chunk in stream([])]
+    final = next(data for _, data in _frames(chunks) if isinstance(data, dict) and data.get('type') == 'final_response')
+    assert final['content'] == 'The explicit final answer.'
+
+
+@pytest.mark.asyncio
+async def test_revised_terminal_prose_still_cannot_attest_execution():
+    @with_completion_gate
+    async def stream(messages):
+        yield _event({'delta': 'Earlier draft.'})
+        yield _event({'type': 'metrics', 'data': {'round_texts': ['All tests passed.']}})
+        yield DONE
+
+    chunks = [chunk async for chunk in stream([{'role': 'user', 'content': 'Create answer.txt and run the tests.'}])]
+    assert not _decision(chunks)['can_complete']
+    assert 'All tests passed.' not in ''.join(chunks)
+
+
+@pytest.mark.asyncio
+async def test_provider_error_preserves_partial_content_despite_empty_terminal_rounds():
+    @with_completion_gate
+    async def stream(messages):
+        yield _event({'type': 'tool_start', 'tool': 'read_file'})
+        yield _event({'delta': 'Safe partial result.'})
+        yield _event({'type': 'metrics', 'data': {'round_texts': []}})
+        yield ERROR
+        yield DONE
+
+    chunks = [chunk async for chunk in stream([])]
+    assert _labels(chunks) == ['tool_start', 'final_response', 'completion_decision', 'metrics', 'error']
+    assert any('Safe partial result.' in chunk for chunk in chunks)
+    assert chunks[-1] == ERROR
+    assert DONE not in chunks
+
+
 def _event(payload):
     return 'data: ' + json.dumps(payload) + '\n\n'
 

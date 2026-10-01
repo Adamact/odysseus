@@ -1,6 +1,33 @@
 const { test, expect } = require('@playwright/test');
 const { dragOnCanvas, editorState, openBlankEditor, reopenDraft, waitForDraft } = require('./helpers.js');
 
+test('Ctrl-click thumbnail shows pixel selection even after outlines were hidden', async ({ page }) => {
+  // Notification polling requires login even in the auth-disabled test server.
+  await page.route('**/api/tasks/notification-logs*', route => route.fulfill({ json: { logs: [] } }));
+  await openBlankEditor(page, { width: 240, height: 160 }, 'Thumbnail selection');
+  const id = await page.evaluate(async () => {
+    const { state } = await import('/static/js/editor/state.js');
+    const layer = state.layers.find(item => item.id === state.activeLayerId);
+    layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+    layer.ctx.fillStyle = '#ff0000';
+    layer.ctx.fillRect(30, 25, 60, 40);
+    state.wandMaskVisible = false;
+    return layer.id;
+  });
+  await page.locator(`.ge-layer-item[data-layer-id="${id}"] .ge-layer-inline-thumb`).click({ modifiers: ['Control'] });
+  await expect.poll(() => page.evaluate(async () => {
+    const { state } = await import('/static/js/editor/state.js');
+    const canvas = state.selectionOverlay;
+    const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    return state.wandMaskVisible && canvas.style.display !== 'none' && pixels.some((value, index) => index % 4 === 3 && value > 0);
+  })).toBe(true);
+  await expect.poll(() => page.evaluate(async () => {
+    const { state } = await import('/static/js/editor/state.js');
+    const ctx = state.wandMask.getContext('2d');
+    return [ctx.getImageData(40, 35, 1, 1).data[3], ctx.getImageData(0, 0, 1, 1).data[3]];
+  })).toEqual([255, 0]);
+});
+
 test('selected layers align to the canvas and undo as one operation', async ({ page }) => {
   await openBlankEditor(page, { width: 320, height: 240 }, 'Alignment E2E');
   await page.locator('#ge-add-layer').click();

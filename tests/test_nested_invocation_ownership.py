@@ -40,6 +40,65 @@ async def tool(block):
 
 
 @pytest.mark.asyncio
+async def test_detached_stream_identity_is_distinct_from_nested_journal_lineage():
+    from src import agent_runs
+
+    session_id = 'wave11-pr40-nested-identity'
+    ready = asyncio.Event()
+    release = asyncio.Event()
+    seen = {}
+
+    @with_completion_gate
+    async def child(messages):
+        seen['child'] = current_journal()
+        yield event({'type': 'metrics', 'data': {}})
+        yield DONE
+
+    @with_completion_gate
+    async def parent(messages):
+        seen['parent'] = current_journal()
+        seen['child_chunks'] = [chunk async for chunk in child([])]
+        assert current_journal() is seen['parent']
+        ready.set()
+        yield event({'type': 'tool_start', 'tool': 'read_file'})
+        await release.wait()
+        yield event({'type': 'metrics', 'data': {}})
+        yield DONE
+
+    run = agent_runs.start(session_id, parent([]))
+    try:
+        await asyncio.wait_for(ready.wait(), 5)
+        journal_ids = {seen['parent'].run_id, seen['child'].run_id}
+        assert len(journal_ids) == 2
+        assert run.run_id not in journal_ids
+        assert seen['child'].parent_run_id == seen['parent'].run_id
+        assert agent_runs.get_run_id(session_id) == run.run_id
+        for invocation_id in journal_ids:
+            assert not agent_runs.stop(session_id, invocation_id)
+            assert not agent_runs.request_finish(session_id, invocation_id)
+        assert not agent_runs.should_finish(session_id)
+        assert agent_runs.request_finish(session_id, run.run_id)
+        release.set()
+        chunks = [chunk async for chunk in agent_runs.subscribe(session_id, run)]
+        replay = [chunk async for chunk in agent_runs.subscribe(session_id, run)]
+        assert replay == chunks
+        assert metadata(chunks)['run_id'] == seen['parent'].run_id
+        assert metadata(seen['child_chunks'])['parent_run_id'] == seen['parent'].run_id
+        assert agent_runs.get_run_id(session_id) == run.run_id
+        assert chunks.count(DONE) == 1
+        assert current_journal() is None
+    finally:
+        release.set()
+        if not run.task.done():
+            run.task.cancel()
+        await asyncio.gather(run.task, return_exceptions=True)
+        if run.evict_task is not None:
+            run.evict_task.cancel()
+            await asyncio.gather(run.evict_task, return_exceptions=True)
+        agent_runs._RUNS.pop(session_id, None)
+
+
+@pytest.mark.asyncio
 async def test_same_workspace_nested_gates_own_distinct_journals_and_evidence(tmp_path):
     seen = {}
 

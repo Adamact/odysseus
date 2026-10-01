@@ -17,5 +17,9 @@ def test_agent_theme_inventory_includes_yoyo():
     interaction = (ROOT / "src/ai_interaction.py").read_text(encoding="utf-8")
     schemas = (ROOT / "src/tool_schemas.py").read_text(encoding="utf-8")
 
-    assert '"monolith", "yoyo"' in interaction
+    from src.theme_palette import THEME_PRESETS
+
+    # The agent's preset inventory is the shared palette module's tuple.
+    assert THEME_PRESETS[-2:] == ("monolith", "yoyo")
+    assert "from src.theme_palette import THEME_PRESETS" in interaction
     assert "blueprint, monolith, yoyo" in schemas

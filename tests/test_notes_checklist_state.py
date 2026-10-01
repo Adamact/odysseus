@@ -39,6 +39,15 @@ def test_explicit_checked_state_is_idempotent(checklist):
         assert call(checklist) == before
 
 
+@pytest.mark.parametrize('args', [{}, {'index': None}, {'index': True}, {'index': 0.0}, {'index': '0'}])
+def test_toggle_requires_explicit_integer_index(checklist, args):
+    before = call(checklist)
+    result = call(checklist, 'toggle_item', done=True, **args)
+    assert result['exit_code'] == 1
+    assert 'index' in result['error']
+    assert call(checklist) == before
+
+
 @pytest.mark.parametrize("done", ["false", "true", 0, 1, None, [], {}])
 def test_invalid_target_state_does_not_change_checklist(checklist, done):
     before = call(checklist)
@@ -78,3 +87,45 @@ def test_remove_item_never_silently_toggles_checked_state(checklist):
         {"text": "tea", "done": False}, {"text": "rice", "done": True},
     ])["exit_code"] == 0
     assert call(checklist) == before
+
+
+@pytest.mark.parametrize('items', [None, 'drop keys, meeting 2pm', [{'text': ''}], [{'text': 'keys', 'done': 'false'}]])
+def test_malformed_checklist_creation_saves_nothing(checklist, items):
+    with database.SessionLocal() as db:
+        before = db.query(database.Note).count()
+    args = {'note_type': 'checklist', 'title': 'Tasks hidden in title'}
+    if items is not None:
+        args['checklist_items'] = items
+    result = asyncio.run(do_manage_notes(json.dumps({'action': 'add', **args}), owner='sft_checklist'))
+    assert result['exit_code'] == 1
+    assert 'Nothing saved' in result['error']
+    with database.SessionLocal() as db:
+        assert db.query(database.Note).count() == before
+
+
+@pytest.mark.parametrize('key', ['id', 'note_id', 'noteId'])
+def test_add_with_existing_id_never_creates_duplicate(checklist, key):
+    before = call(checklist)
+    result = asyncio.run(do_manage_notes(json.dumps({
+        'action': 'add', key: checklist, 'note_type': 'checklist',
+        'checklist_items': [{'text': 'New task', 'done': False}],
+    }), owner='sft_checklist'))
+    assert result['exit_code'] == 1
+    assert 'action="update"' in result['error']
+    assert call(checklist) == before
+    with database.SessionLocal() as db:
+        assert db.query(database.Note).count() == 1
+
+
+def test_checklist_default_title_uses_user_local_date(checklist, monkeypatch):
+    from datetime import datetime, timezone, timedelta
+    import src.user_time
+    monkeypatch.setattr(src.user_time, 'now_user_local', lambda: datetime(
+        2026, 9, 30, 0, 30, tzinfo=timezone(timedelta(hours=2))))
+    result = asyncio.run(do_manage_notes(json.dumps({
+        'action': 'add', 'note_type': 'checklist',
+        'checklist_items': [{'text': 'Meeting 2pm', 'done': False}],
+    }), owner='sft_checklist'))
+    assert result['exit_code'] == 0
+    assert result['note_title'] == 'To-do - 2026-09-30'
+    assert 'Meeting 2pm' in call(result['note_id'])['results']

@@ -7,7 +7,7 @@
  *   #ge-compare-btn
  *   #ge-save-menu-btn + #ge-save-menu  (Save / Save as / Download /
  *                                       Save project / Load project)
- *   #ge-zoom-out / #ge-zoom-in / #ge-zoom-fit / #ge-zoom-100
+ *   #ge-zoom-out / #ge-zoom-in / #ge-zoom-100 (Fit / 1:1 toggle)
  *   #ge-export-gallery / #ge-download
  *   #ge-save-project / #ge-load-project
  *   #ge-edge-menu-btn + #ge-edge-menu (Width input + Feather / Delete
@@ -122,8 +122,11 @@ export function wireTopbar(deps) {
   }
 
   // Zoom buttons.
-  document.getElementById('ge-zoom-fit')?.addEventListener('click', fitZoom);
-  document.getElementById('ge-zoom-100')?.addEventListener('click', () => { state.zoom = 1; applyZoom(); });
+  document.getElementById('ge-zoom-100')?.addEventListener('click', () => {
+    if (state.zoomViewMode === 'scale' ||
+        (Math.abs(state.zoom - 1) < 0.001 && state.zoomViewMode !== 'fit')) fitZoom();
+    else { state.zoom = 1; state.zoomViewMode = 'scale'; applyZoom(); }
+  });
   document.getElementById('ge-zoom-in')?.addEventListener('click', () => { state.zoom = Math.min(5, state.zoom * 1.25); applyZoom(); });
   document.getElementById('ge-zoom-out')?.addEventListener('click', () => { state.zoom = Math.max(0.1, state.zoom / 1.25); applyZoom(); });
 

@@ -7,11 +7,12 @@ const EMPTY = '["",[],[]]';
 const normalize = text => text.replace(/\s+/g, ' ').trim();
 
 export function startsContinuationRound(event) {
-  if (!event || event.type !== 'agent_step') return false;
+  if (!event || event.type !== 'agent_step' || event.stage) return false;
   const round = Number(event.round);
-  // The initial response bubble already owns round 1. Replacing it before the
-  // first token causes a visible flash and discards its in-flight UI state.
-  return !Number.isFinite(round) || round > 1;
+  // Only an explicit later round needs a new bubble. Status-only steps (such
+  // as task classification) and round 1 belong to the processing bubble;
+  // replacing it replays its entrance animation just before the first token.
+  return Number.isInteger(round) && round > 1;
 }
 
 function signature(root, live) {

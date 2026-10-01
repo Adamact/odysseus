@@ -18,7 +18,7 @@ SELF = Path(__file__).name
 
 # The helper itself names the file, because being the one place that does is
 # the point.
-ALLOWED = {SELF, "document_source.py"}
+ALLOWED = {SELF, "document_source.py", "document_source.mjs"}
 
 # Every test language the assertions can hide in. A Python-only glob is what
 # let the JS references to ``static/style.css`` outlive the file they named.
@@ -55,9 +55,6 @@ KNOWN_ADJACENCY_SLICES = {
     ('test_document_active_restore.py',
      'for (const doc of activeDocs)',
      '_syncDocIndicator'),
-    ('test_document_edit_reference_js.py',
-     'function clearSelection() {',
-     '\\n  }'),
     ('test_document_rich_checklist_enter.py',
      'function _handleRichChecklistEnter',
      'let _richInlineCodeTypingArmed'),

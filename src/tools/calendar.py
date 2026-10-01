@@ -7,7 +7,8 @@ Holds the manage_calendar tool (CalDAV-backed event CRUD).
 import json
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Dict, Optional
 
 from src.tools._common import _parse_tool_args
@@ -15,6 +16,80 @@ from src.tool_utils import get_upload_handler
 from src.upload_handler import reserve_upload_references
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_local_event_times(args: dict) -> dict:
+    args = dict(args)
+    for field, target in (('local_start', 'dtstart'), ('local_end', 'dtend')):
+        if field not in args:
+            continue
+        value = args[field]
+        if not isinstance(value, dict):
+            raise ValueError(f'{field} must contain date and time fields')
+        day, clock = value.get('date'), value.get('time')
+        if not isinstance(day, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', day):
+            raise ValueError(f'{field}.date must be YYYY-MM-DD')
+        if args.get('all_day') is True:
+            if clock:
+                raise ValueError(f'Omit {field}.time for an all-day event')
+            normalized = day
+        else:
+            if not isinstance(clock, str) or not re.fullmatch(r'\d{2}:\d{2}(?::\d{2})?', clock):
+                raise ValueError(f'{field}.time must be HH:MM or HH:MM:SS; put its zone in timezone')
+            normalized = day + 'T' + clock
+        parsed = datetime.fromisoformat(normalized)
+        if target in args and datetime.fromisoformat(str(args[target])) != parsed:
+            raise ValueError(f'Conflicting {field} and {target}; use only one representation')
+        args[target] = normalized
+    return args
+
+
+def _saved_event_times(event) -> dict:
+    """Report persisted timestamps, not the model's unnormalized input."""
+    def serialize(value):
+        if value is None:
+            return None
+        if event.all_day:
+            return value.date().isoformat()
+        return value.isoformat() + ('Z' if event.is_utc else '')
+
+    return {
+        'dtstart': serialize(event.dtstart),
+        'dtend': serialize(event.dtend),
+        'all_day': bool(event.all_day),
+        'is_utc': bool(event.is_utc),
+    }
+
+
+def _explicit_calendar_time(raw: str, zone_name: str) -> tuple[datetime, bool]:
+    """Convert a stated wall time without relying on the browser timezone."""
+    zone_name = str(zone_name).strip()
+    offset = re.fullmatch(r'(?:UTC|GMT)?([+-])(\d{2}):(\d{2})', zone_name, re.I)
+    if zone_name.upper() in {'UTC', 'GMT', 'Z'}:
+        zone = timezone.utc
+    elif offset:
+        hours, minutes = int(offset[2]), int(offset[3])
+        if hours > 23 or minutes > 59:
+            raise ValueError('Invalid timezone offset')
+        zone = timezone(timedelta(minutes=(hours * 60 + minutes) * (1 if offset[1] == '+' else -1)))
+    else:
+        try:
+            zone = ZoneInfo(zone_name)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError('timezone must be UTC, a signed HH:MM offset, or an IANA zone') from exc
+    value = datetime.fromisoformat(str(raw).replace('Z', '+00:00'))
+    if value.tzinfo is not None:
+        if value.utcoffset() != value.astimezone(zone).utcoffset():
+            raise ValueError('Timestamp offset conflicts with timezone; preserve the stated wall time and zone')
+        return value.astimezone(timezone.utc).replace(tzinfo=None), True
+    candidates = set()
+    for fold in (0, 1):
+        instant = value.replace(tzinfo=zone, fold=fold).astimezone(timezone.utc)
+        if instant.astimezone(zone).replace(tzinfo=None) == value:
+            candidates.add(instant)
+    if len(candidates) != 1:
+        raise ValueError('Local time is ambiguous or nonexistent due to daylight saving; specify a valid time with explicit offset')
+    return candidates.pop().replace(tzinfo=None), True
 
 
 async def do_manage_calendar(content: str, owner: Optional[str] = None, *, import_event_uid: Optional[str] = None) -> Dict:
@@ -38,6 +113,10 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None, *, impor
         args = _parse_tool_args(content)
     except ValueError:
         return {"error": "Invalid JSON arguments", "exit_code": 1}
+    try:
+        args = _normalize_local_event_times(args)
+    except (ValueError, TypeError) as exc:
+        return {"error": str(exc), "exit_code": 1}
 
     # ── Batch normalization ──
     # Some models (e.g. deepseek-v4-flash) emit {"events": [{...}, ...]}
@@ -180,6 +259,8 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None, *, impor
 
     def _parse_event_dt(raw: str) -> tuple[datetime, bool]:
         """Parse agent event datetimes in the user's timezone when available."""
+        if args.get('timezone'):
+            return _explicit_calendar_time(raw, args['timezone'])
         return _parse_dt_pair(parse_due_for_user(raw))
 
     def _parse_all_day_event_dt(raw: str) -> tuple[datetime, bool]:
@@ -495,12 +576,11 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None, *, impor
                     )
                 return {
                     "response": (
-                        f"Event already exists: [{summary}](#event-{existing.uid}) on {dtstart_str}"
+                        f"Event already exists: [{summary}](#event-{existing.uid}) on {_saved_event_times(existing)['dtstart']}"
                         + reminder_text
                     ),
                     "uid": existing.uid,
-                    "dtstart": dtstart_str,
-                    "all_day": bool(existing.all_day),
+                    **_saved_event_times(existing),
                     "anchor": f"[{summary}](#event-{existing.uid})",
                     "has_reminder": bool(reminder_note_id),
                     "reminder_note_id": reminder_note_id,
@@ -572,10 +652,9 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None, *, impor
             # that opens the calendar on that day. See the markdown
             # anchor convention ([Name](#event-<uid>)).
             return {
-                "response": f"Created event [{summary}](#event-{uid}){tag_blurb} on {dtstart_str}{reminder_blurb}",
+                "response": f"Created event [{summary}](#event-{uid}){tag_blurb} on {_saved_event_times(ev)['dtstart']}{reminder_blurb}",
                 "uid": uid,
-                "dtstart": dtstart_str,
-                "all_day": bool(all_day),
+                **_saved_event_times(ev),
                 "anchor": f"[{summary}](#event-{uid})",
                 "has_reminder": bool(reminder_note_id),
                 "reminder_note_id": reminder_note_id,
@@ -711,11 +790,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None, *, impor
             return {
                 "response": f"Updated event [{ev.summary or uid}](#event-{base_uid}){reminder_text}",
                 "uid": base_uid,
-                "dtstart": (
-                    (ev.dtstart.isoformat() + ("Z" if bool(ev.is_utc) and not bool(ev.all_day) else ""))
-                    if ev.dtstart else None
-                ),
-                "all_day": bool(ev.all_day),
+                **_saved_event_times(ev),
                 "anchor": f"[{ev.summary or uid}](#event-{base_uid})",
                 "has_reminder": bool(reminder_note_id) or bool(_calendar_reminder_for_event(db, owner, ev)),
                 "reminder_note_id": reminder_note_id,

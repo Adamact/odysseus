@@ -172,11 +172,10 @@ _SOFTWARE_RELEASE_HINTS = (
     "package",
 )
 
-# Default general engines (google/duckduckgo/brave/startpage/wikipedia) are
-# routinely rate-limited / CAPTCHA-blocked on this instance and return nothing.
-# Pin engines that actually respond so non-news queries get results without any
-# third-party API fallback. Override via SEARXNG_GENERAL_ENGINES.
-_GENERAL_ENGINES = os.environ.get("SEARXNG_GENERAL_ENGINES", "bing,mojeek,presearch")
+# Verified with the pinned September SearXNG adapters. Bing can return unrelated
+# pages as successful results; do not prefer it over working general engines.
+# Deployments can override this via SEARXNG_GENERAL_ENGINES.
+_GENERAL_ENGINES = os.environ.get("SEARXNG_GENERAL_ENGINES", "google,brave,duckduckgo")
 
 
 def searxng_search_api(query: str, count: Optional[int] = None, categories: str = "general",

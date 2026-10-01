@@ -61,6 +61,7 @@ def test_broad_memory_listing_keeps_bounded_reviewable_items():
     assert "- [fact a1](#memory-a1) — private detail" in summary
     assert "- [preference b1](#memory-b1) — hidden preference" in summary
     assert "...and 254 more saved memories." in summary
+    assert "[Open Memory to browse all](#memory)" in summary
 
 
 def test_compact_memory_listing_is_already_a_complete_summary():

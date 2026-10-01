@@ -9,6 +9,7 @@ function-locally here.
 import hashlib
 import io
 import uuid
+import re
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -25,11 +26,26 @@ async def do_edit_image(content: str, owner: Optional[str] = None) -> Dict:
     action = args.get("action", "")
     if not image_id or not action:
         return {"error": "image_id and action are required", "exit_code": 1}
-    if action not in {"upscale", "rembg"}:
+    if action not in {"prompt", "upscale", "rembg"}:
         return {
-            "error": f"Unsupported edit action: {action}. Use upscale or rembg.",
+            "error": f"Unsupported edit action: {action}. Use prompt, upscale or rembg.",
             "exit_code": 1,
         }
+
+    if str(image_id).startswith('odysseus://attachment/'):
+        from src.tool_utils import get_upload_handler
+        from src.settings import load_settings
+        ref = re.fullmatch(r'odysseus://attachment/([A-Za-z0-9_-]+(?:\.[A-Za-z0-9]+)?)', image_id)
+        handler = get_upload_handler()
+        info = handler.resolve_upload(ref[1], owner=owner, allow_admin=False) if ref and owner and handler else None
+        if not info or not info.get('path') or not handler.is_image_file(info.get('name') or info.get('id') or ref[1], info.get('mime', '')):
+            return {'error': 'Uploaded image not found or not accessible', 'exit_code': 1}
+        if action != 'prompt':
+            return {'error': 'Uploaded images support action=prompt here', 'exit_code': 1}
+        if not load_settings().get('image_gen_enabled', True):
+            return {'error': 'Image generation is disabled by the administrator.', 'exit_code': 1}
+        from src.ai_interaction import do_edit_image as edit_with_model
+        return await edit_with_model(str(args.get('prompt') or '').strip(), info['path'], owner=owner, size='auto')
 
     from core.database import GalleryImage, SessionLocal
     from src.constants import GENERATED_IMAGES_DIR
@@ -52,6 +68,18 @@ async def do_edit_image(content: str, owner: Optional[str] = None) -> Dict:
         source_path = (root / source_name).resolve()
         if source_name != source.filename or source_path.parent != root or not source_path.is_file():
             return {"error": "Image file not found", "exit_code": 1}
+
+        if action == "prompt":
+            from src.settings import load_settings
+            if not load_settings().get('image_gen_enabled', True):
+                return {"error": "Image generation is disabled by the administrator.", "exit_code": 1}
+            prompt = str(args.get('prompt') or '').strip()
+            if not prompt:
+                return {"error": "prompt is required for instruction-based editing", "exit_code": 1}
+            session_id = source.session_id
+            db.close()
+            from src.ai_interaction import do_edit_image as edit_with_model
+            return await edit_with_model(prompt, str(source_path), session_id=session_id, owner=owner, size='auto')
 
         from PIL import Image
 

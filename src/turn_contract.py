@@ -27,7 +27,7 @@ FAMILY_TOOLS = {
     "memory": frozenset({"manage_memory", "search_chats"}),
     "documents": frozenset({"manage_documents", "create_document", "edit_document", "update_document", "suggest_document"}),
     "email": frozenset({"list_email_accounts", "list_emails", "search_emails", "read_email", "download_attachment", "scan_email_unsubscribes", "scan_spam", "unsubscribe_email", "send_email", "reply_to_email", "draft_email", "draft_email_reply", "ai_draft_email_reply", "bulk_email", "block_sender", "manage_email_state", "archive_email", "delete_email", "mark_email_read", "resolve_contact", "manage_contact"}),
-    "search_browser": frozenset({"web_search", "web_fetch", "private_browser", "youtube_tool", "search_hf_models", "pdf_extract"}),
+    "search_browser": frozenset({"web_search", "web_fetch", "get_weather", "private_browser", "youtube_tool", "search_hf_models", "pdf_extract"}),
     "shell_files": frozenset({"bash", "python", "host_shell", "read_file", "write_file", "edit_file", "apply_patch", "grep", "glob", "ls", "get_workspace", "manage_bg_jobs", "inspect_media", "extract_text", "transcribe_media"}),
     "cookbook_admin": frozenset({"download_model", "serve_model", "serve_preset", "list_serve_presets", "list_served_models", "stop_served_model", "tail_serve_output", "list_downloads", "cancel_download", "list_cached_models", "list_cookbook_servers", "adopt_served_model", "list_models", "manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "api_call", "app_api", "list_sessions", "manage_session", "create_session", "send_to_session", "chat_with_model", "ask_teacher"}),
     "ui": frozenset({"ui_control"}),
@@ -97,9 +97,24 @@ _CONVERSATIONAL_ACTION_LEAD = re.compile(
 )
 
 
+def editor_request_instructions(value: str) -> str:
+    """Exclude writing-menu source blocks from routing, not from model context.
+
+    These labelled blocks carry the selected prose or saved writing style. Their
+    nouns and imperative sentences are data, not additional tool requests.
+    Preserve instructions outside the blocks, including any trailing request.
+    """
+    return re.sub(
+        r"(?:Selected passage:|Use this configured writing style as the source of truth:)"
+        r"[ \t]*\r?\n---[ \t]*\r?\n[\s\S]*?\r?\n---(?=\r?\n|$)",
+        "[editor content supplied]",
+        str(value or ""),
+    ).strip()
+
+
 def _normalize_request_lead(value: str) -> str:
     """Remove harmless conversational wrappers before intent classification."""
-    text = str(value or "").strip()
+    text = editor_request_instructions(value)
     text = re.sub(r"^(?:thx|thank\s+you)\s*[,!]\s+(?=\S)", "", text, flags=re.I)
     text = re.sub(
         r"^thanks?\s*[,!]\s+(?=(?:do|repeat|show|list|read|open|find|search|check)\b)",
@@ -268,6 +283,8 @@ _LOOKUP = re.compile(
     re.I,
 )
 _PERSONAL_STORE_LOOKUP = re.compile(
+    r"^\s*(?:please\s+)?look\s+(?:(?:in|at|through)\s+)?(?:(?:my|our|the)\s+)?"
+    r"(?:emails?|mail|inbox|notes?|documents?|calendar|memories|tasks?)\b|"
     r"^\s*(?:what|which|where|when|how\s+many)\b[\s\S]{0,180}?"
     r"(?:\b(?:my|our)\b|\bdo\s+(?:i|we)\s+have\b|\b(?:is|are)\s+saved\b)|"
     r"^\s*(?:does?|is|are)\s+any\s+"
@@ -439,7 +456,7 @@ _REQUIRED_TOOLS = {
 
 # These capabilities have no action_intents category. Match explicit actions
 # and supported media targets, not incidental image/audio words in prose.
-# edit_image's real schema supports only upscale and background removal.
+# Prompt edits of prior generated images are resolved separately from history.
 _MEDIA_REQUESTS = tuple(
     (family, re.compile(r"^\s*" + _REQUEST_PREFIX + pattern, re.I))
     for family, pattern in (
@@ -524,9 +541,22 @@ _ACTION_VERBS = frozenset({
 })
 
 
+def calendar_retiming_request(text: str) -> bool:
+    """Recognize an explicit temporal move of a named calendar object."""
+    return bool(re.match(
+        r'^\s*' + _REQUEST_PREFIX
+        + r'(?:push|bring|postpone|delay|shift)\s+'
+          r'(?:(?:my|our|the|this|that|an?)\s+)?'
+          r'(?:event|meeting|appointment)\b[^.;!?\n]{0,100}'
+          r'\b(?:by|until|to)\s+\S+',
+        str(text or ''), re.I,
+    ))
+
+
 def _has_action_signal(text: str) -> bool:
     """Recognize a normal action prefix or one transposition/typo in its verb."""
-    if _ACTION.search(text) or _CONTEXTUAL_ACTION.search(text) or _RETURN_TO_ACTION.search(text):
+    if (_ACTION.search(text) or _CONTEXTUAL_ACTION.search(text)
+            or _RETURN_TO_ACTION.search(text) or calendar_retiming_request(text)):
         return True
     tokens = re.findall(r"[a-z]+", str(text or "").lower())[:6]
     while tokens and tokens[0] in {"please", "ok", "okay", "also", "then", "yes", "yeah", "sure"}:
@@ -549,8 +579,10 @@ def _has_action_signal(text: str) -> bool:
 def targets_bound_editor_request(message: str) -> bool:
     """Recognize a write to the visible editor without stealing explicit targets."""
     text = _normalize_request_lead(message)
+    explicit_inline_review = (re.search(r'\b(?:open|active)\s+document\b', text, re.I)
+                              and re.search(r'\binline\s+suggestions?\b', text, re.I))
     if (not (_BOUND_EDITOR_WRITE.search(text) or _BOUND_EDITOR_IMPLICIT_REVISION.search(text)
-             or _BOUND_EDITOR_TRAILING_WRITE.search(text))
+             or _BOUND_EDITOR_TRAILING_WRITE.search(text) or explicit_inline_review)
             or _NEW_EDITOR_OBJECT.search(text)):
         return False
     return not _NON_EDITOR_WRITE_TARGET.search(text)
@@ -666,12 +698,143 @@ def inline_text_transformation(message: str) -> bool:
     ))
 
 
+def scheduled_automation_request(message: str) -> bool:
+    """Recognize a leading cadence that schedules the following operation."""
+    text = _normalize_request_lead(message)
+    # A leading cadence scopes the following operation to future runs. The
+    # operation's subject (email, news, documents) is not work to do now.
+    return bool(re.match(
+        r'^\s*' + _REQUEST_PREFIX
+        + r'(?:(?:every|each)\s+(?:day|week|month|morning|evening|weekday|weekend|'
+        r'monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?|daily|weekly|monthly)'
+        r'(?:\s+at\s+\d{1,2}(?::\d{2})?(?:\s*(?:am|pm))?(?:\s+(?:UTC|GMT))?)?'
+        r'\s*,?\s+(?:please\s+)?(?:research|summari[sz]e|review|check|audit|sync|'
+        r'notify|remind|monitor|back\s+up)\s+\S', text, re.I,
+    ))
+
+
+def creation_container_tool(message: str) -> str | None:
+    """The explicitly created container owns its content, not vice versa."""
+    text = _normalize_request_lead(message)
+    if scheduled_automation_request(text):
+        return 'manage_tasks'
+    match = re.match(
+        r'^\s*' + _REQUEST_PREFIX
+        + r'(?:add|create|write|save|make|set\s+up)\s+'
+        r'(?:(?:a|an|the|my|new|quick|short|freeform|temporary|scheduled|recurring|'
+        r'single|one|two|three|four|five|six|seven|eight|nine|ten|[1-9]\d*)\s+)*'
+        r'(?P<container>to[ -]?dos?|checklists?|tasks?|automations?|scheduled\s+jobs?)\b',
+        text, re.I,
+    )
+    if not match:
+        return None
+    container = match['container'].lower()
+    return 'manage_tasks' if re.match(r'(?:task|automation|scheduled)', container) else 'manage_notes'
+
+
+def standalone_code_request(message: str) -> bool:
+    """Recognize a new code artifact, leaving explicit filesystem work alone."""
+    text = _normalize_request_lead(message)
+    if re.search(r'\b(?:repo(?:sitory)?|workspace|directory|folder|filesystem|on disk|terminal)\b|(?:~?/|[A-Za-z]:\\\\)\S+', text, re.I):
+        return False
+    if re.search(r'\b(?:using|with|via)\s+(?:bash|shell|python)\b', text, re.I):
+        return False
+    if re.match(r'^' + _REQUEST_PREFIX + r'(?:write|create|make|build|generate|implement|code)\s+', text, re.I):
+        body = re.sub(r'^' + _REQUEST_PREFIX + r'(?:write|create|make|build|generate|implement|code)\s+', '', text, flags=re.I)
+        if re.match(r'(?:(?:a|an|the|new|short|brief|simple)\s+)*(?:email|reply|note|task|document|article|explanation|tutorial|example|snippet)\b', body, re.I):
+            return False
+        return bool(re.search(r'\b(?:code|script|program|game|app|website|webpage|html|svg)\b|\bin\s+(?:python|javascript|typescript|rust|go|java|c\+\+|ruby|php)\b', body, re.I))
+    # A format-only reply can complete an artifact request without shell access.
+    return bool(re.fullmatch(r'(?:just\s+)?(?:an?\s+)?(?:svg|html)(?:\s+(?:please|instead))?[.!]?', text, re.I))
+
+
+def image_edit_followup(message: str, history: Iterable, *, image_attachment=False) -> bool:
+    """A scene revision follows a successful image, not an unrelated old image."""
+    text = _normalize_request_lead(message)
+    if not re.match(r'^' + _REQUEST_PREFIX + r'(?:add|remove|change|replace|edit|adjust|make|turn|put)\b', text, re.I):
+        return False
+    if image_creation_tools(text) or creation_container_tool(text):
+        return False
+    if re.match(r'^' + _REQUEST_PREFIX + r'make\s+(?:a\s+)?(?:new|different|another)\s+(?:one|image|picture)\b', text, re.I):
+        return False
+    if re.search(r'\b(?:email|document|note|task|calendar|workspace|file|code)\b', text, re.I):
+        return False
+    if re.search(r'\bmake\s+sense\b', text, re.I):
+        return False
+    if image_attachment:
+        return True
+    for row in reversed(tuple(history)):
+        role = row.get('role') if isinstance(row, dict) else getattr(row, 'role', '')
+        if role != 'assistant':
+            continue
+        metadata = row.get('metadata', {}) if isinstance(row, dict) else getattr(row, 'metadata', {})
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except (ValueError, TypeError):
+                metadata = {}
+        for event in reversed((metadata or {}).get('tool_events') or []):
+            if event.get('tool') not in {'generate_image', 'edit_image'} or event.get('error') or event.get('exit_code') not in (None, 0):
+                continue
+            try:
+                result = json.loads(event.get('output') or '{}')
+            except (ValueError, TypeError):
+                result = {}
+            if event.get('image_id') or (isinstance(result, dict) and result.get('image_id')):
+                return True
+        return False
+    return False
+
+
+def image_creation_tools(message: str) -> frozenset[str] | None:
+    """Leading visual creation or a standalone visual brief owns generation."""
+    text = _normalize_request_lead(message)
+    match = re.match(
+        r'^\s*' + _REQUEST_PREFIX + r'(?:generates?|creates?|makes?|draws?|designs?)\s+'
+        r'(?:(?:me|us)\s+)?(?:(?:an?|the|new)[.,]?\s+)*'
+        r'(?:(?:youtube|video|blog|custom)\s+)?'
+        r'(?:images?|pictures?|illustrations?|thumbnails?|logos?|posters?)\b', text, re.I)
+    if not match:
+        # Chat users commonly give a visual brief without an imperative verb.
+        # Anchor at the start so search, description, and document requests
+        # mentioning an image retain their own operation.
+        match = re.match(
+            r'^\s*(?:please\s+)?(?:an?\s+)?'
+            r'(?:image|picture|illustration|portrait|drawing|photo)\s+of\s+\S+',
+            text, re.I,
+        )
+        if not match:
+            return None
+    tools = {'generate_image'}
+    # Explicit insertion is a second operation, not a content/topic keyword.
+    if re.search(r'\b(?:and|then)\s+(?:insert|add|put|place)\b[^.!?\n]{0,60}'
+                 r'\b(?:into|in|to)\s+(?:(?:this|the|my|open|current|active)\s+)*document\b',
+                 text[match.end():], re.I):
+        tools.add('update_document')
+    return frozenset(tools)
+
+
+def _routing_email_scope(message: str) -> str:
+    """A mailbox location qualifier is not an independent filesystem command."""
+    text = str(message or '')
+    if not re.search(r'\b(?:emails?|mail|inbox|mailbox)\b', text, re.I):
+        return text
+    return re.sub(
+        r'(?P<boundary>^|[.!?;]\s+)use\s+(?:the\s+)?'
+        r'[\w /\-\"\x27()]{1,64}\s+folder\s+(?:on|in)\s+'
+        r'[\w.+-]+@[\w-]+(?:\.[\w-]+)+[.!?]?\s*$',
+        lambda match: match['boundary'] + 'Use the email mailbox.',
+        text, flags=re.I,
+    )
+
+
 def selected_tools_for_request(message: str) -> frozenset[str] | None:
     """Narrow only a complete, explicit operation; None retains family scope.
 
     Full matching intentionally excludes compound instructions, sends, and
     mailbox-content requests. Account discovery needs only local metadata.
     """
+    message = _routing_email_scope(editor_request_instructions(message))
     raw_text = str(message or "").strip()
     if inline_text_transformation(raw_text):
         return frozenset()
@@ -708,6 +871,14 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
     }
     if explicitly_named:
         return frozenset(explicitly_named)
+    container_tool = creation_container_tool(text)
+    if container_tool:
+        return frozenset({container_tool})
+    image_tools = image_creation_tools(text)
+    if image_tools:
+        return image_tools
+    if standalone_code_request(text):
+        return frozenset({'create_document'})
     explicitly_named_web = {
         name
         for name in ("web_search", "web_fetch")
@@ -793,6 +964,7 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
         re.I,
     ):
         return frozenset({"manage_settings"})
+    web_lookup_fallback = False
     if (
         re.search(r"\b(?:look\s*up|search|find)\b", text, re.I)
         and re.search(
@@ -811,7 +983,7 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
         # Current lookups need discovery before navigation. Letting the model
         # begin on an arbitrary browser page can ground an answer in stale or
         # unrelated content without ever establishing a current source set.
-        return frozenset({"web_search"})
+        web_lookup_fallback = True
     if re.search(
         r"\b(?:reviews?|ratings?|評判|レビュー|testimonials?)\b",
         text,
@@ -826,7 +998,7 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
         # when the user does not say "search". Route them to web_search before
         # the model sees a schema; otherwise a no-tool contract invites raw
         # provider-specific markup (notably DeepSeek DSML) that cannot execute.
-        return frozenset({"web_search"})
+        web_lookup_fallback = True
     if re.search(
         r"\buse\s+(?:the\s+)?(?:odysseus\s+)?web_search\b",
         raw_text,
@@ -1687,7 +1859,7 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
         re.match(r"^\s*" + _REQUEST_PREFIX + r"(?:delete|remove|archive|rename)\b", text, re.I)
         and re.search(r"\b" + session_noun + r"\b", text, re.I)
     ):
-        return frozenset({"manage_session"})
+        return frozenset({"list_sessions", "manage_session"})
     if (
         re.match(r"^\s*" + _REQUEST_PREFIX + r"(?:read|open|show)\b", text, re.I)
         and re.search(r"\b(?:email|message)?\s*uid\s*[:#]?\s*[A-Za-z0-9._-]+", text, re.I)
@@ -1746,6 +1918,10 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
         and not re.search(r"[;\n]|\b(?:and\s+then|then\s+use|and\s+use)\b", text, re.I)
     ):
         return frozenset(named)
+    # Generic freshness/review language must not outrank a concrete operation
+    # above or turn a lookup in the user's own store into a public web search.
+    if web_lookup_fallback and not names_personal_store(text):
+        return frozenset({"web_search"})
     return None
 
 
@@ -3775,6 +3951,9 @@ def _clause_capabilities(text: str) -> set[str]:
     # only as the forbidden side effect (for example, "do not create a file").
     if _PURE_ACTION_PROHIBITION.fullmatch(text):
         return set()
+    container_tool = creation_container_tool(text)
+    if container_tool:
+        return {'tasks' if container_tool == 'manage_tasks' else 'notes'}
     if re.fullmatch(
         r"\s*(?:please\s+)?solve\s+(?:the|this)\s+task\s+efficiently\s+"
         r"before\s+(?:the\s+)?timeout(?:\s*\([^)]*\))?\s*",
@@ -4112,6 +4291,18 @@ def _immediate_prior_user_subject_tokens(history: Iterable) -> frozenset[str]:
     return frozenset()
 
 
+def result_reference_followup(message: str) -> bool:
+    """Recognize subject-less result references, not new subjects or actions."""
+    return bool(re.fullmatch(
+        r"\s*(?:(?:can|could|would)\s+(?:you|u)\s+)?(?:please\s+)?(?:"
+        r"(?:links?|sources?|urls?)(?:\s+(?:for|to))?(?:\s+more\s+(?:info(?:rmation)?|details?))?"
+        r"|(?:more\s+)?(?:info(?:rmation)?|details?)(?:\s+(?:on|about)\s+(?:that|this|it))?"
+        r"|(?:give|show|send)\s+(?:me\s+)?(?:the\s+)?(?:links?|sources?|urls?)(?:\s+(?:for|to)\s+(?:that|this|it|those|these))?"
+        r"|(?:open|read|expand)\s+(?:that|this|it|the\s+(?:first|second|third|last)\s+(?:one|result|link|source))"
+        r")(?:\s+(?:please|pls))?[.!?]*\s*", str(message or ''), re.I,
+    ))
+
+
 def immediately_established_family(message: str, history: Iterable) -> str | None:
     """Resolve an elliptical follow-up against the immediately proven domain.
 
@@ -4150,7 +4341,7 @@ def immediately_established_family(message: str, history: Iterable) -> str | Non
             break
     if not prior_user_text:
         return None
-    if _subject_tokens(message) & _subject_tokens(prior_user_text):
+    if result_reference_followup(message) or _subject_tokens(message) & _subject_tokens(prior_user_text):
         return next(iter(families))
     return None
 
@@ -4219,9 +4410,9 @@ def recently_read_gallery(history: Iterable, *, user_turns: int = 4) -> bool:
 
 # Personal-data product nouns. A broad-briefing phrase ("what's new",
 # "give me an update", "news") must not out-rank these: the user is asking
-# about their own store, not the open Web. Scoped to a first-person
-# possessive so open-web subjects that merely borrow a product noun
-# ("the latest events in Kyiv") keep their Web route.
+# about their own store, not the open Web. First-person possessives,
+# explicit mailbox nouns, and concrete email references identify the store;
+# open-web subjects such as "the latest events in Kyiv" keep their Web route.
 _PERSONAL_STORE_NOUNS = (
     r"(?:e?mails?|inbox|mailbox|calendar|calender|events?|appointments?|"
     r"meetings?|agenda|notes?|checklists?|tasks?|todos?|documents?|docs?|"
@@ -4229,7 +4420,9 @@ _PERSONAL_STORE_NOUNS = (
 )
 _PERSONAL_STORE_SUBJECT = re.compile(
     rf"\b(?:my|our)\b(?:\s+\w+){{0,2}}\s+{_PERSONAL_STORE_NOUNS}\b|"
-    rf"\b(?:inbox|mailbox)\b",
+    rf"\b(?:inbox|mailbox)\b|"
+    r"\b(?:the|this|that)\s+(?:(?:latest|last|newest|recent)\s+)?"
+    r"email\s+(?:from|about|regarding|sent|received)\b",
     re.I,
 )
 
@@ -4271,6 +4464,8 @@ def personal_store_families(message: str) -> frozenset[str]:
 
 def broad_web_briefing_request(message: str) -> bool:
     """Recognize requests that need broad, current, multi-source Web evidence."""
+    if creation_container_tool(message):
+        return False
     text = _normalize_request_lead(message)
     if re.search(
         r"\b(?:what(?:['’]?s|\s+is)\s+(?:new|happening)|anything\s+new|"
@@ -4302,13 +4497,70 @@ def broad_web_briefing_request(message: str) -> bool:
     )
 
 
-def requested_capabilities(message: str, history: Iterable = (), *, active_document=False, workspace=False) -> frozenset[str]:
+def corrected_browser_target(message: str, history: Iterable = ()) -> dict | None:
+    """Bind a URL-only correction to a recent explicit browsing objective."""
+    from urllib.parse import urlsplit
+
+    def target(text):
+        match = re.fullmatch(
+            r"(?:try\s+|use\s+)?((?:https?://)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?(?:/[^\s<>]*)?)",
+            text.strip(), re.I,
+        )
+        if not match:
+            return None
+        url = match[1]
+        url = url if '://' in url else 'https://' + url
+        return url if urlsplit(url).hostname else None
+
+    url = target(str(message or ''))
+    if not url:
+        return None
+    turns = 0
+    for row in reversed(tuple(history)):
+        if isinstance(row, dict) and row.get('_harness_control'):
+            continue
+        role = row.get('role') if isinstance(row, dict) else getattr(row, 'role', '')
+        if role != 'user':
+            continue
+        content = row.get('content', '') if isinstance(row, dict) else getattr(row, 'content', '')
+        if not isinstance(content, str):
+            return None
+        turns += 1
+        if turns > 4:
+            break
+        if target(content) or re.fullmatch(r'(?:please\s+)?browse (?:their|the) (?:website|site)', content.strip(), re.I):
+            continue
+        if re.match(r'^(?:please\s+)?(?:browse|visit|open)\s+', content.strip(), re.I) and re.search(
+            r'(?:https?://|\b[a-z0-9-]+\.[a-z]{2,}\b)', content, re.I,
+        ):
+            return {'url': url, 'objective': content}
+        # An intervening unrelated user request breaks the reference.
+        return None
+    return None
+
+
+def requested_capabilities(message: str, history: Iterable = (), *, active_document=False, workspace=False, image_attachment=False) -> frozenset[str]:
     """Classify once; inherit a prior capability only for a referential follow-up."""
+    message = _routing_email_scope(editor_request_instructions(message))
     raw_text = str(message or "").strip()
     text = _normalize_request_lead(message)
     if lead := _CONVERSATIONAL_ACTION_LEAD.fullmatch(text):
         text = lead["request"].strip()
     history = tuple(history)
+    if corrected_browser_target(raw_text, history):
+        return frozenset({'search_browser'})
+    container_tool = creation_container_tool(raw_text)
+    if container_tool:
+        # The payload describes future work, not a competing operation now.
+        # Keep family selection consistent with selected_tools_for_request.
+        return frozenset({'tasks' if container_tool == 'manage_tasks' else 'notes'})
+    if image_edit_followup(raw_text, history, image_attachment=image_attachment):
+        return frozenset({'image_editing'})
+    image_tools = image_creation_tools(raw_text)
+    if image_tools:
+        return frozenset({'image_generation'} | ({'documents'} if 'update_document' in image_tools else set()))
+    if standalone_code_request(raw_text):
+        return frozenset({'documents'})
     repeated_subject = _subject_tokens(text) & _immediate_prior_user_subject_tokens(history)
     scope_text = " ".join(
         token for token in re.findall(r"[\w'-]+", text)
@@ -4393,6 +4645,11 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
         broad_web_briefing_request(text)
         and not re.search(r"\b(?:research|investigate|deep[ -]?dive)\b", text, re.I)
     ):
+        selected = selected_tools_for_request(raw_text)
+        if selected:
+            # Keep family scope consistent with the concrete operation. A
+            # subject such as "latest design review" is not a web directive.
+            return frozenset().union(*(_families_for_tool(tool) for tool in selected))
         _personal = personal_store_families(text)
         if _personal:
             return _personal
@@ -4501,6 +4758,10 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
             return frozenset({"documents", "ui"})
         return frozenset({"documents"})
     recent_family = recently_executed_families(history, maximum=1)
+    if result_reference_followup(text):
+        reference_family = immediately_established_family(text, history)
+        if reference_family:
+            return frozenset({reference_family})
     if (
         re.search(
             r"\b(?:where(?:['’]?s|\s+is)|what\s+(?:country|place|city|region)\s+has)\s+"
@@ -5863,7 +6124,7 @@ def resolve_full_inventory_contract(*, schemas: Iterable[dict], policy: ToolPoli
     """Experimental trained inventory: permissions filter offers; model chooses actions."""
     families = frozenset({"calendar", "notes", "tasks", "skills", "memory", "documents",
                           "email", "search_browser", "shell_files", "cookbook_admin",
-                          "image_editing"})
+                          "image_editing", "image_generation"})
     # ``ui_control`` is the executable bridge for explicit client-interface
     # requests (for example, opening the gallery).  It is not one of the ten
     # persisted-data families, but omitting it here makes the full-inventory
@@ -5892,6 +6153,7 @@ def resolve_turn_contract(*, capabilities: Iterable[str], schemas: Iterable[dict
                           required_tools: Iterable[str] = (),
                           required_capabilities: Iterable[str] | None = None,
                           selected_tools: Iterable[str] | None = None,
+                          always_available_tools: Iterable[str] = (),
                           warm_tools: Iterable[str] = (),
                           required_read_operation: RequiredReadOperation | None = None,
                           message: str | None = None, history: Iterable = ()) -> TurnContract:
@@ -5904,6 +6166,8 @@ def resolve_turn_contract(*, capabilities: Iterable[str], schemas: Iterable[dict
     selected_tools optionally narrows the family inventory. warm_tools restores
     exact tools successfully used earlier in this conversation, but never grants
     permission because the result is still intersected with executable.
+    always_available_tools keeps tools for a visible, owner-checked surface
+    available through exact request narrowing, subject to the same policy.
     New callers may supply an exact required_read_operation, or message/history
     to resolve one. Omitting both preserves the existing family-only API.
     """
@@ -5946,6 +6210,12 @@ def resolve_turn_contract(*, capabilities: Iterable[str], schemas: Iterable[dict
         # Browser is not core. It is a bounded recovery capability for a web
         # turn when static search/fetch cannot read the named site.
         selected.add("private_browser")
+    # Email headers discover records; they are not a complete reading surface.
+    # Keep the read-only continuation available after exact search narrowing.
+    # The executable intersection below still enforces disabled tools/accounts.
+    if 'search_emails' in selected:
+        selected.update({'read_email', 'download_attachment', 'list_email_accounts'})
+    selected.update(canonical_tool(n) for n in always_available_tools)
     selected.update(canonical_tool(n) for n in warm_tools if str(n or "").strip())
     # Controls are neutral; enabling Web is permission, never a requested family.
     if selected:

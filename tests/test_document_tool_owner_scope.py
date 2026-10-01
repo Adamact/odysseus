@@ -201,6 +201,8 @@ def test_edit_document_rejects_noop_find_replace(monkeypatch):
         set_active_document(None)
 
     assert "No edits applied" in result["error"]
+    assert "identical" in result["error"]
+    assert "none of the FIND blocks matched" not in result["error"]
     assert doc.version_count == 1
 
 

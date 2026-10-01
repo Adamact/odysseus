@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers.document_source import document_source
+from tests.helpers.js_modules import email_library_paths
 import src.tool_capabilities as tool_capabilities
 from src.tool_capabilities import (
     KNOWN_CAPABILITY_TOOLS,
@@ -19,7 +21,6 @@ from src.tool_capabilities import (
     messages_contain_external_untrusted_context,
     tool_result_should_arm_gate,
 )
-from tests.helpers.document_source import document_source
 
 
 ToolBlock = namedtuple("ToolBlock", ["tool_type", "content"])
@@ -1405,14 +1406,16 @@ def test_frontend_tool_approval_uses_opaque_id_and_fixed_decisions():
             "static/js/chatRenderer.js",
             "static/js/chatStream.js",
             "static/js/emailInbox.js",
-            "static/js/emailLibrary.js",
             "static/js/settings.js",
             "static/js/slashCommands.js",
         )
     ]
-    # The document editor is a module set, not one file: a stale version string
-    # must not be able to hide in a module extracted out of document.js.
+    # Both the document editor and email library are module sets.
     approval_module_sources.append(document_source())
+    approval_module_sources.extend(
+        p.read_text()
+        for p in email_library_paths(include_wrapper=True)
+    )
     assert all(
         "20260722emailfastindex1" not in source
         for source in approval_module_sources

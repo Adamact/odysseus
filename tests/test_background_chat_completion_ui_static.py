@@ -25,15 +25,16 @@ def test_background_completion_survives_rerender_and_hidden_selected_chat():
 
 
 def test_sidebar_has_clear_working_and_done_states():
-    assert "session-run-state" in SESSIONS
-    assert "Agent finished while you were away" in SESSIONS
-    assert ".session-run-state.is-working" in CSS
-    assert ".session-run-state.is-done" in CSS
+    # The provider star carries the run state: it spins while working and
+    # becomes a check mark when done. The separate text pill is retired, and
+    # any pill left from an older render is removed.
+    assert "star.classList.toggle('processing', isRunning)" in SESSIONS
+    assert "star.classList.toggle('notify', isCompleted)" in SESSIONS
+    assert "listItem.querySelector('.session-run-state')" in SESSIONS
+    assert "state.remove();" in SESSIONS
     assert ".session-star.notify::after" in CSS
-    assert "content: '\\2713'" in CSS
+    assert "polyline points='20 6 9 17 4 12'" in CSS
     assert ".session-star.notify {\n      animation: none;" in CSS
-    assert "spinnerModule.createWhirlpool(12)" in SESSIONS
-    assert "session-run-whirlpool" in CSS
     assert "state.textContent = 'Working'" not in SESSIONS
 
 

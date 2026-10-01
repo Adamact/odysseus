@@ -612,13 +612,16 @@ class SessionManager:
         finally:
             db.close()
 
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(self, session_id: str, *, delete_images: bool = False) -> bool:
         """Permanently delete a session and all its messages."""
         db = SessionLocal()
         try:
             try:
-                from src.session_image_cleanup import cleanup_session_images
-                cleanup_session_images(session_id, db=db)
+                from src.session_image_cleanup import cleanup_session_images, preserve_session_images
+                if delete_images:
+                    cleanup_session_images(session_id, db=db)
+                else:
+                    preserve_session_images(session_id, db=db)
             except Exception as e:
                 logger.warning(f"Image cleanup failed while deleting session {session_id}: {e}")
 

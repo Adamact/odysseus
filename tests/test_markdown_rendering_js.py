@@ -18,6 +18,14 @@ def node_available():
         pytest.skip("node binary not on PATH")
 
 
+def test_blockquoted_html_codefence_does_not_leak_placeholders(node_available):
+    result = subprocess.run(
+        ["node", "tests/markdown_codefence_placeholder_regression.mjs"],
+        cwd=_REPO, capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+
+
 def _run_markdown_case(markdown: str, render_expr: str = "mod.mdToHtml(input)", with_katex: bool = False):
     script = textwrap.dedent(
         r"""
@@ -261,6 +269,20 @@ def test_expanded_skill_payload_uses_normal_skill_list_markup(node_available):
     assert '<h2>Drafts</h2>' in html
     assert 'href="#skill-last-published" class="chat-link"' in html
     assert 'href="#skill-first-draft" class="chat-link"' in html
+
+
+def test_saved_ajax_skill_inventory_plain_names_open_skills(node_available):
+    html = _run_markdown_case(
+        'Skills (44):\n\n**Published**\n'
+        '- action-evidence-synthesis (communication)\n'
+        '- artifact-completion (agent)\n\n**Drafts**\n'
+        '- add-search-delete-and-verify-temporary-memory-by-marker\n'
+        '- ...and 24 more skills.'
+    )
+    assert 'href="#skill-action-evidence-synthesis" class="chat-link"' in html
+    assert 'href="#skill-artifact-completion" class="chat-link"' in html
+    assert 'href="#skill-add-search-delete-and-verify-temporary-memory-by-marker" class="chat-link"' in html
+    assert 'href="#skill-...and"' not in html
 
 
 def test_session_titles_with_escaped_brackets_remain_clickable(node_available):

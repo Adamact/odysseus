@@ -4,6 +4,7 @@ import base64
 import json
 from pathlib import Path
 
+from core import platform_compat
 import src.agent_tools.web_tools as web_tools
 from src.agent_tools.web_tools import (
     PrivateBrowserTool,
@@ -11,6 +12,45 @@ from src.agent_tools.web_tools import (
     shutdown_private_browser_sessions,
 )
 from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
+
+
+@pytest.mark.parametrize('snapshot,empty', [
+    ('- generic\n  - generic\n    - generic', True),
+    ('(empty page)', True),
+    ('- heading "No results found"', False),
+    ('- button "Accept cookies" [ref=e1]', False),
+    ('- generic "GameStop"', False),
+])
+def test_browser_distinguishes_loading_scaffolding_from_content(snapshot, empty):
+    observation = json.dumps([{'success': True, 'result': {'snapshot': snapshot}}])
+    assert PrivateBrowserTool._empty_dom_observation(observation) is empty
+
+
+def test_open_snapshot_batch_waits_for_loading_scaffolding(monkeypatch):
+    monkeypatch.setattr(web_tools.shutil, 'which', lambda name: '/usr/bin/agent-browser')
+    monkeypatch.setattr(PrivateBrowserTool, '_AUTO_SCREENSHOT_ACTIONS', set())
+    batches = []
+    class Proc:
+        returncode = 0
+        def __init__(self, kwargs):
+            self.kwargs = kwargs
+        async def communicate(self, stdin=None):
+            batches.append(json.loads(stdin))
+            snapshot = '- generic\n  - generic' if len(batches) == 1 else '- heading "Loaded results"'
+            output = json.dumps([{'success': True, 'result': {'snapshot': snapshot}}]).encode()
+            if self.kwargs['stdout'] != asyncio.subprocess.PIPE:
+                self.kwargs['stdout'].write(output)
+                return b'', b''
+            return output, b''
+    async def spawn(*command, **kwargs):
+        return Proc(kwargs)
+    monkeypatch.setattr(asyncio, 'create_subprocess_exec', spawn)
+    result = asyncio.run(PrivateBrowserTool().execute(json.dumps({
+        'action': 'batch', 'commands': [['open', 'https://example.com'], ['snapshot']],
+    }), {'session_id': 'loading-scaffolding'}))
+    assert 'Loaded results' in result['output']
+    assert len(batches) == 2
+    assert batches[1] == [['wait', '1000'], ['snapshot']]
 
 
 def test_private_browser_plain_url_defaults_to_read() -> None:
@@ -593,8 +633,8 @@ def test_click_observes_empty_destination_with_bounded_read_only_retry(monkeypat
     result = asyncio.run(PrivateBrowserTool().execute(
         json.dumps({'action': 'click', 'target': '@e2'}), {'session_id': 'empty-destination'}))
     assert result['exit_code'] == 0, result
-    if mode == 'recent_model_choice' and outcome == 'populated':
-        assert 'heading "Destination" [ref=e7]' in result['output']
+    if outcome == 'populated':
+        assert 'Destination' in result['output'] and '[ref=e7]' in result['output']
         assert '(empty page)' not in result['output']
     else:
         assert '(empty page)' in result['output']
@@ -602,9 +642,8 @@ def test_click_observes_empty_destination_with_bounded_read_only_retry(monkeypat
     if outcome in {'timeout', 'invalid'}:
         assert 'fresh page snapshot could not be obtained' in result['output']
     assert bool(killed) is (outcome == 'timeout')
-    assert len(batches) == (2 if mode == 'recent_model_choice' else 1)
-    if mode == 'recent_model_choice':
-        assert 0 < deadlines[1] < deadlines[0] <= 20
+    assert len(batches) == 2
+    assert 0 < deadlines[1] < deadlines[0] <= 20
     assert sum('click' in command for command in commands) == 1
     assert all(command[0] in {'wait', 'snapshot'} for batch in batches for command in batch)
 
@@ -775,7 +814,7 @@ def test_fill_verification_is_truthful_without_dumping_input_values(monkeypatch,
         assert 'could not be verified' in result['error']
 
 
-@pytest.mark.parametrize('mode,observed', [('recent_model_choice', True), ('baseline', False)])
+@pytest.mark.parametrize('mode,observed', [('recent_model_choice', True), ('baseline', True)])
 @pytest.mark.parametrize('action', ['click', 'fill'])
 def test_failed_interaction_returns_current_refs_without_retrying_action(monkeypatch, mode, observed, action):
     from types import SimpleNamespace
@@ -1809,7 +1848,7 @@ def test_terminate_owned_chrome_skips_the_sweep_without_procfs(
     """macOS and Windows have no /proc; shutdown must degrade, not raise."""
 
     missing = tmp_path / "no-procfs"
-    monkeypatch.setattr(web_tools, "_PROC_ROOT", missing)
+    monkeypatch.setattr(platform_compat, "PROC_ROOT", missing)
 
     def _unexpected_iterdir(*args, **kwargs):
         raise AssertionError("the pid sweep must not run without procfs")
@@ -1838,10 +1877,112 @@ def test_terminate_owned_chrome_kills_only_this_runtimes_profile(
     _write_pid("202", "chrome --user-data-dir=/Users/someone/Library/Chrome")
     (proc / "self").mkdir()
 
-    monkeypatch.setattr(web_tools, "_PROC_ROOT", proc)
+    monkeypatch.setattr(platform_compat, "PROC_ROOT", proc)
     killed: list[int] = []
     monkeypatch.setattr(web_tools.os, "kill", lambda pid, sig: killed.append(pid))
 
     PrivateBrowserTool._terminate_owned_chrome({"TMPDIR": str(tmpdir)})
 
     assert killed == [101]
+
+
+def _pid_file_for(tmp_path, monkeypatch, namespace, session, pid):
+    """Write a pid file where the daemon helpers will look for it."""
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setenv("ODYSSEUS_BROWSER_NAMESPACE", namespace)
+    candidates = web_tools._browser_pid_file_candidates(tmp_path, namespace, session)
+    target = candidates[0]
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(str(pid))
+    return target
+
+
+def test_live_daemon_pid_file_survives_a_host_without_procfs(
+    monkeypatch, tmp_path
+) -> None:
+    """Off Linux a missing cmdline is not evidence the daemon exited."""
+
+    monkeypatch.setattr(platform_compat, "PROC_ROOT", tmp_path / "no-procfs")
+    monkeypatch.setattr(web_tools, "_process_is_alive", lambda pid: True)
+    killed: list[int] = []
+    monkeypatch.setattr(web_tools.os, "kill", lambda pid, sig: killed.append(pid))
+    pid_file = _pid_file_for(tmp_path, monkeypatch, "clawmm-test", "session-1", 4321)
+
+    PrivateBrowserTool._terminate_owned_daemon({}, "session-1")
+
+    assert pid_file.exists(), "a live daemon's pid file must not be removed"
+    assert killed == [], "an unverified process must not be killed"
+
+
+def test_dead_daemon_pid_file_is_removed_without_procfs(monkeypatch, tmp_path) -> None:
+    """A pid that no longer exists is the one case that justifies forgetting it."""
+
+    monkeypatch.setattr(platform_compat, "PROC_ROOT", tmp_path / "no-procfs")
+    monkeypatch.setattr(web_tools, "_process_is_alive", lambda pid: False)
+    pid_file = _pid_file_for(tmp_path, monkeypatch, "clawmm-test", "session-2", 4322)
+
+    PrivateBrowserTool._terminate_owned_daemon({}, "session-2")
+
+    assert not pid_file.exists()
+
+
+def test_owned_daemon_is_detected_from_a_live_pid_without_procfs(
+    monkeypatch, tmp_path
+) -> None:
+    """Answering "no daemon" here is what lets close bootstrap a fresh one."""
+
+    monkeypatch.setattr(platform_compat, "PROC_ROOT", tmp_path / "no-procfs")
+    monkeypatch.setattr(web_tools, "_process_is_alive", lambda pid: True)
+    _pid_file_for(tmp_path, monkeypatch, "clawmm-test", "session-3", 4323)
+
+    assert PrivateBrowserTool._owned_daemon_exists({}, "session-3") is True
+
+
+def test_owned_daemon_absent_when_the_pid_is_gone(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(platform_compat, "PROC_ROOT", tmp_path / "no-procfs")
+    monkeypatch.setattr(web_tools, "_process_is_alive", lambda pid: False)
+    _pid_file_for(tmp_path, monkeypatch, "clawmm-test", "session-4", 4324)
+
+    assert PrivateBrowserTool._owned_daemon_exists({}, "session-4") is False
+
+
+def test_procfs_host_still_matches_on_the_command_line(monkeypatch, tmp_path) -> None:
+    """With procfs present the identity check stays exact, not pid-liveness."""
+
+    proc = tmp_path / "proc"
+    (proc / "5555").mkdir(parents=True)
+    (proc / "5555" / "cmdline").write_bytes(b"node\0agent-browser\0--serve")
+    (proc / "6666").mkdir(parents=True)
+    (proc / "6666" / "cmdline").write_bytes(b"some\0other\0process")
+    monkeypatch.setattr(platform_compat, "PROC_ROOT", proc)
+    monkeypatch.setattr(web_tools, "_process_is_alive", lambda pid: True)
+
+    _pid_file_for(tmp_path, monkeypatch, "clawmm-test", "session-5", 5555)
+    assert PrivateBrowserTool._owned_daemon_exists({}, "session-5") is True
+
+    _pid_file_for(tmp_path, monkeypatch, "clawmm-test", "session-6", 6666)
+    assert PrivateBrowserTool._owned_daemon_exists({}, "session-6") is False
+
+
+def test_liveness_probe_goes_through_the_platform_safe_helper(monkeypatch) -> None:
+    """The no-procfs path must not reach a bare ``os.kill(pid, 0)``.
+
+    CPython's Windows ``os.kill`` calls ``TerminateProcess(handle, sig)`` for
+    any signal other than CTRL_C / CTRL_BREAK, so probing liveness with signal
+    0 terminates the process it asks about — and the only hosts that reach this
+    probe are the ones with no procfs, Windows among them.
+    ``core.platform_compat.pid_alive`` is the tree's platform-safe answer.
+    """
+
+    asked: list[int] = []
+    monkeypatch.setattr(
+        platform_compat, "pid_alive", lambda pid: asked.append(pid) or True
+    )
+    monkeypatch.setattr(
+        web_tools.os,
+        "kill",
+        lambda *a, **kw: pytest.fail("os.kill must not be used to probe liveness"),
+    )
+
+    assert web_tools._process_is_alive(4242) is True
+    assert asked == [4242]

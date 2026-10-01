@@ -199,7 +199,9 @@ export async function refreshModels(force = false, opts = {}) {
         // ages out. (Bug repro: serve a model, picker is empty for ~30s
         // even though the endpoint is in the DB and online.)
         const _seq = ++_fetchSeq;
-        const _url = `${API_BASE}/api/models` + (force ? '?refresh=true' : '?background=false');
+        const _url = `${API_BASE}/api/models` + (force
+          ? `?refresh=true${opts.waitForRefresh ? '&wait_refresh=true' : ''}`
+          : '?background=false');
         _fetchInflight = fetch(_url, { credentials: 'same-origin' })
           .then(async (res) => {
             if (!res.ok) throw new Error(`HTTP ${res.status}`);

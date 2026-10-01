@@ -592,33 +592,6 @@ body.notes-drag-mode .note-card {
 .note-corner-menu-dropdown .ncm-item:hover {
   background: color-mix(in srgb, var(--fg) 8%, transparent);
 }
-.note-checkbox-agent {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 14px;
-  padding: 0;
-  margin: 0 1px;
-  border: 0;
-  background: transparent;
-  color: var(--accent, var(--red));
-  box-shadow: none;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.12s, color 0.12s;
-}
-.note-checkbox-agent:hover {
-  background: transparent;
-  opacity: 1 !important;
-}
-.note-checkbox-agent.is-agent-stream-complete {
-  color: #50fa7b;
-  opacity: 0.9;
-}
-.note-checkbox-agent svg {
-  display: block;
-}
 
 .note-card {
   /* Same tint that .doclib-card uses so a default (uncolored) note

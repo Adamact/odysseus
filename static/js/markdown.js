@@ -230,6 +230,28 @@ function linkifyRawCookbookLists(src) {
   }).join('\n');
 }
 
+// Older Ajax skill inventories were saved with plain slugs. Make those
+// existing chat rows open the same Skills panel as current linked results.
+function linkifyPlainSkillLists(src) {
+  let inSkills = false;
+  return String(src || '').split('\n').map(line => {
+    if (/^Skills \(\d+\):\s*$|^Skill matches \(\d+\):\s*$/.test(line)) {
+      inSkills = true;
+      return line;
+    }
+    if (!inSkills) return line;
+    if (/^\*\*(?:Published|Drafts)\*\*\s*$/.test(line) || !line.trim()) return line;
+    if (/^#{1,6}\s|^[A-Za-z][^\n]*:\s*$/.test(line)) {
+      inSkills = false;
+      return line;
+    }
+    if (/\]\(#skill-/.test(line)) return line;
+    const row = line.match(/^(\s*-\s+)(?:\*\*)?([A-Za-z0-9][A-Za-z0-9._-]*)(?:\*\*)?(?=\s|$)(.*)$/);
+    if (!row || row[2] === '...and') return line;
+    return `${row[1]}[${row[2]}](#skill-${encodeURIComponent(row[2])})${row[3]}`;
+  }).join('\n');
+}
+
 function flattenLegacyNoteMoreDetails(src) {
   return String(src || '').replace(
     /<details>\s*<summary>\s*(\.\.\.and\s+\d+\s+more\s+notes?)\s*<\/summary>[\s\S]*?<\/details>/gi,
@@ -945,6 +967,13 @@ export function mdToHtml(src, opts) {
   s = linkifyRawEmailReadBlocks(s);
   s = linkifyPlainEmailUidLines(s);
   s = linkifyRawCookbookLists(s);
+  s = linkifyPlainSkillLists(s);
+  // Older saved memory summaries used a plain-text instruction. Keep those
+  // actionable too, using the existing Memory panel anchor handler.
+  s = s.replace(
+    /(^|\n)(\.\.\.and \d+ more saved memories\. )Open Memory to browse all\./g,
+    '$1$2[Open Memory to browse all](#memory).',
+  );
 
   // Convert markdown images before links so ![alt](url) does not become
   // literal "!" plus a normal link.

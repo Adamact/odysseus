@@ -2,6 +2,7 @@ from pathlib import Path
 import re
 
 from tests.helpers.stylesheets import app_css
+from tests.helpers.js_modules import email_library_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,7 +33,7 @@ def test_calendar_chat_event_links_fetch_uid_and_show_title_time():
     app_src = (ROOT / "static/app.js").read_text()
     renderer_src = (ROOT / "static/js/chatRenderer.js").read_text()
     inbox_src = (ROOT / "static/js/emailInbox.js").read_text()
-    library_src = (ROOT / "static/js/emailLibrary.js").read_text()
+    library_src = email_library_source()
 
     assert '@router.get("/events/{uid}")' in routes_src
     assert "async function _fetchEventByUid" in calendar_src

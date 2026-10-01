@@ -1219,14 +1219,6 @@
           </button>
         </div>
         <div class="chat-input-right">
-          <!-- Reasoning effort dropdown for models supporting reasoning levels -->
-          <div class="reasoning-effort-wrap" id="reasoning-effort-wrap" style="display:none;">
-            <button type="button" class="reasoning-effort-btn" id="reasoning-effort-btn" title="Reasoning effort" aria-haspopup="listbox" aria-expanded="false">
-              <span class="reasoning-effort-prefix">Effort: </span><span class="reasoning-effort-current" id="reasoning-effort-current">Default</span>
-              <svg class="reasoning-effort-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-            </button>
-            <div class="reasoning-effort-menu hidden" id="reasoning-effort-menu" role="listbox"></div>
-          </div>
           <!-- Agent / Chat mode toggle -->
           <div class="mode-toggle">
             <button type="button" class="mode-toggle-btn active" id="mode-agent-btn" aria-pressed="true">Agent</button>
@@ -1243,6 +1235,16 @@
       <input type="checkbox" id="plan-toggle" style="display:none;">
     </div>
     <form id="chat-form" autocomplete="off" action="javascript:void(0);" style="display:none;"></form>
+    <!-- Retain the bound control while the Chat Context popup is closed. -->
+    <div id="reasoning-effort-home" hidden>
+      <div class="reasoning-effort-wrap" id="reasoning-effort-wrap" style="display:none;">
+        <button type="button" class="reasoning-effort-btn" id="reasoning-effort-btn" title="Reasoning effort" aria-haspopup="listbox" aria-expanded="false">
+          <span class="reasoning-effort-prefix">Reasoning effort</span><span class="reasoning-effort-current" id="reasoning-effort-current">Default</span>
+          <svg class="reasoning-effort-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="reasoning-effort-menu hidden" id="reasoning-effort-menu" role="listbox"></div>
+      </div>
+    </div>
 
     <!-- Character (custom preset) modal -->
     <div id="custom-preset-modal" class="modal hidden">
@@ -1548,6 +1550,15 @@
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v-.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15z"/></svg>
             <span>System</span>
           </button>
+          </div>
+
+          <!-- Build provenance, pinned below the scrolling nav so it stays at
+               the bottom-left of the panel: the version this build registers
+               and the commit the running process actually loaded. Populated
+               from /api/version; stays hidden until that answers. -->
+          <div class="settings-sidebar-build admin-only" id="settings-sidebar-build" hidden>
+            <span class="settings-sidebar-build-version" id="settings-sidebar-build-version"></span>
+            <span class="settings-sidebar-build-commit" id="settings-sidebar-build-commit"></span>
           </div>
         </div>
         <div class="settings-panels">

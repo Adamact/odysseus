@@ -12,7 +12,7 @@
  *   Ctrl+S         save (Shift = save as / export to gallery)
  *   Ctrl+Shift+T   open resize popup
  *   Ctrl+Alt+T     start free transform
- *   Ctrl+Alt+I     invert wand / lasso selection
+ *   Ctrl+Alt+Shift+I invert selection (Ctrl+Alt+I also works)
  *   Ctrl+Alt+J     new empty layer
  *   Ctrl/Cmd+J     copy selected pixels to a layer, or duplicate the layer
  *   Ctrl+Alt+G     create/release clipping mask
@@ -74,7 +74,7 @@ export function wireKeyboardShortcuts(deps) {
     setTemporaryPan,
     nudgeActiveLayer, endLayerNudge,
     toggleQuickMask, nudgeSelection,
-    deselectSelection,
+    deselectSelection, fillSelection,
   } = deps;
 
   const isTypingTarget = (target) => target && (
@@ -94,6 +94,12 @@ export function wireKeyboardShortcuts(deps) {
     if (e.target?.closest?.('#styled-confirm-overlay')) return;
     // Fields and text layers own native editing, including undo and clipboard.
     if (isTypingTarget(e.target)) return;
+    if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.key === 'Backspace') {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!e.repeat) fillSelection?.();
+      return;
+    }
     if (e.code === 'Space' && !isTypingTarget(e.target)) {
       e.preventDefault();
       setTemporaryPan?.(true);
@@ -170,7 +176,7 @@ export function wireKeyboardShortcuts(deps) {
       }
       if (e.shiftKey && e.key === 'T') { e.preventDefault(); e.stopPropagation(); resizeCustomPrompt(); return; }
       if (e.altKey && e.code === 'KeyT') { e.preventDefault(); e.stopPropagation(); startTransform(); return; }
-      // Ctrl+Alt+I — invert current selection. Uses e.code so
+      // Ctrl+Alt+Shift+I (or the previous Ctrl+Alt+I) inverts the selection. Uses e.code so
       // Alt-modified key values (e.g. `ˆ` on Mac with Option+I)
       // don't break the match.
       if (e.altKey && e.code === 'KeyI') {

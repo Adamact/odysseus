@@ -803,6 +803,7 @@ export function styledPrompt(message, {
   confirmText = 'Save',
   cancelText = 'Cancel',
   maxLength = 80,
+  inputType = 'text',
 } = {}) {
   return new Promise(resolve => {
     let overlay = document.getElementById('styled-prompt-overlay');
@@ -835,6 +836,8 @@ export function styledPrompt(message, {
     msgEl.textContent = message || '';
     msgEl.style.display = message ? '' : 'none';
     input.value = defaultValue || '';
+    input.type = inputType === 'password' ? 'password' : 'text';
+    input.autocomplete = inputType === 'password' ? 'new-password' : 'off';
     input.placeholder = placeholder || '';
     input.maxLength = maxLength;
     okBtn.textContent = confirmText;
@@ -846,6 +849,7 @@ export function styledPrompt(message, {
     overlay.style.display = '';
 
     function cleanup(result) {
+      input.value = '';
       overlay.classList.add('hidden');
       overlay.style.display = 'none';
       okBtn.removeEventListener('click', onOk);
@@ -856,7 +860,7 @@ export function styledPrompt(message, {
       try { _prevFocus && _prevFocus.focus && _prevFocus.focus(); } catch {}
       resolve(result);
     }
-    function onOk() { cleanup((input.value || '').trim()); }
+    function onOk() { cleanup(inputType === 'password' ? input.value : (input.value || '').trim()); }
     function onCancel() { cleanup(null); }
     function onBackdrop(e) { if (e.target === overlay) cleanup(null); }
     function onKey(e) {

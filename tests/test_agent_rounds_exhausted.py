@@ -9,11 +9,13 @@ return, or moves the done-break, could silently flip this. See PR #1999 / #1997.
 import asyncio
 import json
 from pathlib import Path
+import pytest
 
 import src.agent_loop as al
 from src.tool_capabilities import ToolGateDecision
 from src.tool_capabilities import capabilities_for_action
 from src.tool_approvals import tool_approval_store
+from tests.runtime_evidence_helpers import authoritative_executor
 
 
 def _collect(gen):
@@ -39,6 +41,16 @@ def _patch_common(monkeypatch):
     monkeypatch.setattr(al, "get_setting", lambda key, default=None: default, raising=False)
     monkeypatch.setattr(al, "get_mcp_manager", lambda: None, raising=False)
     monkeypatch.setattr(al, "estimate_tokens", lambda *a, **k: 10, raising=False)
+    # The round providers are synthetic. Keep real compaction logic while
+    # supplying its context window instead of probing the dummy endpoint.
+    import src.context_compactor as context_compactor
+    monkeypatch.setattr(context_compactor, "get_context_length", lambda *a, **k: 128_000)
+    # These fixtures supply the round provider below. Any direct grace-synthesis
+    # request has no configured response, rather than contacting the fake URL.
+    async def _unconfigured_direct_provider(*args, **kwargs):
+        raise RuntimeError("No direct-provider completion configured in this fixture")
+        yield  # Keep the direct-provider async-generator interface.
+    monkeypatch.setattr(al, "stream_llm", _unconfigured_direct_provider)
     # These tests exercise round convergence. Keep the prompt-integrity gate
     # out of the fixture so a synthetic tool result does not turn the next
     # round into an approval test instead.
@@ -997,6 +1009,7 @@ def test_empty_workspace_round_gets_one_bounded_action_nudge(monkeypatch):
             yield 'data: {"delta":"Workspace checked."}\n\n'
         yield "data: [DONE]\n\n"
 
+    @authoritative_executor
     async def _fake_exec(block, *args, **kwargs):
         return (block.tool_type, {"output": "/workspace", "exit_code": 0})
 
@@ -1011,7 +1024,15 @@ def test_empty_workspace_round_gets_one_bounded_action_nudge(monkeypatch):
     )))
 
     assert len(seen) == 3
-    assert any(e.get("delta") == "Workspace checked." for e in events)
+    decision = next(e["data"] for e in events if e.get("type") == "completion_decision")
+    assert not decision["can_complete"]
+    assert "fixture.py" in decision["missing_artifacts"]
+    assert any(
+        e.get("type") == "final_response"
+        and "Workspace checked." in e.get("content", "")
+        and "incomplete" in e.get("content", "")
+        for e in events
+    )
 
 
 def test_empty_workspace_nudge_names_only_tools_in_active_schema(monkeypatch):
@@ -1205,7 +1226,8 @@ def test_eval_workspace_prompt_uses_host_tool_then_answers(monkeypatch):
     assert any("active workspace is /home/tester/project" in e.get("delta", "") for e in events)
 
 
-def test_tui_coding_turn_recovers_inspects_patches_and_verifies(monkeypatch):
+@pytest.mark.parametrize('explicit_verifier', [False, True])
+def test_tui_coding_turn_recovers_inspects_patches_and_verifies(monkeypatch, explicit_verifier):
     """A stale compact router must still complete a real coding workflow."""
     _patch_common(monkeypatch)
     calls = []
@@ -1227,6 +1249,7 @@ def test_tui_coding_turn_recovers_inspects_patches_and_verifies(monkeypatch):
         },
     }
 
+    @authoritative_executor
     async def _fake_exec(block, *args, **kwargs):
         executed.append((block.tool_type, block.content))
         if block.tool_type == "host_shell":
@@ -1300,7 +1323,8 @@ def test_tui_coding_turn_recovers_inspects_patches_and_verifies(monkeypatch):
         "deepseek-v4-flash",
         [{
             "role": "user",
-            "content": "Fix the parser in this local TUI project and run the tests.",
+            "content": "Fix the parser in this local TUI project and run "
+                       + ("python -m pytest -q." if explicit_verifier else "the tests."),
         }],
         max_rounds=6,
         relevant_tools={"get_workspace", "ls", "host_shell", "apply_patch", "edit_file", "todowrite"},
@@ -1316,14 +1340,20 @@ def test_tui_coding_turn_recovers_inspects_patches_and_verifies(monkeypatch):
     assert not any(tool in {"get_workspace", "ls"} for tool, _ in executed)
     # Invalid backend/container tool names are replaced with the authoritative
     # host-shell recovery in the same round, so no extra clarification round
-    # should be required before the patch and verification turns.
-    assert len(calls) == 3
+    # should be required before the patch and verification turns. An opaque
+    # conditional fallback still needs synthesis and cannot attest tests.
+    assert len(calls) == (3 if explicit_verifier else 4)
+    decision = next(event['data'] for event in events if event.get('type') == 'completion_decision')
+    assert decision['can_complete'] is explicit_verifier
+    assert (decision['status'] == 'verified') is explicit_verifier
     assert any(
         event.get("type") == "final_response"
         and "Verification:" in event.get("content", "")
         and "passed" in event.get("content", "")
         for event in events
-    )
+    ) is explicit_verifier
+    terminal = next(event['data'] for event in events if event.get('type') == 'metrics')
+    assert terminal['completion_gate']['additional_provider_calls'] == 0
     assert not any(event.get("type") in {"rounds_exhausted", "loop_breaker_triggered"} for event in events)
 
 
@@ -1339,6 +1369,7 @@ def test_qwen_tui_coding_summary_reports_verification_retry(monkeypatch):
         "runtime_execution_contract": {"local_workspace_tasks": "use_host_shell_bridge"},
     }
 
+    @authoritative_executor
     async def _fake_exec(block, *args, **kwargs):
         nonlocal test_attempts
         executed.append(block.tool_type)
@@ -1390,7 +1421,8 @@ def test_qwen_tui_coding_summary_reports_verification_retry(monkeypatch):
     assert "`pytest -q` passed" in summary
 
 
-def test_tui_coding_turn_replaces_duplicate_edit_with_requested_tests(monkeypatch):
+@pytest.mark.parametrize('explicit_verifier', [False, True])
+def test_tui_coding_turn_replaces_duplicate_edit_with_requested_tests(monkeypatch, explicit_verifier):
     """A successful edit followed by another edit must converge on real tests."""
     _patch_common(monkeypatch)
     executed = []
@@ -1407,6 +1439,7 @@ def test_tui_coding_turn_replaces_duplicate_edit_with_requested_tests(monkeypatc
         },
     }
 
+    @authoritative_executor
     async def _fake_exec(block, *args, **kwargs):
         executed.append((block.tool_type, block.content))
         if block.tool_type == "read_file":
@@ -1450,7 +1483,8 @@ def test_tui_coding_turn_replaces_duplicate_edit_with_requested_tests(monkeypatc
             "role": "user",
             "content": (
                 "A regression was introduced in nested backend error handling. "
-                "Find the cause, fix it with a scoped change, and run the relevant tests."
+                "Find the cause, fix it with a scoped change, and run "
+                + ("pytest -q." if explicit_verifier else "the relevant tests.")
             ),
         }],
         max_rounds=6,
@@ -1465,12 +1499,15 @@ def test_tui_coding_turn_replaces_duplicate_edit_with_requested_tests(monkeypatc
     ]
     verification_command = json.loads(executed[-1][1])["command"]
     assert "pytest" in verification_command
+    decision = next(event['data'] for event in events if event.get('type') == 'completion_decision')
+    assert decision['can_complete'] is explicit_verifier
+    assert (decision['status'] == 'verified') is explicit_verifier
     assert any(
         "Verification:" in event.get("content", "")
         and "passed" in event.get("content", "")
         for event in events
         if event.get("type") == "final_response"
-    )
+    ) is explicit_verifier
 
 
 def test_failed_forced_verifier_allows_an_adapted_test_command(monkeypatch):
@@ -1491,6 +1528,7 @@ def test_failed_forced_verifier_allows_an_adapted_test_command(monkeypatch):
         },
     }
 
+    @authoritative_executor
     async def _fake_exec(block, *args, **kwargs):
         nonlocal host_attempts
         executed.append((block.tool_type, block.content))
@@ -3363,6 +3401,7 @@ def test_final_prose_with_missing_artifact_enters_recovery(monkeypatch):
     requests = []
     executed = []
 
+    @authoritative_executor
     async def _fake_exec(block, *args, **kwargs):
         executed.append(block)
         if block.tool_type == "write_file":

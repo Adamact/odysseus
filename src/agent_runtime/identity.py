@@ -11,6 +11,17 @@ import stat
 from .path_policy import _is_sensitive_path
 
 
+TUI_PYTHON_RUNNER_SETUP = (
+    "runner=''; "
+    "if [ -x .venv/bin/python ]; then runner=.venv/bin/python; "
+    "elif [ -x venv/bin/python ]; then runner=venv/bin/python; "
+    "elif git_common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) "
+    "&& [ -x \"$(dirname \"$git_common\")/.venv/bin/python\" ]; then "
+    "runner=\"$(dirname \"$git_common\")/.venv/bin/python\"; "
+    "else runner=python; fi; "
+)
+
+
 def digest(value: object) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False,
                                      separators=(",", ":"), default=str).encode()).hexdigest()
@@ -85,13 +96,23 @@ def artifact_identity(value: str, workspace: str = "") -> str:
 
 
 def executable_words(command: str) -> tuple[str, ...]:
-    """Recognize one foreground command, optionally after safe cd/set prefixes.
+    """Recognize one foreground command after exact interpreter or cd/set prefixes.
 
     This is deliberately conservative evidence parsing, not shell authorization.
-    Pipelines, control flow, substitutions and status-masking tails are not proof
+    Other control flow, substitutions, pipelines and status-masking tails are not proof
     that a verifier returned the recorded shell status.
     """
     text = str(command or '').strip()
+    if text.startswith(TUI_PYTHON_RUNNER_SETUP):
+        remainder = text[len(TUI_PYTHON_RUNNER_SETUP):]
+        # This exact server-owned prelude only selects the interpreter. The
+        # trailing command must still be a single foreground invocation whose
+        # status is returned unchanged; the generic discovery fallback is not.
+        if remainder.startswith('"$runner" '):
+            arguments = remainder[len('"$runner" '):]
+            if '$' in arguments:
+                return ()
+            text = 'python ' + arguments
     if any(marker in text for marker in ('`', '$(', '${', '\n', '\r')):
         return ()
     try:

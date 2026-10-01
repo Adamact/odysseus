@@ -1,12 +1,13 @@
 from pathlib import Path
 from tests.helpers.document_source import document_source
+from tests.helpers.js_modules import email_library_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_card_delete_waits_for_durable_success_and_uses_email_identity():
-    source = (ROOT / "static/js/emailLibrary.js").read_text()
+    source = email_library_source()
     assert "function _emailMutationQuery(em" in source
     assert "em?.folder || fallbackFolder" in source
     assert "em?.account_id || state._libAccountId" in source

@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v654-css-split-3';
+const CACHE_NAME = 'odysseus-v656-pr40-editor-precache';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -101,9 +101,19 @@ const PRECACHE = [
   '/static/js/slashCommands.js?v=20260921chatgptusage1',
   '/static/js/research/jobs.js?v=20260910researcherrorpersist1',
   '/static/js/emailInbox.js?v=20260914aireply4',
+  '/static/js/emailLibrary/index.js',
+  '/static/js/emailLibrary/aiReply.js',
+  '/static/js/emailLibrary/attachments.js',
+  '/static/js/emailLibrary/bodyRender.js',
+  '/static/js/emailLibrary/menus.js',
+  '/static/js/emailLibrary/reader.js',
+  '/static/js/emailLibrary/settingsPage.js',
+  '/static/js/emailLibrary/unsubscribe.js',
   '/static/js/emailLibrary/utils.js',
   '/static/js/emailLibrary/signatureFold.js',
   '/static/js/emailLibrary/state.js',
+  // emailInbox.js has always imported this one; it was never precached.
+  '/static/js/emailLibrary/replyRecipients.js',
   '/static/js/notes.js?v=20260911notesselectioncancel1',
   '/static/js/tasks.js?v=20260914taskmodel1',
   '/static/js/calendar.js?v=20260914emailsource11',
@@ -133,6 +143,7 @@ const PANEL_PRECACHE = [
   '/static/js/galleryEditor.js?v=20260909movepicklayer1',
   '/static/js/editor/ai-inpaint.js?v=20260708match1',
   '/static/js/editor/ai-models.js',
+  '/static/js/editor/ai-operation.js',
   '/static/js/editor/ai-rembg.js',
   '/static/js/editor/ai-tool-runner.js',
   '/static/js/editor/ai-tools-misc.js',
@@ -185,6 +196,8 @@ const PANEL_PRECACHE = [
   '/static/js/editor/layer-geometry.js',
   '/static/js/editor/precision-guides.js',
   '/static/js/editor/layer-panel.js',
+  '/static/js/editor/layer-style-menu.js',
+  '/static/js/editor/layer-styles.js',
   '/static/js/editor/mask-utils.js',
   '/static/js/editor/shortcuts-popover.js',
   '/static/js/editor/slider-ux.js',
@@ -205,6 +218,7 @@ const PANEL_PRECACHE = [
   '/static/js/editor/tools/lasso.js',
   '/static/js/editor/tools/marquee.js',
   '/static/js/editor/tools/move.js',
+  '/static/js/editor/tools/pen-selection.js',
   '/static/js/editor/tools/stroke.js',
   '/static/js/editor/tools/transform-drag.js',
   '/static/js/editor/tools/transform-handles.js',

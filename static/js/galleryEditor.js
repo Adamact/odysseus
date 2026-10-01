@@ -40,6 +40,7 @@ import {
 } from './editor/layer-helpers.js';
 import {
   renderEffects as _renderEffects,
+  effectsWithPreview as _effectsWithPreview,
   renderEffectsAsync as _renderEffectsAsync,
   normalizeEffect as _normalizeEffect,
   effectLabel as _effectLabel,
@@ -72,7 +73,7 @@ import {
   normalizeAdjustmentData as _normalizeAdjustmentData,
 } from './editor/adjustment-layer.js';
 import { buildToolbar as _buildToolbar } from './editor/build/toolbar.js?v=20260830editor2';
-import { buildTopbar as _buildTopbar } from './editor/build/topbar.js';
+import { buildTopbar as _buildTopbar, buildZoomFooter as _buildZoomFooter } from './editor/build/topbar.js';
 import {
   controlsHTML as _controlsHTML,
   layerPanelHTML as _layerPanelHTML,
@@ -98,6 +99,7 @@ import {
 import {
   snapshotByteSize as _snapshotByteSize,
   trimHistoryStack as _trimHistoryStack,
+  shareSnapshotPixels as _shareSnapshotPixels,
 } from './editor/history-budget.js';
 import { cropDocument as _cropDocument } from './editor/document-geometry.js';
 import { encodeExportCanvas as _encodeExportCanvas, openExportDialog as _openExportDialog } from './editor/export-dialog.js';
@@ -134,6 +136,9 @@ import {
 import { normalizeLayerClipping as _normalizeLayerClipping } from './editor/layer-clipping.js';
 import { createCropTool } from './editor/tools/crop.js';
 import { createLassoTool } from './editor/tools/lasso.js';
+import { createPenSelectionTool } from './editor/tools/pen-selection.js';
+import { LAYER_STYLES, styleParams } from './editor/layer-styles.js';
+import { openLayerStyleMenu } from './editor/layer-style-menu.js';
 import { createMarqueeTool } from './editor/tools/marquee.js';
 import { createWandTool } from './editor/tools/wand.js';
 import {
@@ -170,7 +175,7 @@ import { wireSliderUx } from './editor/slider-ux.js';
 import { createShortcutsPopover } from './editor/shortcuts-popover.js';
 import { wireKeyboardShortcuts } from './editor/keyboard-shortcuts.js';
 import { wireClipboardAndDrop } from './editor/clipboard-and-drop.js';
-import { wireAIModelSelectors } from './editor/ai-models.js';
+import { wireAIModelSelectors, resolveInpaintModel } from './editor/ai-models.js';
 import { wireInpaintButtons } from './editor/ai-inpaint.js?v=20260708match1';
 import { wireAIToolsMisc } from './editor/ai-tools-misc.js';
 import { wireRembgAndSharpen } from './editor/ai-rembg.js';
@@ -257,6 +262,7 @@ if (!window.__galleryEditEscHardGuardInstalled) {
       return;
     }
     if (e.target?.closest?.('#styled-confirm-overlay')) return;
+    if (state.editorOpen && state.tool === 'pen' && !e.target?.closest?.('input, textarea, select, [contenteditable="true"]') && _penTool.key(e)) return;
     const isSamCancel = !!_samAbortController
       && (e.key === 'Escape' || ((e.ctrlKey || e.metaKey) && String(e.key || '').toLowerCase() === 'c'));
     if (isSamCancel) {
@@ -426,7 +432,9 @@ function _registerDocClickAway(handler) {
 function _getSelectedAIEndpoint(type) {
   let raw = '';
   if (type === 'inpaint') {
-    raw = document.getElementById('ge-ai-inpaint')?.value || '';
+    const option = resolveInpaintModel(document.getElementById('ge-ai-inpaint'));
+    if (!option) throw new Error('No available inpaint model. Select or connect an image-editing endpoint.');
+    raw = option.value;
   } else if (type) {
     // Per-tool dropdowns (harmonize/upscale/style). Each lives in its
     // own section's panel and is marked with data-ge-tool-model="<name>".
@@ -1198,10 +1206,7 @@ function _flipAllLayers(axis)  { return _canvasTransforms.flipAll(axis); }
 
 function _renderLayerOutput(layer, shouldContinue = () => true) {
   return _renderWithLayerMasks(
-    _renderEffects(_renderLayerWithAdjLayers(layer), [
-      ...(layer.effects || []),
-      ...(layer._effectPreview ? [layer._effectPreview] : []),
-    ], shouldContinue),
+    _renderEffects(_renderLayerWithAdjLayers(layer), _effectsWithPreview(layer), shouldContinue),
     layer,
     state.layerOffsets.get(layer.id) || { x: 0, y: 0 },
   );
@@ -1218,19 +1223,13 @@ function _drawDocumentLayers(ctx, shouldContinue = () => true) {
     state,
     renderLayer,
     (target, layer, base) => _drawAdjustmentLayer(target, state, layer, base, renderLayer),
-    (base, group, renderGroupContinue) => _renderEffects(base, [
-      ...(group.effects || []),
-      ...(group._effectPreview ? [group._effectPreview] : []),
-    ], renderGroupContinue),
+    (base, group, renderGroupContinue) => _renderEffects(base, _effectsWithPreview(group), renderGroupContinue),
     shouldContinue,
   );
 }
 
 async function _renderLayerOutputAsync(layer, shouldContinue = () => true) {
-  const rendered = await _renderEffectsAsync(_renderLayerWithAdjLayers(layer), [
-    ...(layer.effects || []),
-    ...(layer._effectPreview ? [layer._effectPreview] : []),
-  ], shouldContinue);
+  const rendered = await _renderEffectsAsync(_renderLayerWithAdjLayers(layer), _effectsWithPreview(layer), shouldContinue);
   return _renderWithLayerMasks(rendered, layer, state.layerOffsets.get(layer.id) || { x: 0, y: 0 });
 }
 
@@ -1248,10 +1247,7 @@ async function _drawDocumentLayersAsync(ctx, shouldContinue = () => true) {
       item => _renderLayerOutputAsync(item, shouldContinue),
       shouldContinue,
     ),
-    (base, group, renderGroupContinue) => _renderEffectsAsync(base, [
-      ...(group.effects || []),
-      ...(group._effectPreview ? [group._effectPreview] : []),
-    ], renderGroupContinue),
+    (base, group, renderGroupContinue) => _renderEffectsAsync(base, _effectsWithPreview(group), renderGroupContinue),
     shouldContinue,
   );
 }
@@ -1596,6 +1592,7 @@ function _finishComposite(render, documentCanvas) {
   if (state.transformActive) _drawTransformHandles();
   else if (state.transformOverlay) state.transformOverlay.style.display = 'none';
   if (state.marqueeActive && state.marqueeRect) _drawMarqueeOverlay();
+  _penTool.draw();
   if (state.cropRect && !state.cropping) _drawCropOverlay();
   if (state.activeSnapGuides && state.activeSnapGuides.length) _drawSnapGuides();
   _precisionGuides?.drawDocumentOverlay(state.mainCtx);
@@ -1904,7 +1901,7 @@ function _saveState(label) {
   // isolated: a history-snapshot failure must degrade (lose one undo
   // step) rather than kill the user's action.
   try {
-    const snap = _snapshotState();
+    const snap = _shareSnapshotPixels(_snapshotState(), state.undoStack.at(-1));
     snap._label = label || 'Edit';
     snap._ts = Date.now();
     state.undoStack.push(snap);
@@ -2788,6 +2785,7 @@ function undo() {
   if (state.undoStack.length === 0) return;
   const target = state.undoStack.pop();
   const cur = _snapshotState();
+  _shareSnapshotPixels(cur, target);
   cur._label = target._label || 'Edit';
   cur._ts = Date.now();
   state.redoStack.push(cur);
@@ -2801,6 +2799,7 @@ function redo() {
   if (state.redoStack.length === 0) return;
   const target = state.redoStack.pop();
   const cur = _snapshotState();
+  _shareSnapshotPixels(cur, target);
   cur._label = target._label || 'Edit';
   cur._ts = Date.now();
   state.undoStack.push(cur);
@@ -2898,6 +2897,7 @@ function _beginDraw(e) {
   if (state.tool === 'eyedropper') return _eyedropperTool.pick(e);
   if (state.tool === 'gradient') return _gradientTool.begin(e);
   if (state.tool === 'marquee') return _marqueeTool.begin(e);
+  if (state.tool === 'pen') return _penTool.begin(e);
   // Inpaint can create its own layer + mask on the fly, so skip the
   // "no active layer → bail" gate for it specifically.
   const activeMask = _getActiveMaskLayer();
@@ -2922,6 +2922,7 @@ function _beginDraw(e) {
 }
 
 function _continueDraw(e) {
+  if (state.tool === 'pen') return _penTool.drag(e);
   // _continueDraw is now bound to the window so drags can extend past
   // the canvas. The brush-cursor overlay should only follow the cursor
   // when it's actually over the canvas, otherwise hide it.
@@ -2953,6 +2954,7 @@ function _continueDraw(e) {
 }
 
 function _endDraw(e) {
+  if (state.tool === 'pen') return _penTool.end();
   // Transform-tool drag end — handler in editor/tools/transform-drag.js.
   if (_transformDragTool.tryEnd(e)) return;
   if (_shapeDraft) return _endShape(e);
@@ -3724,6 +3726,11 @@ const _beginLasso    = _lassoTool.begin;
 const _continueLasso = _lassoTool.drag;
 const _endLasso      = _lassoTool.end;
 const _cancelLasso   = _lassoTool.cancel;
+const _penTool = createPenSelectionTool({
+  activeLayer, saveState: _saveState, composite,
+  commitSelectionMask: _commitSelectionMask,
+  syncSelectionUi: _syncToolClearIndicators,
+});
 
 function _drawMarqueeOverlay() {
   const rect = state.marqueeRect;
@@ -4326,13 +4333,14 @@ function _hideLayerThumb() {
   if (state.layerThumbEl) state.layerThumbEl.style.display = 'none';
 }
 
-// Shift+click on a layer row → use that layer's opaque pixels as a
+// Ctrl-click on a layer thumbnail uses that layer's opaque pixels as a
 // wand-style selection. Lifts pixel alpha > 0 into the wand mask so the
 // user can immediately Bg-Remove / Erase / Copy through the layer.
 function _loadLayerAlphaAsSelection(layer) {
   if (!layer || !layer.canvas) return;
-  const w = layer.canvas.width, h = layer.canvas.height;
-  const src = layer.ctx.getImageData(0, 0, w, h).data;
+  const rendered = _renderLayerOutput(layer) || layer.canvas;
+  const w = rendered.width, h = rendered.height;
+  const src = rendered.getContext('2d').getImageData(0, 0, w, h).data;
   const mask = document.createElement('canvas');
   mask.width = w; mask.height = h;
   const mctx = mask.getContext('2d');
@@ -4348,8 +4356,7 @@ function _loadLayerAlphaAsSelection(layer) {
   mctx.putImageData(mdata, 0, 0);
   _saveState();
   _commitSelectionMask(mask, layer, 'replace', 'wand');
-  state.wandLastSeed = null;
-  composite();
+  _activateSelectionCanvas(state.wandMask, 'wand');
   if (uiModule) uiModule.showToast('Layer pixels selected');
 }
 
@@ -5038,6 +5045,7 @@ async function _addRetainedEffect(type, presetName = null) {
     uiModule?.showToast?.('Select an image layer or group first');
     return;
   }
+  if (LAYER_STYLES[type]) return _configureLayerStyle(layer, type);
   const initial = type === 'color-overlay'
     ? [
       { key: 'color', label: 'Color', type: 'color', value: '#ffffff' },
@@ -5106,6 +5114,28 @@ async function _addRetainedEffect(type, presetName = null) {
   uiModule?.showToast?.(`${type === 'color-overlay' ? 'Color Overlay' : 'Drop Shadow'} added`);
 }
 
+async function _configureLayerStyle(layer, type, existing = null) {
+  if (_isLayerEffectivelyLocked(state, layer)) { uiModule?.showToast('Unlock the layer first'); return; }
+  const session = state.editorSessionToken;
+  const initial = styleParams(type, existing?.params);
+  const controls = LAYER_STYLES[type].controls.map(control => ({ ...control, value: initial[control.key] }));
+  const result = await _filterSliderPrompt(LAYER_STYLES[type].label, controls, values => {
+    layer._effectPreview = { ...existing, type, visible: true, opacity: existing?.opacity ?? 1, params: styleParams(type, values) };
+    composite();
+  });
+  layer._effectPreview = null;
+  composite();
+  if (!result || session !== state.editorSessionToken || !state.editorOpen ||
+      !(state.layers.includes(layer) || state.layerGroups?.includes(layer))) return;
+  _saveState(`${existing ? 'Edit' : 'Add'} ${LAYER_STYLES[type].label}`);
+  if (existing) existing.params = styleParams(type, result);
+  else {
+    layer.effects ||= [];
+    layer.effects.push(_normalizeEffect({ type, params: styleParams(type, result) }));
+  }
+  _schedulePersist(); _renderLayerPanel(); composite();
+}
+
 async function _editRetainedGradient(layer, effect) {
   const params = effect.params || {};
   const stops = Array.isArray(params.stops) && params.stops.length >= 2
@@ -5159,6 +5189,7 @@ async function _editRetainedGradient(layer, effect) {
 async function _editRetainedEffect(layer, effect) {
   if (!layer || !effect) return;
   const type = effect.type;
+  if (LAYER_STYLES[type]) return _configureLayerStyle(layer, type, effect);
   if (type === 'linear-gradient' || type === 'radial-gradient') return _editRetainedGradient(layer, effect);
   const p = effect.params || {};
   const initial = type === 'gaussian-blur'
@@ -5316,6 +5347,7 @@ function _fitZoom() {
   const fit = _getFitZoom();
   if (!fit) return;
   state.zoom = fit;
+  state.zoomViewMode = 'fit';
   _applyZoom({ resetPan: true });
 }
 
@@ -5410,26 +5442,40 @@ function _nudgeSelectionBoundary(dx, dy) {
 }
 
 function _syncZoomControls() {
-  const fitBtn = document.getElementById('ge-zoom-fit');
   const actualBtn = document.getElementById('ge-zoom-100');
   const fit = _getFitZoom();
-  const isFit = fit !== null && Math.abs(state.zoom - fit) < 0.001;
-  const isActual = !isFit && Math.abs(state.zoom - 1) < 0.001;
-  if (fitBtn) {
-    fitBtn.classList.toggle('active', isFit);
-    fitBtn.setAttribute('aria-pressed', isFit ? 'true' : 'false');
-  }
+  const isFit = fit !== null && Math.abs(state.zoom - fit) < 0.001 &&
+    (fit < 0.999 || state.zoomViewMode !== 'scale');
   if (actualBtn) {
-    actualBtn.classList.toggle('active', isActual);
+    const isActual = !isFit && Math.abs(state.zoom - 1) < 0.001;
+    actualBtn.classList.toggle('active', isFit || isActual);
     actualBtn.setAttribute('aria-pressed', isActual ? 'true' : 'false');
+    actualBtn.title = isActual ? 'Switch to fit view' : 'Switch to actual size';
+    actualBtn.setAttribute('aria-label', isActual ? 'Actual size; switch to fit view' : 'Fit view; switch to actual size');
+    const label = actualBtn.querySelector('.ge-stacked-label');
+    if (label) label.textContent = isActual ? 'SCALE' : 'FIT';
+    const glyph = actualBtn.querySelector('.ge-stacked-glyph');
+    if (glyph) glyph.innerHTML = isActual ? '1:1' : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 14 4 20 10 20"/><polyline points="20 10 20 4 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
   }
+}
+
+let _inpaintPanelPosition = null;
+
+function _applyInpaintPanelPosition(panel, position) {
+  const left = Math.max(8, Math.min(window.innerWidth - panel.offsetWidth - 8, position.left));
+  const top = Math.max(8, Math.min(window.innerHeight - panel.offsetHeight - 8, position.top));
+  panel.style.left = `${left}px`;
+  panel.style.top = `${top}px`;
+  return { left, top };
 }
 
 function _positionInpaintPanel(anchorBtn) {
   const panel = document.getElementById('ge-inpaint-section');
   if (!panel || window.innerWidth <= 820) return;
-  if (panel.dataset.userMoved === '1') {
+  if (_inpaintPanelPosition) {
     panel.classList.add('ge-inpaint-popover');
+    panel.dataset.userMoved = '1';
+    _inpaintPanelPosition = _applyInpaintPanelPosition(panel, _inpaintPanelPosition);
     return;
   }
   panel.classList.add('ge-inpaint-popover');
@@ -5448,6 +5494,7 @@ function _positionInpaintPanel(anchorBtn) {
     const r = anchorBtn?.getBoundingClientRect?.();
     if (!r) return;
     requestAnimationFrame(() => {
+      if (!panel.isConnected || _inpaintPanelPosition || panel.dataset.userMoved === '1') return;
       const panelW = panel.offsetWidth || 320;
       const panelH = panel.offsetHeight || 520;
       const left = Math.min(window.innerWidth - panelW - 12, Math.max(12, r.right + 10));
@@ -5458,6 +5505,7 @@ function _positionInpaintPanel(anchorBtn) {
     return;
   }
   requestAnimationFrame(() => {
+    if (!panel.isConnected || _inpaintPanelPosition || panel.dataset.userMoved === '1') return;
     const refRect = ref.getBoundingClientRect();
     const panelW = panel.offsetWidth || 320;
     const panelH = panel.offsetHeight || 520;
@@ -5489,13 +5537,17 @@ function _wireInpaintPopoverWindow() {
   const head = panel.querySelector('[data-inpaint-drag]');
   if (!head) return;
   head.addEventListener('pointerdown', (e) => {
-    if (window.innerWidth <= 820 || e.target.closest('button')) return;
+    if (window.innerWidth <= 820 || e.button !== 0 || e.target.closest('button')) return;
     e.preventDefault();
     e.stopPropagation();
     panel.classList.add('ge-inpaint-popover');
     const startX = e.clientX;
     const startY = e.clientY;
     const r0 = panel.getBoundingClientRect();
+    // Claim the position immediately so a pending auto-placement cannot
+    // overwrite this drag, and retain it when the editor rebuilds its DOM.
+    panel.dataset.userMoved = '1';
+    _inpaintPanelPosition = { left: r0.left, top: r0.top };
     head.setPointerCapture(e.pointerId);
     head.style.cursor = 'grabbing';
     const onMove = (ev) => {
@@ -5506,15 +5558,20 @@ function _wireInpaintPopoverWindow() {
       panel.dataset.userMoved = '1';
       panel.style.left = `${nx}px`;
       panel.style.top = `${ny}px`;
+      _inpaintPanelPosition = { left: nx, top: ny };
     };
     const onUp = () => {
       try { head.releasePointerCapture(e.pointerId); } catch {}
       head.style.cursor = '';
       head.removeEventListener('pointermove', onMove);
       head.removeEventListener('pointerup', onUp);
+      head.removeEventListener('pointercancel', onUp);
+      head.removeEventListener('lostpointercapture', onUp);
     };
     head.addEventListener('pointermove', onMove);
     head.addEventListener('pointerup', onUp);
+    head.addEventListener('pointercancel', onUp);
+    head.addEventListener('lostpointercapture', onUp);
   });
 }
 
@@ -5545,6 +5602,7 @@ function _buildEditor(container) {
     },
     onSelectTool: (toolId, _btn, toolbarEl) => {
       if (state.tool !== toolId) {
+        _penTool.cancel();
         // Finish a paint gesture before its tool identity changes.
         if (state.drawing) _strokeTool.tryEnd();
         _cropTool.cancel('tool-switch');
@@ -5572,7 +5630,7 @@ function _buildEditor(container) {
       // panel auto-minimises the layers sheet so the controls aren't
       // covered. Swiping the layers handle back up restores it.
       const isMobile = window.innerWidth <= 820;
-      const hasToolControls = ['move', 'transform', 'brush', 'gradient', 'eraser', 'clone', 'heal', 'smudge', 'dodge', 'burn', 'eyedropper', 'text', 'shape', 'marquee', 'lasso', 'wand', 'inpaint', 'sam'].includes(toolId);
+      const hasToolControls = ['move', 'transform', 'brush', 'gradient', 'eraser', 'clone', 'heal', 'smudge', 'dodge', 'burn', 'eyedropper', 'text', 'shape', 'marquee', 'lasso', 'pen', 'wand', 'inpaint', 'sam'].includes(toolId);
       const controlsVisible = controls && !controls.classList.contains('dismissed');
       if (isMobile && hasToolControls && controlsVisible) {
         const rp = document.querySelector('.ge-right-panel');
@@ -5590,6 +5648,8 @@ function _buildEditor(container) {
       const needsBrush = ['brush', 'eraser', 'clone', 'heal', 'smudge', 'dodge', 'burn'].includes(toolId);
       if (brushControls) brushControls.style.display = needsBrush ? '' : 'none';
       const textSection = document.getElementById('ge-text-section');
+      const penSection = document.getElementById('ge-pen-section');
+      if (penSection) penSection.style.display = toolId === 'pen' ? '' : 'none';
       if (textSection) textSection.style.display = toolId === 'text' ? '' : 'none';
       if (toolId === 'text') _syncTextControls();
       const shapeSection = document.getElementById('ge-shape-section');
@@ -5845,6 +5905,7 @@ function _buildEditor(container) {
     continueDraw: _continueDraw,
     endDraw: _endDraw,
     cancelDraw: () => {
+      if (state.tool === 'pen') { _penTool.cancel(); return; }
       if (state.transformActive) _cancelTransform();
       else if (state.drawing) _strokeTool.cancel();
       else if (state.gradientActive) _gradientTool.cancel();
@@ -5872,6 +5933,7 @@ function _buildEditor(container) {
   });
   editorBody.appendChild(rightPanel);
   container.appendChild(editorBody);
+  container.appendChild(_buildZoomFooter());
   _wireInpaintPopoverWindow();
 
   // Slider UX (expand-while-using, floating bubble, click-to-type) —
@@ -6134,7 +6196,7 @@ function _buildEditor(container) {
       sctx.fillStyle = '#fff';
       sctx.fillRect(0, 0, w, h);
     }
-    _saveState('Fill selection');
+    _saveState(selection ? 'Fill selection' : 'Fill layer');
     sctx.globalCompositeOperation = 'source-in';
     sctx.fillStyle = state.color;
     sctx.fillRect(0, 0, w, h);
@@ -6146,7 +6208,11 @@ function _buildEditor(container) {
     composite();
     _renderLayerPanel();
     if (uiModule) uiModule.showToast('Filled');
+    _schedulePersist();
   }
+  document.getElementById('ge-layer-fill')?.addEventListener('click', () => _doFillSelection());
+  document.getElementById('ge-pen-commit')?.addEventListener('click', () => _penTool.commit());
+  document.getElementById('ge-pen-cancel')?.addEventListener('click', () => _penTool.cancel());
 
   // AI model selectors (Gen, Inpaint, per-tool) — full
   // implementation in editor/ai-models.js.
@@ -6266,6 +6332,7 @@ function _buildEditor(container) {
   // AI inpaint (Generate / Remove / Outpaint) — full implementation
   // in editor/ai-inpaint.js.
   wireInpaintButtons({
+    renderLayer: (layer) => _renderLayerOutput(layer),
     buildMergedMaskCanvas: () => _buildMergedMaskCanvas(),
     dilateMask: _dilateMask,
     applyInpaintFeather: _applyInpaintFeather,
@@ -6465,6 +6532,7 @@ function _buildEditor(container) {
   // Keyboard shortcuts — full implementation in
   // editor/keyboard-shortcuts.js.
   wireKeyboardShortcuts({
+    fillSelection: _doFillSelection,
     copyPixelsToClipboard: _copyPixelsToClipboard,
     toolbar, toolKeyMap: _toolKeyMap,
     composite, saveState: _saveState, undo, redo,
@@ -6565,6 +6633,11 @@ function _rasterizePlacedLayerCommand(layer) {
 // Wrap to the legacy name so the dozens of `_renderLayerPanel()` call
 // sites scattered across the file keep working unchanged.
 const _layerPanelRenderer = createLayerPanelRenderer({
+  openLayerStyles: (layer, anchor) => openLayerStyleMenu(anchor, type => {
+    state.activeGroupId = null;
+    state.activeLayerId = layer.id;
+    void _addRetainedEffect(type);
+  }),
   composite,
   saveState: _saveState,
   showLayerThumb: (row, layer) => _showLayerThumb(row, layer),
@@ -7507,6 +7580,7 @@ function _setEditTabLabel(name) {
 }
 
 export function closeEditor(options = {}) {
+  _penTool.cancel();
   const force = options === true || options.force === true;
   const editorMounted = _galleryEditMounted();
   if ((state.editorOpen || editorMounted) && !force && !window.__galleryAllowCloseEditor) {

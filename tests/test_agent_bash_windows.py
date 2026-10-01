@@ -1,6 +1,7 @@
 """Windows execution contract for the agent Bash tool."""
 
 import pytest
+from types import SimpleNamespace
 
 from src.agent_tools import subprocess_tools
 
@@ -85,7 +86,7 @@ async def test_windows_bash_does_not_use_a_stray_tmux_executable(monkeypatch):
     async def fake_create(command, **kwargs):
         captured["command"] = command
         captured["kwargs"] = kwargs
-        return object()
+        return SimpleNamespace(pid=12345)
 
     async def fake_stream(_process, **_kwargs):
         return "ok", "", 0, False

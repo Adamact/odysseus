@@ -89,6 +89,57 @@ def test_computed_styles_match_the_committed_baseline():
 
 
 @_requires_browser
+def test_capture_is_independent_of_elapsed_time_and_font_metrics(tmp_path):
+    page = tmp_path / "fixture.html"
+    source = """<!doctype html><html><head><style>
+      @keyframes fade { from { opacity: .25; } to { opacity: .75; } }
+      .sample { animation: fade .4s linear infinite; transition: color .1s;
+                font: 13px monospace; max-height: 30lh; }
+      #other { font: 23px serif; max-height: 31lh; }
+      textarea { outline-offset: 0; }
+      textarea:focus { outline-offset: 7px; }
+      #alias { font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; }
+      #serialized { font-family: Inter, -apple-system, "system-ui", sans-serif; }
+    </style></head><body>
+      <textarea id="focus" autofocus></textarea><div class="sample" id="sample"></div>
+      <div class="sample" id="other"></div><div id="alias"></div><div id="serialized"></div>
+    </body></html>"""
+    page.write_text(source, encoding="utf-8")
+    inventory = {
+        "properties": ["font-family", "opacity", "max-height", "outline-offset",
+                       "animation-name", "animation-duration", "animation-play-state",
+                       "transition-duration"],
+        "variants": [snapshot.load_inventory()["variants"][0]],
+        "pages": [{"name": "fixture", "url": "/fixture.html", "elements": [
+            {"key": key, "selector": f"#{key}",
+             "lineRelativeProperties": ["max-height"] if key in {"sample", "other"} else []}
+            for key in ("focus", "sample", "other", "alias", "serialized")
+        ]}],
+    }
+    origin, shutdown = snapshot.serve_repository(tmp_path)
+    try:
+        early = snapshot.capture(origin, inventory)["snapshot"]
+        late = snapshot.capture(origin, inventory, measurement_delay_ms=150)["snapshot"]
+        assert early == late
+        values = early["fixture"][inventory["variants"][0]["name"]]
+        assert values["focus"]["outline-offset"] == "0px"
+        assert values["sample"]["opacity"] == "0.25"
+        assert values["sample"]["animation-name"] == "fade"
+        assert values["sample"]["animation-duration"] == "0.4s"
+        assert values["sample"]["animation-play-state"] == "running"
+        assert values["sample"]["transition-duration"] == "0.1s"
+        assert values["sample"]["max-height"] == "30lh"
+        assert values["other"]["max-height"] == "31lh"
+        assert values["alias"]["font-family"] == values["serialized"]["font-family"]
+        page.write_text(source.replace("opacity: .25", "opacity: .5"), encoding="utf-8")
+        changed = snapshot.capture(origin, inventory)["snapshot"]
+        assert changed["fixture"][inventory["variants"][0]["name"]]["sample"]["opacity"] == "0.5"
+        assert snapshot.summarize(changed)["digest"] != snapshot.summarize(early)["digest"]
+    finally:
+        shutdown()
+
+
+@_requires_browser
 def test_reordering_two_conflicting_declarations_moves_the_digest():
     """The harness has to fail when the cascade changes, or it proves nothing.
 

@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 
 def test_new_tmux_session_forwards_runtime_python_environment(monkeypatch):
@@ -188,7 +189,7 @@ def test_direct_bash_subprocess_has_closed_stdin(monkeypatch, tmp_path):
     from src import tool_execution
 
     captured = {}
-    sentinel = object()
+    sentinel = SimpleNamespace(pid=12345)
 
     async def fake_create(command, **kwargs):
         captured.update(kwargs)
@@ -258,7 +259,7 @@ def test_bash_allows_unicode_ffmpeg_drawtext_with_explicit_fontfile(monkeypatch,
     from src import tool_execution
 
     captured = {}
-    sentinel = object()
+    sentinel = SimpleNamespace(pid=12345)
 
     async def fake_create(command, **kwargs):
         captured["command"] = command

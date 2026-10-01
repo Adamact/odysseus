@@ -79,7 +79,7 @@ async function loadUsers() {
 
       // Header: name + badges + delete
       const header = document.createElement('div');
-      header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;cursor:pointer;padding:4px 0;';
+      header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;cursor:pointer;padding:4px 0;';
       const initial = u.username.charAt(0).toUpperCase();
       header.innerHTML = `
         <div class="admin-user-info">
@@ -89,9 +89,10 @@ async function loadUsers() {
             ${u.is_admin ? '<span class="admin-badge" style="margin-left:6px;">ADMIN</span>' : '<span style="font-size:10px;opacity:0.4;display:block;">Click to manage privileges</span>'}
           </div>
         </div>
-        <div style="display:flex;gap:8px;align-items:center;">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <button class="admin-btn-sm" data-adm-toggle-admin="${esc(u.username)}" data-make-admin="${u.is_admin ? '0' : '1'}" style="font-size:11px;">${u.is_admin ? 'Revoke admin' : 'Make admin'}</button>
           <button class="admin-btn-sm" data-adm-rename-user="${esc(u.username)}" style="font-size:11px;">Rename</button>
+          ${u.is_admin ? '' : '<button class="admin-btn-sm" data-adm-reset-password style="font-size:11px;">Change password</button>'}
           ${u.is_admin ? '' : `<button class="admin-btn-delete" data-adm-del-user="${esc(u.username)}" style="font-size:11px;">Remove</button>`}
           ${u.is_admin ? '' : '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>'}
         </div>
@@ -149,7 +150,7 @@ async function loadUsers() {
         // Toggle panel visibility + rotate chevron + load models
         let _modelsLoaded = false;
         header.addEventListener('click', (e) => {
-          if (e.target.closest('.admin-btn-delete, [data-adm-rename-user], [data-adm-toggle-admin]')) return;
+          if (e.target.closest('.admin-btn-delete, [data-adm-rename-user], [data-adm-toggle-admin], [data-adm-reset-password]')) return;
           privPanel.classList.toggle('hidden');
           const chevron = header.querySelector('.admin-user-chevron');
           if (chevron) {
@@ -185,6 +186,29 @@ async function loadUsers() {
           else input.addEventListener('change', handler);
         });
       }
+
+      const passwordBtn = row.querySelector('[data-adm-reset-password]');
+      passwordBtn?.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const options = { title: 'Change password', inputType: 'password', maxLength: 72 };
+        const password = await uiModule.styledPrompt(`New password for "${u.username}". Their existing sessions will be signed out.`, options);
+        if (password === null) return;
+        const confirmation = await uiModule.styledPrompt('Confirm the new password', options);
+        if (confirmation === null) return;
+        if (password !== confirmation) { uiModule.showError('Passwords do not match'); return; }
+        passwordBtn.disabled = true;
+        try {
+          const res = await fetch(`/api/auth/users/${encodeURIComponent(u.username)}/password`, {
+            method: 'PUT', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ new_password: password }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) { uiModule.showError(data.detail || 'Failed to change password'); return; }
+          uiModule.showToast('Password changed. Existing sessions signed out.');
+        } catch { uiModule.showError('Failed to change password'); }
+        finally { passwordBtn.disabled = false; }
+      });
 
       // Rename button
       const renameBtn = row.querySelector('[data-adm-rename-user]');
@@ -1042,7 +1066,7 @@ async function loadEndpoints() {
         <div class="admin-user-row${ep.is_enabled ? '' : ' admin-ep-disabled'}${justAddedClass}" data-adm-ep-id="${ep.id}">
           <div style="display:flex;align-items:center;justify-content:space-between;${hasModels ? 'cursor:pointer;' : ''}padding:4px 0;" data-adm-ep-header="${ep.id}">
             <div class="admin-user-info" style="flex:1;flex-wrap:wrap;gap:0.3rem;align-items:center;">
-              ${_endpointSelectMode ? `<label class="adm-model-row" title="Select ${esc(ep.name)}" style="display:inline-flex;align-items:center;justify-content:center;margin:0 5px 0 0;cursor:pointer;flex-shrink:0;">
+              ${_endpointSelectMode ? `<label class="adm-model-row adm-endpoint-select-label" title="Select ${esc(ep.name)}">
                 <input type="checkbox" class="adm-cb-hidden" data-adm-ep-select="${ep.id}" aria-label="Select ${esc(ep.name)}" ${_selectedEndpointIds.has(String(ep.id)) ? 'checked' : ''}>
                 <span class="adm-check-dot adm-endpoint-select-dot" aria-hidden="true"></span>
               </label>` : ''}

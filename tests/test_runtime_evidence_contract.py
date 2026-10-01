@@ -474,3 +474,70 @@ def test_slice2_matching_artifact_and_verifier_support_combined_claim():
     answer, reason = completion_answer(claim, ledger, ledger.evaluate())
     assert claim in answer
     assert not reason
+
+
+@pytest.mark.parametrize('structured', [False, True])
+def test_native_patch_transport_retains_mutation_evidence(structured):
+    patch = '*** Begin Patch\n*** Update File: config.py\n@@\n-old\n+new\n*** End Patch'
+    command = json.dumps({'patch': patch}) if structured else patch
+    ledger = EvidenceLedger.from_tool_events([
+        {'tool': 'apply_patch', 'command': command, 'exit_code': 0},
+        {'tool': 'bash', 'command': 'pytest tests/test_config.py', 'exit_code': 0},
+    ], CompletionRequirements(required_artifacts=('config.py',), verifier_required=True))
+    assert ledger.evaluate().status.value == 'verified'
+    answer, reason = completion_answer('I updated config.py and ran pytest tests/test_config.py.',
+                                      ledger, ledger.evaluate())
+    assert not reason
+    assert 'I updated config.py' in answer
+
+
+@pytest.mark.parametrize('verifier', ['passing', 'absent', 'before_edit', 'failed'])
+def test_pre_edit_inspection_requires_current_passing_executable_verification(verifier):
+    events = [{'tool': 'read_file', 'command': 'config.py', 'exit_code': 0}]
+    if verifier == 'before_edit':
+        events.append({'tool': 'bash', 'command': 'pytest', 'exit_code': 0})
+    events.append({'tool': 'edit_file', 'command': '{"path":"config.py"}', 'exit_code': 0})
+    if verifier in {'passing', 'failed'}:
+        events.append({'tool': 'bash', 'command': 'pytest', 'exit_code': 0 if verifier == 'passing' else 1})
+    ledger = EvidenceLedger.from_tool_events(events, CompletionRequirements(
+        required_artifacts=('config.py',), verifier_required=True, executable_verifier_available=True))
+    decision = ledger.evaluate()
+    assert decision.can_complete is (verifier == 'passing')
+    assert (decision.status.value == 'verified') is (verifier == 'passing')
+
+
+def test_failed_post_edit_inspection_is_not_hidden_by_passing_tests():
+    ledger = EvidenceLedger.from_tool_events([
+        {'tool': 'edit_file', 'command': '{"path":"config.py"}', 'exit_code': 0},
+        {'tool': 'read_file', 'command': 'config.py', 'exit_code': 1},
+        {'tool': 'bash', 'command': 'pytest', 'exit_code': 0},
+    ], CompletionRequirements(required_artifacts=('config.py',), verifier_required=True))
+    assert not ledger.evaluate().can_complete
+    assert ledger.evaluate().status.value == 'failed'
+
+
+@pytest.mark.parametrize('command, expected', [
+    ('"$runner" -m pytest -q tests/test_config.py', True),
+    ('"$runner" -m unittest', True),
+    ('"$runner" -m pytest --collect-only', False),
+    ('"$runner" -m pytest || true', False),
+    ('"$runner" -m pytest; echo passed', False),
+    ('"$runner" -m pytest $FLAGS', False),
+    ('echo pytest passed', False),
+])
+def test_exact_tui_interpreter_selection_preserves_foreground_verifier_status(command, expected):
+    from src.agent_loop import _tui_python_runner_setup
+    assert is_test_command(_tui_python_runner_setup() + command) is expected
+
+
+def test_tui_discovery_fallback_cannot_attest_that_tests_executed():
+    from src.agent_loop import _tui_local_test_runner_command
+    assert not is_test_command(_tui_local_test_runner_command())
+
+
+@pytest.mark.parametrize('command, expected', [('pytest -q', True), ('pytest || true', False)])
+def test_host_shell_native_arguments_use_the_same_verifier_classification(command, expected):
+    from src.agent_evidence import command_is_test, command_is_validation
+    encoded = json.dumps({'command': command, 'timeout': 120})
+    assert command_is_test(encoded) is expected
+    assert command_is_validation(encoded) is expected

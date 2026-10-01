@@ -1199,6 +1199,8 @@ async def _direct_fallback(
     session_id: Optional[str] = None,
     owner: Optional[str] = None,
     client_runtime_context: Optional[Dict[str, Any]] = None,
+    disabled_tools: Optional[set] = None,
+    tool_policy: Optional[ToolPolicy] = None,
 ) -> Optional[Dict]:
     _subproc_env = {
         **os.environ,
@@ -1215,6 +1217,8 @@ async def _direct_fallback(
             "session_id": session_id,
             "owner": owner,
             "client_runtime_context": client_runtime_context,
+            "disabled_tools": frozenset(disabled_tools or ()),
+            "tool_policy": tool_policy,
         }
 
         from src.agent_tools import TOOL_HANDLERS
@@ -1645,7 +1649,11 @@ async def _execute_tool_block_impl(
     # Route MCP-extracted tools through the MCP manager. Forward
     # the progress callback so long-running subprocess tools
     # (bash, python) can stream `tool_progress` events to the UI.
-    if tool in _MCP_TOOL_MAP:
+    if tool == "generate_image":
+        from src.ai_interaction import do_generate_image
+        desc = "generate_image"
+        result = await dispatched(do_generate_image(content, session_id=session_id, owner=owner))
+    elif tool in _MCP_TOOL_MAP:
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
         result = await dispatched(_call_mcp_tool(tool, content, progress_cb=progress_cb))
@@ -1884,6 +1892,8 @@ async def _execute_tool_block_impl(
             session_id=session_id,
             owner=owner,
             client_runtime_context=client_runtime_context,
+            disabled_tools=disabled_tools,
+            tool_policy=tool_policy,
         ))
 
         if isinstance(res, tuple):
