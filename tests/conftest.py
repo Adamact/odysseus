@@ -201,3 +201,65 @@ def _no_leaked_module_stubs():
         "at teardown.",
         pytrace=False,
     )
+
+
+@pytest.fixture(autouse=True)
+def _no_context_window_network_probe(request):
+    """Keep the turn context-window resolver offline in tests.
+
+    Compact turns resolve their window before the first model request, and
+    most tests drive them with placeholder endpoints. Only the resolver's two
+    I/O edges are replaced: URL resolution (DNS/Tailscale lookups) and its
+    HTTP client, which records each attempted metadata request and fails it
+    as a transport error. Everything else (route wiring, caching, credential
+    scoping, evidence selection) runs for real, so an unintended extra probe
+    stays visible through the ``context_probe_ledger`` fixture.
+
+    Modules that install their own fake client opt out with a module-level
+    ``CONTEXT_PROBE_NETWORK = True``.
+    """
+    ledger = []
+    if getattr(request.module, "CONTEXT_PROBE_NETWORK", False):
+        yield ledger
+        return
+    try:
+        from src.agent_runtime import context_resolution
+    except Exception:
+        yield ledger
+        return
+
+    class _OfflineMetadataClient:
+        def __init__(self, timeout=None):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url, headers=None):
+            ledger.append({"url": url, "headers": dict(headers or {})})
+            raise context_resolution.httpx.ConnectError("network disabled in tests")
+
+    def _offline_provider_urls(endpoint_url):
+        base = endpoint_url.split("/v1")[0] if "/v1" in endpoint_url else endpoint_url.rstrip("/")
+        return base + "/v1/models", endpoint_url
+
+    # A private patcher keeps the shared ``monkeypatch`` fixture's teardown
+    # order unchanged for tests that check their own sys.modules hygiene.
+    patcher = pytest.MonkeyPatch()
+    patcher.setattr(context_resolution, "_http_client", _OfflineMetadataClient)
+    patcher.setattr(context_resolution, "_provider_urls", _offline_provider_urls)
+    context_resolution.clear_probe_cache()
+    try:
+        yield ledger
+    finally:
+        patcher.undo()
+        context_resolution.clear_probe_cache()
+
+
+@pytest.fixture
+def context_probe_ledger(_no_context_window_network_probe):
+    """Metadata requests the context resolver attempted during this test."""
+    return _no_context_window_network_probe
