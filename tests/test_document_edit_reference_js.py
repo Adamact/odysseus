@@ -1,12 +1,14 @@
 """Regression guards for document-selection references in chat bubbles."""
 
 from pathlib import Path
+from tests.helpers.stylesheets import app_css
+from tests.helpers.document_source import document_source, function_body
 
 
 ROOT = Path(__file__).resolve().parents[1]
 RENDERER = (ROOT / "static/js/chatRenderer.js").read_text(encoding="utf-8")
-DOCUMENT = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
-STYLE = (ROOT / "static/style.css").read_text(encoding="utf-8")
+DOCUMENT = document_source()
+STYLE = app_css()
 INDEX = (ROOT / "static/index.html").read_text(encoding="utf-8")
 APP = (ROOT / "static/app.js").read_text(encoding="utf-8")
 
@@ -46,7 +48,7 @@ def test_document_module_has_one_browser_identity_for_restore_and_chat_send():
 
 
 def test_clearing_a_rich_selection_also_resets_native_selection_stats():
-    clear_body = DOCUMENT.split("function clearSelection() {", 1)[1].split("\n  }", 1)[0]
+    clear_body = function_body("clearSelection")
 
     assert "browserSelection.removeAllRanges()" in clear_body
     assert "_scheduleDocumentStats()" in clear_body

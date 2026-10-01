@@ -57,6 +57,7 @@ async function setup() {
     window.startsContinuationRound = (await import('/static/js/turnRendering.js')).startsContinuationRound;
     window.applyModelRouteEventState = (await import('/static/js/chatModelProvenance.js')).applyModelRouteEventState;
     window.createTerminalStreamError = (await import('/static/js/chatStreamErrors.js')).createTerminalStreamError;
+    window.generatedImageResult = (await import('/static/js/generatedImageResult.js')).generatedImageResult;
     window.addMessage = (0, eval)('(' + addMessage + ')');
     window.resumeStream = (0, eval)('(' + resume + ')');
     window.chatRenderer = { addMessage: window.addMessage, recordSessionMetricsCost: noop, buildSourcesBox, buildFindingsBox, buildRagSourcesBox };

@@ -52,7 +52,7 @@ def test_web_subject_followup_does_not_offer_shell_or_private_stores():
     assert capabilities == {'search_browser'}
     assert result.offered
     assert {schema.rsplit('__', 1)[-1] for schema in result.offered} <= {
-        'web_search', 'web_fetch', 'private_browser', 'youtube_tool',
+        'web_search', 'web_fetch', 'get_weather', 'private_browser', 'youtube_tool',
         'search_hf_models', 'pdf_extract',
     }
     assert not result.offered.intersection({
@@ -460,7 +460,7 @@ async def test_experiment_request_uses_compact_tools_auto_choice_and_no_thinking
                                    message='List my notes')
     contract = select_experiment_inventory(inventory, routed, [], mode)
     _ = [chunk async for chunk in preview.stream_preview(
-        endpoint_url='http://test', model='test', messages=[{'role': 'user', 'content': 'Hi'}],
+        endpoint_url='http://test', model='test', messages=[{'role': 'user', 'content': 'List my notes'}],
         headers={}, turn_contract=contract, session_id='test', owner='test',
         disabled_tools=set(), tool_policy=policy,
     )]

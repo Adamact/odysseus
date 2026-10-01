@@ -1,11 +1,12 @@
 from pathlib import Path
 import re
+from tests.helpers.stylesheets import app_css
 
 
 ROOT = Path(__file__).resolve().parents[1]
 TOPBAR = (ROOT / "static/js/editor/build/topbar.js").read_text(encoding="utf-8")
 OVERFLOW = (ROOT / "static/js/editor/wire-topbar-overflow.js").read_text(encoding="utf-8")
-STYLE = (ROOT / "static/style.css").read_text(encoding="utf-8")
+STYLE = app_css()
 
 
 def test_primary_editor_text_actions_use_stacked_toolbar_contract():
@@ -32,15 +33,15 @@ def test_stacked_labels_share_one_size_and_position_rule():
     assert "top: 2px;" in STYLE
 
 
-def test_narrow_topbar_reflows_essential_actions_instead_of_clipping_them():
-    assert "ge-topbar-overflow" in OVERFLOW
-    assert "topbar.classList.add('ge-topbar-overflow')" in OVERFLOW
-    assert "(max-width: 700px)" in OVERFLOW
-    assert ".ge-topbar.ge-topbar-overflow" in STYLE
-    assert "flex: 1 0 100%;" in STYLE
-    right_start = STYLE.index(".ge-topbar-overflow .ge-topbar-right")
-    overflow_right = STYLE[right_start:STYLE.index("}", right_start)]
-    assert "justify-content: flex-start;" in overflow_right
+def test_narrow_topbar_scrolls_essential_actions_and_hides_ai_group_first():
+    assert "if (topbar.scrollWidth > topbar.clientWidth)" in OVERFLOW
+    assert "aiGroup.forEach(el => { el.style.display = 'none'; });" in OVERFLOW
+    assert "new ResizeObserver(() => syncOverflow())" in OVERFLOW
+    mobile = STYLE[STYLE.index("/* Editor topbar — scrolls horizontally") :]
+    topbar = mobile[mobile.index(".ge-topbar {") : mobile.index("}", mobile.index(".ge-topbar {"))]
+    assert "overflow-x: auto;" in topbar
+    assert "flex-wrap: nowrap;" in topbar
+    assert "justify-content: flex-start;" in topbar
 
 
 def test_desktop_tool_rail_keeps_long_tool_names_readable():

@@ -3,11 +3,13 @@
 import json
 import subprocess
 from pathlib import Path
-
+from tests.helpers.stylesheets import app_css
+from tests.helpers.stylesheets import stylesheet_link_tags
+from tests.helpers.document_source import document_source
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
-STYLE = (ROOT / "static/style.css").read_text(encoding="utf-8")
+DOC_JS = document_source()
+STYLE = app_css()
 
 
 def test_selection_toolbar_uses_shared_formatting_path_and_preserves_range():
@@ -25,8 +27,8 @@ def test_selection_toolbar_formats_and_stays_inside_desktop_and_mobile_viewports
       import { chromium } from 'playwright';
       const browser = await chromium.launch({ headless: true });
       const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
-      await page.goto('http://127.0.0.1:7011/static/js/documentOutline.js');
-      await page.setContent('<link rel="stylesheet" href="/static/style.css?v=20260831richtexttools91"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
+      await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentOutline.js`);
+      await page.setContent('__ODY_STYLESHEETS__<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
       await page.evaluate(async () => {
         const mod = await import('/static/js/document.js?v=20260831richtexttools91&selection-toolbar-test=1');
         mod.init('/api');
@@ -102,6 +104,7 @@ def test_selection_toolbar_formats_and_stays_inside_desktop_and_mobile_viewports
       console.log(JSON.stringify({ activeBold, desktopGeometry, formattedHtml, selectedAfterFormat, dismissed, mobileGeometry }));
       await browser.close();
     """
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=ROOT,

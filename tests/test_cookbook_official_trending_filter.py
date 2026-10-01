@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+from tests.helpers.stylesheets import app_css
+
 
 ROOT = Path(__file__).resolve().parent.parent
 COOKBOOK = (ROOT / "static/js/cookbook.js").read_text(encoding="utf-8")
@@ -18,7 +20,7 @@ def test_trending_models_expose_persistent_official_only_switch():
 
 
 def test_trending_models_list_stays_within_the_cookbook_window():
-    style = (ROOT / "static/style.css").read_text(encoding="utf-8")
+    style = app_css()
 
     rule = style[style.index("#cookbook-hf-latest-list {"):style.index("#cookbook-hf-latest-list {") + 220]
     assert "max-height: min(52vh, 480px);" in rule
@@ -34,7 +36,7 @@ def test_trending_endpoint_applies_first_party_namespace_filter():
 
 
 def test_official_only_toggle_fits_narrow_download_toolbar():
-    style = (ROOT / "static/style.css").read_text(encoding="utf-8")
+    style = app_css()
     start = style.rindex(".cookbook-official-filter {")
     rule = style[start:style.index("}", start)]
     assert "flex: 0 1 auto" in rule

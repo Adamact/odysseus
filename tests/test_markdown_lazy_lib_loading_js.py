@@ -15,6 +15,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from tests.helpers.document_source import document_source
 
 _REPO = Path(__file__).resolve().parent.parent
 _HAS_NODE = shutil.which("node") is not None
@@ -102,7 +103,7 @@ globalThis.document = {
 globalThis.MutationObserver = class { observe() {} };
 
 let source = fs.readFileSync('./static/js/markdown.js', 'utf8');
-source = source.replace(/import uiModule from ['"]\.\/ui\.js['"];/, '');
+source = source.replace(/import uiModule from ['"]\.\/ui\.js(?:[?#][^'"]*)?['"];?/, '');
 source = source.replace(
   /import \{ splitTableRow \} from ['"]\.\/markdown\/tableRow\.js['"];/,
   `function splitTableRow(row) {
@@ -401,7 +402,7 @@ def test_detached_container_math_typesets_with_the_real_renderer(node_available)
 
 def test_pdf_export_typesets_its_container_before_html2pdf():
     """Ordering in a call site, so pin the call site. No node needed."""
-    source = (_REPO / "static/js/document.js").read_text(encoding="utf-8")
+    source = document_source()
     match = re.search(r"\n  async function exportAsPdf\(\) \{(.*?)\n  \}\n", source, re.S)
     assert match, "exportAsPdf not found"
     body = match.group(1)

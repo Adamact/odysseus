@@ -14,8 +14,9 @@ from src.agent_tools import TOOL_HANDLERS
 import src.clean_agent_preview as runner
 from src.tool_policy import ToolPolicy
 from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
+from tests.helpers.document_source import declaration
 from src.turn_contract import requested_capabilities, selected_tools_for_request, preserve_bound_editor_selected_tools, resolve_turn_contract
-menu=Path('static/js/document.js').read_text().split('const _AI_WRITING_ACTIONS = Object.freeze({',1)[1].split('});',1)[0]
+menu=declaration('_AI_WRITING_ACTIONS')
 actions=dict(re.findall(r"\s+(\w+): '([^']+)'",menu))
 image_body = '<p>Old caption</p><p><img src="/api/generated-image/fixture.png" alt="Fixture image" width="320" height="180"></p><p>Keep this paragraph unchanged.</p>'
 email_body = ('To: sam@example.com\nSubject: Re: Design review\nIn-Reply-To: <fixture@example.com>\n---\n'

@@ -12,6 +12,7 @@ import subprocess
 import pytest
 
 from src import chatgpt_subscription, llm_core
+from tests.helpers.stylesheets import app_css
 
 ROOT = Path(__file__).parents[1]
 
@@ -99,23 +100,24 @@ def test_model_picker_source_invariants():
 
 
 def test_composer_reasoning_effort_ui_markup():
-    """Verify static/index.html and static/style.css include reasoning effort controls."""
+    """Verify static/index.html and the app stylesheet cascade include reasoning effort controls."""
     html = (ROOT / "static/index.html").read_text(encoding="utf-8")
-    css = (ROOT / "static/style.css").read_text(encoding="utf-8")
+    css = app_css()
     # HTML elements
     assert 'id="reasoning-effort-wrap"' in html
     assert 'id="reasoning-effort-btn"' in html
     assert 'id="reasoning-effort-current"' in html
     assert 'id="reasoning-effort-menu"' in html
     assert 'title="Reasoning effort"' in html
-    assert 'class="reasoning-effort-prefix">Effort: </span>' in html
+    assert 'class="reasoning-effort-prefix">Reasoning effort</span>' in html
     # CSS classes
     assert ".reasoning-effort-wrap" in css
     assert ".reasoning-effort-btn" in css
     assert ".reasoning-effort-menu" in css
     assert ".reasoning-effort-option" in css
-    # Responsive hide of prefix
-    assert ".reasoning-effort-prefix { display: none; }" in css
+    # The control lives in the Chat Context popup, where the prefix is the
+    # row label rather than chat-bar text hidden at narrow widths.
+    assert ".chat-context-popup .reasoning-effort-prefix {" in css
 
 
 def test_chat_submit_includes_reasoning_effort():

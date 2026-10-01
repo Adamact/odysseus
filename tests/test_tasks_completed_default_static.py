@@ -40,7 +40,8 @@ def test_tasks_filter_chips_include_active_paused_switch():
     assert "mkChip(`active (${activeCount})`, 'active', _taskStatusFilter === 'active', 'status');" in src
     assert "mkChip(`paused (${pausedCount})`, 'paused', _taskStatusFilter === 'paused', 'status');" in src
     assert "if (_taskStatusFilter && String(t.status || '').toLowerCase() !== _taskStatusFilter) return false;" in src
-    assert "if (value === null) _taskStatusFilter = null;" in src
+    assert "_taskStatusFilter = _taskStatusFilter === value ? null : value;" in src
+    assert "_taskStatusFilter = null;" in src[src.index("if (kind === 'status')"):src.index("_renderList();", src.index("if (kind === 'status')"))]
 
 
 def test_tasks_completed_view_exposes_active_paused_shortcuts():

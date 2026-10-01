@@ -1,12 +1,15 @@
 from pathlib import Path
 import re
 
+from tests.helpers.stylesheets import app_css, stylesheet_cache_version
+from tests.helpers.js_modules import email_library_source
+
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_mobile_notes_checklist_rows_remain_tappable():
-    css = (ROOT / "static" / "style.css").read_text(encoding="utf-8")
+    css = app_css()
     notes = (ROOT / "static" / "js" / "notes.js").read_text(encoding="utf-8")
 
     assert "body.notes-mobile-mode .note-card .note-checkbox {" in css
@@ -39,7 +42,7 @@ def test_mobile_long_press_enters_select_mode_for_that_note():
 
 
 def test_mobile_select_mode_has_subtle_jiggle_feedback():
-    css = (ROOT / "static" / "style.css").read_text(encoding="utf-8")
+    css = app_css()
 
     assert "@keyframes notes-select-jiggle" in css
     assert "body.notes-mobile-mode .note-card-selectmode" in css
@@ -52,9 +55,8 @@ def test_notes_mobile_checklist_asset_versions_are_bumped():
 
     assert re.search(r"notes\.js\?v=[A-Za-z0-9_-]+", app)
     app_versions = re.findall(r"/static/app\.js\?v=([A-Za-z0-9_-]+)", html)
-    style_version = re.search(r"/static/style\.css\?v=([A-Za-z0-9_-]+)", html)
     assert app_versions and len(set(app_versions)) == 1
-    assert style_version and style_version.group(1) == app_versions[0]
+    assert stylesheet_cache_version() == app_versions[0]
 
 
 def test_drawing_edits_mark_notes_dirty_and_keep_one_gallery_image():
@@ -70,7 +72,7 @@ def test_drawing_edits_mark_notes_dirty_and_keep_one_gallery_image():
 
 
 def test_calendar_email_attachments_have_a_calendar_import_action():
-    email = (ROOT / "static" / "js" / "emailLibrary.js").read_text(encoding="utf-8")
+    email = email_library_source()
     calendar = (ROOT / "static" / "js" / "calendar.js").read_text(encoding="utf-8")
 
     assert "email-attachment-calendar-open" in email
@@ -81,12 +83,18 @@ def test_calendar_email_attachments_have_a_calendar_import_action():
 
 def test_mobile_bulk_select_long_press_is_shared_across_card_types():
     helper = (ROOT / "static" / "js" / "mobileBulkSelect.js").read_text(encoding="utf-8")
-    css = (ROOT / "static" / "style.css").read_text(encoding="utf-8")
+    css = app_css()
 
     assert ".memory-item[data-memory-id]" in helper
     assert ".skill-card[data-skill-name]" in helper
     assert ".task-card[data-id]" in helper
     assert "const HOLD_MS = 450" in helper
-    assert "body:has(#memory-select-btn.active)" in css
-    assert "body:has(#skills-select-btn.active)" in css
-    assert "body:has(#tasks-select-btn.active)" in css
+    shared_buttons = (
+        "#memory-select-btn,", "#skills-select-btn,",
+        "#notes-select-btn,", "#tasks-select-btn,",
+    )
+    shared_css = css.split("/* Shared bulk-selection trigger.", 1)[1]
+    selectors = re.findall(r":is\(([^)]*)\)(?:\.active)?::before", shared_css)
+    assert len(selectors) == 2
+    for selector in selectors:
+        assert all(button in selector for button in shared_buttons)

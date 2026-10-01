@@ -17,7 +17,9 @@ def compact_browser_observation(value, budget=8000):
                 notices.append('Exit code: ' + str(item['exit_code']))
             if item.get('success') is False:
                 notices.append('Browser command failed.')
-            snapshot = item.get('snapshot')
+            snapshot = item.get('snapshot') or item.get('text')
+            if item.get('title'):
+                notices.append('Title: ' + str(item['title']))
             url = item.get('url') or item.get('origin')
             if isinstance(snapshot, str) and snapshot.strip():
                 # Snapshot text already contains labels and refs in DOM order.

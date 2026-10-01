@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from tests.helpers.stylesheets import app_css
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -302,7 +304,7 @@ def test_dependency_status_cache_is_not_fragmented_by_unused_model_hint():
 def test_model_lists_fade_after_complete_rows_are_painted():
     hwfit = _read("static/js/cookbook-hwfit.js")
     cookbook = _read("static/js/cookbook.js")
-    style = _read("static/style.css")
+    style = app_css()
 
     assert "cookbook-model-list-fade" in hwfit
     assert "cookbook-model-list-fade" in cookbook
@@ -314,7 +316,7 @@ def test_model_lists_fade_after_complete_rows_are_painted():
 
 def test_dependency_panel_has_stable_categories_and_mobile_build_action():
     cookbook = _read("static/js/cookbook.js")
-    style = _read("static/style.css")
+    style = app_css()
 
     assert "const _depCategoryOrder = ['System', 'Tools', 'LLM', 'Image'" in cookbook
     assert "const _orderedDepCategories = (byCat)" in cookbook
@@ -337,7 +339,7 @@ def test_direct_download_auto_fold_requires_deliberate_boundary_gesture():
 
 
 def test_launch_command_box_uses_accent_focus_glow():
-    style = _read("static/style.css")
+    style = app_css()
     assert ".hwfit-serve-cmd-details[open] .hwfit-serve-cmd" in style
     assert "box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent" in style
 
@@ -345,7 +347,7 @@ def test_launch_command_box_uses_accent_focus_glow():
 def test_server_settings_color_picker_uses_dot_trigger():
     cookbook = _read("static/js/cookbook.js")
     hwfit = _read("static/js/cookbook-hwfit.js")
-    style = _read("static/style.css")
+    style = app_css()
     assert 'aria-label="Change server color (currently ${esc(selectedColorLabel)})"' in cookbook
     assert "btn.setAttribute('aria-label', `Change server color (currently ${label})`)" in hwfit
     assert ".cookbook-server-row .cookbook-srv-color-dot" in style
@@ -357,7 +359,7 @@ def test_server_settings_color_picker_uses_dot_trigger():
 def test_default_server_matches_exclusive_model_directory_selector():
     cookbook = _read("static/js/cookbook.js")
     hwfit = _read("static/js/cookbook-hwfit.js")
-    style = _read("static/style.css")
+    style = app_css()
     assert "const icon = active ? _MODELDIR_CHECK_ON : _MODELDIR_CHECK_OFF;" in cookbook
     assert "_envState.defaultServer = key;" in hwfit
     assert "Toggle off if it's already the default" not in hwfit

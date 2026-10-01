@@ -369,7 +369,6 @@ FUNCTION_TOOL_SCHEMAS = [
                     "full": {"type": "boolean", "description": "Raise the download budget to the hard cap for large pages/files. Use only after a result reported partial content."},
                     "query": {"type": "string", "description": "Optional comma-separated terms used to select matching passages/pages from long documents or PDFs, for example 'DocVQA, ChartQA, TextVQA, Qwen2.5-VL-72B'."}
                 },
-                "anyOf": [{"required": ["url"]}, {"required": ["urls"]}],
                 "required": []
             }
         }

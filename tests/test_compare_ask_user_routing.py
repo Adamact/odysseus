@@ -1,5 +1,6 @@
 from pathlib import Path
 import re
+from tests.helpers.stylesheets import app_css
 
 
 def test_compare_renders_ask_user_in_the_originating_pane():
@@ -80,7 +81,7 @@ def test_compare_pane_templates_hide_response_actions_until_response_exists():
     root = Path(__file__).resolve().parents[1]
     index = (root / "static/js/compare/index.js").read_text(encoding="utf-8")
     panes = (root / "static/js/compare/panes.js").read_text(encoding="utf-8")
-    styles = (root / "static/style.css").read_text(encoding="utf-8")
+    styles = app_css()
 
     assert re.search(r"from './panes\.js\?v=[A-Za-z0-9_-]+'", index)
     assert re.search(r"from './selector\.js\?v=[A-Za-z0-9_-]+'", index)
@@ -152,7 +153,7 @@ def test_compare_panes_have_visible_runtime_state_without_revealing_empty_action
     root = Path(__file__).resolve().parents[1]
     stream = (root / "static/js/compare/stream.js").read_text(encoding="utf-8")
     panes = (root / "static/js/compare/panes.js").read_text(encoding="utf-8")
-    styles = (root / "static/style.css").read_text(encoding="utf-8")
+    styles = app_css()
 
     assert "_paneEl.classList.remove('is-done', 'is-failed', 'is-awaiting-input');" in stream
     assert "_paneEl.classList.add('is-streaming');" in stream
@@ -179,7 +180,7 @@ def test_compare_panes_surface_compact_result_summary():
     index = (root / "static/js/compare/index.js").read_text(encoding="utf-8")
     panes = (root / "static/js/compare/panes.js").read_text(encoding="utf-8")
     stream = (root / "static/js/compare/stream.js").read_text(encoding="utf-8")
-    styles = (root / "static/style.css").read_text(encoding="utf-8")
+    styles = app_css()
 
     assert 'pane-header-row pane-header-secondary' in index
     assert 'class=\"pane-summary\" id=\"cmp-summary-' in index
@@ -200,10 +201,10 @@ def test_compare_panes_surface_compact_result_summary():
     assert "font-variant-numeric: tabular-nums;" in styles
 
 
-def test_compare_selector_surfaces_endpoint_metadata_and_blocks_duplicates():
+def test_compare_selector_surfaces_duplicate_warning_without_blocking_start():
     root = Path(__file__).resolve().parents[1]
     selector = (root / "static/js/compare/selector.js").read_text(encoding="utf-8")
-    styles = (root / "static/style.css").read_text(encoding="utf-8")
+    styles = app_css()
 
     assert "function _selectionKey(sel)" in selector
     assert "function _duplicateSelectionKeys()" in selector
@@ -211,8 +212,8 @@ def test_compare_selector_surfaces_endpoint_metadata_and_blocks_duplicates():
     assert "function _updateStartReadiness()" in selector
     assert "row.classList.add('cmp-model-row-duplicate');" in selector
     assert "Duplicate selection" in selector
-    assert "startBtn.disabled = blocked;" in selector
-    assert "Remove duplicate selections before starting compare" in selector
+    assert "startBtn.disabled = false;" in selector
+    assert "Duplicate selections will run as separate panes" in selector
     assert "if (selections.length > 1)" in selector
     assert selector.count("renderModelRows();") >= 12
 
@@ -227,7 +228,7 @@ def test_compare_selector_surfaces_endpoint_metadata_and_blocks_duplicates():
     assert "order: 2;" in rm_block
     assert "margin-left: auto;" in rm_block
     assert "align-self: center;" in rm_block
-    assert "top: -3px;" in rm_block
+    assert "top: -2px;" in rm_block
 
 
 def test_unsaved_compare_helper_sessions_do_not_render_in_sidebar():

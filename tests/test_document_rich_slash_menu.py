@@ -3,11 +3,13 @@
 import json
 import subprocess
 from pathlib import Path
-
+from tests.helpers.stylesheets import app_css
+from tests.helpers.stylesheets import stylesheet_link_tags
+from tests.helpers.document_source import document_source
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
-STYLE = (ROOT / "static/style.css").read_text(encoding="utf-8")
+DOC_JS = document_source()
+STYLE = app_css()
 
 
 def test_slash_menu_reuses_rich_text_actions_and_is_accessible():
@@ -40,8 +42,8 @@ def test_slash_menu_filters_converts_blocks_inserts_tables_and_fits_mobile():
       import { chromium } from 'playwright';
       const browser = await chromium.launch({ headless: true });
       const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
-      await page.goto('http://127.0.0.1:7011/static/js/documentOutline.js');
-      await page.setContent('<link rel="stylesheet" href="/static/style.css?v=20260831richtexttools91"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
+      await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentOutline.js`);
+      await page.setContent('__ODY_STYLESHEETS__<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
       await page.evaluate(async () => {
         const mod = await import('/static/js/document.js?v=20260831richtexttools91&slash-menu-test=1');
         mod.init('/api');
@@ -52,7 +54,9 @@ def test_slash_menu_filters_converts_blocks_inserts_tables_and_fits_mobile():
           current_content: '<p>Opening paragraph</p><p><br></p>',
           version_count: 1,
         });
-        await new Promise(resolve => setTimeout(resolve, 450));
+      });
+      await page.waitForFunction(() => document.querySelectorAll('#doc-email-richbody p').length >= 2);
+      await page.evaluate(() => {
         const block = document.querySelector('#doc-email-richbody p:last-child');
         const range = document.createRange();
         range.selectNodeContents(block);
@@ -111,6 +115,7 @@ def test_slash_menu_filters_converts_blocks_inserts_tables_and_fits_mobile():
       });
       await page.keyboard.type('/');
       await page.waitForSelector('#doc-rich-slash-menu');
+      await page.mouse.move(1, 1);
       await page.keyboard.press('End');
       const mobile = await page.locator('#doc-rich-slash-menu').evaluate(el => {
         const rect = el.getBoundingClientRect();
@@ -131,6 +136,7 @@ def test_slash_menu_filters_converts_blocks_inserts_tables_and_fits_mobile():
         };
       });
       await page.keyboard.press('Home');
+      const homeOptions = await page.locator('.doc-rich-slash-label').allTextContents();
       const homeLabel = await page.locator('.doc-rich-slash-item.is-active .doc-rich-slash-label').textContent();
       await page.keyboard.press('Escape');
       const escaped = await page.locator('#doc-rich-slash-menu').count() === 0;
@@ -142,9 +148,10 @@ def test_slash_menu_filters_converts_blocks_inserts_tables_and_fits_mobile():
         popup: el.hasAttribute('aria-haspopup'),
       }));
 
-      console.log(JSON.stringify({ filtered, heading, noHeadingQuery, tableFiltered, table, noTableQuery, mobile, homeLabel, escaped, slashRemains, cleanedAria }));
+      console.log(JSON.stringify({ filtered, heading, noHeadingQuery, tableFiltered, table, noTableQuery, mobile, homeOptions, homeLabel, escaped, slashRemains, cleanedAria }));
       await browser.close();
     """
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=ROOT,
@@ -169,7 +176,8 @@ def test_slash_menu_filters_converts_blocks_inserts_tables_and_fits_mobile():
     assert mobile["activeLabel"] == "Image"
     assert mobile["activeDescendant"] == mobile["activeId"]
     assert mobile["scrollTop"] > 0
-    assert data["homeLabel"] == "Text"
+    assert data["homeOptions"][0] == "Text"
+    assert data["homeLabel"] == data["homeOptions"][0], data
     assert data["escaped"] is True
     assert data["slashRemains"] is True
     assert data["cleanedAria"] == {

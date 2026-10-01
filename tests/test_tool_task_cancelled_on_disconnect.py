@@ -73,6 +73,7 @@ def test_tool_task_cancelled_on_generator_close(monkeypatch):
             [{"role": "user", "content": "run sleep 60"}],
             max_rounds=2,
             relevant_tools={"bash"},
+            workspace="/workspace",
         )
         saw_tool_start = False
         saw_tool_progress = False

@@ -177,7 +177,7 @@ async def test_native_product_browser_turn_cannot_bypass_family_contract(
 
 
 @pytest.mark.asyncio
-async def test_native_transcription_turn_keeps_reader_and_workspace_recovery(
+async def test_native_transcription_turn_does_not_offer_shell_fallbacks(
     monkeypatch, registered_mcp_manager,
 ):
     from routes import chat_routes
@@ -223,13 +223,15 @@ async def test_native_transcription_turn_keeps_reader_and_workspace_recovery(
     contract = observed[0]
     assert contract is not None
     assert contract.capabilities == {"transcription"}
-    from src.clean_agent_preview import INTERACTIVE_CORE_TOOLS, NATIVE_WORKSPACE_TOOLS
-    assert contract.required == {"transcribe_media"}
-    assert contract.offered == (INTERACTIVE_CORE_TOOLS | NATIVE_WORKSPACE_TOOLS) & contract.executable
+    assert contract.offered == {"transcribe_media", "ask_user"}
+    assert "bash" not in contract.offered
+    assert "python" not in contract.offered
+    assert "inspect_media" not in contract.offered
+    assert contract.permits("transcribe_media")
 
 
 @pytest.mark.asyncio
-async def test_native_ocr_turn_keeps_reader_and_workspace_recovery(
+async def test_native_ocr_turn_offers_only_extract_text(
     monkeypatch, registered_mcp_manager,
 ):
     from routes import chat_routes
@@ -275,9 +277,11 @@ async def test_native_ocr_turn_keeps_reader_and_workspace_recovery(
     contract = observed[0]
     assert contract is not None
     assert contract.capabilities == {"ocr"}
-    from src.clean_agent_preview import INTERACTIVE_CORE_TOOLS, NATIVE_WORKSPACE_TOOLS
-    assert contract.required == {"extract_text"}
-    assert contract.offered == (INTERACTIVE_CORE_TOOLS | NATIVE_WORKSPACE_TOOLS) & contract.executable
+    assert contract.offered == {"extract_text", "ask_user"}
+    assert "inspect_media" not in contract.offered
+    assert "bash" not in contract.offered
+    assert "python" not in contract.offered
+    assert contract.permits("extract_text")
 
 
 @pytest.mark.asyncio
@@ -333,7 +337,7 @@ async def test_native_sft_owner_can_use_confined_read_file_tool(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('deny_core', [False, True])
-async def test_exact_odysseus_clean_route_keeps_requested_family_and_core(
+async def test_exact_odysseus_clean_route_offers_only_requested_compact_family(
     monkeypatch, registered_mcp_manager, deny_core,
 ):
     from routes import chat_routes
@@ -373,11 +377,10 @@ async def test_exact_odysseus_clean_route_keeps_requested_family_and_core(
     contract = observed[0]
     assert contract.selection_mode == "clean_compact_v3_preview"
     assert contract.capabilities == {"tasks"}
-    from src.clean_agent_preview import INTERACTIVE_CORE_TOOLS
-    assert contract.offered == ({"manage_tasks"} | INTERACTIVE_CORE_TOOLS) & contract.executable
+    assert contract.offered == ({"manage_tasks"} if deny_core else {"manage_tasks", "ask_user"})
+    assert not {"bash", "python", "read_file", "web_search", "web_fetch"} & contract.offered
     assert contract.required == {"manage_tasks"}
-    if deny_core:
-        assert not contract.offered & INTERACTIVE_CORE_TOOLS
+    assert contract.permits("manage_tasks")
 
 
 @pytest.mark.asyncio

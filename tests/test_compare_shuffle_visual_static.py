@@ -1,5 +1,6 @@
 from pathlib import Path
 import re
+from tests.helpers.stylesheets import app_css, stylesheet_cache_version
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -11,7 +12,7 @@ def _read(path: str) -> str:
 
 def test_compare_shuffle_shows_center_notice_with_dice_icon():
     panes = _read("static/js/compare/panes.js")
-    css = _read("static/style.css")
+    css = app_css()
 
     assert "ICON_DICE" in panes
     assert "compare-shuffle-notice" in panes
@@ -23,7 +24,7 @@ def test_compare_shuffle_shows_center_notice_with_dice_icon():
 def test_compare_chat_and_agent_panes_expose_per_pane_inference_settings():
     index = _read("static/js/compare/index.js")
     panes = _read("static/js/compare/panes.js")
-    css = _read("static/style.css")
+    css = app_css()
 
     assert "pane-settings-btn" in panes
     assert "paneSettingsButtonHtml" in index
@@ -41,7 +42,7 @@ def test_compare_chat_and_agent_panes_expose_per_pane_inference_settings():
 def test_compare_probe_control_has_requested_vertical_alignment():
     index = _read("static/js/compare/index.js")
     probe = _read("static/js/compare/probe.js")
-    css = _read("static/style.css")
+    css = app_css()
 
     assert 'class="compare-check-icon"' in index
     assert '<span class="compare-check-label">Probe</span>' in index
@@ -64,9 +65,8 @@ def test_compare_cache_key_bumped_for_shuffle_notice():
     index = _read("static/js/compare/index.js")
 
     app_versions = re.findall(r"/static/app\.js\?v=([A-Za-z0-9_-]+)", html)
-    style_version = re.search(r"/static/style\.css\?v=([A-Za-z0-9_-]+)", html)
     assert app_versions and len(set(app_versions)) == 1
-    assert style_version and style_version.group(1) == app_versions[0]
+    assert stylesheet_cache_version() == app_versions[0]
     assert re.search(r"compare/index\.js\?v=[A-Za-z0-9_-]+", app)
     assert re.search(r"vote\.js\?v=[A-Za-z0-9_-]+", index)
     assert re.search(r"panes\.js\?v=[A-Za-z0-9_-]+", index)
@@ -75,7 +75,7 @@ def test_compare_cache_key_bumped_for_shuffle_notice():
 
 def test_compare_score_button_label_is_nudged_up():
     vote = _read("static/js/compare/vote.js")
-    css = _read("static/style.css")
+    css = app_css()
 
     assert '<span class="compare-score-label">Score</span>' in vote
     assert ".compare-score-label" in css

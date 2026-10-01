@@ -1,17 +1,22 @@
 """Numeric font sizes and the shared app color picker in Rich Text."""
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
+from tests.helpers.stylesheets import app_css
+from tests.helpers.stylesheets import stylesheet_link_tags
+from tests.helpers.document_source import document_source, function_body
+
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
-STYLE = (ROOT / "static/style.css").read_text(encoding="utf-8")
+DOC_JS = document_source()
+STYLE = app_css()
 
 
 def test_font_and_color_controls_use_shared_components():
-    assert "import { attachColorPicker } from './colorPicker.js?v=20260831richtexttools91';" in DOC_JS
+    assert re.search(r"import \{ attachColorPicker \} from './colorPicker\.js\?v=[A-Za-z0-9_-]+';", DOC_JS)
     assert 'data-dd="textsize" title="Font size" aria-label="Font size"' in DOC_JS
     for size, pixels in {1: 10, 2: 13, 3: 16, 4: 18, 5: 24, 6: 32, 7: 48}.items():
         assert f"{size}: {pixels}" in DOC_JS
@@ -44,8 +49,8 @@ def test_horizontal_rule_is_ordered_after_clear_formatting():
 
 
 def test_image_options_are_hidden_until_a_rich_image_is_selected():
-    clear_fn = DOC_JS.split("function _clearRichImageSelection()", 1)[1].split("function _selectRichImage", 1)[0]
-    select_fn = DOC_JS.split("function _selectRichImage", 1)[1].split("function _selectedRichImage", 1)[0]
+    clear_fn = function_body("_clearRichImageSelection")
+    select_fn = function_body("_selectRichImage")
     assert "imageButton.style.display = 'none';" in clear_fn
     assert "imageButton.style.display = '';" in select_fn
 
@@ -54,7 +59,9 @@ def test_rich_image_insert_button_uses_image_plus_icon():
     button = DOC_JS.split('id="md-toolbar-attach-btn"', 1)[1].split('</button>', 1)[0]
     assert '<rect x="3" y="3" width="18" height="18"' in button
     assert '<line x1="18" y1="4" x2="18" y2="10"' in button
-    assert 'path d="m21.44 11.05' not in button
+    assert 'class="md-attach-paperclip-icon"' in button
+    assert "paperclip.style.display = isEmail ? '' : 'none'" in DOC_JS
+    assert "imageIcon.style.display = isEmail ? 'none' : ''" in DOC_JS
 
 
 def test_selection_clear_formatting_only_shows_for_formatted_ranges():
@@ -88,8 +95,8 @@ def test_numeric_font_size_and_custom_colors_work_on_desktop_and_mobile():
 
       async function exercise(viewport, suffix) {
         const page = await browser.newPage({ viewport });
-        await page.goto('http://127.0.0.1:7011/static/js/documentStats.js');
-        await page.setContent('<link rel="stylesheet" href="/static/style.css?v=20260831richtexttools91"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
+        await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentStats.js`);
+        await page.setContent('__ODY_STYLESHEETS__<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
         await page.evaluate(async suffix => {
           const mod = await import(`/static/js/document.js?v=20260831richtexttools91&font-color=${suffix}`);
           mod.init('/api');
@@ -100,13 +107,14 @@ def test_numeric_font_size_and_custom_colors_work_on_desktop_and_mobile():
             current_content: '<p>Font target</p><p>Color target</p><p>Highlight target</p>',
             version_count: 1,
           });
-          await new Promise(resolve => setTimeout(resolve, 450));
         }, suffix);
+        await page.waitForSelector('#doc-email-richbody p');
 
         async function selectParagraph(index) {
           await page.evaluate(index => {
             const rich = document.querySelector('#doc-email-richbody');
             const paragraph = rich.querySelectorAll('p')[index];
+            if (!paragraph) throw new Error(`Missing paragraph ${index}: ${rich.innerHTML}`);
             rich.focus();
             const range = document.createRange();
             range.selectNodeContents(paragraph);
@@ -184,6 +192,7 @@ def test_numeric_font_size_and_custom_colors_work_on_desktop_and_mobile():
       console.log(JSON.stringify({ desktop, mobile }));
       await browser.close();
     """
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=ROOT,

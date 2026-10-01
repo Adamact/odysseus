@@ -22473,7 +22473,7 @@ async def stream_agent_loop(
                 "manage_notes", "manage_calendar", "manage_tasks",
                 "ask_user", "update_plan",
             }
-        elif _ody_doc_finetune_mode and route_tools is not None:
+        elif (_ody_doc_finetune_mode or doc_mode) and route_tools is not None:
             if _prompt_active_document is not None:
                 route_tools = {
                     "edit_document", "update_document", "suggest_document",
@@ -22481,12 +22481,12 @@ async def stream_agent_loop(
                 }
             else:
                 route_tools = {"create_document", "ask_user", "update_plan"}
-        elif _ody_notes_finetune_mode and route_tools is not None:
+        elif (_ody_notes_finetune_mode or notes_mode) and route_tools is not None:
             route_tools = {
                 "manage_notes", "manage_calendar", "manage_tasks",
                 "ask_user", "update_plan",
             }
-        elif _ody_general_no_tool_mode:
+        elif _ody_general_no_tool_mode or general_no_tool_mode:
             route_tools = set()
         else:
             route_tools = _route_tui_local_workspace_tools(
@@ -22984,6 +22984,8 @@ async def stream_agent_loop(
         # navigation tools. Do not let the general agent floor re-add bash
         # after that narrow surface was selected.
         and not (_low_signal_turn and workspace)
+        and not _ody_notes_finetune_mode
+        and not _ody_general_no_tool_mode
     ):
         from src.turn_contract import CONTRACT_CORE_TOOLS
         _core_agent_tools = set(CONTRACT_CORE_TOOLS)
@@ -23230,6 +23232,13 @@ async def stream_agent_loop(
         _relevant_tools = {"update_plan", "ask_user"} - set(disabled_tools)
         _base_relevant_tools = set(_relevant_tools)
         logger.info("[agent-intent] explicit plan request clamped to plan tools")
+
+    if _low_signal_turn and not workspace and not _terminal_agent_mode and _relevant_tools is not None:
+        # Retrieval and the core floor can surface file readers for a vague
+        # local-project hint even though no project has been selected.
+        _relevant_tools.difference_update(_DOMAIN_TOOL_MAP["files"])
+        if _base_relevant_tools is not None:
+            _base_relevant_tools.difference_update(_DOMAIN_TOOL_MAP["files"])
 
     if _relevant_tools is not None:
         logger.info("[agent-intent] selected_tools=%s", sorted(_relevant_tools)[:50])
@@ -24225,6 +24234,7 @@ async def stream_agent_loop(
     _failed_read_recovery_sent = False
     _failed_read_recovery_instruction_sent = False
     _post_effectful_mutation_done = False
+    _verified_coding_summary_emitted = False
     _successful_mutation_signatures: set[tuple[str, str]] = set()
     _single_execution_bound = _request_forbids_execution_retry(_last_user)
     _execution_tool_attempts: dict[str, int] = {}
@@ -25874,9 +25884,17 @@ async def stream_agent_loop(
             and not _approved_result_injected
             and not _native_terminal_runtime
             and not normalized_external_tool_schemas
-            # A one-tool shortcut cannot own a causal compound workflow. Let
-            # the agent consume the complete request-scoped tool surface.
-            and len(_caller_relevant_tools or ()) <= 1
+            # The explicit topic-bulk path below owns its search-then-bulk
+            # sequence. Other multi-tool requests need the agent's full route.
+            and (
+                len(_caller_relevant_tools or ()) <= 1
+                or (
+                    _caller_relevant_tools == {
+                        "mcp__email__search_emails", "mcp__email__bulk_email",
+                    }
+                    and _parse_qwen_explicit_email_topic_bulk_action_request(_last_user)
+                )
+            )
             and not _request_has_compound_actions(_last_user)
             # Sealed safe reads use the central required-operation path so
             # execution and canonical rendering have the same owner.
@@ -33949,6 +33967,11 @@ async def stream_agent_loop(
                     _tui_bash_block_completed
                     and block.tool_type == "host_shell"
                 )
+                and not (
+                    block.tool_type == "host_shell"
+                    and _has_tui_host_bridge
+                    and _post_effectful_mutation_done
+                )
             ):
                 _terminal_summary = _ody_qwen_terminal_tool_summary({
                     "tool": block.tool_type,
@@ -35383,10 +35406,11 @@ async def stream_agent_loop(
             _post_effectful_mutation_done
             and _post_edit_verification_completed
             and _workspace_mutation_completion_authorized
-            and _deterministic_terminal_eligible
+            and (_deterministic_terminal_eligible or _tui_local_execution_turn)
         ):
             if _tui_local_execution_turn or _qwen38_tool_router:
                 full_response = _tui_verified_coding_summary(tool_events)
+                _verified_coding_summary_emitted = True
                 yield f'data: {json.dumps({"type": "final_response", "content": full_response})}\n\n'
             elif not full_response.strip() or full_response.strip().startswith("```"):
                 _verification_output = ""
@@ -36970,7 +36994,7 @@ async def stream_agent_loop(
 
     _response_before_tool_summary = full_response
     _action_summary_selected = False
-    if tool_events and _deterministic_terminal_eligible:
+    if tool_events and _deterministic_terminal_eligible and not _verified_coding_summary_emitted:
         _multi_read_email_summaries = _email_read_summaries_from_tool_events(tool_events)
         _multi_attachment_summaries = _email_attachment_summaries_from_tool_events(tool_events)
         _bulk_email_state_summary = _email_state_bulk_terminal_summary(tool_events, user_text=_last_user)

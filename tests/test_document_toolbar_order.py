@@ -3,10 +3,12 @@
 import json
 import subprocess
 from pathlib import Path
+from tests.helpers.stylesheets import stylesheet_link_tags
+from tests.helpers.document_source import document_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+DOC_JS = document_source()
 
 
 def test_toolbar_groups_define_writing_actions_before_view_controls():
@@ -18,8 +20,8 @@ def test_toolbar_groups_define_writing_actions_before_view_controls():
     assert ordering.index("name: 'inline-basic'") < ordering.index("name: 'inline-color'")
     assert ordering.index("name: 'inline-color'") < ordering.index("name: 'alignment'")
     assert ordering.index("name: 'alignment'") < ordering.index("name: 'spacing'")
-    assert ordering.index("name: 'spacing'") < ordering.index("name: 'link'")
-    assert ordering.index("name: 'link'") < ordering.index("name: 'paragraph'")
+    assert ordering.index("'[data-md=\"link\"]'") < ordering.index("name: 'alignment'")
+    assert ordering.index("name: 'spacing'") < ordering.index("name: 'paragraph'")
     assert ordering.index("name: 'paragraph'") < ordering.index("name: 'insert'")
     assert ordering.index("name: 'insert'") < ordering.index("name: 'document'")
     assert ordering.index("name: 'document'") < ordering.index("name: 'view'")
@@ -37,8 +39,8 @@ def test_rich_toolbar_rendered_order_is_stable_on_desktop_and_mobile():
 
       async function inspect(viewport, suffix) {
         const page = await browser.newPage({ viewport });
-        await page.goto('http://127.0.0.1:7011/static/js/documentStats.js');
-        await page.setContent('<link rel="stylesheet" href="/static/style.css?v=20260831richtexttools91"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
+        await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentStats.js`);
+        await page.setContent('__ODY_STYLESHEETS__<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
         await page.evaluate(async suffix => {
           const mod = await import(`/static/js/document.js?v=20260831richtexttools91&toolbar-order=${suffix}`);
           mod.init('/api');
@@ -49,8 +51,8 @@ def test_rich_toolbar_rendered_order_is_stable_on_desktop_and_mobile():
             current_content: '<p>Writing tools</p>',
             version_count: 1,
           });
-          await new Promise(resolve => setTimeout(resolve, 450));
         }, suffix);
+        await page.waitForSelector('#doc-email-richbody p');
 
         const state = await page.evaluate(() => {
           const toolbar = document.querySelector('#md-toolbar-items');
@@ -58,7 +60,8 @@ def test_rich_toolbar_rendered_order_is_stable_on_desktop_and_mobile():
           const key = item => item.dataset.dd || item.dataset.md || item.id;
           const visible = controls.filter(item => {
             const style = getComputedStyle(item);
-            return style.display !== 'none' && style.visibility !== 'hidden';
+            return !item.classList.contains('md-toolbar-sep')
+              && style.display !== 'none' && style.visibility !== 'hidden';
           });
           return {
             all: controls.map(item => [item.dataset.toolbarGroup, key(item)]),
@@ -78,6 +81,7 @@ def test_rich_toolbar_rendered_order_is_stable_on_desktop_and_mobile():
       console.log(JSON.stringify({ desktop, mobile }));
       await browser.close();
     """
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=ROOT,
@@ -90,7 +94,7 @@ def test_rich_toolbar_rendered_order_is_stable_on_desktop_and_mobile():
 
     expected_groups = [
         "display-size", "type", "inline-basic", "inline-color", "alignment", "spacing",
-        "link", "paragraph", "insert", "inline-rich", "document", "view",
+        "paragraph", "insert", "inline-rich", "document", "view",
     ]
     expected_separators = [
         "display-size-type",
@@ -98,8 +102,7 @@ def test_rich_toolbar_rendered_order_is_stable_on_desktop_and_mobile():
         "inline-basic-inline-color",
         "inline-color-alignment",
         "alignment-spacing",
-        "spacing-link",
-        "link-paragraph",
+        "spacing-paragraph",
         "paragraph-insert",
         "insert-inline-rich",
         "inline-rich-document",
@@ -110,7 +113,7 @@ def test_rich_toolbar_rendered_order_is_stable_on_desktop_and_mobile():
         assert list(dict.fromkeys(groups)) == expected_groups
         assert state["separators"] == expected_separators
         assert state["visible"][:6] == [
-            "doc-fontsize-btn",
+            "doc-ai-writing-btn",
             "heading",
             "font",
             "textsize",
@@ -118,11 +121,11 @@ def test_rich_toolbar_rendered_order_is_stable_on_desktop_and_mobile():
             "italic",
         ]
         assert state["visible"].index("link") < state["visible"].index("list")
-        assert state["visible"].index("list") < state["visible"].index("md-toolbar-attach-btn")
+        assert state["visible"].index("md-toolbar-attach-btn") < state["visible"].index("list")
         assert state["visible"].index("md-toolbar-attach-btn") < state["visible"].index("doc-find-toolbar-btn")
         assert state["visible"].index("subscript") > state["visible"].index("md-toolbar-attach-btn")
         if "doc-outline-toolbar-btn" in state["visible"]:
-            assert state["visible"].index("doc-fontsize-btn") < state["visible"].index("doc-outline-toolbar-btn")
+            assert state["visible"].index("doc-ai-writing-btn") < state["visible"].index("doc-outline-toolbar-btn")
         assert state["pageOverflow"] == 0
 
     assert data["mobile"]["toolbarOverflow"] is True

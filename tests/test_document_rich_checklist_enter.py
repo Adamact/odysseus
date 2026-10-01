@@ -3,10 +3,12 @@
 import json
 import subprocess
 from pathlib import Path
+from tests.helpers.stylesheets import stylesheet_link_tags
+from tests.helpers.document_source import document_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+DOC_JS = document_source()
 
 
 def test_checklist_enter_uses_native_edit_commands_and_resets_state():
@@ -25,8 +27,8 @@ def test_enter_creates_unchecked_task_and_empty_enter_exits_cleanly():
       import { chromium } from 'playwright';
       const browser = await chromium.launch({ headless: true });
       const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
-      await page.goto('http://127.0.0.1:7011/static/js/documentOutline.js');
-      await page.setContent('<link rel="stylesheet" href="/static/style.css?v=20260831richtexttools91"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
+      await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentOutline.js`);
+      await page.setContent('__ODY_STYLESHEETS__<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
       await page.evaluate(async () => {
         const mod = await import('/static/js/document.js?v=20260831richtexttools91&checklist-enter-test=1');
         mod.init('/api');
@@ -78,6 +80,7 @@ def test_enter_creates_unchecked_task_and_empty_enter_exits_cleanly():
       console.log(JSON.stringify({ afterFirstEnter, ...data }));
       await browser.close();
     """
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=ROOT,

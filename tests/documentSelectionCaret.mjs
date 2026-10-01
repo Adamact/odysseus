@@ -1,8 +1,8 @@
-import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
+import { documentSource } from './helpers/document_source.mjs';
 import { chromium } from 'playwright';
 
-const source = readFileSync('static/js/document.js', 'utf8');
+const source = documentSource();
 const start = source.indexOf('  function clearSelection(');
 const cleanup = source.slice(start, source.indexOf('  function clearSelectionAt(', start));
 assert.equal((source.match(/if \(_selections.length\) clearSelection\(\{ preserveCaret: true \}\);/g) || []).length, 2);

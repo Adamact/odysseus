@@ -3,6 +3,7 @@
 import json
 import subprocess
 from pathlib import Path
+from tests.helpers.stylesheets import stylesheet_link_tags
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,8 +32,8 @@ def test_save_status_is_dirty_race_safe_and_reports_failures():
         });
         active -= 1;
       });
-      await page.goto('http://127.0.0.1:7011/static/js/documentStats.js');
-      await page.setContent('<link rel="stylesheet" href="/static/style.css?v=20260831richtexttools91"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
+      await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentStats.js`);
+      await page.setContent('__ODY_STYLESHEETS__<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
       await page.evaluate(async () => {
         const mod = await import('/static/js/document.js?v=20260831richtexttools91&save-status-test=1');
         mod.init('/api');
@@ -81,6 +82,7 @@ def test_save_status_is_dirty_race_safe_and_reports_failures():
       console.log(JSON.stringify({ initial, dirty, duringSave, afterSave, afterFailure, bodies, maxActive, footer, mobile }));
       await browser.close();
     """
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=ROOT,

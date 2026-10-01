@@ -3,16 +3,16 @@
 import json
 import subprocess
 from pathlib import Path
+from tests.helpers.stylesheets import stylesheet_link_tags
+from tests.helpers.document_source import document_source, function_body
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+DOC_JS = document_source()
 
 
 def test_merge_split_commands_use_contextual_undoable_table_path():
-    actions = DOC_JS.split("function _applyRichTableAction", 1)[1].split(
-        "function _insertRichPageBreak", 1
-    )[0]
+    actions = function_body("_applyRichTableAction")
     menu = DOC_JS.split("function _showMdDropdown", 1)[1].split(
         "function initMdToolbar", 1
     )[0]
@@ -33,8 +33,8 @@ def test_mobile_merge_split_round_trip_preserves_headers_formatting_and_history(
       import { chromium } from 'playwright';
       const browser = await chromium.launch({ headless: true });
       const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
-      await page.goto('http://127.0.0.1:7011/static/js/documentStats.js');
-      await page.setContent('<link rel="stylesheet" href="/static/style.css?v=20260831richtexttools91"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
+      await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentStats.js`);
+      await page.setContent('__ODY_STYLESHEETS__<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
       await page.evaluate(async () => {
         const mod = await import('/static/js/document.js?v=20260831richtexttools91&table-merge-split=1');
         mod.init('/api');
@@ -138,6 +138,7 @@ def test_mobile_merge_split_round_trip_preserves_headers_formatting_and_history(
       }));
       await browser.close();
     """
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=ROOT,

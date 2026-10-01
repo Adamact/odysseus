@@ -1,10 +1,12 @@
 from pathlib import Path
+import re
+from tests.helpers.stylesheets import app_css
 
 
 ROOT = Path(__file__).resolve().parents[1]
 CHAT = (ROOT / "static/js/chat.js").read_text(encoding="utf-8")
 UI = (ROOT / "static/js/ui.js").read_text(encoding="utf-8")
-STYLE = (ROOT / "static/style.css").read_text(encoding="utf-8")
+STYLE = app_css()
 
 
 def test_terminal_and_canonical_renders_preserve_chat_scroll_anchor():
@@ -83,7 +85,9 @@ def test_large_tool_scroll_fix_is_served_under_a_fresh_chat_module_key():
     """The fixed ui module is imported by chat.js, so stale chat.js is stale UI."""
     app = (ROOT / "static/app.js").read_text(encoding="utf-8")
     index = (ROOT / "static/index.html").read_text(encoding="utf-8")
-    key = "chat.js?v=20260916largetoolscroll2"
+    match = re.search(r"chat\.js\?v=([A-Za-z0-9_-]+)", app)
+    assert match is not None, "chat.js must be imported with a cache-busting key"
+    key = f"chat.js?v={match.group(1)}"
 
     assert key in app
     assert index.count(key) == 2

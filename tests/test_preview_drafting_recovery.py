@@ -19,10 +19,14 @@ def test_explicit_thinking_off_wins_without_tools(monkeypatch):
 
 def test_fetch_requires_a_page_in_full_and_compact_contracts():
     schema = next(s for s in FUNCTION_TOOL_SCHEMAS if s['function']['name'] == 'web_fetch')
-    for item in [schema, compact_schemas([schema])[0]]:
-        params = item['function']['parameters']
-        with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate({'query': 'compose a letter'}, params)
+    # The preview validates calls against the compact contract, which requires
+    # url or urls. The full schema is sent to providers whose top-level
+    # parameter contract rejects anyOf (test_model_tool_modes), so it accepts
+    # both forms without the combinator.
+    compact = compact_schemas([schema])[0]['function']['parameters']
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({'query': 'compose a letter'}, compact)
+    for params in [schema['function']['parameters'], compact]:
         jsonschema.validate({'url': 'https://example.com', 'query': 'details'}, params)
         jsonschema.validate({'urls': ['https://example.com']}, params)
 

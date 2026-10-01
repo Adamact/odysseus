@@ -2319,7 +2319,7 @@ def compact_schemas(schemas, *, model=None):
                 'Saved notes. Create a todo in ONE add call: note_type="checklist", '
                 'checklist_items=[{text,done:false}], title only if requested (otherwise auto-dated). '
                 'Keep tasks and stated times in item text, never title. No time conversion. '
-                'Freeform body: content. Existing note: update+id, never add. '
+                'Freeform body: content. add creates a new note; update with id edits an existing note, never add. '
                 'list supports label/archived; search by topic; view by id. Delete only on request. '
                 'due_date sets a reminder, not an item time.'
             )
@@ -5339,6 +5339,8 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     required_artifacts = runtime_required_artifacts(
         direct_user_text, client_runtime_context,
     ) if native_workspace_enabled else tuple()
+    if required_artifacts:
+        web_briefing_target = False
     yield event({'type': 'turn_contract', **turn_contract.audit(), 'schema_mode': 'compact_contract_v5',
                  'native_workspace': native_workspace_enabled,
                  'required_artifacts': list(required_artifacts),
@@ -7186,7 +7188,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     browser_access_blocked = (
                         canonical(actual_tool) == 'private_browser'
                         and not failed
-                        and browser_observation_access_blocked(output)
+                        and browser_observation_access_blocked(result.get('output') or result)
                     )
                     browser_page_missing = (
                         canonical(actual_tool) == 'private_browser'

@@ -3,16 +3,16 @@
 import json
 import subprocess
 from pathlib import Path
+from tests.helpers.stylesheets import stylesheet_link_tags
+from tests.helpers.document_source import document_source, function_body
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+DOC_JS = document_source()
 
 
 def test_find_index_inserts_boundaries_without_flattening_inline_spans():
-    section = DOC_JS.split("function _buildRichFindRanges", 1)[1].split(
-        "function _renderRichFindRanges", 1
-    )[0]
+    section = function_body("_buildRichFindRanges")
     assert "const blockSelector = 'p,div,h1,h2,h3,h4,h5,h6,li,blockquote,pre,td,th'" in section
     assert "block !== previousBlock" in section
     assert "between.cloneContents().querySelector?.('br')" in section
@@ -24,8 +24,8 @@ def test_find_rejects_cross_block_matches_but_supports_inline_matches_and_replac
       import { chromium } from 'playwright';
       const browser = await chromium.launch({ headless: true });
       const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
-      await page.goto('http://127.0.0.1:7011/static/js/documentOutline.js');
-      await page.setContent('<link rel="stylesheet" href="/static/style.css?v=20260831richtexttools91"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
+      await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentOutline.js`);
+      await page.setContent('__ODY_STYLESHEETS__<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
       await page.evaluate(async () => {
         const mod = await import('/static/js/document.js?v=20260831richtexttools91&find-boundaries-test=1');
         mod.init('/api');
@@ -73,6 +73,7 @@ def test_find_rejects_cross_block_matches_but_supports_inline_matches_and_replac
       console.log(JSON.stringify({ crossParagraph, crossBreak, crossInline, ...data }));
       await browser.close();
     """
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=ROOT,

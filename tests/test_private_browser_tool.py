@@ -4,6 +4,7 @@ import base64
 import json
 from pathlib import Path
 
+from core import platform_compat
 import src.agent_tools.web_tools as web_tools
 from src.agent_tools.web_tools import (
     PrivateBrowserTool,
@@ -1839,3 +1840,149 @@ def test_generic_go_to_phrase_is_browser_interaction() -> None:
     assert not _looks_like_explicit_browser_interaction(
         "Find rules for getting rid of garbage in Setagaya-ku."
     )
+
+
+def test_terminate_owned_chrome_skips_the_sweep_without_procfs(
+    monkeypatch, tmp_path
+) -> None:
+    """macOS and Windows have no /proc; shutdown must degrade, not raise."""
+
+    missing = tmp_path / "no-procfs"
+    monkeypatch.setattr(platform_compat, "PROC_ROOT", missing)
+
+    def _unexpected_iterdir(*args, **kwargs):
+        raise AssertionError("the pid sweep must not run without procfs")
+
+    monkeypatch.setattr(Path, "iterdir", _unexpected_iterdir)
+
+    PrivateBrowserTool._terminate_owned_chrome({"TMPDIR": str(tmp_path)})
+
+
+def test_terminate_owned_chrome_kills_only_this_runtimes_profile(
+    monkeypatch, tmp_path
+) -> None:
+    """With procfs present, match on the runtime-owned profile prefix alone."""
+
+    proc = tmp_path / "proc"
+    tmpdir = tmp_path / "runtime-tmp"
+    tmpdir.mkdir()
+    profile_prefix = str(tmpdir.resolve() / "agent-browser-chrome-")
+
+    def _write_pid(pid: str, cmdline: str) -> None:
+        entry = proc / pid
+        entry.mkdir(parents=True)
+        (entry / "cmdline").write_bytes(cmdline.replace(" ", "\0").encode())
+
+    _write_pid("101", f"chrome --user-data-dir={profile_prefix}abc")
+    _write_pid("202", "chrome --user-data-dir=/Users/someone/Library/Chrome")
+    (proc / "self").mkdir()
+
+    monkeypatch.setattr(platform_compat, "PROC_ROOT", proc)
+    killed: list[int] = []
+    monkeypatch.setattr(web_tools.os, "kill", lambda pid, sig: killed.append(pid))
+
+    PrivateBrowserTool._terminate_owned_chrome({"TMPDIR": str(tmpdir)})
+
+    assert killed == [101]
+
+
+def _pid_file_for(tmp_path, monkeypatch, namespace, session, pid):
+    """Write a pid file where the daemon helpers will look for it."""
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setenv("ODYSSEUS_BROWSER_NAMESPACE", namespace)
+    candidates = web_tools._browser_pid_file_candidates(tmp_path, namespace, session)
+    target = candidates[0]
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(str(pid))
+    return target
+
+
+def test_live_daemon_pid_file_survives_a_host_without_procfs(
+    monkeypatch, tmp_path
+) -> None:
+    """Off Linux a missing cmdline is not evidence the daemon exited."""
+
+    monkeypatch.setattr(platform_compat, "PROC_ROOT", tmp_path / "no-procfs")
+    monkeypatch.setattr(web_tools, "_process_is_alive", lambda pid: True)
+    killed: list[int] = []
+    monkeypatch.setattr(web_tools.os, "kill", lambda pid, sig: killed.append(pid))
+    pid_file = _pid_file_for(tmp_path, monkeypatch, "clawmm-test", "session-1", 4321)
+
+    PrivateBrowserTool._terminate_owned_daemon({}, "session-1")
+
+    assert pid_file.exists(), "a live daemon's pid file must not be removed"
+    assert killed == [], "an unverified process must not be killed"
+
+
+def test_dead_daemon_pid_file_is_removed_without_procfs(monkeypatch, tmp_path) -> None:
+    """A pid that no longer exists is the one case that justifies forgetting it."""
+
+    monkeypatch.setattr(platform_compat, "PROC_ROOT", tmp_path / "no-procfs")
+    monkeypatch.setattr(web_tools, "_process_is_alive", lambda pid: False)
+    pid_file = _pid_file_for(tmp_path, monkeypatch, "clawmm-test", "session-2", 4322)
+
+    PrivateBrowserTool._terminate_owned_daemon({}, "session-2")
+
+    assert not pid_file.exists()
+
+
+def test_owned_daemon_is_detected_from_a_live_pid_without_procfs(
+    monkeypatch, tmp_path
+) -> None:
+    """Answering "no daemon" here is what lets close bootstrap a fresh one."""
+
+    monkeypatch.setattr(platform_compat, "PROC_ROOT", tmp_path / "no-procfs")
+    monkeypatch.setattr(web_tools, "_process_is_alive", lambda pid: True)
+    _pid_file_for(tmp_path, monkeypatch, "clawmm-test", "session-3", 4323)
+
+    assert PrivateBrowserTool._owned_daemon_exists({}, "session-3") is True
+
+
+def test_owned_daemon_absent_when_the_pid_is_gone(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(platform_compat, "PROC_ROOT", tmp_path / "no-procfs")
+    monkeypatch.setattr(web_tools, "_process_is_alive", lambda pid: False)
+    _pid_file_for(tmp_path, monkeypatch, "clawmm-test", "session-4", 4324)
+
+    assert PrivateBrowserTool._owned_daemon_exists({}, "session-4") is False
+
+
+def test_procfs_host_still_matches_on_the_command_line(monkeypatch, tmp_path) -> None:
+    """With procfs present the identity check stays exact, not pid-liveness."""
+
+    proc = tmp_path / "proc"
+    (proc / "5555").mkdir(parents=True)
+    (proc / "5555" / "cmdline").write_bytes(b"node\0agent-browser\0--serve")
+    (proc / "6666").mkdir(parents=True)
+    (proc / "6666" / "cmdline").write_bytes(b"some\0other\0process")
+    monkeypatch.setattr(platform_compat, "PROC_ROOT", proc)
+    monkeypatch.setattr(web_tools, "_process_is_alive", lambda pid: True)
+
+    _pid_file_for(tmp_path, monkeypatch, "clawmm-test", "session-5", 5555)
+    assert PrivateBrowserTool._owned_daemon_exists({}, "session-5") is True
+
+    _pid_file_for(tmp_path, monkeypatch, "clawmm-test", "session-6", 6666)
+    assert PrivateBrowserTool._owned_daemon_exists({}, "session-6") is False
+
+
+def test_liveness_probe_goes_through_the_platform_safe_helper(monkeypatch) -> None:
+    """The no-procfs path must not reach a bare ``os.kill(pid, 0)``.
+
+    CPython's Windows ``os.kill`` calls ``TerminateProcess(handle, sig)`` for
+    any signal other than CTRL_C / CTRL_BREAK, so probing liveness with signal
+    0 terminates the process it asks about — and the only hosts that reach this
+    probe are the ones with no procfs, Windows among them.
+    ``core.platform_compat.pid_alive`` is the tree's platform-safe answer.
+    """
+
+    asked: list[int] = []
+    monkeypatch.setattr(
+        platform_compat, "pid_alive", lambda pid: asked.append(pid) or True
+    )
+    monkeypatch.setattr(
+        web_tools.os,
+        "kill",
+        lambda *a, **kw: pytest.fail("os.kill must not be used to probe liveness"),
+    )
+
+    assert web_tools._process_is_alive(4242) is True
+    assert asked == [4242]

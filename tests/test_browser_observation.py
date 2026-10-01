@@ -3,6 +3,15 @@ import json
 from src.clean_agent_preview import preview_tool_result_text
 
 
+def test_legacy_page_text_retains_access_block_evidence():
+    result = {'url': 'https://example.org', 'title': 'Security verification',
+              'text': 'Unusual traffic. Complete the CAPTCHA.'}
+    output = preview_tool_result_text({'output': json.dumps(result), 'exit_code': 0},
+                                     'private_browser', {})
+    assert 'Security verification' in output
+    assert 'Complete the CAPTCHA' in output
+
+
 def test_snapshot_survives_large_duplicate_refs():
     result = {'refs': {f'e{i}': {'name': 'noise' * 50} for i in range(1000)},
               'origin': 'https://example.org',

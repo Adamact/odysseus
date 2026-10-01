@@ -1,8 +1,9 @@
-import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
+import { documentSource } from './helpers/document_source.mjs';
 import { chromium } from 'playwright';
+import { appCss } from './helpers/stylesheets.mjs';
 
-const source = readFileSync('static/js/document.js', 'utf8');
+const source = documentSource();
 const start = source.indexOf('  function _showCurrentSuggestion()');
 const end = source.indexOf('  /** Show inline diff by modifying', start);
 assert.ok(start >= 0 && end > start);
@@ -12,7 +13,7 @@ const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 700, height: 500 } });
   await page.setContent('<div class="doc-editor-pane"><div id="doc-editor-wrap"></div></div>');
-  await page.addStyleTag({ path: 'static/style.css' });
+  await page.addStyleTag({ content: await appCss() });
   const result = await page.evaluate(code => {
     let _activeSuggestions = [];
     let _suggestionTotal = 0, _suggestionIndex = 0;

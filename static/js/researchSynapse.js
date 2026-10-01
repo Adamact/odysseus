@@ -38,7 +38,7 @@ export default function createResearchSynapse(container, opts = {}) {
         <span class="rs-sep">·</span>
         <span class="rs-timer">00:00</span>
       </div>
-      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">
+      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Live research map">
         <g class="rs-guide" aria-hidden="true">
           <ellipse cx="${cx}" cy="${cy}" rx="116" ry="72"></ellipse>
           <ellipse cx="${cx}" cy="${cy}" rx="58" ry="36"></ellipse>

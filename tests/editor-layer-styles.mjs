@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright';
+import { appCss } from './helpers/stylesheets.mjs';
 
 const browser = await chromium.launch({ headless: true });
 try {
@@ -46,7 +47,7 @@ try {
     return result;
   });
   assert.equal(results.length, 7);
-  await page.addStyleTag({ content: await readFile(new URL('../static/style.css', import.meta.url), 'utf8') });
+  await page.addStyleTag({ content: await appCss() });
   await page.evaluate(async () => {
     const { openLayerStyleMenu } = await import('/layer-style-menu.js');
     document.querySelector('#fx').onclick = event => { event.stopPropagation(); openLayerStyleMenu(event.currentTarget, () => {}); };

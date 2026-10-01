@@ -3,31 +3,35 @@
 import json
 import subprocess
 from pathlib import Path
+from tests.helpers.stylesheets import app_css
+from tests.helpers.stylesheets import stylesheet_link_tags
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "static/js/documentLibrary.js").read_text(encoding="utf-8")
-STYLE = (ROOT / "static/style.css").read_text(encoding="utf-8")
+STYLE = app_css()
 
 
-def test_mobile_footer_exposes_open_and_more_only():
+def test_mobile_footer_exposes_delete_open_and_more():
     assert "doclib-expanded-open-btn" in SOURCE
     assert "doclib-expanded-mobile-more" in SOURCE
     assert "label: 'Open in new chat'" in SOURCE
     assert "'Open in original' : 'Open document'" in SOURCE
-    assert "label: 'Export file'" in SOURCE
+    assert "label: 'Export file ›'" in SOURCE
+    assert "label: 'Original format'" in SOURCE
+    assert "label: 'Markdown (.md)'" in SOURCE
     assert "'Restore document' : 'Archive document'" in SOURCE
     assert "label: 'Delete document'" in SOURCE
 
-    mobile_css = STYLE.split("The Documents preview footer only exposes Open and More", 1)[1]
+    mobile_css = STYLE.split("On phones, keep Delete explicit", 1)[1]
     mobile_css = mobile_css.split("/* Chat top bar", 1)[0]
     for hidden_action in (
-        ".doclib-expanded-delete-btn",
         ".doclib-expanded-archive-btn",
         ".doclib-expanded-clone-btn",
         ".doclib-expanded-export-btn",
     ):
         assert hidden_action in mobile_css
+    assert ".doclib-expanded-delete-btn {\n        display: inline-flex !important" in mobile_css
     assert ".doclib-expanded-mobile-more" in mobile_css
     assert "display: inline-flex" in mobile_css
     assert "box-sizing: border-box" in mobile_css
@@ -50,8 +54,8 @@ def test_mobile_open_in_new_chat_copies_to_materialized_session():
       import { chromium } from 'playwright';
       const browser = await chromium.launch({ headless: true });
       const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
-      await page.goto('http://127.0.0.1:7011/static/js/documentStats.js');
-      await page.setContent('<link rel="stylesheet" href="/static/style.css?v=20260831richtexttools91"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
+      await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentStats.js`);
+      await page.setContent('__ODY_STYLESHEETS__<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
       const state = await page.evaluate(async () => {
         let currentSession = 'current-chat';
         let createDirectCalls = 0;
@@ -104,6 +108,7 @@ def test_mobile_open_in_new_chat_copies_to_materialized_session():
       console.log(JSON.stringify(state));
       await browser.close();
     """
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=ROOT,

@@ -107,9 +107,9 @@ async def test_stream_recovers_navigation_then_fetch_without_email_classifier(mo
                   {'role': 'user', 'content': URL}],
         session_id='fixture-browser', owner='test', disabled_tools=set(), tool_policy=policy)]
     assert calls == ['private_browser', 'web_fetch', 'web_search'], '\n'.join(chunks)
-    assert requests[1]['tool_choice'] == 'required'
+    assert requests[1]['tool_choice'] == 'auto'
     assert [s['function']['name'] for s in requests[1]['tools']] == ['web_fetch']
-    assert requests[2]['tool_choice'] == 'required'
+    assert requests[2]['tool_choice'] == 'auto'
     assert [s['function']['name'] for s in requests[2]['tools']] == ['web_search']
     assert any('browser_transport_fallback' in chunk for chunk in chunks)
     assert any('[DONE]' in chunk for chunk in chunks)

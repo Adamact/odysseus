@@ -3,26 +3,22 @@
 import json
 import subprocess
 from pathlib import Path
-
+from tests.helpers.stylesheets import app_css
+from tests.helpers.stylesheets import stylesheet_link_tags
+from tests.helpers.document_source import declaration, document_source, function_body
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
-STYLE = (ROOT / "static/style.css").read_text(encoding="utf-8")
+DOC_JS = document_source()
+STYLE = app_css()
 
 
 def test_heading_levels_and_page_break_are_exposed_everywhere():
-    slash = DOC_JS.split("const _RICH_SLASH_COMMANDS", 1)[1].split(
-        "const _RICH_BLOCK_INPUT_RULES", 1
-    )[0]
-    rules = DOC_JS.split("const _RICH_BLOCK_INPUT_RULES", 1)[1].split(
-        "function _applyRichBlockInputRule", 1
-    )[0]
+    slash = declaration("_RICH_SLASH_COMMANDS")
+    rules = declaration("_RICH_BLOCK_INPUT_RULES")
     dropdown = DOC_JS.split("function _showMdDropdown", 1)[1].split(
         "function initMdToolbar", 1
     )[0]
-    exporter = DOC_JS.split("function _richTextExportCss", 1)[1].split(
-        "function exportAsHtml", 1
-    )[0]
+    exporter = function_body("_richTextExportCss")
 
     for level in (5, 6):
         assert f"action: 'h{level}'" in slash
@@ -43,8 +39,8 @@ def test_mobile_headings_page_break_history_and_persistence():
       import { chromium } from 'playwright';
       const browser = await chromium.launch({ headless: true });
       const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
-      await page.goto('http://127.0.0.1:7011/static/js/documentStats.js');
-      await page.setContent('<link rel="stylesheet" href="/static/style.css?v=20260831richtexttools91"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
+      await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentStats.js`);
+      await page.setContent('__ODY_STYLESHEETS__<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
       await page.evaluate(async () => {
         const mod = await import('/static/js/document.js?v=20260831richtexttools91&structure-tools-test=1');
         window.__structureToolsDocModule = mod;
@@ -152,6 +148,7 @@ def test_mobile_headings_page_break_history_and_persistence():
       }));
       await browser.close();
     """
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=ROOT,

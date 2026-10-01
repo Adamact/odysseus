@@ -16,7 +16,7 @@ def test_text_and_truncation(tmp_path):
 
 
 def test_real_pdf_text(tmp_path):
-    import fitz
+    fitz = pytest.importorskip('fitz')  # PyMuPDF is in requirements-optional.txt
     path = tmp_path / 'payslip.pdf'
     with fitz.open() as doc:
         page = doc.new_page()
@@ -38,7 +38,7 @@ def test_blank_pdf_reports_ocr(tmp_path):
 
 
 def test_xlsx(tmp_path):
-    from openpyxl import Workbook
+    Workbook = pytest.importorskip('openpyxl').Workbook  # requirements-optional.txt
     path = tmp_path / 'expenses.xlsx'
     book = Workbook()
     book.active.append(['Expenses', 12500])

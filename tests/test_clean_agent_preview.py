@@ -4377,11 +4377,13 @@ def test_v3_schema_uses_configured_versioned_contract_root(tmp_path, monkeypatch
     monkeypatch.setenv('ODYSSEUS_TOOL_CONTRACT_ROOT', str(contract_root))
     module.contract_builder.cache_clear()
     try:
-        notes = next(
+        # Probe a tool whose compact description the harness does not
+        # replace; manage_notes now carries a full harness-owned override.
+        search = next(
             s for s in FUNCTION_TOOL_SCHEMAS
-            if s['function']['name'] == 'manage_notes'
+            if s['function']['name'] == 'web_search'
         )
-        compact = module.compact_schemas([notes])[0]
+        compact = module.compact_schemas([search])[0]
         assert compact['function']['description'].startswith('versioned-contract-loaded')
     finally:
         module.contract_builder.cache_clear()
@@ -4392,7 +4394,8 @@ def test_v3_document_edit_schema_has_one_unambiguous_structured_form():
                 if s['function']['name'] == 'edit_document')
     parameters = edit['function']['parameters']
     assert parameters['required'] == ['edits']
-    assert set(parameters['properties']) == {'edits'}
+    assert set(parameters['properties']) == {'edits', 'more'}
+    assert parameters['properties']['more']['type'] == 'boolean'
 
 
 def test_v3_ui_schema_advertises_only_policy_executable_client_local_actions():
@@ -5650,7 +5653,7 @@ async def test_blocked_search_engine_browser_forces_native_web_search(monkeypatc
     )
     raw = [chunk async for chunk in stream_preview(
         endpoint_url='http://test', model='test',
-        messages=[{'role': 'user', 'content': 'Open browser and find the latest AI news.'}],
+        messages=[{'role': 'user', 'content': 'Open browser and find an AI model release.'}],
         headers={}, turn_contract=contract, session_id='test', owner='test',
         disabled_tools=set(), tool_policy=ToolPolicy(), max_rounds=4,
     )]
@@ -5720,7 +5723,9 @@ async def test_native_stream_reserves_remaining_budget_for_required_artifact(mon
 
     async def execute(block, **kwargs):
         executed.append(block.tool_type)
-        return block.tool_type, {"output": "ok", "exit_code": 0}
+        return block.tool_type, {"output": "ok", "exit_code": 0,
+                                 "materialized_artifacts": ["/tmp_workspace/results"]
+                                 if block.tool_type == "python" and "out.md" in block.content else []}
 
     monkeypatch.setattr(module.httpx, "AsyncClient", Client)
     monkeypatch.setattr(module, "execute_tool_block", execute)
@@ -5832,7 +5837,9 @@ async def test_native_stream_reserves_wall_time_for_required_artifact(monkeypatc
         executed.append(block.tool_type)
         if block.tool_type == "web_search":
             now[0] = 450.0
-        return block.tool_type, {"output": "ok", "exit_code": 0}
+        return block.tool_type, {"output": "ok", "exit_code": 0,
+                                 "materialized_artifacts": ["/tmp_workspace/results"]
+                                 if block.tool_type == "python" and "out.md" in block.content else []}
 
     monkeypatch.setattr(module.time, "monotonic", lambda: now[0])
     monkeypatch.setattr(module.httpx, "AsyncClient", Client)
@@ -6431,7 +6438,7 @@ async def test_native_stream_terminates_after_calling_a_permanently_suppressed_t
         {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": f"inspect-{index}", "function": {
             "name": "inspect_media", "arguments": arguments,
         }}]}}]}
-        for index in range(1, 5)
+        for index in range(1, 4)
     ] + [{"choices": [{"delta": {"content": "Final answer from existing evidence."}}]}])
 
     class Response:
@@ -6479,9 +6486,9 @@ async def test_native_stream_terminates_after_calling_a_permanently_suppressed_t
 
     events = [json.loads(chunk[6:]) for chunk in raw if "[DONE]" not in chunk]
     assert len(executions) == 1
-    assert len(requests) == 5
-    assert 'tools' not in requests[4]
-    assert 'best concise final answer' in requests[4]['messages'][-1]['content'].lower()
+    assert len(requests) == 4
+    assert 'tools' not in requests[3]
+    assert 'best concise final answer' in requests[3]['messages'][-1]['content'].lower()
     final = [event for event in events if event.get("type") == "final_response"]
     assert final == []
     metrics = next(event['data'] for event in events if event.get('type') == 'metrics')

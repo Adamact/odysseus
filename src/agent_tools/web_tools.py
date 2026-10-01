@@ -18,6 +18,7 @@ import urllib.request
 from pathlib import Path
 from typing import Dict, Any
 
+from core import platform_compat
 from src.constants import MAX_OUTPUT_CHARS
 
 PDF_EXTRACT_MAX_BYTES = 80_000_000
@@ -118,6 +119,47 @@ def _browser_pid_file_candidates(
             ]
         )
     return list(dict.fromkeys(candidates))
+
+
+# Linux exposes one command line per pid under /proc; macOS and Windows do not.
+# Kept as a module attribute so the procfs-dependent paths stay testable on a
+# host that has no procfs, and on one that does.
+
+
+def _process_command_line(pid: int) -> str | None:
+    """Command line of a running process, or ``None`` when it cannot be read.
+
+    ``None`` means "this host cannot tell", not "the process is gone". Off
+    Linux there is no procfs to read a command line from, so callers must not
+    treat it as proof that the process exited.
+    """
+
+    try:
+        return (platform_compat.PROC_ROOT / str(pid) / "cmdline").read_bytes().replace(
+            b"\0", b" "
+        ).decode("utf-8", errors="replace")
+    except (OSError, UnicodeError):
+        return None
+
+
+def _process_is_alive(pid: int) -> bool:
+    """Whether a pid currently exists.
+
+    Delegates to ``core.platform_compat.pid_alive`` rather than probing with
+    ``os.kill(pid, 0)`` directly. That probe is POSIX-only: CPython's Windows
+    ``os.kill`` calls ``TerminateProcess(handle, sig)`` for any signal other
+    than CTRL_C / CTRL_BREAK, so it would *kill* the daemon it is asked about.
+    Windows is also where there is no procfs, which is precisely when this
+    function gets called at all.
+
+    ``pid_alive`` reads False for a pid that ``os.kill`` reports with
+    ``PermissionError`` — a live process owned by another user. Neither caller
+    here wants a different answer: the sweep only unlinks a pid file it wrote
+    itself, and treating somebody else's pid as "not our daemon" is the safe
+    reading in both.
+    """
+
+    return platform_compat.pid_alive(pid)
 
 _SCHOLARLY_METADATA_CUE_RE = re.compile(
     r"\b(?:accept(?:ed|ance)?|publish(?:ed|ing|cation)?|venue|conference|"
@@ -2366,8 +2408,14 @@ class PrivateBrowserTool:
         except OSError:
             return
         profile_prefix = str(tmpdir / "agent-browser-chrome-")
+        if not platform_compat.has_procfs():
+            # Without procfs there is no way to match a reparented Chrome by
+            # its command line, and the sweep is an optimisation rather than a
+            # correctness requirement.  Leave those trees to the daemon's own
+            # lifecycle instead of failing the whole shutdown path.
+            return
         pids: list[int] = []
-        for entry in Path("/proc").iterdir():
+        for entry in platform_compat.PROC_ROOT.iterdir():
             if not entry.name.isdigit():
                 continue
             try:
@@ -2397,16 +2445,18 @@ class PrivateBrowserTool:
         for pid_file in pid_files:
             try:
                 pid = int(pid_file.read_text().strip())
-                command_line = (Path("/proc") / str(pid) / "cmdline").read_bytes().replace(
-                    b"\0", b" "
-                ).decode("utf-8", errors="replace")
-            except FileNotFoundError:
-                # The daemon may have exited between writing its pid file and
-                # this cleanup pass.  The exact file is still ours to remove.
-                with contextlib.suppress(FileNotFoundError, PermissionError, OSError):
-                    pid_file.unlink()
+            except (OSError, ValueError):
                 continue
-            except (OSError, UnicodeError, ValueError):
+            command_line = _process_command_line(pid)
+            if command_line is None:
+                # Either the daemon exited between writing its pid file and
+                # this pass, or this host has no procfs to ask. Only the first
+                # justifies forgetting the pid file. Without procfs we cannot
+                # confirm the process is ours, so we neither kill it nor drop
+                # the record that would let a later pass find it.
+                if not _process_is_alive(pid):
+                    with contextlib.suppress(FileNotFoundError, PermissionError, OSError):
+                        pid_file.unlink()
                 continue
             if "agent-browser" in command_line:
                 with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
@@ -2433,10 +2483,17 @@ class PrivateBrowserTool:
         for pid_file in _browser_pid_file_candidates(runtime_dir, namespace, session_id):
             try:
                 pid = int(pid_file.read_text().strip())
-                command_line = (Path("/proc") / str(pid) / "cmdline").read_bytes().replace(
-                    b"\0", b" "
-                ).decode("utf-8", errors="replace")
-            except (FileNotFoundError, OSError, UnicodeError, ValueError):
+            except (OSError, ValueError):
+                continue
+            command_line = _process_command_line(pid)
+            if command_line is None:
+                # Without procfs we can only tell that something with this pid
+                # is alive, not that it is agent-browser. The pid file is our
+                # own namespaced one, so treat a live pid as a match: answering
+                # "no daemon" here is what lets `close` bootstrap a fresh one
+                # and wait on its browser forever.
+                if _process_is_alive(pid):
+                    return True
                 continue
             if "agent-browser" in command_line:
                 return True

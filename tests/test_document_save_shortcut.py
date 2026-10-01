@@ -3,10 +3,12 @@
 import json
 import subprocess
 from pathlib import Path
+from tests.helpers.stylesheets import stylesheet_link_tags
+from tests.helpers.document_source import document_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
+DOC_JS = document_source()
 
 
 def test_save_shortcut_uses_manual_version_path_and_cancels_autosave():
@@ -37,8 +39,8 @@ def test_ctrl_s_saves_rich_text_immediately_once_and_updates_status():
           body: JSON.stringify({ version_count: 2 }),
         });
       });
-      await page.goto('http://127.0.0.1:7011/static/js/documentStats.js');
-      await page.setContent('<link rel="stylesheet" href="/static/style.css?v=20260831richtexttools91"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
+      await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentStats.js`);
+      await page.setContent('__ODY_STYLESHEETS__<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
       await page.evaluate(async () => {
         const mod = await import('/static/js/document.js?v=20260831richtexttools91&save-shortcut-test=1');
         mod.init('/api');
@@ -71,6 +73,7 @@ def test_ctrl_s_saves_rich_text_immediately_once_and_updates_status():
       console.log(JSON.stringify({ dirty, saved, badge, requests }));
       await browser.close();
     """
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=ROOT,

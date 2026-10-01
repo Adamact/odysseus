@@ -1,8 +1,8 @@
-import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
+import { documentSource } from './helpers/document_source.mjs';
 import { chromium } from 'playwright';
 
-const source = readFileSync('static/js/document.js', 'utf8');
+const source = documentSource();
 const start = source.indexOf('  function _applySuggestions(');
 const end = source.indexOf('  /** Animate transition to next suggestion */', start);
 assert.ok(start >= 0 && end > start);

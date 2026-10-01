@@ -3,6 +3,7 @@
 import json
 import subprocess
 from pathlib import Path
+from tests.helpers.stylesheets import stylesheet_link_tags
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,8 +16,8 @@ def test_rich_document_shortcuts_work_at_desktop_and_mobile_widths():
 
       async function exercise(viewport, suffix) {
         const page = await browser.newPage({ viewport });
-        await page.goto('http://127.0.0.1:7011/static/js/documentStats.js');
-        await page.setContent('<link rel="stylesheet" href="/static/style.css?v=20260831richtexttools91"><div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
+        await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentStats.js`);
+        await page.setContent('__ODY_STYLESHEETS__<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
         await page.evaluate(async suffix => {
           const mod = await import(`/static/js/document.js?v=20260831richtexttools91&keyboard-shortcuts=${suffix}`);
           mod.init('/api');
@@ -64,7 +65,8 @@ def test_rich_document_shortcuts_work_at_desktop_and_mobile_widths():
         await selectText('Align target');
         await page.keyboard.press('Control+Shift+e');
         const center = await page.locator('#doc-email-richbody').evaluate(root => root.children[1].style.textAlign);
-        await page.keyboard.press('Control+Shift+r');
+        await page.locator('[data-dd="align"]').click();
+        await page.locator('#doc-md-dd-menu .doc-overflow-item').filter({ hasText: 'Align right' }).click();
         const right = await page.locator('#doc-email-richbody').evaluate(root => root.children[1].style.textAlign);
         await page.keyboard.press('Control+Shift+j');
         const justify = await page.locator('#doc-email-richbody').evaluate(root => root.children[1].style.textAlign);
@@ -93,6 +95,7 @@ def test_rich_document_shortcuts_work_at_desktop_and_mobile_widths():
       console.log(JSON.stringify({ desktop, mobile }));
       await browser.close();
     """
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=ROOT,

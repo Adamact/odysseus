@@ -1,5 +1,6 @@
 from pathlib import Path
 import re
+from tests.helpers.stylesheets import app_css
 
 
 def test_tool_approval_bypasses_polymorphic_send_button_actions():
@@ -22,7 +23,7 @@ def test_tool_approval_bypasses_polymorphic_send_button_actions():
 def test_ask_user_card_has_no_close_button_and_chat_scale_text():
     root = Path(__file__).resolve().parents[1]
     renderer = (root / "static/js/chatRenderer.js").read_text(encoding="utf-8")
-    styles = (root / "static/style.css").read_text(encoding="utf-8")
+    styles = app_css()
 
     assert "closeBtn.className = 'modal-close ask-user-close';" not in renderer
     assert "closeBtn.setAttribute('aria-label', 'Dismiss question');" not in renderer
@@ -64,7 +65,7 @@ def test_ask_user_card_has_no_close_button_and_chat_scale_text():
 def test_scroll_bottom_button_uses_dropdown_caret_glyph():
     root = Path(__file__).resolve().parents[1]
     html = (root / "static/index.html").read_text(encoding="utf-8")
-    styles = (root / "static/style.css").read_text(encoding="utf-8")
+    styles = app_css()
 
     assert 'class="scroll-nav-caret"' in html
     assert "&#9662;" in html
@@ -155,12 +156,12 @@ def test_every_changed_approval_module_is_cache_busted_together():
         assert found, f"missing cache-busted reference for {module_name}"
         assert len(set(found)) == 1, f"split module graph for {module_name}: {found}"
 
-    # These shared modules are imported throughout the graph. Keep their URL
-    # canonical and unversioned; mixing a query URL with plain relative imports
-    # creates a second singleton with separate state and listeners.
-    for module_name in ("sessions.js", "ui.js", "memory.js", "markdown.js", "models.js"):
+    # Shared modules must have one URL apiece. ui.js is consistently versioned
+    # throughout the graph; the other shared modules remain unversioned.
+    for module_name in ("sessions.js", "memory.js", "markdown.js", "models.js"):
         assert any(module_name in source for source in sources)
         assert not versions(module_name), f"split module graph for {module_name}"
+    assert len(set(versions("ui.js"))) == 1
 
     compare_stream = (root / "static/js/compare/stream.js").read_text(encoding="utf-8")
     compare_vote = (root / "static/js/compare/vote.js").read_text(encoding="utf-8")

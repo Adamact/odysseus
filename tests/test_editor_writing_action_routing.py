@@ -1,6 +1,5 @@
 """Writing-menu source text must not redirect the requested editor operation."""
 import re
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -15,8 +14,9 @@ from src.turn_contract import (
 )
 from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
 from src.tool_policy import ToolPolicy
+from tests.helpers.document_source import declaration
 
-MENU = Path('static/js/document.js').read_text().split('const _AI_WRITING_ACTIONS = Object.freeze({', 1)[1].split('});', 1)[0]
+MENU = declaration('_AI_WRITING_ACTIONS')
 ACTIONS = dict(re.findall(r"\s+(\w+): '([^']+)'", MENU))
 
 

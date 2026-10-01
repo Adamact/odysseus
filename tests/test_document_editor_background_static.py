@@ -1,8 +1,10 @@
 from pathlib import Path
 import re
 
+from tests.helpers.stylesheets import app_css
 
-CSS = Path("static/style.css").read_text()
+
+CSS = app_css()
 
 
 def rule_for(selector: str) -> str:
