@@ -84,6 +84,7 @@ from src.tool_types import ToolBlock
 from src.turn_contract import selected_tools_for_request, with_turn_contract
 from src.agent_runtime.journal import propose_action, execute_action
 from src.agent_runtime.completion import with_completion_gate
+from src.agent_runtime.runtime_selection import is_compact_preview_contract
 from src.teacher_escalation import with_teacher_takeover, request_teacher_takeover
 from src.tool_utils import _truncate, get_mcp_manager
 from src.agent_tools import (
@@ -20425,6 +20426,7 @@ async def stream_agent_loop(
     reasoning_effort: Optional[str] = None,
     _parent_run_id: Optional[str] = None,
     request_authority=MISSING_AUTHORITY,
+    context_resolution=None,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
 
@@ -20460,7 +20462,7 @@ async def stream_agent_loop(
                     ),
                 )
 
-    if turn_contract is not None and turn_contract.selection_mode == 'clean_compact_v3_preview':
+    if is_compact_preview_contract(turn_contract):
         from src.clean_agent_preview import stream_preview
         async for chunk in stream_preview(
             endpoint_url=endpoint_url, model=model, messages=messages, headers=headers,
@@ -20477,6 +20479,9 @@ async def stream_agent_loop(
             max_rounds=max_rounds,
             max_tool_calls=max_tool_calls,
             temperature=temperature,
+            # The route's prepared, typed context window; the compact runtime
+            # must not resolve it a second time.
+            context_resolution=context_resolution,
         ):
             yield chunk
         return
