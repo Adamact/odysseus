@@ -117,6 +117,10 @@ async def _create_bash_subprocess(
             bash,
             "-c",
             str(command or ""),
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
             cwd=cwd,
         )
     kwargs = {"cwd": cwd} if cwd is not None else {}
