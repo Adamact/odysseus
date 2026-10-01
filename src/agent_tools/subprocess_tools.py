@@ -653,6 +653,16 @@ class HostShellTool:
             requested_timeout = 30
         timeout = max(1, min(requested_timeout, 120))
 
+        from src import containment
+        from src.tool_execution import agent_cwd
+
+        sanitized_endpoint = f"{parsed.scheme}://{parsed.netloc}{parsed.path}" if parsed.scheme and parsed.netloc else "host_shell_bridge"
+        owner = str(ctx.get("session_id") or ctx.get("owner") or "host_shell")
+        spec = _owned_spec(agent_cwd(), ctx.get("subproc_env"), timeout)
+        grant = containment.declare_external_bridge(spec, owner=owner, endpoint=sanitized_endpoint)
+        boundary = grant.to_dict()
+        boundary["executed"] = False
+
         request_body: dict[str, object] = {"timeout": timeout}
         request_id = ""
         if job_id:
@@ -676,6 +686,8 @@ class HostShellTool:
                     return {
                         "error": f"host_shell: bridge returned HTTP {resp.status_code}",
                         "exit_code": 1,
+                        "host_bridge": "tui",
+                        "containment": boundary,
                     }
                 data = resp.json()
 
@@ -702,6 +714,8 @@ class HostShellTool:
                             return {
                                 "error": f"host_shell: bridge returned HTTP {poll.status_code}",
                                 "exit_code": 1,
+                                "host_bridge": "tui",
+                                "containment": boundary,
                             }
                         data = poll.json()
                         if not isinstance(data, dict):
@@ -732,15 +746,16 @@ class HostShellTool:
                 task.add_done_callback(_HOST_SHELL_CANCEL_TASKS.discard)
             raise
         except Exception as e:
-            return {"error": f"host_shell: bridge call failed: {e}", "exit_code": 1}
+            return {"error": f"host_shell: bridge call failed: {e}", "exit_code": 1, "containment": boundary}
 
         if not isinstance(data, dict):
-            return {"error": "host_shell: bridge returned invalid payload", "exit_code": 1}
+            return {"error": "host_shell: bridge returned invalid payload", "exit_code": 1, "containment": boundary}
         if data.get("error"):
             return {
                 "error": _truncate(str(data["error"]), MAX_OUTPUT_CHARS),
                 "exit_code": 1,
                 "host_bridge": "tui",
+                "containment": boundary,
             }
         stdout = str(data.get("stdout") or data.get("output") or "")
         stderr = str(data.get("stderr") or "")
@@ -754,15 +769,18 @@ class HostShellTool:
                 "error": "host_shell: bridge returned an invalid exit_code",
                 "exit_code": 1,
                 "host_bridge": "tui",
+                "containment": boundary,
             }
         exit_code = raw_exit_code
         output = stdout.rstrip()
         if stderr.strip():
             output = (output + "\nSTDERR: " + stderr.strip()).strip() if output else "STDERR: " + stderr.strip()
+        boundary["executed"] = True
         result = {
             "output": _truncate(output, MAX_OUTPUT_CHARS) or "(no output)",
             "exit_code": exit_code,
             "host_bridge": "tui",
+            "containment": boundary,
         }
         for key in ("detached", "job_id", "status", "running", "finished", "cwd"):
             if key in data:

@@ -376,3 +376,55 @@ def test_an_unenforceable_required_limit_refuses_instead_of_crashing_the_spawn(w
     with pytest.raises(containment.ContainmentUnavailable) as caught:
         containment.acquire(spec, owner="session-9")
     assert caught.value.missing == frozenset({containment.MEMORY})
+
+
+def test_pid_alive_rejects_non_process_pids(monkeypatch):
+    calls = []
+    real_kill = os.kill
+
+    def fake_kill(pid, sig):
+        calls.append((pid, sig))
+        return real_kill(pid, sig)
+
+    monkeypatch.setattr(os, "kill", fake_kill)
+
+    # Required: None, 0, and any negative integers must return False
+    assert pid_alive(None) is False
+    assert pid_alive(0) is False
+    assert pid_alive(-1) is False
+    assert pid_alive(-42) is False
+    assert pid_alive(-9999) is False
+    assert pid_alive("not_a_pid") is False
+
+    # The underlying process probe (os.kill) must NEVER be invoked for pid <= 0
+    assert calls == []
+
+    # Normal positive-PID behavior remains covered
+    my_pid = os.getpid()
+    assert pid_alive(my_pid) is True
+    assert (my_pid, 0) in calls
+
+
+def test_pid_alive_retains_conservative_liveness_on_eperm(monkeypatch):
+    def fake_kill(pid, sig):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(os, "kill", fake_kill)
+
+    # Positive PID with EPERM is conservatively considered alive
+    assert pid_alive(1) is True
+    assert pid_alive(99999) is True
+
+    # But non-process values still immediately return False without calling probe
+    assert pid_alive(None) is False
+    assert pid_alive(0) is False
+    assert pid_alive(-1) is False
+    assert pid_alive(-100) is False
+
+
+def test_pid_alive_reports_false_on_process_lookup_error(monkeypatch):
+    def fake_kill(pid, sig):
+        raise ProcessLookupError(3, "No such process")
+
+    monkeypatch.setattr(os, "kill", fake_kill)
+    assert pid_alive(99999999) is False

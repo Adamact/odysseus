@@ -348,9 +348,24 @@ def _text_write_to_binary_artifact_result(content: str) -> tuple[str, Dict] | No
 
 async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[str], client_runtime_context: Optional[Dict]):
     import base64
+    from urllib.parse import urlparse
     bridge = _client_bridge(client_runtime_context)
     if bridge is None:
         return tool, {"error": f"{tool}: TUI host bridge is not available", "exit_code": 1}
+
+    url = str(bridge.get("url") or "").strip()
+    parsed = urlparse(url)
+    sanitized_endpoint = f"{parsed.scheme}://{parsed.netloc}{parsed.path}" if parsed.scheme and parsed.netloc else "tui_bridge"
+    from src import containment
+    spec = containment.agent_spec(agent_cwd(), {}, int(_BRIDGE_TOOL_TIMEOUT_S))
+    grant = containment.declare_external_bridge(
+        spec,
+        owner=str(session_id or "tui_bridge"),
+        endpoint=sanitized_endpoint,
+    )
+    boundary = grant.to_dict()
+    boundary["executed"] = False
+
     if tool == "bash":
         from src.agent_tools.subprocess_tools import _host_shell_requires_detach, _host_shell_should_auto_poll
 
@@ -401,9 +416,13 @@ async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[s
                     "output": "host job still running; poll the returned job_id",
                     "exit_code": 0,
                 }
+        if isinstance(result, dict):
+            b = dict(boundary)
+            b["executed"] = (result.get("exit_code") == 0 or (isinstance(result.get("exit_code"), int) and not result.get("error")))
+            result["containment"] = b
         return desc, result
     if tool == "python":
-        return "python: (client)", await _bridge_post(
+        py_res = await _bridge_post(
             bridge,
             "/run",
             {
@@ -414,6 +433,11 @@ async def _route_tool_via_bridge(tool: str, content: str, session_id: Optional[s
             timeout_s=_BRIDGE_TOOL_TIMEOUT_S,
             err_prefix="python",
         )
+        if isinstance(py_res, dict):
+            b = dict(boundary)
+            b["executed"] = (py_res.get("exit_code") == 0 or (isinstance(py_res.get("exit_code"), int) and not py_res.get("error")))
+            py_res["containment"] = b
+        return "python: (client)", py_res
     if tool == "grep":
         stripped = content.strip()
         try:

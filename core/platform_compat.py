@@ -94,7 +94,13 @@ def pid_alive(pid: Optional[int]) -> bool:
     the process it is checking. We instead open the process and read its exit
     code via the Win32 API.
     """
-    if not pid:
+    if pid is None:
+        return False
+    try:
+        pid_int = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid_int <= 0:
         return False
     if IS_WINDOWS:
         import ctypes
@@ -104,7 +110,7 @@ def pid_alive(pid: Optional[int]) -> bool:
         STILL_ACTIVE = 259
         kernel32 = ctypes.windll.kernel32
         handle = kernel32.OpenProcess(
-            PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid)
+            PROCESS_QUERY_LIMITED_INFORMATION, False, pid_int
         )
         if not handle:
             return kernel32.GetLastError() != 87  # ERROR_INVALID_PARAMETER: PID absent
@@ -116,7 +122,7 @@ def pid_alive(pid: Optional[int]) -> bool:
         finally:
             kernel32.CloseHandle(handle)
     try:
-        os.kill(pid, 0)
+        os.kill(pid_int, 0)
         return True
     except ProcessLookupError:
         return False

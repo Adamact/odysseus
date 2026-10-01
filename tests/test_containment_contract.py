@@ -505,3 +505,40 @@ async def test_an_external_bridge_grant_claims_nothing_and_cannot_be_run_locally
     with pytest.raises(ValueError, match="does not own"):
         await containment.run(grant, "echo hello")
     assert no_spawn == []
+
+
+@pytest.mark.parametrize("protected_dest", [
+    "/etc",
+    "/etc/ssl",
+    "/usr",
+    "/usr/local",
+    "/bin",
+    "/bin/sh",
+    "/sbin",
+    "/lib",
+    "/lib64",
+    "/proc",
+    "/proc/sys",
+    "/dev",
+    "/dev/shm",
+    "/sys",
+    "/root",
+    "/root/.ssh",
+    "/home",
+    "/workspace",
+    "/workspace/sub",
+])
+def test_writable_extra_rejects_protected_system_roots_and_descendants(monkeypatch, workspace, protected_dest):
+    install(monkeypatch, mechanism("fake", 10, containment.DIMENSIONS))
+    spec = spec_for(workspace, writable_extra=(protected_dest,))
+    with pytest.raises(ValueError, match="reserved path"):
+        containment.acquire(spec, owner="session-1")
+
+
+def test_writable_extra_accepts_legitimate_scratch_destinations(monkeypatch, workspace):
+    install(monkeypatch, mechanism("fake", 10, containment.DIMENSIONS))
+    spec = spec_for(workspace, writable_extra=("/var/scratch", "/tmp/custom_scratch", "/home/testuser/scratch"))
+    grant = containment.acquire(spec, owner="session-1")
+    assert "/var/scratch" in grant.spec.writable_extra
+    assert "/tmp/custom_scratch" in grant.spec.writable_extra
+    assert "/home/testuser/scratch" in grant.spec.writable_extra

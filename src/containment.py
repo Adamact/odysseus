@@ -121,8 +121,34 @@ _DEATH_POLL_S = 0.05
 # private /tmp or the workspace itself with a host directory would undo the
 # namespace from inside the argv that builds it.
 _RESERVED_BIND_DESTS = frozenset({
-    "/", "/tmp", "/proc", "/dev", "/sys", WORKSPACE_MOUNT,
+    "/", "/tmp", "/home", "/proc", "/dev", "/sys", WORKSPACE_MOUNT,
 })
+
+# System hierarchies where a writable overlay would invalidate the boundary
+# established by bubblewrap. Reject both exact roots and all descendants.
+_PROTECTED_WRITABLE_HIERARCHIES = frozenset({
+    "/etc",
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/lib",
+    "/lib64",
+    "/proc",
+    "/dev",
+    "/sys",
+    "/root",
+    WORKSPACE_MOUNT,
+})
+
+
+def _is_protected_writable_destination(path: str) -> bool:
+    normalized = os.path.abspath(path)
+    if normalized in _RESERVED_BIND_DESTS:
+        return True
+    for root in _PROTECTED_WRITABLE_HIERARCHIES:
+        if normalized == root or normalized.startswith(root.rstrip(os.sep) + os.sep):
+            return True
+    return False
 
 # WORKSPACE_MOUNT is re-exported from src.constants: where the workspace is
 # mounted inside a namespace is a property of the tool contract, not of this
@@ -217,6 +243,7 @@ class ContainmentGrant:
     pgid: Optional[int] = None
     namespace_pid: Optional[int] = None
     namespace_start_token: Optional[str] = None
+    endpoint: Optional[str] = None
 
     @property
     def contained(self) -> bool:
@@ -229,7 +256,7 @@ class ContainmentGrant:
         Deliberately omits ``env``: it is part of the boundary but it is also
         where credentials live, and a tool result is model-visible.
         """
-        return {
+        data = {
             "id": self.id,
             "mechanism": self.mechanism,
             "mode": self.mode,
@@ -242,6 +269,9 @@ class ContainmentGrant:
             "requested": sorted(self.spec.requested),
             "network": self.spec.network,
         }
+        if self.endpoint:
+            data["endpoint"] = self.endpoint
+        return data
 
 
 @dataclass(frozen=True)
@@ -480,6 +510,7 @@ def _write_record(grant: ContainmentGrant) -> None:
         "pgid": grant.pgid,
         "namespace_pid": grant.namespace_pid,
         "namespace_start_token": grant.namespace_start_token,
+        "endpoint": grant.endpoint,
         "acquired_at": time.time(),
         "released_at": None,
         "release": None,
@@ -580,6 +611,9 @@ def _validate_spec(spec: ContainmentSpec) -> ContainmentSpec:
     )
     for path in writable + readonly:
         if path in _RESERVED_BIND_DESTS:
+            raise ValueError(f"containment: refusing to bind over reserved path {path}")
+    for path in writable:
+        if _is_protected_writable_destination(path):
             raise ValueError(f"containment: refusing to bind over reserved path {path}")
     return replace(spec, workspace=workspace, writable_extra=writable, readonly_extra=readonly)
 
@@ -770,6 +804,7 @@ def declare_external_bridge(
         mode=CONTAINMENT_MODE,
         spec=spec,
         external=True,
+        endpoint=endpoint,
     )
     logger.info(
         "containment: grant %s is external (%s); nothing local contains it",
