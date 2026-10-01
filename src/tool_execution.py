@@ -1219,6 +1219,7 @@ async def _direct_fallback(
             "client_runtime_context": client_runtime_context,
             "disabled_tools": frozenset(disabled_tools or ()),
             "tool_policy": tool_policy,
+            "request_authority": active_request_authority(),
         }
 
         from src.agent_tools import TOOL_HANDLERS
@@ -1259,6 +1260,10 @@ async def _document_tool_dispatch(
 # ---------------------------------------------------------------------------
 
 from src.agent_runtime.journal import dispatched, mark_authorized, mark_dispatch, record_action
+from src.agent_runtime.authority import (
+    MISSING_AUTHORITY, ExactOperation, RequestAuthority, active_request_authority,
+    bind_request_authority, save_background_authority,
+)
 
 
 @record_action
@@ -1278,6 +1283,7 @@ async def execute_tool_block(
     exact_approval: Optional[ExactToolApproval] = None,
     active_document_id: Optional[str] = None,
     client_runtime_context: Optional[Dict[str, Any]] = None,
+    request_authority=MISSING_AUTHORITY,
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
@@ -1298,6 +1304,40 @@ async def execute_tool_block(
             "security_context must be a ToolRunSecurityContext or "
             "NO_TOOL_SECURITY_CONTEXT"
         )
+
+    authority = active_request_authority() if request_authority is MISSING_AUTHORITY else request_authority
+    parent = active_request_authority()
+    if isinstance(authority, RequestAuthority) and parent is not None and authority is not parent:
+        authority = parent.intersect(authority)
+    try:
+        operation = ExactOperation.normalize(getattr(block, "tool_type", None), getattr(block, "content", None))
+        valid = isinstance(authority, RequestAuthority) and authority.bound_to(
+            owner=owner, session_id=session_id, workspace=workspace)
+        if valid:
+            authority = authority.restrict(tool_policy, disabled_tools)
+        exact_admission = bool(
+            valid and not authority.inherited and not authority.restricted(operation)
+            and exact_approval is not None and exact_approval.matches(
+                owner=owner, session_id=session_id, workspace=workspace,
+                tool_name=getattr(block, "tool_type", None), content=getattr(block, "content", None)))
+        admitted = valid and (authority.permits(operation) or exact_admission)
+    except (ValueError, TypeError, AttributeError) as error:
+        return f"{getattr(block, 'tool_type', '')}: invalid arguments", {
+            "error": (f"Tool arguments are not valid JSON: {error}"
+                      if isinstance(error, json.JSONDecodeError) else str(error)),
+            "exit_code": 1, "blocked": True,
+            "failure_kind": "request_authority_denied",
+        }
+    if not admitted:
+        reason = "The exact operation is outside server request authority."
+        if tool_policy and any(tool_policy.blocks(name) for name in email_tool_policy_names(getattr(block, "tool_type", ""))):
+            reason = f"Execution of tool '{getattr(block, 'tool_type', '')}' is forbade by the active tool policy."
+        elif isinstance(authority, RequestAuthority) and authority.restricted(operation):
+            reason = "The exact operation is disabled by user or server request authority policy."
+        return f"{getattr(block, 'tool_type', '')}: BLOCKED", {
+            "error": reason,
+            "exit_code": 1, "blocked": True, "failure_kind": "request_authority_denied",
+        }
 
     from src.turn_contract import active_turn_contract
     contract = active_turn_contract()
@@ -1393,31 +1433,32 @@ async def execute_tool_block(
 
     token = _active_workspace.set(workspace or None)
     try:
-        output = await _execute_tool_block_impl(
-            block,
-            session_id=session_id,
-            disabled_tools=disabled_tools,
-            owner=owner,
-            progress_cb=progress_cb,
-            tool_policy=tool_policy,
-            approved_document_id=(
-                exact_approval.pending.document_id
-                if approval_claimed
-                else None
-            ),
-            approved_document_version=(
-                exact_approval.pending.document_version
-                if approval_claimed
-                else None
-            ),
-            approved_document_digest=(
-                exact_approval.pending.document_digest
-                if approval_claimed
-                else None
-            ),
-            active_document_id=active_document_id,
-            client_runtime_context=client_runtime_context,
-        )
+        with bind_request_authority(authority):
+            output = await _execute_tool_block_impl(
+                block,
+                session_id=session_id,
+                disabled_tools=disabled_tools,
+                owner=owner,
+                progress_cb=progress_cb,
+                tool_policy=tool_policy,
+                approved_document_id=(
+                    exact_approval.pending.document_id
+                    if approval_claimed
+                    else None
+                ),
+                approved_document_version=(
+                    exact_approval.pending.document_version
+                    if approval_claimed
+                    else None
+                ),
+                approved_document_digest=(
+                    exact_approval.pending.document_digest
+                    if approval_claimed
+                    else None
+                ),
+                active_document_id=active_document_id,
+                client_runtime_context=client_runtime_context,
+            )
         if isinstance(security_context, ToolRunSecurityContext):
             security_context.observe_tool_result(
                 getattr(block, "tool_type", None),
@@ -1628,6 +1669,9 @@ async def _execute_tool_block_impl(
             from src import bg_jobs
             mark_dispatch()
             rec = bg_jobs.launch(_bg_cmd, session_id=session_id, cwd=agent_cwd())
+            # Only this server launch may seal detached-job authority; a
+            # handler/bridge output carrying a job id is not a grant source.
+            save_background_authority(rec["id"], active_request_authority())
             short = _bg_cmd.strip().split(chr(10))[0][:80]
             desc = f"bash (background): {short}"
             result = {

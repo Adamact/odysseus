@@ -534,11 +534,13 @@ async def _run_skill_test_job(
     messages=None,
     transcript=None,
     exact_approval=None,
+    request_authority=None,
 ):
     """Background coroutine: run the skill in an agent loop, capture a condensed
     log + transcript, then have the judge grade it. Writes into _skill_test_jobs."""
     import json as _json
     from src.agent_loop import stream_agent_loop
+    from src.agent_runtime.authority import RequestAuthority
 
     job = _skill_test_jobs.get(key)
     if job is None:
@@ -559,6 +561,9 @@ async def _run_skill_test_job(
             url, model, messages, headers=headers,
             temperature=0.3, max_tokens=0, max_rounds=8, owner=owner,
             exact_approval=exact_approval,
+            request_authority=(request_authority or (
+                exact_approval.pending.request_authority if exact_approval is not None else None
+            ) or RequestAuthority.empty(owner=owner)),
         ):
             if not chunk.startswith("data: ") or chunk.strip() == "data: [DONE]":
                 continue
@@ -1039,6 +1044,7 @@ async def _run_skill_audit_arm(messages: list[dict], url, model, headers, owner,
     """Run one audit arm in the agent loop; return transcript, stats, approval."""
     import json as _json
     from src.agent_loop import stream_agent_loop
+    from src.agent_runtime.authority import RequestAuthority, active_request_authority
     transcript = []
     approval_required = None
     stats = {"turns": 0, "tool_calls": 0}
@@ -1051,6 +1057,7 @@ async def _run_skill_audit_arm(messages: list[dict], url, model, headers, owner,
             url, model, messages, headers=headers,
             temperature=0.3, max_tokens=4096, max_rounds=8,
             owner=owner, workload=workload, suppress_skills=True,
+            request_authority=(active_request_authority() or RequestAuthority.empty(owner=owner)),
         ):
             # Streams can include an SSE event line before the data line,
             # notably `event: error`. Do not silently discard those failures.
@@ -2001,6 +2008,9 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         user = _owner(request)
         body = await request.json()
         task = (body.get("task") or "").strip()
+        from src.agent_runtime.authority import RequestAuthority, request_authority_for_http
+        request_authority = (request_authority_for_http(request, task, owner=user)
+                             if task else RequestAuthority.empty(owner=user))
 
         skills = skills_manager.load(owner=user)
         match = next((s for s in skills if s.get("name") == skill_id or s.get("id") == skill_id), None)
@@ -2064,9 +2074,12 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
                 "model": model,
                 "headers": headers,
                 "owner": user,
+                "request_authority": request_authority,
             },
         }
-        _asyncio.create_task(_run_skill_test_job(key, name, md, task, url, model, headers, user, skills_manager))
+        _asyncio.create_task(_run_skill_test_job(
+            key, name, md, task, url, model, headers, user, skills_manager,
+            request_authority=request_authority))
         return {"ok": True, "status": "running", "skill": name, "model": model}
 
     @router.post("/{skill_id}/test-approval")
@@ -2074,6 +2087,8 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         """Resume a manual skill test with one exact server-sealed action."""
         import asyncio as _asyncio
         from src.tool_approvals import tool_approval_store
+        from src.agent_runtime.authority import require_user_approval_request
+        require_user_approval_request(request)
 
         user = _owner(request)
         skills = skills_manager.load(owner=user)

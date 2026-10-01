@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import src.tool_execution as tool_execution
+from tests.runtime_evidence_helpers import server_authorized_executor
 
 from src.tool_execution import (
     AgentExecutionBridge,
@@ -9,6 +10,9 @@ from src.tool_execution import (
     execute_tool_block,
     get_active_execution_bridge,
 )
+
+
+execute_tool_block = server_authorized_executor(execute_tool_block)
 
 
 class Block:

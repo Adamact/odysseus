@@ -25,6 +25,14 @@ from routes.prefs_routes import _load_for_user, _save_for_user
 logger = logging.getLogger(__name__)
 
 
+def _seal_request_task_authority(request, prompt, task_type, action, owner):
+    from src.agent_runtime.authority import MISSING_AUTHORITY, is_internal_tool_request, seal_task_authority
+    # A tool HTTP call starts another ASGI context. Its model-produced body is
+    # not a fresh user request, even though the internal token authenticates it.
+    parent = None if is_internal_tool_request(request) else MISSING_AUTHORITY
+    return seal_task_authority(prompt, task_type, action, owner=owner, parent_authority=parent)
+
+
 def _maybe_cascade_calendar_event(task) -> None:
     """Delete the linked calendar event when a cookbook_serve task is
     removed. Two lookup strategies:
@@ -530,6 +538,8 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 owner=user,
                 name=name,
                 prompt=req.prompt,
+                request_authority_json=_seal_request_task_authority(
+                    request, req.prompt, req.task_type, req.action, user),
                 task_type=req.task_type,
                 action=req.action,
                 schedule=req.schedule,
@@ -737,6 +747,9 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 task.task_type = req.task_type
             if req.action is not None:
                 task.action = req.action
+            if any(value is not None for value in (req.prompt, req.task_type, req.action)):
+                task.request_authority_json = _seal_request_task_authority(
+                    request, task.prompt, task.task_type, task.action, user)
             if req.output_target is not None:
                 task.output_target = req.output_target
             if req.model is not None:

@@ -25,6 +25,7 @@ def _setup_db(tmp_path, monkeypatch):
         next_run = Column(DateTime)
         last_run = Column(DateTime)
         prompt = Column(Text, default='')
+        request_authority_json = Column(Text)
         trigger_type = Column(String, default='schedule')
         schedule = Column(String, default='daily')
         scheduled_time = Column(String, default='08:00')
@@ -187,9 +188,11 @@ def test_running_task_cancel_keeps_event_loop_responsive_during_database_lock(tm
     from src.task_scheduler import TaskScheduler
     from src.builtin_actions import BUILTIN_ACTIONS
     monkeypatch.setenv('BACKGROUND_TASK_FOREGROUND_GATE', 'false')
+    from src.agent_runtime.authority import seal_task_authority
     with session_local() as db:
         db.add(ScheduledTask(id='running-task', owner='alice', name='Fixture action',
-            task_type='action', action='fixture_wait', status='active'))
+            task_type='action', action='fixture_wait', status='active',
+            request_authority_json=seal_task_authority('', 'action', 'fixture_wait', owner='alice')))
         db.commit()
     started = asyncio.Event()
     async def external_action(**kwargs):

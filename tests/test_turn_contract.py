@@ -1806,6 +1806,8 @@ def test_candidate_schema_changes_cannot_mutate_contract():
 async def test_dispatcher_enforces_bound_contract_without_external_mutations(monkeypatch):
     from src import tool_execution, tool_implementations
     from src.tool_execution import NO_TOOL_SECURITY_CONTEXT, execute_tool_block
+    from tests.runtime_evidence_helpers import server_authorized_executor
+    execute_tool_block = server_authorized_executor(execute_tool_block)
 
     handler = AsyncMock(return_value={"events": [], "exit_code": 0})
     monkeypatch.setattr(tool_implementations, "do_manage_calendar", handler)

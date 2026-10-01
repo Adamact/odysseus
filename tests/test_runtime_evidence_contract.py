@@ -6,6 +6,14 @@ import json
 import os
 
 import pytest
+from tests.runtime_evidence_helpers import server_authorized_executor
+
+
+@pytest.fixture(autouse=True)
+def standalone_dispatch_authority(monkeypatch):
+    from src import tool_execution
+    monkeypatch.setattr(tool_execution, "execute_tool_block",
+                        server_authorized_executor(tool_execution.execute_tool_block))
 
 from src.agent_evidence import CompletionRequirements, EvidenceLedger, EvidenceKind
 from src.agent_runtime.completion import completion_answer, with_completion_gate

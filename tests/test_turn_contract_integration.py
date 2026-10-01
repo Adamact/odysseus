@@ -4,6 +4,14 @@ import json
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from tests.runtime_evidence_helpers import server_authorized_executor
+
+
+@pytest.fixture(autouse=True)
+def standalone_dispatch_authority(monkeypatch):
+    from src import tool_execution
+    monkeypatch.setattr(tool_execution, "execute_tool_block",
+                        server_authorized_executor(tool_execution.execute_tool_block))
 
 from src.tool_policy import ToolPolicy
 from src.tool_schemas import FUNCTION_TOOL_SCHEMAS

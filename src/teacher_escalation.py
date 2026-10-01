@@ -585,6 +585,7 @@ async def run_teacher_inline(
     external_untrusted_context_seen: bool = False,
     client_runtime_context: Optional[Dict[str, Any]] = None,
     plan_mode: bool = False,
+    request_authority=None,
 ):
     """Async generator. Yields SSE event strings.
 
@@ -700,6 +701,7 @@ async def run_teacher_inline(
         active_email=active_email,
         turn_contract=turn_contract,
         _parent_run_id=parent_run_id,
+        request_authority=request_authority,
         external_untrusted_context_seen=external_untrusted_context_seen,
         client_runtime_context=deepcopy(client_runtime_context),
         plan_mode=plan_mode,
@@ -822,6 +824,7 @@ async def run_teacher_inline(
         workspace=workspace,
         external_untrusted_context_seen=True,
         capabilities=capabilities_for_action("manage_skills", skill_content),
+        request_authority=request_authority,
     )
     approval = pending.public_payload(
         reason=(

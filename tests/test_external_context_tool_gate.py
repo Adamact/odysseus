@@ -7,6 +7,14 @@ from collections import namedtuple
 from pathlib import Path
 
 import pytest
+from tests.runtime_evidence_helpers import server_authorized_executor
+
+
+@pytest.fixture(autouse=True)
+def standalone_dispatch_authority(monkeypatch):
+    from src import tool_execution
+    monkeypatch.setattr(tool_execution, "execute_tool_block",
+                        server_authorized_executor(tool_execution.execute_tool_block))
 
 from tests.helpers.document_source import document_source
 from tests.helpers.js_modules import email_library_paths
