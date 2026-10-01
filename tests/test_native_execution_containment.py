@@ -104,3 +104,39 @@ async def test_blocked_stdin_is_inside_wall_clock(native_boundary):
     ), timeout=8)
     assert result.timed_out is True
     assert result.release.dead is True
+
+
+@pytest.mark.parametrize("source", ["print(1 + 1)", "import os; print(os.getcwd())",
+                                   "exec('print(2)')", "print('/workspace')"])
+async def test_python_namespace_is_independent_of_content(source, native_boundary, monkeypatch):
+    from tests.containment_helpers import capture_owned_spawn
+    captured = capture_owned_spawn(monkeypatch, native_boundary)
+    monkeypatch.setattr(containment, "MECHANISMS", (containment.Mechanism(
+        "bubblewrap", 30, lambda: True, lambda spec: containment.DEFAULT_REQUIRED,
+    ),))
+    monkeypatch.setattr(containment, "CONTAINMENT_MODE", containment.MODE_ENFORCING)
+    result = await subprocess_tools.PythonTool().execute(source, {})
+    assert captured["argv"][0] == "bwrap"
+    assert "--bind" in captured["argv"]
+    assert result["containment"]["enforced"] == sorted(containment.DEFAULT_REQUIRED)
+    assert "-I" in captured["argv"]
+
+
+async def test_ordinary_python_cannot_bypass_unavailable_containment(monkeypatch):
+    monkeypatch.setattr(containment, "CONTAINMENT_MODE", containment.MODE_ENFORCING)
+    async def forbidden(*args, **kwargs):
+        pytest.fail("ordinary Python bypassed required containment")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", forbidden)
+    result = await subprocess_tools.PythonTool().execute("print(1 + 1)", {})
+    assert result["containment"]["executed"] is False
+
+
+async def test_python_final_expression_and_opt_in_imports(native_boundary):
+    package = native_boundary / "packages"
+    package.mkdir()
+    (package / "demo.py").write_text("value = 42\n")
+    result = await subprocess_tools.PythonTool().execute("import demo; demo.value", {
+        "subproc_env": {**os.environ, "ODYSSEUS_PYTHON_TOOL_SITE_PACKAGES": str(package)},
+    })
+    assert result["output"] == "42"
+    assert result["teardown"]["dead"] is True

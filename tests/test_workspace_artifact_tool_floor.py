@@ -2210,6 +2210,7 @@ def test_python_loaded_code_sees_virtual_workspace_alias(monkeypatch, tmp_path):
     venv.EnvBuilder(with_pip=False).create(environment)
     monkeypatch.setattr(subprocess_tools, "sys", SimpleNamespace(
         prefix=str(environment),
+        base_prefix=sys.base_prefix,
         executable=str(environment / "bin" / "python"),
         version_info=sys.version_info,
     ))

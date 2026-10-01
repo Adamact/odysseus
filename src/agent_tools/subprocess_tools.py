@@ -811,7 +811,7 @@ async def _run_subprocess_streaming(
         timed_out,
     )
 
-def _owned_spec(cwd: str, env: Optional[dict], timeout: int) -> containment.ContainmentSpec:
+def _owned_spec(cwd: str, env: Optional[dict], timeout: int, readonly_extra: tuple = ()) -> containment.ContainmentSpec:
     """Server-defined boundary shared by the native execution tools."""
     readonly = []
     for prefix in (sys.prefix, sys.base_prefix):
@@ -820,17 +820,18 @@ def _owned_spec(cwd: str, env: Optional[dict], timeout: int) -> containment.Cont
             readonly.append(prefix)
     return containment.agent_spec(
         cwd, dict(os.environ if env is None else env), timeout,
-        readonly_extra=tuple(dict.fromkeys(readonly)),
+        readonly_extra=tuple(dict.fromkeys([*readonly, *readonly_extra])),
     )
 
 
-async def _run_owned_command(command, ctx: dict, *, tool: str, timeout: int, argv: bool = False) -> dict:
+async def _run_owned_command(command, ctx: dict, *, tool: str, timeout: int, argv: bool = False,
+                             readonly_extra: tuple = ()) -> dict:
     from src.tool_execution import agent_cwd, _truncate
 
     grant = None
     try:
         grant = containment.acquire(
-            _owned_spec(agent_cwd(), ctx.get("subproc_env"), timeout),
+            _owned_spec(agent_cwd(), ctx.get("subproc_env"), timeout, readonly_extra),
             owner=str(ctx.get("session_id") or ctx.get("owner") or tool),
         )
         if containment.FILESYSTEM not in grant.enforced:
@@ -1206,119 +1207,18 @@ class PythonTool:
                 ),
                 "exit_code": 1,
             }
-        # Only create a mount namespace when the submitted code actually
-        # relies on the public virtual path. Ordinary Python probes and
-        # scripts should retain the real workspace as os.getcwd(); wrapping
-        # every invocation would make that stable contract appear as
-        # ``/workspace`` instead.
-        needs_virtual_namespace = bool(
-            WORKSPACE_MOUNT in content
-            or re.search(r"\b(?:runpy\.run_path|exec\s*\(|importlib\.)", content)
-        )
         if "/tmp/" in content:
             isolated_tmp = _isolated_tmp_dir(agent_cwd())
             content = content.replace("/tmp/", isolated_tmp.rstrip("/") + "/")
-        progress_cb = ctx.get("progress_cb")
         _subproc_env = ctx.get("subproc_env")
-        # Generated scripts commonly contain the public `/workspace/...`
-        # paths shown in the tool contract.  Rewriting the inline `-c` body
-        # cannot repair paths embedded in a script loaded via `runpy`, and a
-        # process-global `/workspace` symlink would break concurrent tasks.
-        # Give Python the same per-task namespace Bash receives so both inline
-        # code and loaded scripts see the stable virtual workspace root.
-        namespaced_content = _python_with_configured_import_paths(
+        content = _python_with_configured_import_paths(
             _python_with_visible_final_expression(content), _subproc_env
         )
-        python_command = shlex.join((sys.executable or "python", "-I", "-c", namespaced_content))
-        # Code that explicitly uses the public /workspace path runs inside a
-        # namespace whose stable cwd is that same bind. Host workspaces under
-        # /tmp or another unbound parent are intentionally invisible by their
-        # real path inside the namespace; trying to chdir there makes otherwise
-        # valid native Python fail before execution.
-        namespaced = (
-            _wrap_workspace_namespace(
-                python_command,
-                agent_cwd(),
-                chdir=WORKSPACE_MOUNT,
-                interpreter_prefix=sys.prefix,
-            )
-            if needs_virtual_namespace
-            else None
+        # All Python code acquires the same server-defined boundary, including
+        # arithmetic and ordinary imports. Source text never selects a scope.
+        raw_paths = str((_subproc_env or {}).get("ODYSSEUS_PYTHON_TOOL_SITE_PACKAGES", ""))
+        roots = tuple(path for path in raw_paths.split(os.pathsep) if path and os.path.isabs(path))
+        return await _run_owned_command(
+            [sys.executable or "python", "-I", "-c", content], ctx,
+            tool="python", timeout=DEFAULT_PYTHON_TIMEOUT, argv=True, readonly_extra=roots,
         )
-        # The boundary this call actually got, reported either way. Note what
-        # the gate above means: code that does not mention /workspace and is
-        # not dynamic gets NO namespace, on every platform including a Linux
-        # host with working bubblewrap. That is deliberate -- it keeps
-        # os.getcwd() the real workspace -- but it is also a filesystem
-        # containment gap wider than the macOS one, and until now nothing said
-        # so. Reporting it is in scope here; closing it is not: it changes the
-        # Linux Python path for every call and cannot be verified on a host
-        # without bwrap. It is the reason enforcing mode cannot be switched on
-        # yet, because enforcing it as written would refuse ordinary Python on
-        # a correctly configured host.
-        boundary_probe = _execution_boundary(
-            agent_cwd(), wall_clock_s=DEFAULT_PYTHON_TIMEOUT,
-        )
-        confined = namespaced is not None
-        if not confined and boundary_probe.mode == containment.MODE_ENFORCING:
-            return containment.unavailable_tool_result(
-                containment.ContainmentUnavailable(
-                    frozenset({containment.FILESYSTEM}), ALIAS_REWRITE_MECHANISM,
-                ),
-                tool="python",
-            )
-        boundary = _filesystem_boundary_block(
-            boundary_probe.mechanism if confined else ALIAS_REWRITE_MECHANISM,
-            boundary_probe.mode,
-            confined=confined,
-        )
-        if namespaced:
-            proc = await asyncio.create_subprocess_exec(
-                "/bin/bash", "-lc", namespaced,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=_subproc_env,
-                cwd=agent_cwd(),
-            )
-        else:
-            # Platforms without a usable namespace still receive the same
-            # alias contract through a conservative source rewrite.
-            content = _python_with_configured_import_paths(
-                _python_with_visible_final_expression(
-                    _replace_workspace_alias(content, agent_cwd())
-                ),
-                _subproc_env,
-            )
-            proc = await asyncio.create_subprocess_exec(
-                (sys.executable or "python"), "-I", "-c", content,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=_subproc_env,
-                cwd=agent_cwd(),
-            )
-        mark_operation_started('subprocess', pid=proc.pid)
-        stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
-            proc,
-            timeout=DEFAULT_PYTHON_TIMEOUT,
-            progress_cb=progress_cb,
-        )
-        if timed_out:
-            return {"error": f"python: timed out after {DEFAULT_PYTHON_TIMEOUT}s — process killed", "exit_code": 124, "stdout": _truncate(stdout, MAX_OUTPUT_CHARS), "stderr": _truncate(stderr, MAX_OUTPUT_CHARS), "containment": boundary}
-        child_failure = _python_child_runtime_failure(stdout, stderr, rc)
-        if child_failure:
-            return {
-                "error": _truncate(
-                    "python: a child operation failed despite a zero Python exit "
-                    "status:\n" + child_failure,
-                    MAX_OUTPUT_CHARS,
-                ),
-                "exit_code": 1,
-                "stderr": _truncate(stderr, MAX_OUTPUT_CHARS),
-                "containment": boundary,
-            }
-        output = stdout.rstrip()
-        err = stderr.rstrip()
-        if err:
-            output = (output + "\nSTDERR: " + err).strip() if output else "STDERR: " + err
-        output = _truncate(output, MAX_OUTPUT_CHARS)
-        return {"output": output or "(no output)", "exit_code": rc or 0, "containment": boundary}
