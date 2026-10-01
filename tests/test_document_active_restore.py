@@ -1,11 +1,10 @@
 """Regression guards for restoring a chat's exact active document."""
 
 from pathlib import Path
+from tests.helpers.document_source import document_source, function_body
 
 
-DOC_JS = (
-    Path(__file__).resolve().parents[1] / "static/js/document.js"
-).read_text(encoding="utf-8")
+DOC_JS = document_source()
 
 
 def test_active_document_is_persisted_per_session():
@@ -32,9 +31,7 @@ def test_closing_active_document_clears_stale_restore_pointer():
 
 
 def test_explicit_document_open_clears_minimized_dock_state():
-    ensure_mounted = DOC_JS.split("function _ensureDocPaneMounted()", 1)[1].split(
-        "export async function loadDocument", 1
-    )[0]
+    ensure_mounted = function_body("_ensureDocPaneMounted")
 
     assert "Modals.isMinimized('doc-panel')" in ensure_mounted
     assert "Modals.unregister('doc-panel');" in ensure_mounted
@@ -42,9 +39,7 @@ def test_explicit_document_open_clears_minimized_dock_state():
 
 
 def test_library_open_intent_is_persisted_before_delayed_session_restore():
-    body = DOC_JS.split("export function prepareDocumentOpen(sessionId)", 1)[1].split(
-        "/** Switch chat", 1
-    )[0]
+    body = function_body("prepareDocumentOpen")
 
     assert "_markDocVisibleState(sessionId, 'open');" in body
     assert "Modals.isMinimized('doc-panel')" in body

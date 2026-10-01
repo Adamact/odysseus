@@ -1,11 +1,12 @@
 from pathlib import Path
 import re
+from tests.helpers.stylesheets import app_css
 
 
 ROOT = Path(__file__).resolve().parents[1]
 CHAT = (ROOT / "static/js/chat.js").read_text(encoding="utf-8")
 UI = (ROOT / "static/js/ui.js").read_text(encoding="utf-8")
-STYLE = (ROOT / "static/style.css").read_text(encoding="utf-8")
+STYLE = app_css()
 
 
 def test_terminal_and_canonical_renders_preserve_chat_scroll_anchor():
