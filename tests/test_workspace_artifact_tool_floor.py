@@ -2260,14 +2260,20 @@ def test_workspace_namespace_rejects_broad_or_symlinked_python_prefixes(monkeypa
     monkeypatch.setattr(subprocess_tools.shutil, "which", lambda name: "/usr/bin/bwrap")
     linked_root = tmp_path / "linked-root"
     linked_root.symlink_to("/", target_is_directory=True)
+    # Compared against the argv with no interpreter prefix at all: an unsafe
+    # prefix must add *nothing*. Asserting the absence of a literal
+    # `--ro-bind <prefix> <prefix>` instead would also fire on a base mount the
+    # argv makes for its own reasons -- /home and /mnt are read-only binds
+    # there -- which says nothing about whether the prefix was rejected.
+    baseline = shlex.split(
+        subprocess_tools._wrap_workspace_namespace("echo ok", str(tmp_path))
+    )
     for unsafe_prefix in ("/", "/tmp", "/var", "/home", str(linked_root)):
         command = subprocess_tools._wrap_workspace_namespace(
             "echo ok", str(tmp_path), interpreter_prefix=unsafe_prefix,
         )
         args = shlex.split(command)
-        assert ["--ro-bind", unsafe_prefix, unsafe_prefix] not in [
-            args[index:index + 3] for index in range(len(args) - 2)
-        ]
+        assert args == baseline, f"prefix {unsafe_prefix} changed the namespace argv"
         assert ["--tmpfs", "/tmp"] in [
             args[index:index + 2] for index in range(len(args) - 1)
         ]

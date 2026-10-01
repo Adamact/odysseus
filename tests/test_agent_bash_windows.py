@@ -100,7 +100,12 @@ async def test_windows_bash_does_not_use_a_stray_tmux_executable(monkeypatch):
         {"subproc_env": {}, "session_id": "chat-1"},
     )
 
-    assert result == {"output": "ok", "exit_code": 0}
+    assert result["output"] == "ok"
+    assert result["exit_code"] == 0
+    # Every bash result now carries the execution boundary it actually got.
+    # Asserting dict equality here would make that field impossible to add
+    # without touching a test about tmux, so the shape is asserted instead.
+    assert result["containment"]["reported_dimensions"] == ["filesystem"]
     assert captured["command"] == "pwd"
     assert captured["kwargs"]["cwd"] == workspace
 

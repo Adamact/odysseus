@@ -34,7 +34,14 @@ from src.tool_capabilities import ToolRunSecurityContext, blocked_tool_result
 from src.tool_approvals import ExactToolApproval
 from src.tool_policy import ToolPolicy
 from src.client_tool_contract import TUI_ROUTED_BRIDGE_TOOL_NAMES
-from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES, DATA_DIR
+from src.constants import (
+    DATA_DIR,
+    MAX_DIFF_LINES,
+    MAX_OUTPUT_CHARS,
+    MAX_READ_CHARS,
+    WORKSPACE_MOUNT,
+)
+from src.path_confinement import canonical_root, confine, is_inside
 from src.tool_utils import _truncate, get_mcp_manager
 
 
@@ -814,13 +821,7 @@ def _resolve_tool_path(raw_path: str) -> str:
         )
 
     for root in _tool_path_roots():
-        if resolved == root:
-            return resolved
-        try:
-            common = os.path.commonpath([resolved, root])
-        except ValueError:
-            continue
-        if common == root:
+        if is_inside(root, resolved):
             return resolved
     raise ValueError(
         f"path '{raw_path}' is outside the allowed roots"
@@ -838,33 +839,27 @@ def _resolve_tool_path_in_workspace(workspace: str, raw_path: str) -> str:
     """
     if raw_path is None or not str(raw_path).strip():
         raise ValueError("path is required")
-    base = os.path.realpath(workspace)
+    base = canonical_root(workspace)
     expanded = os.path.expanduser(str(raw_path).strip())
     # `/workspace` is the stable user-facing agent root in tasks and docs.
     # Native/manual installs may bind the request to another physical folder;
     # resolve the alias inside that active workspace rather than rejecting it.
-    if expanded == "/workspace":
+    if expanded == WORKSPACE_MOUNT:
         expanded = base
-    elif expanded.startswith("/workspace/"):
-        expanded = os.path.join(base, expanded.removeprefix("/workspace/"))
-    candidate = expanded if os.path.isabs(expanded) else os.path.join(base, expanded)
-    resolved = os.path.realpath(candidate)
+    elif expanded.startswith(WORKSPACE_MOUNT + "/"):
+        expanded = os.path.join(base, expanded.removeprefix(WORKSPACE_MOUNT + "/"))
+    try:
+        resolved = confine(base, expanded)
+    except (ValueError, OSError):
+        raise ValueError(f"path '{raw_path}' is outside the workspace ({workspace})")
+    # Confinement says "inside the root"; the deny list says "allowed". They
+    # are separate questions and this one stays here, with the policy that
+    # owns it.
     if _is_sensitive_path(resolved):
         raise ValueError(
             f"path '{raw_path}' is inside a sensitive directory "
             f"(e.g. .ssh, .gnupg) or matches a sensitive filename"
         )
-    if resolved != base:
-        # normcase so containment holds on case-insensitive filesystems
-        # (Windows, default macOS): it lowercases on Windows and is a no-op on
-        # POSIX. commonpath raises ValueError across Windows drives (C: vs D:)
-        # or mixed abs/rel — both mean "outside", so the except rejects them.
-        nbase = os.path.normcase(base)
-        try:
-            if os.path.commonpath([os.path.normcase(resolved), nbase]) != nbase:
-                raise ValueError
-        except ValueError:
-            raise ValueError(f"path '{raw_path}' is outside the workspace ({workspace})")
     return resolved
 
 

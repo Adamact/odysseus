@@ -67,7 +67,11 @@ from core.atomic_io import atomic_write_json
 from core.platform_compat import IS_WINDOWS, find_bash, pid_alive
 
 from src import process_ownership
-from src.constants import CONTAINMENT_STATE_FILE, MAX_OUTPUT_CHARS
+from src.constants import (
+    CONTAINMENT_STATE_FILE,
+    MAX_OUTPUT_CHARS,
+    WORKSPACE_MOUNT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -118,13 +122,12 @@ _DEATH_POLL_S = 0.05
 # private /tmp or the workspace itself with a host directory would undo the
 # namespace from inside the argv that builds it.
 _RESERVED_BIND_DESTS = frozenset({
-    "/", "/tmp", "/proc", "/dev", "/sys", "/workspace",
+    "/", "/tmp", "/proc", "/dev", "/sys", WORKSPACE_MOUNT,
 })
 
-#: Where the workspace is mounted inside a namespace. The public tool contract
-#: already promises this path, so it is the one path a contained command may
-#: assume.
-WORKSPACE_MOUNT = "/workspace"
+# WORKSPACE_MOUNT is re-exported from src.constants: where the workspace is
+# mounted inside a namespace is a property of the tool contract, not of this
+# module, and two definitions of it would be two contracts.
 
 
 class ContainmentUnavailable(RuntimeError):
@@ -602,6 +605,59 @@ def _select(spec: ContainmentSpec) -> tuple[Optional[Mechanism], frozenset[str]]
         if spec.required <= provided:
             return mechanism, provided
     return best, best_provided
+
+
+@dataclass(frozen=True)
+class ContainmentProbe:
+    """What a spec *would* get on this host. No grant, no record, no process.
+
+    For a spawn path that has not yet been rewritten to run through
+    :func:`run` and still builds its own ``create_subprocess_*`` call. Such a
+    caller still has to decide — refuse, or run and say so — and that decision
+    has to come from the same mechanism table :func:`acquire` consults, or the
+    tree grows a second opinion about what this host can enforce.
+
+    Calling :func:`acquire` for the answer is the wrong shape: it writes a
+    durable grant record, and a record whose pid is never filled in and whose
+    :func:`release` never runs is an entry a restart reaper will keep finding.
+    """
+
+    mechanism: str
+    enforced: frozenset[str]
+    degraded: tuple[str, ...]
+    unenforced_required: tuple[str, ...]
+    mode: str
+
+    @property
+    def contained(self) -> bool:
+        return not self.unenforced_required
+
+    @property
+    def refuses(self) -> bool:
+        """True when this spec cannot run at all under the current mode."""
+        return bool(self.unenforced_required) and self.mode == MODE_ENFORCING
+
+
+def probe(spec: ContainmentSpec) -> ContainmentProbe:
+    """Answer what this host can establish for ``spec``, without acquiring it.
+
+    Same selection, same mechanism table and same arithmetic as
+    :func:`acquire`; it just stops before the side effects. The command is not
+    an input here either.
+
+    :raises ValueError: the spec is malformed (a caller bug, in either mode).
+    """
+    spec = _validate_spec(spec)
+    mechanism, provided = _select(spec)
+    enforced = provided & spec.requested
+    missing_required = frozenset(spec.required) - enforced
+    return ContainmentProbe(
+        mechanism=mechanism.name if mechanism else "none",
+        enforced=enforced,
+        degraded=tuple(sorted(spec.requested - enforced - spec.required)),
+        unenforced_required=tuple(sorted(missing_required)),
+        mode=CONTAINMENT_MODE,
+    )
 
 
 def acquire(spec: ContainmentSpec, *, owner: str) -> ContainmentGrant:

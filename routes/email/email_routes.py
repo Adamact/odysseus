@@ -39,6 +39,7 @@ from email.mime.multipart import MIMEMultipart
 from fastapi import APIRouter, Query, UploadFile, File, BackgroundTasks, HTTPException, Depends, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from src.constants import DATA_DIR
+from src.path_confinement import confine
 
 from src.llm_core import llm_call_async
 from src.upload_limits import read_upload_limited, EMAIL_COMPOSE_UPLOAD_MAX_BYTES
@@ -4199,9 +4200,12 @@ def setup_email_routes():
                 return {"error": f"Attachment index {index} not found"}
 
             from pathlib import Path as _Path
-            target_root = os.path.abspath(str(target_dir))
-            filepath_str = os.path.abspath(str(filepath))
-            if os.path.commonpath([target_root, filepath_str]) != target_root:
+            # realpath, not abspath: abspath only folds `..`, so a symlink
+            # written into the extraction directory would have passed this
+            # check and then been read through.
+            try:
+                filepath_str = confine(str(target_dir), str(filepath))
+            except (ValueError, OSError):
                 logger.warning("Rejected attachment path outside extraction dir: %s", filepath)
                 return {"error": "Invalid attachment path"}
             filepath = _Path(filepath_str)

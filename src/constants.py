@@ -155,6 +155,17 @@ SCHOLARLY_LOOKUP_TOTAL_BUDGET = 20.0
 CLEANUP_ENABLED = os.getenv("CLEANUP_ENABLED", "True").lower() == "true"
 CLEANUP_INTERVAL_HOURS = int(os.getenv("CLEANUP_INTERVAL_HOURS", "24"))
 
+# Agent workspace
+# The stable virtual root the tool contract promises an agent, independent of
+# where the workspace physically lives. Both the mount namespace and the
+# path resolvers map it to the active workspace, so it is the one absolute path
+# a contained command may assume.
+WORKSPACE_MOUNT = "/workspace"
+# Scratch directory inside the workspace that agent shell commands get in place
+# of the host /tmp. A dirname rather than a path: the workspace is dynamic, so
+# the full path is only knowable per turn.
+AGENT_ISOLATED_TMP_DIRNAME = ".tmp"
+
 # Auth policy
 PASSWORD_MIN_LENGTH = 8
 

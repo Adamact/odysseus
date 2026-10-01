@@ -1,5 +1,6 @@
 import asyncio
 import ast
+import logging
 import os
 import re
 import shlex
@@ -15,8 +16,11 @@ from urllib.parse import urlparse
 
 import httpx
 
-from src.constants import MAX_OUTPUT_CHARS
+from src import containment
+from src.constants import AGENT_ISOLATED_TMP_DIRNAME, MAX_OUTPUT_CHARS, WORKSPACE_MOUNT
 from src.agent_runtime.journal import mark_operation_started
+
+logger = logging.getLogger(__name__)
 
 # Agent shell calls must fail fast enough for the loop to recover and choose a
 # better tool.  A one-hour default can pin an entire benchmark worker on an
@@ -227,11 +231,221 @@ def _replace_workspace_alias(content: str, cwd: str) -> str:
     )
 
 
+#: Roots the namespace argv mounts itself. A host path under one of these is
+#: already reachable inside the namespace, so it needs no bind and must not get
+#: a ``--dir`` chain: mkdir inside a read-only bind fails and takes the whole
+#: namespace with it.
+_NAMESPACE_MOUNTED_ROOTS = ("/usr", "/home", "/mnt")
+
+#: Destinations a bind must never overlay. Replacing the private root, the
+#: private /tmp or the workspace mount with a host directory undoes the
+#: namespace from inside the argv that builds it.
+_NAMESPACE_RESERVED_DESTS = frozenset({
+    "/", "/tmp", "/var", "/opt", "/etc", WORKSPACE_MOUNT,
+    "/root", "/run", "/proc", "/dev", "/sys", *_NAMESPACE_MOUNTED_ROOTS,
+})
+
+
+def _namespace_visible_without_bind(path: str) -> bool:
+    """True when ``path`` is already reachable through a root the argv mounts."""
+    return any(
+        path == root or path.startswith(root + os.sep)
+        for root in _NAMESPACE_MOUNTED_ROOTS
+    )
+
+
+def _namespace_dir_chain(path: str) -> list[str]:
+    """``--dir`` args for every ancestor of ``path`` the argv has to create.
+
+    bwrap mounts into a tmpfs root, so a bind destination's parents have to
+    exist before the bind. Returns nothing when the parents already exist by
+    virtue of a mount the argv made — creating a directory inside a read-only
+    bind is an error, not a no-op.
+    """
+    if _namespace_visible_without_bind(path):
+        return []
+    parents: list[str] = []
+    parent = os.path.dirname(path)
+    while parent not in ("/", "", "/tmp", "/etc", WORKSPACE_MOUNT, *_NAMESPACE_MOUNTED_ROOTS):
+        parents.append(parent)
+        parent = os.path.dirname(parent)
+    args: list[str] = []
+    for directory in reversed(parents):
+        args.extend(("--dir", directory))
+    return args
+
+
+def _isolated_tmp_dir(cwd: str) -> str:
+    """The workspace-local stand-in for the host ``/tmp``.
+
+    Creation is best-effort: the source tree is read-only in Docker and a
+    workspace can be mounted read-only, and a command that mentions ``/tmp/``
+    must not die with an OSError traceback because a scratch directory could
+    not be made. The rewrite still points at the workspace, so a command that
+    really needs to write there fails on its own terms, inside the boundary,
+    with its own error message.
+    """
+    path = os.path.join(cwd, AGENT_ISOLATED_TMP_DIRNAME)
+    try:
+        os.makedirs(path, exist_ok=True)
+    except OSError:
+        pass
+    return path
+
+
+def _execution_boundary(
+    cwd: str, *, wall_clock_s: int = DEFAULT_BASH_TIMEOUT,
+) -> "containment.ContainmentProbe":
+    """What this host can actually enforce for an agent command in ``cwd``.
+
+    The single place the shell and Python tools ask. Both used to decide for
+    themselves, by testing whether a namespace wrapper came back non-None, and
+    both then fell through to a regex if it had not — so "was that command
+    confined" had no answer and no field in the result. Routing the question
+    through :mod:`src.containment` means one mechanism table, one answer, and a
+    ``containment`` block in the tool result either way.
+
+    ``network`` is left inherited on purpose: ``--unshare-net`` was measured to
+    cut the loopback sidecars this product depends on (ChromaDB on 8100), and
+    the Dockerfile installs ``nmap``/``iproute2``/``dnsutils`` because
+    Docker-hosted agents are expected to do LAN work. It is a reported
+    dimension here, not an enforced one.
+    """
+    try:
+        return containment.probe(
+            containment.agent_spec(
+                workspace=cwd,
+                env={},
+                wall_clock_s=wall_clock_s,
+                max_output_bytes=MAX_OUTPUT_CHARS,
+            )
+        )
+    except ValueError as exc:
+        # A workspace that is not a usable directory is a caller bug to
+        # containment, which raises rather than reporting. Here it must not
+        # take out the tool, and it is still a containment failure: nothing can
+        # be confined to a directory that is not there. Fail closed. The reason
+        # goes in the message rather than a traceback -- this is a known shape,
+        # not an unexpected exception.
+        logger.warning(
+            "execution boundary: cannot probe containment for workspace %r (%s); "
+            "treating every required dimension as unenforced",
+            cwd, exc,
+        )
+        return containment.ContainmentProbe(
+            mechanism="none",
+            enforced=frozenset(),
+            degraded=(),
+            unenforced_required=tuple(sorted(containment.DEFAULT_REQUIRED)),
+            mode=containment.CONTAINMENT_MODE,
+        )
+
+
+#: What the fallback actually is, named so it cannot be mistaken for a
+#: mechanism. ``_replace_workspace_alias`` rewrites the literal token
+#: ``/workspace`` to the real path in the command string; a command that never
+#: mentions ``/workspace`` is untouched by it and runs on the host unrestricted.
+ALIAS_REWRITE_MECHANISM = "workspace_alias_rewrite"
+
+#: Guards the one-per-process fallback warning below. Module state, because the
+#: fact it reports is a property of the host rather than of a command.
+_ALIAS_FALLBACK_LOGGED = False
+
+
+def _filesystem_boundary_block(mechanism: str, mode: str, *, confined: bool) -> dict:
+    """The ``containment`` block for a spawn these tools still build themselves.
+
+    Reports the **filesystem dimension only**, deliberately. The probe knows
+    this host could also give a process group and a real wall clock, but
+    BashTool and PythonTool still assemble their own ``create_subprocess_*``
+    call and pass neither ``start_new_session`` nor a group-wide kill, so
+    listing those dimensions here would be the false claim
+    :mod:`src.containment` calls worse than an honest absence. They arrive when
+    this spawn path moves onto :func:`containment.run`, not before.
+    """
+    return {
+        "mechanism": mechanism,
+        "mode": mode,
+        "enforced": [containment.FILESYSTEM] if confined else [],
+        "unenforced_required": [] if confined else [containment.FILESYSTEM],
+        "contained": confined,
+        "executed": True,
+        # Names the scope of the claim, so "process_tree is absent from
+        # enforced" reads as "not reported here" rather than "not enforced".
+        "reported_dimensions": [containment.FILESYSTEM],
+    }
+
+
+def _contained_command(
+    content: str,
+    cwd: str,
+    *,
+    chdir: str = WORKSPACE_MOUNT,
+    interpreter_prefix: str | None = None,
+) -> tuple[str, dict, bool]:
+    """Resolve ``content`` into the strongest form this host can run.
+
+    Returns ``(command, containment_block, confined)``. The caller spawns
+    ``command``, copies ``containment_block`` into its result verbatim, and
+    refuses instead when ``confined`` is false under enforcing mode.
+
+    This replaces ``namespaced or _replace_workspace_alias(...)``, the line this
+    ticket exists to delete. The two branches it chose between are not
+    comparable — one is a mount namespace, the other is a regex — and choosing
+    the second silently means an uncontained host execution reads in the
+    transcript exactly like a contained one. The fallback still happens under
+    report-only mode, which is what ships; the difference is that it is now
+    recorded in the result.
+
+    :raises containment.ContainmentUnavailable: filesystem containment could
+        not be established and the mode is enforcing. The command is not run.
+    """
+    probe = _execution_boundary(cwd)
+    wrapped = _wrap_workspace_namespace(
+        content, cwd, chdir=chdir, interpreter_prefix=interpreter_prefix,
+    )
+    # The probe's filesystem answer and the wrapper's None/not-None answer rest
+    # on the same condition (`not IS_WINDOWS and which("bwrap")`), so they agree
+    # by construction. `wrapped` is still what decides, because it is what
+    # actually runs: a probe that said yes to a wrapper that declined would be
+    # the same false claim in the other direction.
+    if wrapped is not None:
+        return wrapped, _filesystem_boundary_block(
+            probe.mechanism, probe.mode, confined=True,
+        ), True
+    if probe.mode == containment.MODE_ENFORCING:
+        raise containment.ContainmentUnavailable(
+            frozenset({containment.FILESYSTEM}), ALIAS_REWRITE_MECHANISM,
+        )
+    # Once per process, not once per command. The host's ability to establish a
+    # namespace does not change between calls, so a per-call warning would
+    # drown the log on every macOS install while adding nothing — and the
+    # per-call fact is already in the result block, which is where a reader
+    # looking at one command will look.
+    global _ALIAS_FALLBACK_LOGGED
+    if not _ALIAS_FALLBACK_LOGGED:
+        _ALIAS_FALLBACK_LOGGED = True
+        logger.warning(
+            "execution boundary: no filesystem containment is available on this "
+            "host (mechanism %r); agent commands fall back to the %s, which is "
+            "a path rewrite and not a boundary. Reported per command in the "
+            "result's containment block.",
+            probe.mechanism, ALIAS_REWRITE_MECHANISM,
+        )
+    return (
+        _replace_workspace_alias(content, cwd),
+        _filesystem_boundary_block(
+            ALIAS_REWRITE_MECHANISM, probe.mode, confined=False,
+        ),
+        False,
+    )
+
+
 def _wrap_workspace_namespace(
     content: str,
     cwd: str,
     *,
-    chdir: str = "/workspace",
+    chdir: str = WORKSPACE_MOUNT,
     interpreter_prefix: str | None = None,
 ) -> str | None:
     """Run a shell command with the active workspace mounted at /workspace.
@@ -251,12 +465,31 @@ def _wrap_workspace_namespace(
         "--symlink", "usr/lib64", "/lib64",
         "--symlink", "usr/bin", "/sbin",
         "--dir", "/etc", "--ro-bind", "/etc", "/etc",
-        "--dir", "/home", "--bind", "/home", "/home",
-        "--dir", "/mnt", "--bind", "/mnt", "/mnt",
+        # Read-only, not read-write. These two binds exist so a command can
+        # *read* host material it legitimately needs — a dataset under /mnt, a
+        # dotfile under /home. Binding them writable gave back most of what
+        # the namespace was for: a Linux host with working bubblewrap running
+        # this argv reaches outside the workspace and writes to the user's home
+        # directory, measured rather than inferred. The workspace bind below is
+        # the one writable path, which is what "workspace confinement" means.
+        "--dir", "/home", "--ro-bind", "/home", "/home",
+        "--dir", "/mnt", "--ro-bind", "/mnt", "/mnt",
         "--dir", "/tmp", "--tmpfs", "/tmp",
         "--dev-bind", "/dev", "/dev", "--proc", "/proc",
-        "--dir", "/workspace", "--bind", cwd, "/workspace",
+        "--dir", WORKSPACE_MOUNT, "--bind", cwd, WORKSPACE_MOUNT,
     ]
+    # The workspace stays writable at its real host path as well as at
+    # /workspace. A command can carry the absolute host path: BashTool's own
+    # /tmp redirect rewrites `/tmp/` to `<agent_cwd()>/.tmp/` before the
+    # namespace is built, so the command reaching bwrap already names the real
+    # path. Before /home and /mnt became read-only those writes landed only
+    # because the workspace happened to sit under one of them. Binding the
+    # workspace itself is the narrow version of what that accident provided:
+    # the same directory by either name, and nothing else writable.
+    real_cwd = os.path.realpath(cwd)
+    if real_cwd not in _NAMESPACE_RESERVED_DESTS and len(real_cwd.split(os.sep)) >= 3:
+        args.extend(_namespace_dir_chain(real_cwd))
+        args.extend(("--bind", real_cwd, real_cwd))
     # setup-python installs interpreters under /opt, and local CI virtualenvs
     # can live under /tmp. Those paths are hidden by the private root/tmpfs.
     # Expose only the active interpreter environment, read-only, so Python
@@ -264,15 +497,7 @@ def _wrap_workspace_namespace(
     if interpreter_prefix:
         prefix = os.path.abspath(interpreter_prefix)
         resolved_prefix = os.path.realpath(prefix)
-        mounted_roots = ("/usr", "/home", "/mnt")
-        reserved_roots = {
-            "/", "/tmp", "/var", "/opt", "/etc", "/workspace",
-            "/root", "/run", "/proc", "/dev", "/sys", *mounted_roots,
-        }
-        already_visible = any(
-            prefix == root or prefix.startswith(root + os.sep)
-            for root in mounted_roots
-        )
+        already_visible = _namespace_visible_without_bind(prefix)
         # A prefix is trusted only when it names a specific interpreter tree.
         # In particular, never overlay the private root, tmpfs, or workspace
         # with a broad host directory. Reject symlinked prefixes too: bwrap
@@ -289,18 +514,12 @@ def _wrap_workspace_namespace(
         if (
             not already_visible
             and prefix == resolved_prefix
-            and prefix not in reserved_roots
+            and prefix not in _NAMESPACE_RESERVED_DESTS
             and len(prefix.split(os.sep)) >= 3
             and os.path.isdir(prefix)
             and has_environment_layout
         ):
-            parents = []
-            parent = os.path.dirname(prefix)
-            while parent not in ("/", "/tmp", "/etc", "/workspace", *mounted_roots):
-                parents.append(parent)
-                parent = os.path.dirname(parent)
-            for directory in reversed(parents):
-                args.extend(("--dir", directory))
+            args.extend(_namespace_dir_chain(prefix))
             args.extend(("--ro-bind", prefix, prefix))
     args.extend(("--chdir", chdir, "/bin/bash", "-lc", content))
     return shlex.join(args)
@@ -635,12 +854,13 @@ class BashTool:
                 ),
                 "exit_code": 1,
             }
-        isolated_tmp = os.path.join(agent_cwd(), ".tmp")
         if "/tmp/" in content:
-            os.makedirs(isolated_tmp, exist_ok=True)
+            isolated_tmp = _isolated_tmp_dir(agent_cwd())
             content = content.replace("/tmp/", isolated_tmp.rstrip("/") + "/")
-        namespaced = _wrap_workspace_namespace(content, agent_cwd())
-        content = namespaced or _replace_workspace_alias(content, agent_cwd())
+        try:
+            content, boundary, _confined = _contained_command(content, agent_cwd())
+        except containment.ContainmentUnavailable as exc:
+            return containment.unavailable_tool_result(exc, tool="bash")
         progress_cb = ctx.get("progress_cb")
         _subproc_env = ctx.get("subproc_env")
         session_id = ctx.get("session_id")
@@ -660,6 +880,7 @@ class BashTool:
                     "stdout": _truncate(stdout, MAX_OUTPUT_CHARS),
                     "stderr": _truncate(stderr, MAX_OUTPUT_CHARS),
                     "tmux_session": _tmux_session_name(str(session_id)),
+                    "containment": boundary,
                 }
             output = stdout.rstrip()
             err = stderr.rstrip()
@@ -669,6 +890,7 @@ class BashTool:
                 "output": _truncate(output, MAX_OUTPUT_CHARS) or "(no output)",
                 "exit_code": rc or 0,
                 "tmux_session": _tmux_session_name(str(session_id)),
+                "containment": boundary,
             }
 
         try:
@@ -690,7 +912,7 @@ class BashTool:
                     cwd=agent_cwd(),
                 )
         except RuntimeError as exc:
-            return {"error": str(exc), "exit_code": 1}
+            return {"error": str(exc), "exit_code": 1, "containment": boundary}
         mark_operation_started('subprocess', pid=proc.pid)
         stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
             proc,
@@ -698,13 +920,13 @@ class BashTool:
             progress_cb=progress_cb,
         )
         if timed_out:
-            return {"error": f"bash: timed out after {DEFAULT_BASH_TIMEOUT}s — process killed", "exit_code": 124, "stdout": _truncate(stdout, MAX_OUTPUT_CHARS), "stderr": _truncate(stderr, MAX_OUTPUT_CHARS)}
+            return {"error": f"bash: timed out after {DEFAULT_BASH_TIMEOUT}s — process killed", "exit_code": 124, "stdout": _truncate(stdout, MAX_OUTPUT_CHARS), "stderr": _truncate(stderr, MAX_OUTPUT_CHARS), "containment": boundary}
         output = stdout.rstrip()
         err = stderr.rstrip()
         if err:
             output = (output + "\nSTDERR: " + err).strip() if output else "STDERR: " + err
         output = _truncate(output, MAX_OUTPUT_CHARS)
-        return {"output": output or "(no output)", "exit_code": rc or 0}
+        return {"output": output or "(no output)", "exit_code": rc or 0, "containment": boundary}
 
 class HostShellTool:
     async def execute(self, content: str, ctx: dict) -> dict:
@@ -959,12 +1181,11 @@ class PythonTool:
         # every invocation would make that stable contract appear as
         # ``/workspace`` instead.
         needs_virtual_namespace = bool(
-            "/workspace" in content
+            WORKSPACE_MOUNT in content
             or re.search(r"\b(?:runpy\.run_path|exec\s*\(|importlib\.)", content)
         )
-        isolated_tmp = os.path.join(agent_cwd(), ".tmp")
         if "/tmp/" in content:
-            os.makedirs(isolated_tmp, exist_ok=True)
+            isolated_tmp = _isolated_tmp_dir(agent_cwd())
             content = content.replace("/tmp/", isolated_tmp.rstrip("/") + "/")
         progress_cb = ctx.get("progress_cb")
         _subproc_env = ctx.get("subproc_env")
@@ -987,11 +1208,38 @@ class PythonTool:
             _wrap_workspace_namespace(
                 python_command,
                 agent_cwd(),
-                chdir="/workspace",
+                chdir=WORKSPACE_MOUNT,
                 interpreter_prefix=sys.prefix,
             )
             if needs_virtual_namespace
             else None
+        )
+        # The boundary this call actually got, reported either way. Note what
+        # the gate above means: code that does not mention /workspace and is
+        # not dynamic gets NO namespace, on every platform including a Linux
+        # host with working bubblewrap. That is deliberate -- it keeps
+        # os.getcwd() the real workspace -- but it is also a filesystem
+        # containment gap wider than the macOS one, and until now nothing said
+        # so. Reporting it is in scope here; closing it is not: it changes the
+        # Linux Python path for every call and cannot be verified on a host
+        # without bwrap. It is the reason enforcing mode cannot be switched on
+        # yet, because enforcing it as written would refuse ordinary Python on
+        # a correctly configured host.
+        boundary_probe = _execution_boundary(
+            agent_cwd(), wall_clock_s=DEFAULT_PYTHON_TIMEOUT,
+        )
+        confined = namespaced is not None
+        if not confined and boundary_probe.mode == containment.MODE_ENFORCING:
+            return containment.unavailable_tool_result(
+                containment.ContainmentUnavailable(
+                    frozenset({containment.FILESYSTEM}), ALIAS_REWRITE_MECHANISM,
+                ),
+                tool="python",
+            )
+        boundary = _filesystem_boundary_block(
+            boundary_probe.mechanism if confined else ALIAS_REWRITE_MECHANISM,
+            boundary_probe.mode,
+            confined=confined,
         )
         if namespaced:
             proc = await asyncio.create_subprocess_exec(
@@ -1024,7 +1272,7 @@ class PythonTool:
             progress_cb=progress_cb,
         )
         if timed_out:
-            return {"error": f"python: timed out after {DEFAULT_PYTHON_TIMEOUT}s — process killed", "exit_code": 124, "stdout": _truncate(stdout, MAX_OUTPUT_CHARS), "stderr": _truncate(stderr, MAX_OUTPUT_CHARS)}
+            return {"error": f"python: timed out after {DEFAULT_PYTHON_TIMEOUT}s — process killed", "exit_code": 124, "stdout": _truncate(stdout, MAX_OUTPUT_CHARS), "stderr": _truncate(stderr, MAX_OUTPUT_CHARS), "containment": boundary}
         child_failure = _python_child_runtime_failure(stdout, stderr, rc)
         if child_failure:
             return {
@@ -1035,10 +1283,11 @@ class PythonTool:
                 ),
                 "exit_code": 1,
                 "stderr": _truncate(stderr, MAX_OUTPUT_CHARS),
+                "containment": boundary,
             }
         output = stdout.rstrip()
         err = stderr.rstrip()
         if err:
             output = (output + "\nSTDERR: " + err).strip() if output else "STDERR: " + err
         output = _truncate(output, MAX_OUTPUT_CHARS)
-        return {"output": output or "(no output)", "exit_code": rc or 0}
+        return {"output": output or "(no output)", "exit_code": rc or 0, "containment": boundary}

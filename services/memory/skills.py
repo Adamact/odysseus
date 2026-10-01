@@ -25,6 +25,8 @@ import os
 import time
 from typing import Dict, Iterable, List, Optional
 
+from src.path_confinement import confine
+
 from .skill_format import Skill, slugify
 
 logger = logging.getLogger(__name__)
@@ -644,9 +646,14 @@ class SkillsManager:
                 or (sk.source == "builtin" and not (sk.owner or ""))
             ):
                 continue
-            base = os.path.realpath(os.path.dirname(path))
-            target = os.path.realpath(os.path.join(base, ref_path))
-            if os.path.commonpath([base, target]) != base or target == os.path.dirname(path):
+            # allow_root=False refuses the skill directory itself. The old
+            # guard compared a realpath-ed target against a raw dirname, so on
+            # a host where the skills tree is reached through a symlink (macOS
+            # /tmp -> /private/tmp) the two sides never matched and the guard
+            # could not fire.
+            try:
+                target = confine(os.path.dirname(path), ref_path, allow_root=False)
+            except (ValueError, OSError):
                 return None
             if not os.path.isfile(target):
                 return None
