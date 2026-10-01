@@ -1,0 +1,106 @@
+"""Native execution must use the shared boundary and report actual teardown."""
+import asyncio
+import os
+import sys
+
+import pytest
+
+from src import containment, tool_execution
+from src.agent_tools import subprocess_tools
+
+
+@pytest.fixture(autouse=True)
+def native_boundary(tmp_path, monkeypatch):
+    monkeypatch.setattr(tool_execution, "agent_cwd", lambda: str(tmp_path))
+    monkeypatch.setattr(containment, "_store_path", lambda: tmp_path / "grants.json")
+    monkeypatch.setattr(containment, "CONTAINMENT_MODE", containment.MODE_REPORT_ONLY)
+    monkeypatch.setattr(containment, "MECHANISMS", tuple(
+        m for m in containment.MECHANISMS if m.name == "process_group"
+    ))
+    return tmp_path
+
+
+@pytest.mark.skipif(os.name == "nt", reason="real POSIX group teardown")
+async def test_native_bash_owns_and_releases_its_child(native_boundary):
+    result = await subprocess_tools.BashTool().execute(
+        "if read answer; then echo unexpected; else printf '%s' \"$ODY_TEST_ENV\"; fi",
+        {"subproc_env": {"PATH": "/usr/bin:/bin", "ODY_TEST_ENV": "captured"}},
+    )
+    assert result["output"] == "captured"
+    assert result["exit_code"] == 0
+    assert result["teardown"]["dead"] is True
+    assert result["containment"]["enforced"] == ["process_tree", "wall_clock"]
+    assert result["containment"]["unenforced_required"] == ["filesystem"]
+    assert result["containment"]["network"] == "inherit"
+    assert containment.active_grants() == []
+
+
+async def test_native_bash_refuses_before_spawn_when_required_boundary_missing(monkeypatch):
+    monkeypatch.setattr(containment, "CONTAINMENT_MODE", containment.MODE_ENFORCING)
+    async def forbidden(*args, **kwargs):
+        pytest.fail("refused command reached spawn")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", forbidden)
+    result = await subprocess_tools.BashTool().execute("echo hello", {})
+    assert result["containment"]["executed"] is False
+    assert result["containment"]["unenforced_required"] == ["filesystem"]
+
+
+async def test_failed_spawn_releases_unstarted_grant(native_boundary, monkeypatch):
+    async def fail(*args, **kwargs):
+        raise OSError("spawn failed")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fail)
+    result = await subprocess_tools.BashTool().execute("echo hello", {})
+    assert result["exit_code"] == 1
+    assert containment.active_grants() == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="real POSIX process")
+async def test_long_line_is_drained_and_truncation_reported(native_boundary):
+    spec = containment.ContainmentSpec(
+        workspace=str(native_boundary), env=dict(os.environ), wall_clock_s=5,
+        required=frozenset({containment.PROCESS_TREE, containment.WALL_CLOCK}),
+        max_output_bytes=100,
+    )
+    result = await containment.run(containment.acquire(spec, owner="long-line"),
+        [sys.executable, "-c", "print('x' * 200000)"], argv=True)
+    assert result.exit_code == 0
+    assert result.stdout == "x" * 100
+    assert result.output_truncated is True
+    assert result.release.dead is True
+
+
+@pytest.mark.skipif(os.name == "nt", reason="real POSIX process")
+async def test_output_exactly_at_cap_is_complete(native_boundary):
+    spec = containment.ContainmentSpec(
+        workspace=str(native_boundary), env=dict(os.environ), wall_clock_s=5,
+        required=frozenset({containment.PROCESS_TREE, containment.WALL_CLOCK}), max_output_bytes=100,
+    )
+    result = await containment.run(containment.acquire(spec, owner="exact-cap"),
+        [sys.executable, "-c", "import sys; sys.stdout.write('x' * 100)"], argv=True)
+    assert len(result.stdout) == 100
+    assert result.output_truncated is False
+
+
+def test_permission_denied_is_not_verified_death(monkeypatch):
+    from core import platform_compat
+    def denied(*args):
+        raise PermissionError("EPERM")
+    monkeypatch.setattr(platform_compat, "IS_WINDOWS", False)
+    monkeypatch.setattr(os, "kill", denied)
+    monkeypatch.setattr(os, "killpg", denied)
+    monkeypatch.setattr(containment, "_own_pgid", lambda: 1)
+    assert platform_compat.pid_alive(987654) is True
+    assert containment._group_present(987654) is True
+
+
+@pytest.mark.skipif(os.name == "nt", reason="real POSIX process")
+async def test_blocked_stdin_is_inside_wall_clock(native_boundary):
+    spec = containment.ContainmentSpec(
+        workspace=str(native_boundary), env=dict(os.environ), wall_clock_s=1,
+        required=frozenset({containment.PROCESS_TREE, containment.WALL_CLOCK}),
+    )
+    result = await asyncio.wait_for(containment.run(
+        containment.acquire(spec, owner="blocked-stdin"), "sleep 60", stdin=b"x" * 2000000,
+    ), timeout=8)
+    assert result.timed_out is True
+    assert result.release.dead is True

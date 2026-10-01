@@ -165,6 +165,7 @@ def test_a_gone_leader_with_a_live_group_is_reported_not_killed(
 def test_a_verified_grant_is_torn_down_normally(grant_store, monkeypatch):
     seed_grant()
     verdicts(monkeypatch, {4242: process_ownership.OWNED})
+    monkeypatch.setattr(containment, "_pgid_of", lambda pid: 4242)
     signals = []
     monkeypatch.setattr(
         containment, "_signal_tree",
@@ -177,6 +178,28 @@ def test_a_verified_grant_is_torn_down_normally(grant_store, monkeypatch):
 
     assert outcome.dead is True
     assert outcome.ownership == ""
+
+
+def test_verified_leader_does_not_authorize_a_different_group(grant_store, monkeypatch):
+    seed_grant(pgid=9999)
+    verdicts(monkeypatch, {4242: process_ownership.OWNED})
+    monkeypatch.setattr(containment, "_pgid_of", lambda pid: 4242)
+    monkeypatch.setattr(containment, "_signal_tree", lambda *args: pytest.fail("foreign group signalled"))
+    outcome = containment.reap_record(grant_store()["grant-1"])
+    assert outcome.dead is False
+    assert outcome.ownership == process_ownership.UNVERIFIABLE
+
+
+def test_reaper_retains_a_group_after_its_leader_dies(grant_store, monkeypatch):
+    from src import process_reaper
+    seed_grant()
+    verdicts(monkeypatch, {4242: process_ownership.GONE})
+    monkeypatch.setattr(containment, "_group_present", lambda pgid: True)
+    monkeypatch.setattr(containment, "_signal_tree", lambda *args: pytest.fail("unidentified group signalled"))
+    report = process_reaper.reap_containment_grants()
+    assert report["failed"] == 1
+    assert report["already_gone"] == 0
+    assert "grant-1" in grant_store()
 
 
 def test_an_in_process_grant_is_not_subjected_to_the_gate(monkeypatch, tmp_path):

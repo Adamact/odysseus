@@ -238,6 +238,8 @@ class ContainmentGrant:
             "unenforced_required": list(self.unenforced_required),
             "contained": self.contained,
             "external": self.external,
+            "requested": sorted(self.spec.requested),
+            "network": self.spec.network,
         }
 
 
@@ -815,6 +817,12 @@ def _bwrap_prefix(spec: ContainmentSpec) -> list[str]:
         "--dev-bind", "/dev", "/dev", "--proc", "/proc",
         "--dir", WORKSPACE_MOUNT, "--bind", spec.workspace, WORKSPACE_MOUNT,
     ]
+    # Preserve absolute workspace paths in generated scripts without exposing
+    # a writable parent directory.
+    workspace = os.path.realpath(spec.workspace)
+    if workspace not in _RESERVED_BIND_DESTS and workspace not in {"/usr", "/etc"}:
+        args.extend(_dir_chain(workspace))
+        args.extend(("--bind", workspace, workspace))
     for path in spec.readonly_extra:
         args.extend(_dir_chain(path))
         args.extend(("--ro-bind", path, path))
@@ -873,6 +881,8 @@ def _launch_argv(grant: ContainmentGrant, command: Any, *, argv: bool) -> list[s
         else:
             shell = find_bash()
             if not shell:
+                if IS_WINDOWS:
+                    raise RuntimeError("Git Bash is required for the Bash tool on Windows; install Git for Windows.")
                 raise RuntimeError(
                     "containment: no POSIX shell available to run a shell command"
                 )
@@ -912,7 +922,7 @@ async def _drain(stream, buffer: list[str], budget: list[int]) -> None:
     if stream is None:
         return
     while True:
-        line = await stream.readline()
+        line = await stream.read(65536)
         if not line:
             break
         if budget[0] < 0:
@@ -956,15 +966,23 @@ async def run(
 
     spec = grant.spec
     launch = _launch_argv(grant, command, argv=argv)
-    proc = await asyncio.create_subprocess_exec(
-        *launch,
-        stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        cwd=spec.workspace,
-        env=dict(spec.env),
-        **_spawn_kwargs(grant),
-    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *launch,
+            stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=spec.workspace,
+            env=dict(spec.env),
+            **_spawn_kwargs(grant),
+        )
+    except BaseException:
+        # Acquisition can precede a failed or cancelled spawn. A grant without
+        # a child must not become a permanent restart orphan.
+        release(grant, grace_s=0)
+        raise
+    from src.agent_runtime.journal import mark_operation_started
+    mark_operation_started("subprocess", pid=proc.pid)
     # start_new_session makes the child its own group leader, so the group id
     # is the child's pid. Captured here rather than at teardown: once the leader
     # exits, getpgid can no longer tell us which group its children are in.
@@ -991,16 +1009,18 @@ async def run(
         asyncio.create_task(_drain(proc.stdout, out_buf, out_budget)),
         asyncio.create_task(_drain(proc.stderr, err_buf, err_budget)),
     ]
-    if stdin is not None and proc.stdin is not None:
-        try:
-            proc.stdin.write(stdin)
-            await proc.stdin.drain()
-        except Exception:
-            pass
-        try:
-            proc.stdin.close()
-        except Exception:
-            pass
+    async def _wait() -> None:
+        # Pipe backpressure is execution time too. Feeding a child that never
+        # reads stdin must remain inside the same timeout/cancellation scope.
+        if stdin is not None and proc.stdin is not None:
+            try:
+                proc.stdin.write(stdin)
+                await proc.stdin.drain()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            finally:
+                proc.stdin.close()
+        await proc.wait()
 
     async def _progress() -> None:
         while True:
@@ -1016,7 +1036,7 @@ async def run(
     outcome: Optional[ReleaseOutcome] = None
     try:
         try:
-            await asyncio.wait_for(proc.wait(), timeout=spec.wall_clock_s)
+            await asyncio.wait_for(_wait(), timeout=spec.wall_clock_s)
         except asyncio.TimeoutError:
             timed_out = True
             outcome = await _release_awaited(live, proc)
@@ -1056,12 +1076,8 @@ async def run(
 
 
 # ── release ─────────────────────────────────────────────────────────────────
-# These primitives duplicate the escalating teardown that PR #46 adds to
-# core/platform_compat.kill_process_tree. They are here because this branch is
-# cut from a lab SHA that predates it, and containment cannot ship a teardown
-# that only sends SIGTERM. When #46 lands, release() should delegate to that
-# function and the helpers below should go — carrying two copies of a
-# process-group kill is exactly the divergence this module exists to end.
+# core.platform_compat.kill_process_tree delegates here as well. Native tools,
+# detached jobs and compatibility callers share escalation and death probes.
 def _own_pgid() -> int:
     try:
         return os.getpgid(0)
@@ -1097,8 +1113,10 @@ def _group_present(pgid: Optional[int]) -> bool:
     try:
         os.killpg(pgid, 0)
         return True
-    except (OSError, ProcessLookupError):
+    except ProcessLookupError:
         return False
+    except OSError:
+        return True  # EPERM is a live group we cannot signal, not verified death.
 
 
 def _signal_tree(pid: Optional[int], pgid: Optional[int], sig: int) -> None:
@@ -1188,7 +1206,11 @@ def _ownership_gate(
     """
     verdict = process_ownership.verify(pid, token)
     if verdict == process_ownership.OWNED:
-        return None
+        if IS_WINDOWS or not pgid or _pgid_of(pid) == pgid:
+            return None
+        # A valid leader identity does not establish ownership of an arbitrary
+        # recorded process group. Refuse a stale or inconsistent PGID.
+        verdict = process_ownership.UNVERIFIABLE
 
     if verdict == process_ownership.GONE:
         # The leader is gone. Its group may still hold processes it
@@ -1267,6 +1289,10 @@ def release(grant: ContainmentGrant, *, grace_s: float = 2.0) -> ReleaseOutcome:
     try:
         pgid = int(pgid) if pgid else None
     except (TypeError, ValueError):
+        pgid = None
+    if pid <= 0:
+        pid = 0
+    if pgid is not None and pgid <= 0:
         pgid = None
     grant = replace(grant, pid=pid or None, pgid=pgid)
 

@@ -188,25 +188,14 @@ def test_direct_bash_subprocess_has_closed_stdin(monkeypatch, tmp_path):
     from src.agent_tools import subprocess_tools
     from src import tool_execution
 
-    captured = {}
-    sentinel = SimpleNamespace(pid=12345)
-
-    async def fake_create(command, **kwargs):
-        captured.update(kwargs)
-        return sentinel
-
-    async def fake_stream(proc, **_kwargs):
-        assert proc is sentinel
-        return "ok", "", 0, False
-
-    monkeypatch.setattr(asyncio, "create_subprocess_shell", fake_create)
-    monkeypatch.setattr(subprocess_tools, "_run_subprocess_streaming", fake_stream)
+    from tests.containment_helpers import capture_owned_spawn
+    captured = capture_owned_spawn(monkeypatch, tmp_path)
     monkeypatch.setattr(tool_execution, "agent_cwd", lambda: str(tmp_path))
 
     result = asyncio.run(subprocess_tools.BashTool().execute("echo ok", {}))
 
     assert result["exit_code"] == 0
-    assert captured["stdin"] is asyncio.subprocess.DEVNULL
+    assert captured["kwargs"]["stdin"] is asyncio.subprocess.DEVNULL
     assert not (tmp_path / ".tmp").exists()
 
 
@@ -258,19 +247,8 @@ def test_bash_allows_unicode_ffmpeg_drawtext_with_explicit_fontfile(monkeypatch,
     from src.agent_tools import subprocess_tools
     from src import tool_execution
 
-    captured = {}
-    sentinel = SimpleNamespace(pid=12345)
-
-    async def fake_create(command, **kwargs):
-        captured["command"] = command
-        return sentinel
-
-    async def fake_stream(proc, **_kwargs):
-        assert proc is sentinel
-        return "ok", "", 0, False
-
-    monkeypatch.setattr(asyncio, "create_subprocess_shell", fake_create)
-    monkeypatch.setattr(subprocess_tools, "_run_subprocess_streaming", fake_stream)
+    from tests.containment_helpers import capture_owned_spawn
+    captured = capture_owned_spawn(monkeypatch, tmp_path)
     monkeypatch.setattr(tool_execution, "agent_cwd", lambda: str(tmp_path))
 
     command = (

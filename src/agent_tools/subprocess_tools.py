@@ -811,6 +811,66 @@ async def _run_subprocess_streaming(
         timed_out,
     )
 
+def _owned_spec(cwd: str, env: Optional[dict], timeout: int) -> containment.ContainmentSpec:
+    """Server-defined boundary shared by the native execution tools."""
+    readonly = []
+    for prefix in (sys.prefix, sys.base_prefix):
+        prefix = os.path.realpath(prefix)
+        if not _namespace_visible_without_bind(prefix) and prefix not in _NAMESPACE_RESERVED_DESTS:
+            readonly.append(prefix)
+    return containment.agent_spec(
+        cwd, dict(os.environ if env is None else env), timeout,
+        readonly_extra=tuple(dict.fromkeys(readonly)),
+    )
+
+
+async def _run_owned_command(command, ctx: dict, *, tool: str, timeout: int, argv: bool = False) -> dict:
+    from src.tool_execution import agent_cwd, _truncate
+
+    grant = None
+    try:
+        grant = containment.acquire(
+            _owned_spec(agent_cwd(), ctx.get("subproc_env"), timeout),
+            owner=str(ctx.get("session_id") or ctx.get("owner") or tool),
+        )
+        if containment.FILESYSTEM not in grant.enforced:
+            if argv:
+                command = [*command[:-1], _replace_workspace_alias(command[-1], grant.workspace)]
+            else:
+                command = _replace_workspace_alias(command, grant.workspace)
+        result = await containment.run(grant, command, argv=argv, progress_cb=ctx.get("progress_cb"))
+    except containment.ContainmentUnavailable as exc:
+        return containment.unavailable_tool_result(exc, tool=tool)
+    except (OSError, RuntimeError, ValueError) as exc:
+        return {"error": f"{tool}: execution failed: {exc}", "exit_code": 1,
+                "containment": grant.to_dict() if grant else {"contained": False, "executed": False}}
+
+    boundary = result.grant.to_dict()
+    boundary["executed"] = True
+    teardown = result.release.to_dict() if result.release else {"dead": False}
+    output = result.stdout.rstrip()
+    if result.stderr.rstrip():
+        output = (output + "\nSTDERR: " + result.stderr.rstrip()).strip()
+    truncated = result.output_truncated or len(output) > MAX_OUTPUT_CHARS
+    common = {"containment": boundary, "teardown": teardown, "output_truncated": truncated}
+    if not teardown["dead"]:
+        return {**common, "error": f"{tool}: process teardown could not verify death",
+                "failure_kind": "process_teardown_failed", "exit_code": 1,
+                "stdout": _truncate(result.stdout, MAX_OUTPUT_CHARS),
+                "stderr": _truncate(result.stderr, MAX_OUTPUT_CHARS)}
+    if result.timed_out:
+        return {**common, "error": f"{tool}: timed out after {timeout}s; process tree terminated",
+                "exit_code": 124, "stdout": _truncate(result.stdout, MAX_OUTPUT_CHARS),
+                "stderr": _truncate(result.stderr, MAX_OUTPUT_CHARS)}
+    if tool == "python":
+        child_failure = _python_child_runtime_failure(result.stdout, result.stderr, result.exit_code)
+        if child_failure:
+            return {**common, "error": _truncate("python: a child operation failed despite a zero Python exit status:\n" + child_failure, MAX_OUTPUT_CHARS),
+                    "exit_code": 1, "stderr": _truncate(result.stderr, MAX_OUTPUT_CHARS)}
+    return {**common, "output": _truncate(output, MAX_OUTPUT_CHARS) or "(no output)",
+            "exit_code": result.exit_code if result.exit_code is not None else 1}
+
+
 class BashTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import agent_cwd, _truncate
@@ -861,14 +921,14 @@ class BashTool:
         if "/tmp/" in content:
             isolated_tmp = _isolated_tmp_dir(agent_cwd())
             content = content.replace("/tmp/", isolated_tmp.rstrip("/") + "/")
-        try:
-            content, boundary, _confined = _contained_command(content, agent_cwd())
-        except containment.ContainmentUnavailable as exc:
-            return containment.unavailable_tool_result(exc, tool="bash")
         progress_cb = ctx.get("progress_cb")
         _subproc_env = ctx.get("subproc_env")
         session_id = ctx.get("session_id")
         if not IS_WINDOWS and session_id and shutil.which("tmux"):
+            try:
+                content, boundary, _confined = _contained_command(content, agent_cwd())
+            except containment.ContainmentUnavailable as exc:
+                return containment.unavailable_tool_result(exc, tool="bash")
             stdout, stderr, rc, timed_out = await _run_tmux_bash(
                 content,
                 session_id=str(session_id),
@@ -897,40 +957,7 @@ class BashTool:
                 "containment": boundary,
             }
 
-        try:
-            if IS_WINDOWS:
-                proc = await _create_bash_subprocess(
-                    content,
-                    cwd=agent_cwd(),
-                    env=_subproc_env,
-                )
-            else:
-                # Preserve the existing captured POSIX path; the structural
-                # helper is primarily needed to avoid cmd.exe on Windows.
-                proc = await asyncio.create_subprocess_shell(
-                    content,
-                    stdin=asyncio.subprocess.DEVNULL,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    env=_subproc_env,
-                    cwd=agent_cwd(),
-                )
-        except RuntimeError as exc:
-            return {"error": str(exc), "exit_code": 1, "containment": boundary}
-        mark_operation_started('subprocess', pid=proc.pid)
-        stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
-            proc,
-            timeout=DEFAULT_BASH_TIMEOUT,
-            progress_cb=progress_cb,
-        )
-        if timed_out:
-            return {"error": f"bash: timed out after {DEFAULT_BASH_TIMEOUT}s — process killed", "exit_code": 124, "stdout": _truncate(stdout, MAX_OUTPUT_CHARS), "stderr": _truncate(stderr, MAX_OUTPUT_CHARS), "containment": boundary}
-        output = stdout.rstrip()
-        err = stderr.rstrip()
-        if err:
-            output = (output + "\nSTDERR: " + err).strip() if output else "STDERR: " + err
-        output = _truncate(output, MAX_OUTPUT_CHARS)
-        return {"output": output or "(no output)", "exit_code": rc or 0, "containment": boundary}
+        return await _run_owned_command(content, ctx, tool="bash", timeout=DEFAULT_BASH_TIMEOUT)
 
 class HostShellTool:
     async def execute(self, content: str, ctx: dict) -> dict:

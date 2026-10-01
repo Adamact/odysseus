@@ -73,6 +73,12 @@ def reap_containment_grants() -> Dict[str, Any]:
             continue
         verdict = process_ownership.verify_record(record)
         if verdict == process_ownership.GONE:
+            if containment._group_present(record.get("pgid")):
+                # Leader death does not prove tree death. Without a surviving
+                # identity we cannot signal the group, so retain the evidence.
+                report["failed"] += 1
+                logger.error("process_reaper: grant %s leader is gone but group survives", grant_id)
+                continue
             containment.forget(grant_id)
             report["already_gone"] += 1
             continue

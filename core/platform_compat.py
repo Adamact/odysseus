@@ -107,51 +107,42 @@ def pid_alive(pid: Optional[int]) -> bool:
             PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid)
         )
         if not handle:
-            return False
+            return kernel32.GetLastError() != 87  # ERROR_INVALID_PARAMETER: PID absent
         try:
             code = wintypes.DWORD()
             if kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
                 return code.value == STILL_ACTIVE
-            return False
+            return True  # A failed probe does not establish death.
         finally:
             kernel32.CloseHandle(handle)
     try:
         os.kill(pid, 0)
         return True
-    except (OSError, ProcessLookupError):
+    except ProcessLookupError:
         return False
+    except OSError:
+        return True  # EPERM and other inspection failures are not ESRCH.
 
 
-def kill_process_tree(pid: Optional[int]) -> None:
-    """Terminate ``pid`` and all of its descendants.
+def kill_process_tree(pid: Optional[int]):
+    """Use the runtime's shared escalating teardown and return verified death.
 
-    POSIX: signal the whole process group (``killpg``), falling back to a plain
-    ``kill`` if the pid isn't a group leader.
-    Windows: ``taskkill /T /F`` walks and kills the child tree (there is no
-    process-group signalling).
+    Callers retaining durable PIDs must validate their recorded identity before
+    calling this compatibility entry point. Native grants retain identity at
+    spawn and use containment.release directly.
     """
-    if not pid:
-        return
-    if IS_WINDOWS:
-        try:
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(pid)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-        except Exception:
-            pass
-        return
-    import signal
-
-    try:
-        os.killpg(os.getpgid(pid), signal.SIGTERM)
-    except Exception:
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except Exception:
-            pass
+    from src import containment
+    if not pid or int(pid) <= 0:
+        return containment.ReleaseOutcome(dead=True, escalated=False)
+    spec = containment.ContainmentSpec(workspace=os.getcwd(), env={}, wall_clock_s=1,
+                                       required=frozenset())
+    grant = containment.ContainmentGrant(
+        id="", mechanism="windows_tree" if IS_WINDOWS else "process_group",
+        workspace=spec.workspace, enforced=frozenset(), degraded=(),
+        unenforced_required=(), owner="compatibility", mode=containment.CONTAINMENT_MODE,
+        spec=spec, pid=int(pid), pgid=containment._pgid_of(int(pid)),
+    )
+    return containment.release(grant)
 
 
 # ── Shell / executable resolution ───────────────────────────────────────────
