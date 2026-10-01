@@ -1,4 +1,5 @@
 from pathlib import Path
+from tests.helpers.document_source import document_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,7 +13,7 @@ def test_opening_notes_minimizes_open_document():
 
 
 def test_opening_document_minimizes_notes():
-    script = (ROOT / "static/js/document.js").read_text()
+    script = document_source()
 
     assert "function _minimizeNotesForDocumentOpen()" in script
     assert "window.notesModule.closePanel('down')" in script

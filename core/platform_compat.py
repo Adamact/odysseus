@@ -36,6 +36,19 @@ IS_APPLE_SILICON = (
 )
 
 
+# ── procfs ──────────────────────────────────────────────────────────────────
+# Linux exposes one directory per pid under /proc; macOS and Windows have no
+# procfs at all. Any code that walks it must skip the walk rather than raise.
+# Kept as a module attribute so both branches stay testable on either kind of
+# host.
+PROC_ROOT = Path("/proc")
+
+
+def has_procfs() -> bool:
+    """True when the host exposes a procfs pid tree that can be scanned."""
+    return PROC_ROOT.is_dir()
+
+
 # ── File permissions ────────────────────────────────────────────────────────
 def safe_chmod(path, mode: int) -> bool:
     """``os.chmod`` that is a harmless no-op on Windows.

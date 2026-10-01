@@ -5,6 +5,7 @@ import pytest
 from src.deep_research import CATEGORY_PROMPTS, _infer_research_category
 from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
 from src.visual_report import _standard_visual_variant
+from tests.helpers.stylesheets import app_css
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,7 +21,7 @@ def _tool_schema(name: str) -> dict:
 
 def test_visual_research_mode_is_removed_from_ui_prompt_and_tool_schema():
     panel_source = (ROOT / "static/js/research/panel.js").read_text(encoding="utf-8")
-    style_source = (ROOT / "static/style.css").read_text(encoding="utf-8")
+    style_source = app_css()
     routes_source = (ROOT / "routes/research/research_routes.py").read_text(encoding="utf-8")
     category_schema = _tool_schema("trigger_research")["parameters"]["properties"]["category"]
     rounds_schema = _tool_schema("trigger_research")["parameters"]["properties"]["max_rounds"]

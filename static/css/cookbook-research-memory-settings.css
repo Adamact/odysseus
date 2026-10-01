@@ -1,22 +1,20 @@
 /* Cookbook (including What Fits?), deep research, memory, settings and admin.
  *
- * Split out of style.css for maintainability, not for performance: this file
- * is loaded eagerly from index.html immediately after style.css, so the rules
- * land in the cascade in exactly the order they had inside the single file.
- * Nothing here is lazy-loaded.
+ * This is an eagerly loaded tail segment of the app stylesheet cascade. The
+ * former static/style.css now lives in the numbered 00-17 fragments; these
+ * three pre-existing panel files follow those fragments without changing
+ * their relative order. Nothing here is lazy-loaded.
  *
- * LOAD ORDER IS PART OF THE CONTRACT. The <link> tags in static/index.html and
- * the PRECACHE list in static/sw.js must both list the stylesheets in this
- * order:
- *   1. static/style.css
+ * LOAD ORDER IS PART OF THE CONTRACT. static/index.html and the PRECACHE list
+ * in static/sw.js must agree:
+ *   1. static/css/00-tokens.css through static/css/17-research.css,
+ *      in numeric order
  *   2. static/css/documents-gallery-editor.css
  *   3. static/css/email-calendar-notes-tasks.css
  *   4. static/css/cookbook-research-memory-settings.css
  *
- * Rules were moved verbatim. A rule stays in style.css when its selector group
- * covers more than one panel, when the class is shared design language used by
- * modules outside this panel, or when moving it would change which of two
- * equally specific rules wins.
+ * Rules in this file retain their existing cascade position. Shared rules
+ * formerly kept in static/style.css now live in the numbered fragments.
  */
 
 /* Cookbook already shows its own running/served-status dot
@@ -27,10 +25,6 @@
 @keyframes research-done-pulse {
       0%, 100% { transform: scale(1); opacity: 1; }
       50% { transform: scale(1.5); opacity: 0.7; }
-    }
-@keyframes research-pulse {
-      0%, 100% { background: color-mix(in srgb, var(--red) 12%, transparent); }
-      50% { background: color-mix(in srgb, var(--red) 22%, transparent); }
     }
 #cookbook-gguf-delete-overlay {
       background:rgba(0,0,0,0.5);
@@ -1175,6 +1169,38 @@ details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="vllm_kv_cache_dtype
   overflow-y: auto;
   overflow-x: hidden;
 }
+/* Build provenance at the bottom of the sidebar. The nav above it takes the
+   free space, so this needs no absolute positioning to sit at the bottom.
+   `[hidden]` needs restating: an author `display` rule outranks the UA
+   stylesheet's [hidden] rule, so the attribute alone would not hide it. */
+.settings-sidebar-build {
+  display: flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 8px;
+  padding: 4px 12px 2px;
+  border-top: 1px solid var(--border);
+  font-size: 9px;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+.settings-sidebar-build[hidden] {
+  display: none;
+}
+/* Same treatment as the "Admin" group label this sits under. */
+.settings-sidebar-build-version {
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.settings-sidebar-build-commit {
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.75;
+}
 .settings-nav-search-wrap {
   position: relative;
   margin: 0 0 8px;
@@ -1330,6 +1356,9 @@ body.settings-sidebar-resize-active {
 .settings-sidebar.settings-sidebar-collapsed .settings-sidebar-content {
   display: none;
 }
+.settings-sidebar.settings-sidebar-collapsed .settings-sidebar-build {
+  display: none;
+}
 .settings-sidebar.settings-sidebar-collapsed .settings-sidebar-resize-handle {
   display: none;
 }
@@ -1360,7 +1389,8 @@ body.settings-sidebar-resize-active {
 
   .settings-nav-search-wrap,
   .settings-sidebar-resize-handle,
-  .settings-sidebar-toggle {
+  .settings-sidebar-toggle,
+  .settings-sidebar-build {
     display: none;
   }
 
@@ -1388,7 +1418,8 @@ body.settings-sidebar-resize-active {
 
   .settings-nav-search-wrap,
   .settings-sidebar-resize-handle,
-  .settings-sidebar-toggle {
+  .settings-sidebar-toggle,
+  .settings-sidebar-build {
     display: none;
   }
 }

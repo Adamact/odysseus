@@ -17,7 +17,10 @@ def _run(tool, content):
 @pytest.fixture
 def repo():
     # Built under /tmp, which is on the default tool-path allowlist.
-    root = tempfile.mkdtemp(dir="/tmp", prefix="codenav_")
+    # realpath because the code under test resolves the path it reports, and on
+    # macOS /tmp is a symlink to /private/tmp: comparing the unresolved path
+    # against the resolved one fails on a file both sides found correctly.
+    root = os.path.realpath(tempfile.mkdtemp(dir="/tmp", prefix="codenav_"))
     try:
         with open(os.path.join(root, "a.py"), "w") as f:
             f.write("import os\n# needle here\nprint('x')\n")

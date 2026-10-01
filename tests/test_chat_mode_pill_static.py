@@ -1,4 +1,5 @@
 from pathlib import Path
+from tests.helpers.stylesheets import app_css
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -7,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_user_mode_pill_is_rendered_and_live_updated():
     renderer = (ROOT / "static/js/chatRenderer.js").read_text(encoding="utf-8")
     chat = (ROOT / "static/js/chat.js").read_text(encoding="utf-8")
-    styles = (ROOT / "static/style.css").read_text(encoding="utf-8")
+    styles = app_css()
     routes = (ROOT / "routes/chat_routes.py").read_text(encoding="utf-8")
     helpers = (ROOT / "routes/chat_helpers.py").read_text(encoding="utf-8")
 

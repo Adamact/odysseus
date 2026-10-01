@@ -18,7 +18,7 @@ import urllib.request
 from pathlib import Path
 from typing import Dict, Any
 
-from core.platform_compat import pid_alive
+from core import platform_compat
 from src.constants import MAX_OUTPUT_CHARS
 
 PDF_EXTRACT_MAX_BYTES = 80_000_000
@@ -124,7 +124,6 @@ def _browser_pid_file_candidates(
 # Linux exposes one command line per pid under /proc; macOS and Windows do not.
 # Kept as a module attribute so the procfs-dependent paths stay testable on a
 # host that has no procfs, and on one that does.
-_PROC_ROOT = Path("/proc")
 
 
 def _process_command_line(pid: int) -> str | None:
@@ -136,7 +135,7 @@ def _process_command_line(pid: int) -> str | None:
     """
 
     try:
-        return (_PROC_ROOT / str(pid) / "cmdline").read_bytes().replace(
+        return (platform_compat.PROC_ROOT / str(pid) / "cmdline").read_bytes().replace(
             b"\0", b" "
         ).decode("utf-8", errors="replace")
     except (OSError, UnicodeError):
@@ -160,7 +159,7 @@ def _process_is_alive(pid: int) -> bool:
     reading in both.
     """
 
-    return pid_alive(pid)
+    return platform_compat.pid_alive(pid)
 
 _SCHOLARLY_METADATA_CUE_RE = re.compile(
     r"\b(?:accept(?:ed|ance)?|publish(?:ed|ing|cation)?|venue|conference|"
@@ -2359,14 +2358,14 @@ class PrivateBrowserTool:
         except OSError:
             return
         profile_prefix = str(tmpdir / "agent-browser-chrome-")
-        if not _PROC_ROOT.is_dir():
+        if not platform_compat.has_procfs():
             # Without procfs there is no way to match a reparented Chrome by
             # its command line, and the sweep is an optimisation rather than a
             # correctness requirement.  Leave those trees to the daemon's own
             # lifecycle instead of failing the whole shutdown path.
             return
         pids: list[int] = []
-        for entry in _PROC_ROOT.iterdir():
+        for entry in platform_compat.PROC_ROOT.iterdir():
             if not entry.name.isdigit():
                 continue
             try:
