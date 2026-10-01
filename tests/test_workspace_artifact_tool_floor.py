@@ -2216,7 +2216,7 @@ def test_python_loaded_code_sees_virtual_workspace_alias(monkeypatch, tmp_path):
     ))
     script = workspace / ".python-workspace-alias-test.py"
     output = workspace / ".python-workspace-alias-test.txt"
-    outside = workspace / "host-sibling.txt"
+    outside = workspace.parent / "host-sibling.txt"
     outside.write_text("must stay hidden from private /tmp")
     script.write_text(
         "from pathlib import Path; "
