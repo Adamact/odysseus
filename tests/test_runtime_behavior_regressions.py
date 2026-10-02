@@ -243,6 +243,9 @@ def test_native_terminal_runtime_adds_offered_tools_deliberately():
 # belonging to the user, or to another worktree, must survive it.
 
 def test_chrome_sweep_kills_only_this_runtimes_profile(monkeypatch, tmp_path):
+    import shutil
+
+    from src import process_ownership
     from src.agent_tools.web_tools import PrivateBrowserTool
 
     proc = tmp_path / "proc"
@@ -250,9 +253,19 @@ def test_chrome_sweep_kills_only_this_runtimes_profile(monkeypatch, tmp_path):
     tmpdir.mkdir()
     ours = str(tmpdir.resolve() / "agent-browser-chrome-")
 
+    # A fake process needs an identity, not only a command line: the sweep
+    # signals a process only after verifying the start token it matched on.
+    # Without a stat here the token would be read from the host's real /proc,
+    # so the outcome would depend on whether this pid happens to exist.
+    boot = proc / "sys/kernel/random/boot_id"
+    boot.parent.mkdir(parents=True)
+    boot.write_text("fake-boot\n")
+
     def _pid(pid, cmdline):
         entry = proc / pid
         entry.mkdir(parents=True)
+        starttime = " ".join(["0"] * 15 + [str(1000 + int(pid))])
+        (entry / "stat").write_text(f"{pid} (chrome) S 1 {pid} {pid} {starttime}")
         (entry / "cmdline").write_bytes(cmdline.replace(" ", "\0").encode())
 
     _pid("101", f"chrome --user-data-dir={ours}session-a")
@@ -261,8 +274,14 @@ def test_chrome_sweep_kills_only_this_runtimes_profile(monkeypatch, tmp_path):
     (proc / "self").mkdir()
 
     monkeypatch.setattr(platform_compat, "PROC_ROOT", proc)
+    monkeypatch.setattr(process_ownership, "PROC_ROOT", proc)
     killed = []
-    monkeypatch.setattr(al_web.os, "kill", lambda pid, sig: killed.append(pid))
+
+    def _kill(pid, sig):
+        killed.append(pid)
+        shutil.rmtree(proc / str(pid), ignore_errors=True)
+
+    monkeypatch.setattr(al_web.os, "kill", _kill)
 
     PrivateBrowserTool._terminate_owned_chrome({"TMPDIR": str(tmpdir)})
 
