@@ -2708,8 +2708,7 @@ async def shutdown_private_browser_sessions() -> None:
         _ACTIVE_BROWSER_SESSIONS.discard(session)
     from src.browser_identity import _REGISTRY
     for record in tuple(_REGISTRY.values()):
-        session = record.session
-        if session is not None and session.observation.daemon.owned():
+        if record.env and "AGENT_BROWSER_SOCKET_DIR" in record.env:
             browser_lifecycle.force_cleanup(Path(record.env["AGENT_BROWSER_SOCKET_DIR"]), record.key,
                 method="shutdown", pid_alive=lambda pid: _process_is_alive(pid))
         record.invalidate()

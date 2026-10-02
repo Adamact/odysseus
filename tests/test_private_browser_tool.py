@@ -746,3 +746,31 @@ def test_liveness_probe_goes_through_the_platform_safe_helper(monkeypatch) -> No
 
     assert web_tools._process_is_alive(4242) is True
     assert asked == [4242]
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cleans_up_invalidated_registered_browser_session(monkeypatch) -> None:
+    """Shutdown cleanup must terminate owned daemons even if record.session was invalidated."""
+    from unittest.mock import MagicMock
+    from src import browser_identity as browser
+
+    cleaned: list[tuple[Path, str]] = []
+    def fake_force_cleanup(root, key, **kwargs):
+        cleaned.append((Path(root), key))
+
+    monkeypatch.setattr("src.browser_lifecycle.force_cleanup", fake_force_cleanup)
+
+    record = MagicMock()
+    record.key = "ody-test1234"
+    record.env = {"AGENT_BROWSER_SOCKET_DIR": "/tmp/test-socket-dir"}
+    record.session = None  # Simulates cancellation / invalidate()
+    record.invalidate = MagicMock()
+
+    monkeypatch.setattr(browser, "_REGISTRY", {("alice", "thread"): record})
+
+    await shutdown_private_browser_sessions()
+
+    assert cleaned == [(Path("/tmp/test-socket-dir"), "ody-test1234")]
+    assert browser._REGISTRY == {}
+    record.invalidate.assert_called_once()
+
