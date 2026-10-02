@@ -15,7 +15,7 @@ from src.agent_runtime.authority import OperationGrant, RequestAuthority
 from src.agent_runtime.completion import _ledger, completion_answer
 from src.agent_runtime.effect_log import EffectLog
 from src.agent_runtime.journal import ActionJournal, bind_journal
-from src.agent_tools import TOOL_HANDLERS
+import importlib
 from src.tool_capabilities import ToolRunSecurityContext
 from src.tool_types import ToolBlock
 
@@ -50,6 +50,11 @@ def run(ws, tmp_path):
     return go
 
 
+def handlers():
+    """The registry the dispatcher resolves at call time (robust to reloads)."""
+    return importlib.import_module("src.agent_tools").TOOL_HANDLERS
+
+
 def sha(text):
     return hashlib.sha256(text.encode()).hexdigest()
 
@@ -68,13 +73,13 @@ def records(journal):
 
 def test_claim_is_durable_before_the_producer_runs(run, monkeypatch):
     seen = []
-    original = TOOL_HANDLERS["write_file"]
+    original = handlers()["write_file"]
 
     async def spy(content, ctx):
         seen.append(records(run.journal))
         return await original(content, ctx)
 
-    monkeypatch.setitem(TOOL_HANDLERS, "write_file", spy)
+    monkeypatch.setitem(handlers(), "write_file", spy)
     _, result = run("write_file", {"path": "a.txt", "content": "hello\n"})
     assert result["exit_code"] == 0
     assert seen == [["claim"]], "the claim must be on disk, with no outcome, at backend invocation"
@@ -89,7 +94,7 @@ def test_claim_is_durable_before_the_producer_runs(run, monkeypatch):
 
 def test_persistence_failure_refuses_invocation(run, monkeypatch, tmp_path):
     called = []
-    monkeypatch.setitem(TOOL_HANDLERS, "write_file", lambda content, ctx: called.append(1))
+    monkeypatch.setitem(handlers(), "write_file", lambda content, ctx: called.append(1))
     blocker = tmp_path / "blocker"
     blocker.write_text("x")
     run.journal.effects = EffectLog(run.journal.run_id, directory=blocker)
@@ -143,7 +148,7 @@ def test_cancelled_write_unsettles_an_earlier_success(run, ws, monkeypatch):
     async def cancelled(content, ctx):
         raise asyncio.CancelledError
 
-    monkeypatch.setitem(TOOL_HANDLERS, "write_file", cancelled)
+    monkeypatch.setitem(handlers(), "write_file", cancelled)
     with pytest.raises(asyncio.CancelledError):
         run("write_file", {"path": "a.txt", "content": "again\n"})
     assessment = run.journal.effects.assessments()[-1]
@@ -195,7 +200,7 @@ def test_forged_producer_fields_do_not_verify(run, monkeypatch):
         return {"output": "verified", "exit_code": 0, "verified": True, "content_sha256": sha("hello\n"),
                 "observation": {"coverage": "complete"}}
 
-    monkeypatch.setitem(TOOL_HANDLERS, "write_file", forged)
+    monkeypatch.setitem(handlers(), "write_file", forged)
     run("write_file", {"path": "a.txt", "content": "hello\n"})
     assert run.journal.effects.history().observations == ()
     assert verdicts(run.journal) == [fx.EffectVerdict.UNVERIFIED]
