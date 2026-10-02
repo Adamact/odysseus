@@ -82,3 +82,23 @@ def test_stale_terminal_snapshot_cannot_suppress_new_generation(store):
     assert not bg_jobs.mark_unfollowable('job', expected_record=old)
     assert 'followup_state' not in bg_jobs.peek('job')
     assert resources.launch_path(new.generation).exists()
+
+
+async def test_linkage_lost_during_continuation_cannot_deliver(store, monkeypatch, monitor_session):
+    _, rec = seed(store, status='done')
+    async def interrupted(*args, **kwargs):
+        (bg_jobs._JOBS_DIR / 'job.authority.json').unlink()
+        return 'must not be delivered', []
+    monkeypatch.setattr(bg_monitor, '_drain_agent', interrupted)
+    assert await bg_monitor._process_followup(rec) is bg_monitor.FollowupResult.TERMINAL_UNFOLLOWABLE
+    assert not monitor_session
+    assert not bg_jobs.pending_followups()
+
+
+async def test_stale_terminal_outcome_retries_current_record(store, monkeypatch, monitor_session):
+    _, old = seed(store, status='done')
+    seed(store, status='done')
+    async def terminal(rec): return bg_monitor.FollowupResult.TERMINAL_UNFOLLOWABLE
+    monkeypatch.setattr(bg_monitor, '_run_followup', terminal)
+    assert await bg_monitor._process_followup(old) is bg_monitor.FollowupResult.RETRYABLE_LATER
+    assert bg_jobs.pending_followups()

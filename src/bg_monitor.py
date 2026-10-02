@@ -157,6 +157,12 @@ async def _run_followup(rec: dict) -> FollowupResult:
     context.append(_background_result_message(rec))
     authority = authority.restrict(disabled_tools=get_setting("disabled_tools", []) or ())
     full, tool_events = await _drain_agent(sess, context, request_authority=authority)
+    # An awaited continuation must not deliver a result after its immutable
+    # linkage disappears or is replaced. This check grants no new authority.
+    try:
+        validate_job(resource)
+    except (ValueError, TypeError, OSError, RuntimeError):
+        return FollowupResult.TERMINAL_UNFOLLOWABLE
 
     # Persist ONLY the assistant continuation so it renders as a normal agent
     # turn — a standard chat bubble plus `tool_events` that the frontend
@@ -184,7 +190,8 @@ async def _process_followup(rec):
         from src.agent_runtime.process_resources import job_from_record
         bg_jobs.mark_followed_up(rec["id"], expected=job_from_record(rec))
     elif outcome is FollowupResult.TERMINAL_UNFOLLOWABLE:
-        bg_jobs.mark_unfollowable(rec["id"], expected_record=rec)
+        if not bg_jobs.mark_unfollowable(rec["id"], expected_record=rec):
+            return FollowupResult.RETRYABLE_LATER
         logger.warning("bg-followup: job %s has no valid continuation linkage; retired from pending", rec.get("id"))
     return outcome
 
