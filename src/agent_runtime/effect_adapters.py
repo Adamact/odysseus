@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 import hashlib
+import io
 import json
 import logging
 import os
@@ -28,6 +29,8 @@ _FILESYSTEM_READS = frozenset({"read_file", "ls", "glob", "grep"})
 _JOB_READS = frozenset({"list", "ls", "jobs", "output", "get", "read", "tail", "status", "show"})
 _OWNED_READS = frozenset({"vault_get", "vault_search", "list_sessions", "search_chats"})
 _JOB_SETTLED = {"done", "failed"}
+# Largest pre-state an edit/patch postcondition is derived from.
+_PRE_STATE_LIMIT = 10 * 1024 * 1024
 logger = logging.getLogger(__name__)
 
 
@@ -88,28 +91,94 @@ def _write_file_digest(execution_input: str, path: str) -> str:
     return hashlib.sha256(_unwrap_fenced_source_body(body, path).encode("utf-8")).hexdigest()
 
 
+def _pre_state_text(resource: Any, *, newline: str | None) -> str | None:
+    """The exact bound file decoded as its producer decodes it, or None.
+
+    Reads only the admitted target binding (identity-checked). An oversized,
+    replaced or undecodable file yields None: a truncated read must never
+    stand in for the whole pre-state.
+    """
+    data = _read_whole(resource, _PRE_STATE_LIMIT)
+    if data is None or len(data) > _PRE_STATE_LIMIT:
+        return None
+    try:
+        return io.TextIOWrapper(io.BytesIO(data), encoding="utf-8", newline=newline).read()
+    except (UnicodeDecodeError, ValueError):
+        return None
+
+
+def _edit_file_digest(execution_input: str, resource: Any) -> str:
+    """SHA-256 of the exact bytes edit_file writes for this admitted input, or ''."""
+    from src.agent_tools.filesystem_tools import _edit_file_text
+    try:
+        args = json.loads(execution_input)
+    except (TypeError, ValueError):
+        return ""
+    if not isinstance(args, dict):
+        return ""
+    old, new, replace_all = args.get("old_string"), args.get("new_string"), args.get("replace_all", False)
+    if not isinstance(old, str) or not old or not isinstance(new, str) or type(replace_all) is not bool or old == new:
+        return ""
+    # edit_file reads with newline="" and writes with newline="": no translation.
+    original = _pre_state_text(resource, newline="")
+    if original is None:
+        return ""
+    updated, _ = _edit_file_text(original, old, new, replace_all)
+    return "" if updated is None else hashlib.sha256(updated.encode("utf-8")).hexdigest()
+
+
+def _patch_update_digest(op: dict, resource: Any) -> str:
+    """SHA-256 of the exact bytes apply_patch writes for one update, or ''."""
+    from src.agent_tools.filesystem_tools import _apply_patch_hunks
+    # apply_patch reads updates with universal newlines and writes newline="".
+    original = _pre_state_text(resource, newline=None)
+    if original is None:
+        return ""
+    try:
+        updated = _apply_patch_hunks(original, op["hunks"], op["path"])
+    except ValueError:
+        return ""
+    return hashlib.sha256(updated.encode("utf-8")).hexdigest()
+
+
 def _filesystem_scope(bound: Any) -> tuple[tuple[ResourceRef, ...], tuple[Postcondition, ...]]:
+    """Exact bindings and the requested post-state of each mutation target.
+
+    Each postcondition is the exact content (or absence) the producer's own
+    transformation yields from the admitted pre-state, so an unrelated change
+    can never satisfy it. When any target's requested state cannot be derived
+    the claim carries no postcondition at all and stays UNVERIFIED: a partial
+    set would let the derivable targets verify the whole operation.
+    """
     from src.agent_tools.filesystem_tools import _parse_agent_patch
     tool = bound.operation.tool
     refs = tuple(resource_ref(b.resource, b.role) for b in bound.bindings)
     obligations: list[Postcondition] = []
     if tool == "write_file":
-        target = refs[0]
         expected = _write_file_digest(bound.execution_input, bound.bindings[0].resource.path)
-        obligations.append(Postcondition(target, Predicate.CONTENT_SHA256, expected) if expected
-                           else Postcondition(target, Predicate.EXISTS))
+        if not expected:
+            return refs, ()
+        obligations.append(Postcondition(refs[0], Predicate.CONTENT_SHA256, expected))
     elif tool == "edit_file":
-        obligations.append(Postcondition(refs[0], Predicate.EXISTS))
+        expected = _edit_file_digest(bound.execution_input, bound.bindings[0].resource)
+        if not expected:
+            return refs, ()
+        obligations.append(Postcondition(refs[0], Predicate.CONTENT_SHA256, expected))
     elif tool == "apply_patch":
         ops = _parse_agent_patch(json.loads(bound.execution_input)["patch_text"])
-        for op, ref in zip(ops, refs):
+        if len(ops) != len(bound.bindings):
+            return refs, ()
+        for op, binding, ref in zip(ops, bound.bindings, refs):
             if op["kind"] == "add":
-                digest = hashlib.sha256(op["content"].encode("utf-8")).hexdigest()
-                obligations.append(Postcondition(ref, Predicate.CONTENT_SHA256, digest))
+                obligations.append(Postcondition(ref, Predicate.CONTENT_SHA256,
+                                                 hashlib.sha256(op["content"].encode("utf-8")).hexdigest()))
             elif op["kind"] == "delete":
                 obligations.append(Postcondition(ref, Predicate.ABSENT))
             else:
-                obligations.append(Postcondition(ref, Predicate.EXISTS))
+                expected = _patch_update_digest(op, binding.resource)
+                if not expected:
+                    return refs, ()
+                obligations.append(Postcondition(ref, Predicate.CONTENT_SHA256, expected))
     return refs, tuple(obligations)
 
 

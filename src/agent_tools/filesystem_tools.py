@@ -116,6 +116,20 @@ def _unified_diff(old: str, new: str, path: str) -> Optional[Dict[str, Any]]:
         "file": os.path.basename(path) or (path or "file"),
     }
 
+def _edit_file_text(original: str, old: str, new: str, replace_all: bool) -> tuple[str | None, str]:
+    """The exact text edit_file writes for ``original``, or None and why not.
+
+    Pure: the effect adapter derives the requested post-state from this same
+    function, so the postcondition is the producer's own transformation.
+    """
+    count = original.count(old)
+    if count == 0:
+        return None, "not_found"
+    if count > 1 and not replace_all:
+        return None, f"not_unique:{count}"
+    return (original.replace(old, new) if replace_all else original.replace(old, new, 1)), "ok"
+
+
 class EditFileTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
@@ -150,12 +164,9 @@ class EditFileTool:
             # Exact replacement must not normalize unrelated CRLF/CR newlines.
             with open(path, "r", encoding="utf-8", newline="") as f:
                 original = f.read()
-            count = original.count(old)
-            if count == 0:
-                return original, None, "not_found"
-            if count > 1 and not replace_all:
-                return original, None, f"not_unique:{count}"
-            updated = original.replace(old, new) if replace_all else original.replace(old, new, 1)
+            updated, status = _edit_file_text(original, old, new, replace_all)
+            if updated is None:
+                return original, None, status
             attempted.append(True)
             with open(path, "w", encoding="utf-8", newline="") as f:
                 f.write(updated)
