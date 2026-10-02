@@ -162,3 +162,176 @@ def test_owned_revision_scope_round_trips(tmp_path):
     log.claim(effect_id="e1", action_id="a1", operation=fx.OperationRef("manage_notes", "", "0" * 64),
               impact_scope=(record,))
     assert EffectLog.load(RUN, directory=tmp_path / "fx").history().claims[0].impact_scope == (record,)
+
+
+# -- crash durability ----------------------------------------------------------
+
+def synced(monkeypatch, events):
+    """Record the path each real fsync makes durable, in call order."""
+    real_fsync = os.fsync
+    monkeypatch.setattr(os, "fsync", lambda fd: (events.append(os.readlink(f"/proc/self/fd/{fd}")),
+                                                 real_fsync(fd))[1])
+
+
+@pytest.mark.skipif(not os.path.isdir("/proc/self/fd"), reason="needs /proc fd paths")
+def test_created_directories_are_synced_before_the_claim_returns(tmp_path, target, monkeypatch):
+    events = []
+    synced(monkeypatch, events)
+    log = EffectLog(RUN, directory=tmp_path / "new" / "fx")
+    claim(log, target)
+    # Each newly created directory entry, then the record, then the log's entry.
+    assert events == [str(tmp_path), str(tmp_path / "new"), str(log.path), str(tmp_path / "new" / "fx")]
+    events.clear()
+    claim(log, target, "e2", "a2")
+    assert events == [str(log.path)], "later appends need only the record fsync"
+
+
+@pytest.mark.skipif(not os.path.isdir("/proc/self/fd"), reason="needs /proc fd paths")
+def test_launch_index_is_synced_written_replaced_then_directory_synced(tmp_path, target, monkeypatch):
+    log = EffectLog(RUN, directory=tmp_path / "fx")
+    claim(log, target)
+    events = []
+    synced(monkeypatch, events)
+    real_replace = os.replace
+    monkeypatch.setattr(os, "replace", lambda a, b: (events.append("replace"), real_replace(a, b))[1])
+    log.index_launch("d" * 32, "e1")
+    assert events == [str(tmp_path / "fx" / ("launch-" + "d" * 32 + ".tmp")), "replace", str(tmp_path / "fx")]
+    assert EffectLog.launch_owner("d" * 32, directory=tmp_path / "fx") == (RUN, "e1")
+
+
+def test_torn_tail_from_a_crashed_writer_is_repaired_before_the_next_append(tmp_path, target):
+    directory = tmp_path / "fx"
+    claim(EffectLog(RUN, directory=directory), target)
+    with open(directory / f"{RUN}.jsonl", "ab") as stream:
+        stream.write(b'{"v":1,"type":"claim","rec')  # crash mid-append
+    survivor = EffectLog.load(RUN, directory=directory)
+    claim(survivor, target, "e2", "a2")
+    reloaded = EffectLog.load(RUN, directory=directory)
+    assert [c.effect_id for c in reloaded.history().claims] == ["e1", "e2"]
+    assert all(line.startswith("{") for line in (directory / f"{RUN}.jsonl").read_text().splitlines())
+
+
+# -- concurrent writers --------------------------------------------------------
+
+def test_independent_logs_allocate_from_the_durable_tail(tmp_path, target):
+    directory = tmp_path / "fx"
+    first, second = EffectLog(RUN, directory=directory), EffectLog(RUN, directory=directory)
+    claim(first, target, "e1", "a1")
+    claim(second, target, "e2", "a2")  # second never saw e1 in memory
+    claim(first, target, "e3", "a3")
+    positions = [r.sequence for r in (*EffectLog.load(RUN, directory=directory).history().claims,)]
+    assert positions == [1, 2, 3]
+    assert [c.effect_id for c in first.history().claims] == ["e1", "e2", "e3"]
+
+
+def test_threads_with_separate_logs_never_duplicate_positions(tmp_path, target):
+    import threading
+    directory = tmp_path / "fx"
+    logs = [EffectLog(RUN, directory=directory) for _ in range(4)]
+    barrier = threading.Barrier(len(logs))
+
+    def append(index, log):
+        barrier.wait()
+        for n in range(25):
+            claim(log, target, f"e{index}-{n}", f"a{index}-{n}")
+
+    threads = [threading.Thread(target=append, args=(i, log)) for i, log in enumerate(logs)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    history = EffectLog.load(RUN, directory=directory).history()
+    assert sorted(c.sequence for c in history.claims) == list(range(1, 101))
+
+
+_WRITER = """
+import sys
+from pathlib import Path
+from src.agent_runtime import effects as fx
+from src.agent_runtime.effect_log import EffectLog
+from src.agent_runtime.resources import FilesystemResource, FilesystemRoot
+directory, workspace, index = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+root = FilesystemRoot.seal(workspace)
+target = fx.resource_ref(FilesystemResource.resolve(root, workspace + "/a.txt", allow_missing=True), "destination")
+log = EffectLog(sys.argv[4], directory=directory)
+for n in range(40):
+    log.claim(effect_id=f"p{index}-{n}", action_id=f"a{index}-{n}",
+              operation=fx.OperationRef("write_file", "", "0" * 64), impact_scope=(target,))
+"""
+
+
+def test_independent_processes_never_duplicate_positions(tmp_path, target):
+    import subprocess
+    import sys
+    from pathlib import Path
+    directory = tmp_path / "fx"
+    root = Path(__file__).resolve().parents[1]
+    env = {**os.environ, "ODYSSEUS_DATA_DIR": str(tmp_path / "data"), "PYTHONPATH": str(root)}
+    writers = [subprocess.Popen([sys.executable, "-c", _WRITER, str(directory), str(tmp_path / "ws"), str(i), RUN],
+                                cwd=root, env=env) for i in range(4)]
+    assert [writer.wait(timeout=120) for writer in writers] == [0, 0, 0, 0]
+    history = EffectLog.load(RUN, directory=directory).history()
+    assert sorted(c.sequence for c in history.claims) == list(range(1, 161))
+
+
+def test_a_settled_effect_is_never_settled_again_by_another_writer(tmp_path, target):
+    directory = tmp_path / "fx"
+    owner = EffectLog(RUN, directory=directory)
+    made = claim(owner, target)
+    owner.outcome(effect_id=made.effect_id, execution=fx.ExecutionOutcome.RUNNING, impact=fx.Impact.POSSIBLE)
+    other = EffectLog.load(RUN, directory=directory)  # also sees RUNNING
+    assert owner.outcome(effect_id=made.effect_id, execution=fx.ExecutionOutcome.REPORTED_SUCCESS,
+                         impact=fx.Impact.POSSIBLE) is not None
+    assert other.outcome(effect_id=made.effect_id, execution=fx.ExecutionOutcome.FAILED,
+                         impact=fx.Impact.POSSIBLE) is None
+    reloaded = EffectLog.load(RUN, directory=directory)
+    assert reloaded.history().latest_outcome(made.effect_id).execution is fx.ExecutionOutcome.REPORTED_SUCCESS
+    assert other.history().latest_outcome(made.effect_id).execution is fx.ExecutionOutcome.REPORTED_SUCCESS
+
+
+def test_recovery_leaves_a_claim_another_writer_settled(tmp_path, target):
+    directory = tmp_path / "fx"
+    live = EffectLog(RUN, directory=directory)
+    made = claim(live, target)
+    stale = EffectLog.load(RUN, directory=directory)  # sees the claim unsettled
+    live.outcome(effect_id=made.effect_id, execution=fx.ExecutionOutcome.REPORTED_SUCCESS, impact=fx.Impact.POSSIBLE)
+    assert stale.recover_interrupted() == ()
+    assert [r["type"] for r in records(live.path)] == ["claim", "outcome"]
+
+
+def test_concurrent_effect_log_open_returns_same_instance(tmp_path):
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        instances = list(pool.map(lambda _: EffectLog.open(RUN, directory=tmp_path / "fx"), range(16)))
+    assert all(instance is instances[0] for instance in instances)
+
+
+# -- control-plane protection ----------------------------------------------------
+
+def test_hardlinked_effect_state_is_control_plane_without_scanning_the_store(tmp_path, monkeypatch):
+    from pathlib import Path
+    from src.agent_runtime import effect_log, resources
+    store = tmp_path / "effects"
+    store.mkdir()
+    monkeypatch.setattr(effect_log, "EFFECTS_DIR", str(store))
+    for n in range(50):
+        (store / f"{n:032x}.jsonl").write_text("{}\n")
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    ordinary = workspace / "notes.txt"
+    ordinary.write_text("x")
+    listed, globbed = [], []
+    real_scandir, real_rglob = os.scandir, Path.rglob
+    monkeypatch.setattr(resources.os, "scandir", lambda path: (listed.append(str(path)), real_scandir(path))[1])
+    monkeypatch.setattr(Path, "rglob", lambda self, pattern: (globbed.append(str(self)), real_rglob(self, pattern))[1])
+    assert resources._control_plane_path(str(ordinary)) is False
+    assert str(store) not in listed and str(store) not in globbed
+    alias = workspace / "sneaky.jsonl"
+    os.link(store / f"{7:032x}.jsonl", alias)
+    assert resources._control_plane_path(str(alias)) is True
+    assert str(store) not in globbed, "the effect store is listed one level, never recursively inventoried"
+    # Multiply linked files elsewhere stay ordinary.
+    elsewhere = tmp_path / "other.txt"
+    elsewhere.write_text("y")
+    os.link(elsewhere, workspace / "pnpm-style.txt")
+    assert resources._control_plane_path(str(workspace / "pnpm-style.txt")) is False

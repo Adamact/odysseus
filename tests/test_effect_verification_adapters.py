@@ -385,3 +385,149 @@ def test_cancellation_is_recorded_without_inventing_a_result(tmp_path, store, mo
     act(journal, monkeypatch, launch_capture(tmp_path), "bash", "x", error=asyncio.CancelledError())
     assessment = journal.effects.assessments()[0]
     assert (assessment.execution, assessment.cleanup) == (fx.ExecutionOutcome.CANCELLED, fx.CleanupState.UNKNOWN)
+
+
+# -- producer trust boundary ---------------------------------------------------
+
+def test_running_requires_a_server_launch_reservation(tmp_path, store, monkeypatch):
+    journal = journal_for(store)
+    # A process producer without a launch reservation cannot start work.
+    act(journal, monkeypatch, job_capture("kill"), "manage_bg_jobs", json.dumps({"action": "kill"}),
+        result={"output": "Killed", "exit_code": 0, "bg_job_id": "job9"})
+    # An unbound producer cannot detach anything.
+    act(journal, monkeypatch, adapters.DispatchCapture(), "plugin_sync",
+        result={"output": "", "exit_code": 0, "detached": True, "teardown": {"dead": True}})
+    first, second = journal.effects.history().outcomes
+    assert first.execution is fx.ExecutionOutcome.REPORTED_SUCCESS
+    assert (second.execution, second.cleanup) == (fx.ExecutionOutcome.REPORTED_SUCCESS,
+                                                  fx.CleanupState.NOT_APPLICABLE)
+    assert second.facts == fx.ProducerFacts(exit_code=0)
+
+
+def test_unbound_job_lifecycle_cannot_settle_a_launch(tmp_path, store, monkeypatch):
+    journal = journal_for(store)
+    act(journal, monkeypatch, launch_capture(tmp_path), "bash", "#!bg\nsleep 1",
+        result={"output": "Started", "exit_code": 0, "bg_job_id": "job1"})
+    act(journal, monkeypatch, adapters.DispatchCapture(), "plugin_status", result=job_result("done", 0))
+    assert journal.effects.assessments()[0].execution is fx.ExecutionOutcome.RUNNING
+
+
+# -- truthful completion ---------------------------------------------------------
+
+def remote_act(journal, monkeypatch, **outcome):
+    remote = ExternalResource("mcp", "endpoint", "server", "send_email", "inc-1")
+    bound = BoundBackendOperation(remote, "request", "alice", "thread", "mcp__server__send_email", "{}")
+    return act(journal, monkeypatch, adapters.DispatchCapture(backend=bound), "mcp__server__send_email", **outcome)
+
+
+def written_artifact(tmp_path, store):
+    workspace = tmp_path / "ws"
+    workspace.mkdir(exist_ok=True)
+    (workspace / "out.txt").write_text("x")
+    journal = journal_for(store)
+    journal.workspace = str(workspace)
+    write = journal.propose(ToolBlock("write_file", json.dumps({"path": "out.txt", "content": "x"})))
+    write.execution_id = write.action_id + ":execution:1"
+    write.finish({"output": "Wrote", "exit_code": 0})
+    return journal, CompletionRequirements(required_artifacts=("out.txt",), workspace_root=str(workspace))
+
+
+DISCLOSURE = ("External operation mcp__server__send_email reported success; any external change it made was "
+              "not independently verified.")
+
+
+def test_reported_external_mutation_cannot_complete_as_satisfied(tmp_path, store, monkeypatch):
+    from src.agent_evidence import EXTERNAL_EFFECT_UNVERIFIED
+    from src.agent_runtime.completion import completion_answer
+    journal, requirements = written_artifact(tmp_path, store)
+    assert _ledger(journal, requirements).evaluate().status == CompletionStatus.SATISFIED
+    remote_act(journal, monkeypatch, result={"stdout": "Message sent", "stderr": "", "exit_code": 0})
+    ledger = _ledger(journal, requirements)
+    decision = ledger.evaluate()
+    assert (decision.status, decision.can_complete, decision.reason) == (
+        CompletionStatus.UNVERIFIED, True, EXTERNAL_EFFECT_UNVERIFIED)
+    text = "I wrote out.txt. I sent the summary to Bob. I updated it. Bob has been notified. Done."
+    answer, _ = completion_answer(text, ledger, decision)
+    assert "I wrote out.txt." in answer
+    for unsupported in ("I sent", "I updated it", "Done."):
+        assert unsupported not in answer
+    # Whatever phrasing survives, the server states the unverified effect.
+    assert answer.rstrip().endswith(DISCLOSURE)
+
+
+def test_reported_external_mutation_without_artifacts_is_disclosed(store, monkeypatch):
+    from src.agent_runtime.completion import completion_answer
+    journal = journal_for(store)
+    remote_act(journal, monkeypatch, result={"stdout": "ok", "stderr": "", "exit_code": 0})
+    ledger = _ledger(journal, CompletionRequirements())
+    decision = ledger.evaluate()
+    assert decision.status == CompletionStatus.UNVERIFIED
+    answer, _ = completion_answer("I sent the email to the user. The remote operation succeeded.", ledger, decision)
+    assert "I sent the email" not in answer and "remote operation succeeded" not in answer
+    assert answer.startswith("Unsupported execution claims were omitted") and answer.endswith(DISCLOSURE)
+
+
+def test_unknown_external_outcome_is_disclosed_as_unknown(store, monkeypatch):
+    from src.agent_runtime.completion import completion_answer
+    journal = journal_for(store)
+    remote_act(journal, monkeypatch, error=TimeoutError("transport closed after send"))
+    ledger = _ledger(journal, CompletionRequirements())
+    answer, _ = completion_answer("Here is the draft.", ledger, ledger.evaluate())
+    assert answer.endswith("External operation mcp__server__send_email has an unknown outcome; it may or may "
+                           "not have taken effect.")
+
+
+def test_passing_tests_stay_a_test_fact_beside_an_external_effect(tmp_path, store, monkeypatch):
+    from src.agent_runtime.completion import completion_answer
+    journal = journal_for(store)
+    act(journal, monkeypatch, launch_capture(tmp_path), "bash", "pytest -q",
+        result={"output": "1 passed", "exit_code": 0})
+    remote_act(journal, monkeypatch, result={"stdout": "ok", "stderr": "", "exit_code": 0})
+    ledger = _ledger(journal, CompletionRequirements())
+    decision = ledger.evaluate()
+    assert decision.status == CompletionStatus.UNVERIFIED and decision.can_complete
+    answer, _ = completion_answer("All tests passed.", ledger, decision)
+    assert answer.startswith("All tests passed.") and answer.endswith(DISCLOSURE)
+
+
+# -- effect obligations without declared artifacts -------------------------------
+
+def test_unsettled_effect_after_verifier_blocks_verified_completion(tmp_path, store, monkeypatch):
+    journal = journal_for(store)
+    act(journal, monkeypatch, launch_capture(tmp_path), "bash", "pytest -q",
+        result={"output": "1 passed", "exit_code": 0})
+    assert _ledger(journal, CompletionRequirements()).evaluate().status == CompletionStatus.VERIFIED
+    act(journal, monkeypatch, launch_capture(tmp_path, "d" * 32), "bash", "x", error=RuntimeError("lost"))
+    decision = _ledger(journal, CompletionRequirements()).evaluate()
+    assert decision.status == CompletionStatus.BLOCKED and not decision.can_complete
+
+
+def test_settled_effect_after_verifier_keeps_verified(tmp_path, store, monkeypatch):
+    journal = journal_for(store)
+    act(journal, monkeypatch, launch_capture(tmp_path), "bash", "pytest -q",
+        result={"output": "1 passed", "exit_code": 0})
+    act(journal, monkeypatch, launch_capture(tmp_path, "d" * 32), "bash", "echo hi",
+        result={"output": "hi", "exit_code": 0, "teardown": {"dead": True}})
+    assert _ledger(journal, CompletionRequirements()).evaluate().status == CompletionStatus.VERIFIED
+
+
+def test_background_launch_without_obligations_can_complete_unverified(tmp_path, store, monkeypatch):
+    journal = journal_for(store)
+    act(journal, monkeypatch, launch_capture(tmp_path), "bash", "#!bg\nnpm run dev",
+        result={"output": "Started background job `job1`.", "exit_code": 0, "bg_job_id": "job1"})
+    decision = _ledger(journal, CompletionRequirements()).evaluate()
+    assert (decision.status, decision.can_complete) == (CompletionStatus.UNVERIFIED, True)
+
+
+def test_child_known_scope_mutation_leaves_unrelated_parent_evidence_fresh(store, monkeypatch):
+    parent = journal_for(store)
+    read = OwnedResource("vault", "alice", "thread", "vault", "rec", "rev-1")
+    act(parent, monkeypatch, owned_capture("vault_get", {"id": "rec"}, read), "vault_get",
+        result={"output": "x", "exit_code": 0})
+    child = journal_for(store, parent=parent)
+    other = OwnedResource("notes", "alice", "thread", "notes", "n1", "rev-1")
+    act(child, monkeypatch, owned_capture("manage_notes", {"action": "update", "id": "n1"}, other),
+        "manage_notes", result={"output": "updated", "exit_code": 0})
+    history = parent.effects.history()
+    # Exact child scope invalidates only what it overlaps.
+    assert fx.freshness(history.observations[0], history) is fx.Freshness.FRESH

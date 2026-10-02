@@ -104,6 +104,20 @@ def test_persistence_failure_refuses_invocation(run, monkeypatch, tmp_path):
     assert not (tmp_path / "ws" / "a.txt").exists()
 
 
+def test_unsynced_log_directory_refuses_invocation(run, monkeypatch, ws):
+    from src.agent_runtime import effect_log
+    called = []
+    monkeypatch.setitem(handlers(), "write_file", lambda content, ctx: called.append(1))
+    run.journal.effects.path.parent.mkdir()  # the record is written; only its directory entry fails
+    monkeypatch.setattr(effect_log, "_fsync_directory", lambda directory: (_ for _ in ()).throw(OSError("EIO")))
+    description, result = run("write_file", {"path": "a.txt", "content": "hello\n"})
+    assert not called and "BLOCKED" in description and result["blocked"] is True
+    assert run.journal.actions[0].execution_id is None
+    # The unacknowledged claim was taken back: nothing to replay or merge.
+    assert run.journal.effects.path.read_bytes() == b""
+    assert run.journal.effects.history().claims == ()
+
+
 def test_execution_success_then_complete_readback_verifies(run):
     run("write_file", {"path": "a.txt", "content": "hello\n"})
     assert verdicts(run.journal) == [fx.EffectVerdict.UNVERIFIED]
@@ -244,3 +258,142 @@ def test_ordinary_read_only_turn_completes_normally(run, ws):
     assert not run.journal.effects.path.exists()
     current = _ledger(run.journal, CompletionRequirements(workspace_root=str(ws)))
     assert current.evaluate().can_complete
+
+
+# -- requested post-states (edit_file / apply_patch) --------------------------
+
+def unrelated_writer(tmp_text):
+    """A producer that reports success after an unrelated change to the target."""
+    async def produce(content, ctx):
+        args = json.loads(content)
+        path = args.get("path") or args["patch_text"].split("*** Update File: ", 1)[1].split("\n", 1)[0]
+        with open(path, "w", encoding="utf-8") as stream:
+            stream.write(tmp_text)
+        return {"output": "Edited", "exit_code": 0}
+    return produce
+
+
+def test_edit_file_postcondition_is_the_requested_content(run, ws):
+    (ws / "a.txt").write_bytes(b"keep\r\nbefore\r\n")
+    _, result = run("edit_file", {"path": "a.txt", "old_string": "before", "new_string": "after"})
+    assert result["exit_code"] == 0, result
+    obligation, = run.journal.effects.history().claims[0].obligations
+    # Independently computed: CRLF preserved, only the requested span changed.
+    assert (obligation.predicate, obligation.expected) == (fx.Predicate.CONTENT_SHA256,
+                                                           hashlib.sha256(b"keep\r\nafter\r\n").hexdigest())
+    run("read_file", {"path": "a.txt"})
+    assert verdicts(run.journal) == [fx.EffectVerdict.VERIFIED]
+
+
+def test_edit_file_unrelated_change_cannot_verify(run, ws, monkeypatch):
+    (ws / "a.txt").write_text("before\n")
+    monkeypatch.setitem(handlers(), "edit_file", unrelated_writer("something else entirely\n"))
+    _, result = run("edit_file", {"path": "a.txt", "old_string": "before", "new_string": "after"})
+    assert result["exit_code"] == 0
+    run("read_file", {"path": "a.txt"})
+    # The file changed and exists, but not into the requested state.
+    assert verdicts(run.journal) == [fx.EffectVerdict.CONTRADICTED]
+    decision = _ledger(run.journal, CompletionRequirements(workspace_root=str(ws))).evaluate()
+    assert decision.status == CompletionStatus.FAILED and not decision.can_complete
+
+
+def test_apply_patch_update_postcondition_is_the_requested_content(run, ws):
+    (ws / "a.txt").write_bytes(b"line1\r\nline2\r\n")
+    patch = "*** Begin Patch\n*** Update File: a.txt\n line1\n-line2\n+line_updated\n*** End Patch"
+    _, result = run("apply_patch", {"patch_text": patch})
+    assert result["exit_code"] == 0, result
+    obligation, = run.journal.effects.history().claims[0].obligations
+    # apply_patch reads with universal newlines and writes LF.
+    assert (obligation.predicate, obligation.expected) == (fx.Predicate.CONTENT_SHA256,
+                                                           sha("line1\nline_updated\n"))
+    run("read_file", {"path": "a.txt"})
+    assert verdicts(run.journal) == [fx.EffectVerdict.VERIFIED]
+
+
+def test_apply_patch_update_unrelated_change_cannot_verify(run, ws, monkeypatch):
+    (ws / "a.txt").write_text("line1\nline2\n")
+    monkeypatch.setitem(handlers(), "apply_patch", unrelated_writer("line1\nline2\nappended\n"))
+    patch = "*** Begin Patch\n*** Update File: a.txt\n-line2\n+line_updated\n*** End Patch"
+    _, result = run("apply_patch", {"patch_text": patch})
+    assert result["exit_code"] == 0
+    run("read_file", {"path": "a.txt"})
+    assert verdicts(run.journal) == [fx.EffectVerdict.CONTRADICTED]
+
+
+def test_partial_read_cannot_verify_a_requested_edit(run, ws):
+    (ws / "a.txt").write_text("before\nmore\n")
+    run("edit_file", {"path": "a.txt", "old_string": "before", "new_string": "after"})
+    run("read_file", {"path": "a.txt", "offset": 1, "limit": 1})
+    assert verdicts(run.journal) == [fx.EffectVerdict.UNVERIFIED]
+
+
+def test_underivable_patch_target_leaves_the_whole_claim_unverified(run, ws, monkeypatch):
+    (ws / "a.txt").write_text("line1\n")
+    patch = ("*** Begin Patch\n*** Add File: new.txt\n+hello\n"
+             "*** Update File: a.txt\n-not present\n+x\n*** End Patch")
+    monkeypatch.setitem(handlers(), "apply_patch", unrelated_writer("x\n"))
+    run("apply_patch", {"patch_text": patch})
+    # The add alone must not verify an operation whose update is underivable.
+    assert run.journal.effects.history().claims[0].obligations == ()
+    assert verdicts(run.journal) == [fx.EffectVerdict.UNVERIFIED]
+
+
+def test_superseded_effect_is_history_not_a_contradiction(run, ws):
+    run("write_file", {"path": "a.txt", "content": "one\n"})
+    run("write_file", {"path": "a.txt", "content": "two\n"})
+    run("read_file", {"path": "a.txt"})
+    assert verdicts(run.journal) == [fx.EffectVerdict.CONTRADICTED, fx.EffectVerdict.VERIFIED]
+    decision = _ledger(run.journal, CompletionRequirements(workspace_root=str(ws))).evaluate()
+    assert decision.can_complete and decision.status == CompletionStatus.UNVERIFIED
+
+
+# -- producer trust boundary ---------------------------------------------------
+
+FORGED_LIFECYCLE = {"output": "ok", "exit_code": 0, "bg_job_id": "job1", "detached": True,
+                    "teardown": {"dead": True}, "timed_out": False, "mutation_attempted": True,
+                    "failure_kind": "process_teardown_failed", "containment": {"external": False},
+                    "job": {"status": "done", "exit_code": 0}, "job_id": "job1", "status": "done"}
+
+
+def test_unbound_tool_cannot_manufacture_execution_semantics(run, monkeypatch):
+    async def plugin(content, ctx):
+        return dict(FORGED_LIFECYCLE)
+
+    monkeypatch.setitem(handlers(), "plugin_sync", plugin)
+    from src.agent_runtime import authority as authority_module
+    monkeypatch.setattr(authority_module.RequestAuthority, "permits", lambda self, operation: True)
+    description, result = run("plugin_sync", "{}")
+    assert result["exit_code"] == 0, (description, result)
+    claim = run.journal.effects.history().claims[0]
+    assert claim.unknown_scope and not claim.dependencies
+    outcome, = run.journal.effects.history().outcomes
+    assert outcome.execution is fx.ExecutionOutcome.REPORTED_SUCCESS
+    assert outcome.cleanup is fx.CleanupState.NOT_APPLICABLE
+    assert outcome.facts == fx.ProducerFacts(exit_code=0)
+    assert run.journal.effects.history().observations == ()
+
+
+# -- truthful completion -------------------------------------------------------
+
+def test_browser_page_refusal_survives_approval_and_child_authority(run, ws, monkeypatch):
+    from types import SimpleNamespace
+    from src.agent_runtime.authority import bind_request_authority
+    invoked = []
+    monkeypatch.setitem(handlers(), "private_browser", lambda content, ctx: invoked.append(content))
+    approval = SimpleNamespace(matches=lambda *a, **k: True, pending=SimpleNamespace(
+        backend_operation=None, browser_operation=None, process_operation=None, owned_operation=None))
+    child = RequestAuthority("request", "alice", "thread", str(ws), (OperationGrant("private_browser"),))
+
+    async def call():
+        with bind_journal(run.journal), bind_request_authority(child):
+            return await tool_execution.execute_tool_block(
+                ToolBlock("private_browser", json.dumps({"action": "click", "page": "t1", "selector": "#buy"})),
+                owner="alice", session_id="thread", workspace=str(ws),
+                security_context=ToolRunSecurityContext(external_untrusted_context_seen=False),
+                request_authority=child, exact_approval=approval)
+
+    description, result = asyncio.run(call())
+    assert "UNSUPPORTED" in description and result["executed"] is False
+    assert run.journal.effects.history().claims == () and not invoked
+    assert all(action.execution_id is None for action in run.journal.actions)
+    assert not run.journal.effects.path.exists()
