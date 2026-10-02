@@ -78,6 +78,10 @@ Missing-owner values remain state-dependent at legacy call sites, but new storag
   loopback connection without proxy forwarding, cross-site indicators, or an
   internal-tool header. Remote/proxied anonymous traffic remains denied at
   these controls. Auth-enabled administration still requires a human admin.
+  This mode trusts local programs as well as the local operator: a headerless
+  loopback request cannot identify which local program sent it. Agent program
+  launches retain inherited networking; this is not protection against hostile
+  local code. Use authenticated mode when local programs are outside that trust.
   Local Cookbook tools use a separate one-use capability for an admitted exact
   request/operation/native backend and resolved launch body; that capability
   cannot administer shell, PID, SSH-key, or arbitrary Cookbook state routes.
