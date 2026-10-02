@@ -101,10 +101,19 @@ jobs:
           done
 
   python-tests:
-    name: Python tests (pytest)
+    name: Python tests (pytest ${{ matrix.shard }})
     # Keep the namespace/AppArmor setup tied to the audited Ubuntu release.
     runs-on: ubuntu-24.04
     # Make Python test validation authoritative for the configured scope.
+    strategy:
+      # Report every failing section in one run instead of cancelling the rest
+      # the moment one shard goes red.
+      fail-fast: false
+      matrix:
+        # Shards partition the suite by test file, so the four together run
+        # every test exactly once. tests/_shards.py owns the partition and
+        # tests/test_shards.py pins this list to its DEFAULT_SHARD_COUNT.
+        shard: ["1/4", "2/4", "3/4", "4/4"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -210,5 +219,8 @@ jobs:
           print("Runtime bubblewrap PID/mount namespace probe passed.")
           PY
 
-      - run: python -m pytest -q -rs
+      - name: pytest (shard ${{ matrix.shard }})
         if: steps.docs-check.outputs.docs_only != 'true'
+        env:
+          PYTEST_SHARD: ${{ matrix.shard }}
+        run: python -m pytest -q -rs --shard "$PYTEST_SHARD"

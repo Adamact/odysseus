@@ -62,6 +62,37 @@ if "src.database" not in sys.modules:
 # collection, which breaks session import in subsequent tests).
 import core.models  # noqa: E402
 
+def pytest_addoption(parser):
+    """Add ``--shard N/M`` so CI can run the suite as parallel sections."""
+    group = parser.getgroup("sharding", "parallel test sharding")
+    group.addoption(
+        "--shard",
+        action="store",
+        default=None,
+        metavar="N/M",
+        help=(
+            "run only shard N of M (1-based), e.g. --shard 1/4. Shards partition "
+            "the suite by test file, so together they run every test exactly "
+            "once. See tests/_shards.py."
+        ),
+    )
+
+
+def _shard_spec(config):
+    """Parse the ``--shard`` option into a ShardSpec, or None when unset."""
+    from tests._shards import ShardSpecError, parse_shard_spec
+
+    value = config.getoption("shard")
+    if value is None:
+        return None
+    try:
+        return parse_shard_spec(value)
+    except ShardSpecError as error:
+        # UsageError fails the run immediately rather than silently running a
+        # subset nobody asked for - a dropped shard is invisible in a green CI.
+        raise pytest.UsageError(str(error)) from error
+
+
 def pytest_configure(config):
     """Register the dynamic taxonomy ``sub_*`` markers before collection.
 
@@ -79,21 +110,54 @@ def pytest_configure(config):
         if marker_name.startswith("sub_"):
             config.addinivalue_line("markers", f"{marker_name}: taxonomy sub-area marker")
 
+    # Validate --shard before collection so a bad selector fails the run up
+    # front instead of after a few minutes of collecting.
+    _shard_spec(config)
+
 
 def pytest_collection_modifyitems(config, items):
-    """Tag each collected test with its taxonomy ``area_*`` and ``sub_*`` markers.
+    """Tag each collected test with its taxonomy markers, then apply ``--shard``.
 
-    Collection-time only: this adds markers and nothing else. It does not skip,
-    reorder, or deselect tests, mutate fixtures or the environment, or import any
+    Tagging is collection-time only: it adds markers and nothing else. It does
+    not skip, reorder, mutate fixtures or the environment, or import any
     production module. See ``tests/_taxonomy.py`` for the classification rules.
+
+    Sharding deselects the test files that belong to another shard. It runs
+    after collection, so every test module is still imported, in the same order,
+    in every shard - the import-time stubbing above behaves identically whether
+    the suite runs whole or as one section of it. Only the deselected tests'
+    call phase is skipped. See ``tests/_shards.py`` for the partition.
     """
-    import pytest
     from tests._taxonomy import markers_for_path
 
     for item in items:
         path = getattr(item, "path", None) or item.fspath
         for marker_name in markers_for_path(path):
             item.add_marker(getattr(pytest.mark, marker_name))
+
+    spec = _shard_spec(config)
+    if spec is None or spec.selects_everything:
+        return
+
+    from tests._shards import accumulate_file_weights, plan_shards, relative_file_key
+
+    root = getattr(config, "rootpath", None)
+    keys = [
+        relative_file_key(getattr(item, "path", None) or item.fspath, root)
+        for item in items
+    ]
+    weights = accumulate_file_weights(
+        (key, item.get_closest_marker("slow") is not None)
+        for key, item in zip(keys, items)
+    )
+    selected_files = plan_shards(weights, spec.count)[spec.index - 1]
+
+    selected, deselected = [], []
+    for key, item in zip(keys, items):
+        (selected if key in selected_files else deselected).append(item)
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+    items[:] = selected
 
 
 @pytest.fixture(scope="session", autouse=True)
