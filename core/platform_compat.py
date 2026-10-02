@@ -133,22 +133,14 @@ def pid_alive(pid: Optional[int]) -> bool:
 def kill_process_tree(pid: Optional[int], *, start_token=None, pgid=None, require_identity=False):
     """Use the runtime's shared escalating teardown and return verified death.
 
-    Callers retaining durable PIDs must validate their recorded identity before
-    calling this compatibility entry point. Native grants retain identity at
-    spawn and use containment.release directly.
+    Callers retaining durable PIDs must pass their recorded ``start_token``
+    with ``require_identity=True``. Native grants retain identity at spawn and
+    use containment.release directly; this entry point owns no grant record.
     """
-    from src import containment
-    if not pid or int(pid) <= 0:
-        return containment.ReleaseOutcome(dead=True, escalated=False)
-    spec = containment.ContainmentSpec(workspace=os.getcwd(), env={}, wall_clock_s=1,
-                                       required=frozenset())
-    grant = containment.ContainmentGrant(
-        id="", mechanism="windows_tree" if IS_WINDOWS else "process_group",
-        workspace=spec.workspace, enforced=frozenset(), degraded=(),
-        unenforced_required=(), owner="compatibility", mode=containment.CONTAINMENT_MODE,
-        spec=spec, pid=int(pid), pgid=pgid or containment._pgid_of(int(pid)),
+    from src import process_lifecycle
+    return process_lifecycle.terminate_tree(
+        pid, pgid=pgid, start_token=start_token, require_identity=require_identity,
     )
-    return containment.release(grant, start_token=start_token, require_identity=require_identity)
 
 
 # ── Shell / executable resolution ───────────────────────────────────────────

@@ -119,12 +119,30 @@ pty_session = pytest.mark.skipif(
 
 
 async def _spawn_pty_style_session(script: str):
-    """Spawn `script` the way _generate_pty does: its own session via setsid."""
-    return await asyncio.create_subprocess_shell(
+    """Spawn `script` the way _generate_pty does: its own session via setsid,
+    with the leader's identity and group bound at spawn."""
+    import routes.shell_routes as shell_routes
+
+    proc = await asyncio.create_subprocess_shell(
         script,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
         preexec_fn=os.setsid,
+    )
+    shell_routes._bind_pty_spawn_identity(proc)
+    return proc
+
+
+def _bound_fake_leader(monkeypatch, pid=4242):
+    """A fake PTY leader whose spawn identity verifies and still leads its group."""
+    from src import process_lifecycle, process_ownership
+
+    real_getpgid = os.getpgid
+    monkeypatch.setattr(process_ownership, "verify", lambda p, token: process_ownership.OWNED)
+    monkeypatch.setattr(os, "getpgid", lambda p: pid if p == pid else real_getpgid(p))
+    return SimpleNamespace(
+        pid=pid, returncode=0, wait=None,
+        _ody_pty_identity=process_lifecycle.ProcessIdentity(pid, "spawn-token", pgid=pid),
     )
 
 
@@ -281,9 +299,8 @@ async def test_terminate_pty_session_reports_a_session_it_could_not_kill(
     monkeypatch.setattr(shell_routes, "PTY_KILL_GRACE", 0.01)
     monkeypatch.setattr(shell_routes, "_signal_session", lambda *_: True)
     monkeypatch.setattr(shell_routes, "_session_alive", lambda *_: True)
-    monkeypatch.setattr(shell_routes, "_session_pgid", lambda _: 4242)
 
-    proc = SimpleNamespace(pid=4242, returncode=0, wait=None)
+    proc = _bound_fake_leader(monkeypatch)
     assert await shell_routes._terminate_pty_session(proc) is False
 
 
@@ -293,7 +310,6 @@ async def test_terminate_pty_session_escalates_before_giving_up(monkeypatch):
 
     sent = []
     monkeypatch.setattr(shell_routes, "PTY_KILL_GRACE", 0.01)
-    monkeypatch.setattr(shell_routes, "_session_pgid", lambda _: 4242)
     monkeypatch.setattr(shell_routes, "_session_alive", lambda *_: True)
     monkeypatch.setattr(
         shell_routes,
@@ -301,7 +317,7 @@ async def test_terminate_pty_session_escalates_before_giving_up(monkeypatch):
         lambda pgid, pid, sig: sent.append(sig) or True,
     )
 
-    proc = SimpleNamespace(pid=4242, returncode=0, wait=None)
+    proc = _bound_fake_leader(monkeypatch)
     await shell_routes._terminate_pty_session(proc)
 
     assert sent == [signal.SIGTERM, signal.SIGKILL]
@@ -338,6 +354,65 @@ async def test_generate_pty_timeout_says_so_when_the_session_survives(
     )
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process groups")
+async def test_terminate_pty_session_never_signals_the_servers_own_group(monkeypatch):
+    """If setsid did not apply, the child's group is ours: reach the child alone."""
+    import routes.shell_routes as shell_routes
+
+    from src import process_ownership
+
+    own = os.getpgid(0)
+    sent = []
+    monkeypatch.setattr(shell_routes, "PTY_KILL_GRACE", 0.01)
+    monkeypatch.setattr(shell_routes.process_lifecycle, "pgid_of", lambda _pid: own)
+    monkeypatch.setattr(process_ownership, "start_token", lambda pid: "the-leader")
+
+    proc = SimpleNamespace(pid=987654, returncode=0, wait=None)
+    assert shell_routes._session_pgid(proc.pid) is None
+    shell_routes._bind_pty_spawn_identity(proc)
+    assert proc._ody_pty_identity.pgid is None  # no safe session group recorded
+
+    monkeypatch.setattr(os, "killpg", lambda pgid, sig: sent.append(("group", pgid, sig)))
+    monkeypatch.setattr(os, "kill", lambda pid, sig: sent.append(("pid", pid, sig)))
+    await shell_routes._terminate_pty_session(proc)
+
+    assert sent and all(kind == "pid" and target == 987654 for kind, target, _ in sent), sent
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process groups")
+async def test_terminate_pty_session_never_signals_a_reused_leader_pid(monkeypatch):
+    """Leader spawned and bound → reaped → pid reissued → teardown signals nothing.
+
+    The replacement is the worst case: an unrelated session leader, so both
+    its pid and its process group carry the number our leader had.
+    """
+    import routes.shell_routes as shell_routes
+    from src import process_ownership
+
+    pid = 987650
+    real_getpgid = os.getpgid
+    occupant = {"token": "leader-token"}
+    monkeypatch.setattr(process_ownership, "start_token",
+                        lambda p: occupant["token"] if int(p) == pid else None)
+    monkeypatch.setattr(os, "getpgid", lambda p: pid if p == pid else real_getpgid(p))
+
+    proc = SimpleNamespace(pid=pid, returncode=None, wait=None)
+    shell_routes._bind_pty_spawn_identity(proc)  # spawn time: the leader we just created
+    assert proc._ody_pty_identity.pgid == pid
+
+    # The leader exits and is reaped; the kernel reissues its pid to a stranger.
+    proc.returncode = 0
+    occupant["token"] = "replacement-token"
+    signalled = []
+    monkeypatch.setattr(os, "killpg", lambda g, sig: sig and signalled.append(("group", g, sig)))
+    monkeypatch.setattr(os, "kill", lambda p, sig: sig and signalled.append(("pid", p, sig)))
+    monkeypatch.setattr(shell_routes, "PTY_KILL_GRACE", 0.01)
+
+    await shell_routes._terminate_pty_session(proc)
+
+    assert signalled == [], f"teardown signalled the replacement: {signalled}"
+
+
 def test_session_alive_treats_a_refused_probe_as_alive(monkeypatch):
     """EPERM says the group exists but we may not signal it, not that it died.
 
@@ -372,11 +447,10 @@ async def test_terminate_pty_session_reports_a_group_it_may_not_signal(monkeypat
         raise PermissionError(errno.EPERM, "Operation not permitted")
 
     monkeypatch.setattr(shell_routes, "PTY_KILL_GRACE", 0.01)
-    monkeypatch.setattr(shell_routes, "_session_pgid", lambda _: 4242)
+    proc = _bound_fake_leader(monkeypatch)
     monkeypatch.setattr(shell_routes.os, "killpg", refuse)
     monkeypatch.setattr(shell_routes.os, "kill", refuse)
 
-    proc = SimpleNamespace(pid=4242, returncode=0, wait=None)
     assert await shell_routes._terminate_pty_session(proc) is False
 
 

@@ -320,3 +320,69 @@ def test_model_process_scan_returns_empty_without_procfs(monkeypatch, tmp_path):
     monkeypatch.setattr(os, "listdir", _unexpected_listdir)
 
     assert tools._scan_running_model_processes() == []
+
+
+@pytest.mark.asyncio
+async def test_stop_reports_a_survivor_it_can_no_longer_identify(monkeypatch, tmp_path):
+    """Captured as ours, unverifiable at sweep time: not signalled, and said so."""
+    from src import process_ownership
+
+    tracked_cmd = "python -m vllm.entrypoints.openai.api_server --model org/model"
+    state = _tracked_state(cmd=tracked_cmd)
+    posts = _install_httpx_client(monkeypatch, state)
+    _install_successful_tmux_kill(monkeypatch, panes="serve-abc123 900\n")
+    table = _fake_table(monkeypatch, {900: (1, "bash"), 101: (900, tracked_cmd)})
+    asked = {"n": 0}
+
+    def _token(pid):
+        if int(pid) == 101:
+            asked["n"] += 1
+            if asked["n"] > 1:  # the capture succeeded; every later look fails
+                raise process_ownership.InspectionUnavailable("/proc/101/stat")
+            return "token:101"
+        return f"token:{pid}" if int(pid or 0) in table else None
+
+    monkeypatch.setattr(process_ownership, "start_token", _token)
+    signalled = _install_effective_kill(monkeypatch, table)
+
+    result = await tools.do_stop_served_model(json.dumps({"session_id": "serve-abc123"}))
+
+    assert result["exit_code"] == 0
+    assert not any(pid == 101 for pid, _sig in signalled)
+    assert "could not be re-identified and were not signalled (pid 101)" in result["output"]
+    assert _stopped_statuses(posts, "serve-abc123") == ["stopped"]
+
+
+@pytest.mark.asyncio
+async def test_stop_never_signals_a_pid_reissued_between_the_table_and_its_capture(
+    monkeypatch, tmp_path
+):
+    """The table places 101 under the pane; 101 is then reissued to a stranger.
+
+    The stranger's token must never be the one recorded for the session.
+    """
+    from src import process_ownership
+
+    tracked_cmd = "python -m vllm.entrypoints.openai.api_server --model org/model"
+    state = _tracked_state(cmd=tracked_cmd)
+    posts = _install_httpx_client(monkeypatch, state)
+    _install_successful_tmux_kill(monkeypatch, panes="serve-abc123 900\n")
+    table = _fake_table(monkeypatch, {900: (1, "bash"), 101: (900, tracked_cmd)})
+    reads = {"n": 0}
+
+    def _table():
+        reads["n"] += 1
+        if reads["n"] > 1:
+            # After the first read: the server exited and its pid now belongs
+            # to an unrelated process with a fresh identity.
+            table[101] = process_ownership.ProcessInfo(101, 1, "sshd: stranger")
+        return dict(table)
+
+    monkeypatch.setattr(process_ownership, "process_table", _table)
+    signalled = _install_effective_kill(monkeypatch, table)
+
+    result = await tools.do_stop_served_model(json.dumps({"session_id": "serve-abc123"}))
+
+    assert result["exit_code"] == 0
+    assert not any(pid == 101 for pid, _sig in signalled)
+    assert _stopped_statuses(posts, "serve-abc123") == ["stopped"]

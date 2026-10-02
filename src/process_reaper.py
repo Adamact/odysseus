@@ -35,7 +35,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict
 
-from src import process_ownership
+from src import process_lifecycle, process_ownership
 
 logger = logging.getLogger(__name__)
 
@@ -71,16 +71,19 @@ def reap_containment_grants() -> Dict[str, Any]:
             containment.forget(grant_id)
             report["already_gone"] += 1
             continue
-        if record.get("lifetime") == "background" and process_ownership.verify(
-            record.get("supervisor_pid"), record.get("supervisor_token"),
-        ) == process_ownership.OWNED:
+        # A grant's holder — the detached supervisor of a background job, or
+        # the server process that acquired it — is an identity like any
+        # other: a live pid in its slot proves nothing without its token.
+        supervisor = process_lifecycle.ProcessIdentity.from_record(
+            record, pid_key="supervisor_pid", token_key="supervisor_token")
+        if record.get("lifetime") == "background" and supervisor and supervisor.owned():
             # Detached jobs deliberately survive a server restart. Their
             # supervisor owns the wall clock and teardown, independently.
             report["background_kept"] = report.get("background_kept", 0) + 1
             continue
-        if record.get("lifetime") != "cleanup" and record.get("manager_pid") and process_ownership.verify(
-            record["manager_pid"], record.get("manager_token"),
-        ) == process_ownership.OWNED:
+        manager = process_lifecycle.ProcessIdentity.from_record(
+            record, pid_key="manager_pid", token_key="manager_token")
+        if record.get("lifetime") != "cleanup" and manager and manager.owned():
             report["manager_kept"] = report.get("manager_kept", 0) + 1
             continue
         verdict = process_ownership.verify_record(record)
@@ -218,10 +221,18 @@ def reap_legacy_agent_tmux() -> Dict[str, Any]:
                 # current launcher must still match the observed tmux server.
                 report["unverifiable"] += 1
                 continue
-            targets = process_ownership.descendants(roots, table=table)
-            identities = {pid: process_ownership.start_token(pid) for pid in targets}
+            # Membership and identity bound together: a descendant that changed
+            # hands after the table was read is dropped, not recorded under a
+            # stranger's token. One this host cannot identify keeps the whole
+            # session visible and unsignalled.
+            bound = process_lifecycle.bind_descendants(roots)
+            targets = [seen.identity.pid for seen in bound]
+            identities = {seen.identity.pid: seen.identity.start_token for seen in bound}
+            if any(token is None for token in identities.values()):
+                report["unverifiable"] += 1
+                continue
             if snapshot().get(session_id) != panes or process_ownership.verify(server_pid, server_token) != process_ownership.OWNED or any(
-                process_ownership.verify(pid, identities[pid]) != process_ownership.OWNED for pid in roots
+                process_ownership.verify(pid, identities.get(pid)) != process_ownership.OWNED for pid in roots
             ):
                 report["unverifiable"] += 1
                 continue

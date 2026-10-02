@@ -90,7 +90,7 @@ The source tree reads **109** `ODYSSEUS_*` variables: 79 an operator may want to
 | `ODYSSEUS_BROWSER_MCP_REQUIRE_CACHE` | `''` | `src/builtin_mcp.py:90` | Truthy refuses to start the browser MCP server unless its npm package is already in the npx cache, instead of installing it at startup. |
 | `ODYSSEUS_BROWSER_NAMESPACE` | `'odysseus-ui'` | `src/agent_tools/web_tools.py:100` (+3 more) | Namespace for the detached agent-browser daemon's pid files, so two runtimes on one machine do not terminate each other's browsers. |
 | `ODYSSEUS_BROWSER_NO_SANDBOX` | `'1'` | `src/builtin_mcp.py:142` | Security-relevant. On by default, adding `--no-sandbox` because the Docker image cannot use the Chromium sandbox. Set 0, false or no to keep it. |
-| `ODYSSEUS_BROWSER_SCREENSHOT_DIR` | *unset* | `src/agent_tools/web_tools.py:3458` | Where private-browser screenshots are written. Falls back to the container path, then the system temp directory. |
+| `ODYSSEUS_BROWSER_SCREENSHOT_DIR` | *unset* | `src/agent_tools/web_tools.py:3479` | Where private-browser screenshots are written. Falls back to the container path, then the system temp directory. |
 
 ### Container and workspace mounts
 

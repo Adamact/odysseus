@@ -1080,43 +1080,23 @@ async def _capture_session_processes(session_id: str) -> tuple[List[Dict[str, An
         return [], "; the session had no live pane, so its processes could not be identified"
 
     def _snapshot() -> tuple[List[Dict[str, Any]], str]:
+        from src import process_lifecycle
+
+        # Membership (descends from the pane) and identity (start token) are
+        # bound together: a pid that changed hands after the table was read
+        # is dropped instead of being recorded under a stranger's token.
         try:
-            table = process_ownership.process_table()
+            bound = process_lifecycle.bind_descendants(
+                pane_pids, exclude={os.getpid(), os.getppid()})
         except process_ownership.InspectionUnavailable as exc:
             return [], f"; could not identify the session's processes ({exc})"
-        own = {os.getpid(), os.getppid()}
-        records = []
-        for pid in process_ownership.descendants(pane_pids, table=table):
-            if pid in own:
-                continue
-            info = table.get(pid)
-            records.append({
-                "pid": pid,
-                "start_token": process_ownership.capture(pid)["start_token"],
-                "command": info.command if info else "",
-            })
-        return records, ""
+        return [{
+            "pid": seen.identity.pid,
+            "start_token": seen.identity.start_token,
+            "command": seen.facts.command,
+        } for seen in bound], ""
 
     return await asyncio.to_thread(_snapshot)
-
-
-def _signal_owned(pid: int, token: Optional[str], sig: int) -> bool:
-    """Signal ``pid`` only while it still verifies as the process we captured.
-
-    Re-verified immediately before every signal, including the escalation: the
-    gap between SIGTERM and SIGKILL is exactly long enough for the pid to be
-    freed and reissued, and a SIGKILL aimed at whatever landed in the slot is
-    the bug this sweep exists to stop committing.
-    """
-    from src import process_ownership
-
-    if process_ownership.verify(pid, token) != process_ownership.OWNED:
-        return False
-    try:
-        os.kill(pid, sig)
-        return True
-    except (ProcessLookupError, PermissionError, OSError):
-        return False
 
 
 def _sweep_session_survivors(
@@ -1133,47 +1113,36 @@ def _sweep_session_survivors(
     command line, so an identical one may well be a server the user started by
     hand, and killing it because it resembles ours is indistinguishable from
     killing ours. Naming it lets whoever is reading decide.
-    """
-    import signal as _signal
-    import time as _time
 
-    from src import process_ownership
+    The TERM → verify → KILL → verify ladder, and the re-verification before
+    every signal, are :func:`src.process_lifecycle.terminate_identities`.
+    """
+    from src import process_lifecycle
 
     if capture_note:
         return capture_note
 
-    live = [rec for rec in owned
-            if process_ownership.verify(rec["pid"], rec["start_token"]) == process_ownership.OWNED]
-    killed: List[int] = []
-    survivors: List[int] = []
-    for rec in live:
-        pid, token = rec["pid"], rec["start_token"]
-        if not _signal_owned(pid, token, _signal.SIGTERM):
-            continue
-        deadline = _time.monotonic() + _SWEEP_GRACE_S
-        while _time.monotonic() < deadline:
-            if process_ownership.verify(pid, token) != process_ownership.OWNED:
-                break
-            _time.sleep(_SWEEP_POLL_S)
-        if process_ownership.verify(pid, token) == process_ownership.OWNED:
-            _signal_owned(pid, token, _signal.SIGKILL)
-            deadline = _time.monotonic() + 1.0
-            while _time.monotonic() < deadline:
-                if process_ownership.verify(pid, token) != process_ownership.OWNED:
-                    break
-                _time.sleep(_SWEEP_POLL_S)
-        if process_ownership.verify(pid, token) == process_ownership.OWNED:
-            survivors.append(pid)
-        else:
-            killed.append(pid)
+    sweep = process_lifecycle.terminate_identities(
+        (process_lifecycle.ProcessIdentity(pid=int(rec["pid"]), start_token=rec["start_token"])
+         for rec in owned),
+        steps=process_lifecycle.term_kill_steps(_SWEEP_GRACE_S),
+        poll_s=_SWEEP_POLL_S,
+    )
 
     note = ""
-    if killed:
-        note += f"; killed {len(killed)} surviving process(es) owned by the session"
-    if survivors:
+    if sweep.killed:
+        note += f"; killed {len(sweep.killed)} surviving process(es) owned by the session"
+    if sweep.survivors:
         note += (
-            f"; {len(survivors)} process(es) survived SIGKILL and are still "
-            f"running (pid {', '.join(str(pid) for pid in survivors)})"
+            f"; {len(sweep.survivors)} process(es) survived SIGKILL and are still "
+            f"running (pid {', '.join(str(pid) for pid in sweep.survivors)})"
+        )
+    if sweep.unverified:
+        # Captured as the session's, but this host can no longer say whether
+        # the pid still holds that process — so it was not signalled.
+        note += (
+            f"; {len(sweep.unverified)} process(es) could not be re-identified and "
+            f"were not signalled (pid {', '.join(str(pid) for pid in sweep.unverified)})"
         )
     note += _unowned_match_note(tracked_cmd, {rec["pid"] for rec in owned})
     return note

@@ -6,9 +6,10 @@ POSIX session, so the daemon pid recorded in the session's own pid file
 identifies the complete browser tree. Cleanup here is limited to that tree,
 the session's runtime files and its ``agent-browser-chrome-*`` profile.
 
-This is browser-specific ownership only. Generic process containment and
-lifecycle primitives belong to the shared process layer; when those exist,
-``kill_browser_tree`` is the single seam to replace.
+This is browser-specific ownership only: session membership, the profile
+prefix, runtime files and navigation state. Process identity, verified
+signalling and death observation come from :mod:`src.process_lifecycle`,
+reached through the single seam ``kill_browser_tree``.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from core import platform_compat
+from src import process_lifecycle
 
 PROFILE_PREFIX = "agent-browser-chrome-"
 RUNTIME_SUFFIXES = (".pid", ".sock", ".stream", ".version", ".engine")
@@ -121,34 +123,82 @@ def is_verified_daemon(pid: int | None) -> bool:
     return bool(command_line) and "agent-browser" in command_line
 
 
-def browser_tree(leader: int) -> list[int]:
+@dataclass(frozen=True)
+class _Member:
+    """One process as the membership scan saw it, bound to its identity."""
+
+    identity: process_lifecycle.ProcessIdentity
+    state: str
+    pgid: int
+    sid: int
+    cmdline: str
+
+
+def _read_member_facts(pid: int) -> tuple[tuple[str, int, int], str] | None:
+    stat = _read_stat(pid)
+    if stat is None:
+        return None
+    return stat, _read_cmdline(pid) or ""
+
+
+def _snapshot() -> dict[int, _Member]:
+    """Every visible process, with the facts membership is decided from.
+
+    Each pid's stat and command line are read between two start-token reads
+    (:func:`process_lifecycle.observe`), so the identity teardown later
+    verifies is the identity of the very process membership was decided for —
+    never one captured afterwards from a pid that may have changed hands.
+    """
+
+    snapshot: dict[int, _Member] = {}
+    for pid in _live_pids():
+        seen = process_lifecycle.observe(pid, _read_member_facts)
+        if seen is None:
+            continue
+        (state, pgid, sid), cmdline = seen.facts
+        snapshot[pid] = _Member(
+            identity=process_lifecycle.ProcessIdentity(
+                pid=pid, start_token=seen.identity.start_token, pgid=pgid),
+            state=state, pgid=pgid, sid=sid, cmdline=cmdline,
+        )
+    return snapshot
+
+
+def browser_members(leader: int) -> list[_Member]:
     """Processes owned by the browser session whose daemon pid is ``leader``.
 
     While the daemon is verified alive, every member of its POSIX session is
     owned. Once the daemon is gone the pid may be reused, so only Chrome
     process groups whose root carries an agent-browser profile are claimed.
+    Decided from one identity-bound snapshot.
     """
 
-    members: list[tuple[int, int]] = []
-    for pid in _live_pids():
-        stat = _read_stat(pid)
-        if stat is None or stat[0] == "Z" or stat[2] != leader:
-            continue
-        members.append((pid, stat[1]))
+    snapshot = _snapshot()
+    members = [
+        member for member in snapshot.values()
+        if member.state != "Z" and member.sid == leader
+    ]
     if not members:
         return []
-    if is_verified_daemon(leader):
-        return sorted(pid for pid, _ in members)
-    owned_groups = {
-        pgid for pid, pgid in members if _profile_dirs([pid])
-    }
-    return sorted(pid for pid, pgid in members if pgid in owned_groups)
+    daemon = snapshot.get(leader)
+    if daemon is not None and daemon.state != "Z" and "agent-browser" in daemon.cmdline:
+        owned = members
+    else:
+        owned_groups = {member.pgid for member in members if _profiles_of([member.cmdline])}
+        owned = [member for member in members if member.pgid in owned_groups]
+    return sorted(owned, key=lambda member: member.identity.pid)
 
 
-def _profile_dirs(pids: list[int]) -> set[Path]:
+def browser_tree(leader: int) -> list[int]:
+    """Pids owned by the browser session whose daemon pid is ``leader``."""
+
+    return [member.identity.pid for member in browser_members(leader)]
+
+
+def _profiles_of(cmdlines: list[str]) -> set[Path]:
     profiles: set[Path] = set()
-    for pid in pids:
-        for token in (_read_cmdline(pid) or "").split():
+    for cmdline in cmdlines:
+        for token in cmdline.split():
             if not token.startswith("--user-data-dir="):
                 continue
             path = Path(token.split("=", 1)[1])
@@ -162,34 +212,30 @@ def kill_browser_tree(leader: int, *, settle_s: float = 1.0) -> tuple[list[int],
 
     Returns ``(killed, survivors, profile_dirs)``. Synchronous so it can run
     from cancellation and shutdown paths without awaiting.
+
+    Which processes form the session is decided here (:func:`browser_members`);
+    how they are signalled is the generic lifecycle's. Each member's identity
+    is the one bound to the facts membership was decided from — never
+    recaptured afterwards — and it is re-verified before the signal, so a pid
+    freed and reissued at any point after the scan is never hit. A member
+    whose identity cannot be established is not signalled and is reported as
+    a survivor: the session still owns it, and its profile must not be
+    deleted from under it.
     """
 
-    members = browser_tree(leader)
-    profiles = _profile_dirs(members)
-    ordered = [pid for pid in members if pid != leader]
-    if leader in members:
-        ordered.append(leader)
-    killed = []
-    for pid in ordered:
-        try:
-            os.kill(pid, signal.SIGKILL)
-            killed.append(pid)
-        except (ProcessLookupError, PermissionError, OSError):
-            continue
-    deadline = time.monotonic() + settle_s
-    survivors = list(killed)
-    while survivors and time.monotonic() < deadline:
-        survivors = [pid for pid in survivors if _alive(pid)]
-        if survivors:
-            time.sleep(0.02)
-    return killed, survivors, profiles
-
-
-def _alive(pid: int) -> bool:
-    stat = _read_stat(pid)
-    if stat is None:
-        return False
-    return stat[0] != "Z"
+    members = browser_members(leader)
+    profiles = _profiles_of([member.cmdline for member in members])
+    ordered = [member for member in members if member.identity.pid != leader]
+    ordered += [member for member in members if member.identity.pid == leader]
+    # Browser semantics: Chrome is not asked to shut down here — the polite
+    # path is the agent-browser ``close`` command. This is the forced path.
+    sweep = process_lifecycle.terminate_identities(
+        [member.identity for member in ordered],
+        steps=((signal.SIGKILL, settle_s),), poll_s=0.02,
+    )
+    survivors = [member.identity.pid for member in ordered
+                 if member.identity.pid in sweep.survivors or member.identity.pid in sweep.unverified]
+    return list(sweep.killed), survivors, profiles
 
 
 @dataclass
