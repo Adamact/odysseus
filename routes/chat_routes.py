@@ -814,10 +814,13 @@ def _external_execution_bridge(
             raise ValueError("external execution bridge returned an invalid payload")
         return str(payload.get("description") or tool), payload["result"]
 
+    from src.agent_runtime.remote_resources import configuration_incarnation
     return AgentExecutionBridge(
         route_tool=route_tool,
         supported_tools=supported,
         name="request_local_http",
+        endpoint_id=url,
+        configuration_id=configuration_incarnation((url, token, tuple(sorted(supported)))),
     )
 
 
@@ -3418,6 +3421,7 @@ def setup_chat_routes(
         _request_authority = request_authority_for_http(
             request, message, owner=_user, session_id=session, workspace=workspace,
             history=_turn_history, policy=tool_policy,
+            client_runtime_context=client_runtime_context,
             active_document=bool(active_doc),
             image_attachment=any(str(a.get('mime') or '').startswith('image/')
                                  for a in (ctx.preprocessed.attachment_meta or [])),

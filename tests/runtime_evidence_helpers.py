@@ -14,16 +14,20 @@ def server_authorized_executor(executor):
     from src.agent_runtime.authority import OperationGrant, RequestAuthority
     from src.tool_policy import known_tool_names
     from src.turn_contract import canonical_tool
+    from src.agent_runtime.remote_resources import seal_backends
     call_signature = signature(executor)
     @wraps(executor)
     async def execute(*args, **kwargs):
         bound = call_signature.bind(*args, **kwargs)
         parameters = bound.arguments
+        grants = tuple(OperationGrant(name) for name in sorted(
+            {canonical_tool(n) for n in known_tool_names()} | {"list_dir", "find_files"}))
         kwargs.setdefault("request_authority", RequestAuthority(
             "standalone-test-request", str(parameters.get("owner") or "").strip().casefold(),
             str(parameters.get("session_id") or ""), str(parameters.get("workspace") or ""),
-            tuple(OperationGrant(name) for name in sorted(
-                {canonical_tool(n) for n in known_tool_names()} | {"list_dir", "find_files"})),
+            grants,
+            backend_resources=seal_backends((g.tool for g in grants), context=parameters.get("client_runtime_context"),
+                owner=str(parameters.get("owner") or "").strip().casefold()),
         ))
         return await executor(*args, **kwargs)
     return execute

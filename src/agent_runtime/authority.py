@@ -11,7 +11,10 @@ from pathlib import Path
 import re
 from uuid import uuid4
 
-from src.agent_runtime.resources import FilesystemRoot, intersect_roots
+from src.agent_runtime.resources import (
+    FilesystemRoot, ExternalResource, NativeBackendResource, OwnedScope,
+    backend_from_dict, intersect_roots, seal_owned_scopes,
+)
 from src.tool_policy import ToolPolicy, build_effective_tool_policy
 from src.turn_contract import (
     FAMILY_TOOLS, canonical_tool, requested_capabilities,
@@ -115,6 +118,8 @@ class RequestAuthority:
     # None is only the trusted constructor's instruction to seal a workspace.
     # Persisted/child authorities always carry an explicit tuple, including ().
     resource_roots: tuple[FilesystemRoot, ...] | None = None
+    backend_resources: tuple[ExternalResource | NativeBackendResource, ...] | None = None
+    owned_scopes: tuple[OwnedScope, ...] | None = None
 
     def __post_init__(self):
         if (not isinstance(self.request_id, str) or not self.request_id
@@ -138,11 +143,24 @@ class RequestAuthority:
                 or any(not isinstance(r, FilesystemRoot) or (r.owner and r.owner != self.owner)
                        for r in self.resource_roots)):
             raise ValueError("Malformed request resource roots")
+        if self.backend_resources is None:
+            from src.agent_runtime.remote_resources import seal_backends
+            object.__setattr__(self, "backend_resources", seal_backends((g.tool for g in self.grants), owner=self.owner))
+        if self.owned_scopes is None:
+            object.__setattr__(self, "owned_scopes", seal_owned_scopes(
+                self.owner, self.session_id, (g.tool for g in self.grants)))
+        if (not isinstance(self.backend_resources, tuple)
+                or any(not isinstance(r, (ExternalResource, NativeBackendResource))
+                       or (isinstance(r, ExternalResource) and r.owner and r.owner != self.owner) for r in self.backend_resources)
+                or not isinstance(self.owned_scopes, tuple)
+                or any(not isinstance(s, OwnedScope) or (s.owner, s.thread_id) != (self.owner, self.session_id)
+                       for s in self.owned_scopes)):
+            raise ValueError("Malformed backend or owned resource scope")
 
     @classmethod
     def empty(cls, *, owner=None, session_id=None, workspace=None):
         return cls(uuid4().hex, _owner(owner), str(session_id or ""), str(workspace or ""),
-                   resource_roots=())
+                   resource_roots=(), backend_resources=(), owned_scopes=())
 
     def bound_to(self, *, owner=None, session_id=None, workspace=None):
         return (self.owner == _owner(owner) and self.session_id == str(session_id or "")
@@ -168,35 +186,44 @@ class RequestAuthority:
             raise TypeError("Child authority must be server-owned RequestAuthority")
         grants = []
         roots = ()
+        backends = ()
+        owned = ()
         if (self.owner, self.session_id, self.workspace) == (child.owner, child.session_id, child.workspace):
             theirs = {g.tool: g for g in child.grants}
             grants = [g.intersect(theirs[g.tool]) for g in self.grants if g.tool in theirs]
             roots = intersect_roots(self.resource_roots, child.resource_roots)
+            backends = tuple(r for r in self.backend_resources if r in child.backend_resources)
+            owned = tuple(s for left in self.owned_scopes for right in child.owned_scopes
+                          if (s := left.intersect(right)) is not None)
         return replace(self, grants=tuple(grants), denied=self.denied | child.denied,
                        block_all=self.block_all or child.block_all,
                        disable_mcp=self.disable_mcp or child.disable_mcp, inherited=True,
-                       resource_roots=roots)
+                       resource_roots=roots, backend_resources=backends, owned_scopes=owned)
 
     def continuation(self, *, owner=None, session_id=None):
         """A server continuation may rebind a session, never change owner/grants."""
         if self.owner != _owner(owner):
             return RequestAuthority.empty(owner=owner, session_id=session_id)
-        return replace(self, session_id=str(session_id or ""), inherited=True)
+        rebound = str(session_id or "")
+        return replace(self, session_id=rebound, inherited=True,
+                       owned_scopes=tuple(replace(s, thread_id=rebound) for s in self.owned_scopes) if rebound else ())
 
     def to_dict(self):
-        return {"version": 2, "request_id": self.request_id, "owner": self.owner,
+        return {"version": 3, "request_id": self.request_id, "owner": self.owner,
                 "session_id": self.session_id, "workspace": self.workspace,
                 "grants": [{"tool": g.tool,
                             "actions": None if g.actions is None else sorted(g.actions),
                             "inputs": None if g.inputs is None else sorted(g.inputs)} for g in self.grants],
                 "denied": sorted(self.denied), "block_all": self.block_all,
                 "disable_mcp": self.disable_mcp, "inherited": self.inherited,
-                "resource_roots": [r.to_dict() for r in self.resource_roots]}
+                "resource_roots": [r.to_dict() for r in self.resource_roots],
+                "backend_resources": [r.to_dict() for r in self.backend_resources],
+                "owned_scopes": [s.to_dict() for s in self.owned_scopes]}
 
     @classmethod
     def from_dict(cls, value):
         if (not isinstance(value, dict) or type(value.get("version")) is not int
-                or value["version"] not in {1, 2}):
+                or value["version"] not in {1, 2, 3}):
             raise ValueError("Unsupported authority snapshot")
         def limits(value):
             if value is None:
@@ -204,14 +231,19 @@ class RequestAuthority:
             if not isinstance(value, list) or any(not isinstance(v, str) for v in value):
                 raise ValueError("Malformed authority limits")
             return frozenset(value)
-        roots = value["resource_roots"] if value["version"] == 2 else []
+        roots = value["resource_roots"] if value["version"] >= 2 else []
         if not isinstance(roots, list):
             raise ValueError("Malformed request resource snapshot")
+        backends = value["backend_resources"] if value["version"] == 3 else []
+        owned = value["owned_scopes"] if value["version"] == 3 else []
+        if not isinstance(backends, list) or not isinstance(owned, list):
+            raise ValueError("Malformed request resource scope snapshot")
         return cls(value["request_id"], value["owner"], value["session_id"], value["workspace"],
                    tuple(OperationGrant(g["tool"], limits(g["actions"]), limits(g["inputs"]))
                          for g in value["grants"]), limits(value["denied"]),
                    value["block_all"], value["disable_mcp"], value["inherited"],
-                   tuple(FilesystemRoot.from_dict(r) for r in roots))
+                   tuple(FilesystemRoot.from_dict(r) for r in roots),
+                   tuple(backend_from_dict(r) for r in backends), tuple(OwnedScope.from_dict(s) for s in owned))
 
 
 _BROWSER_READ_ACTIONS = frozenset({"open", "navigate", "snapshot", "text", "read", "find",
@@ -262,7 +294,7 @@ def interpret_request(request_text, *, history=(), workspace=None, active_docume
 
 def create_request_authority(request_text, *, owner=None, session_id=None, workspace=None,
                              history=(), policy=None, active_document=False,
-                             image_attachment=False, capabilities=None):
+                             image_attachment=False, capabilities=None, client_runtime_context=None):
     """Deterministic server policy over semantic facts, never schema inventory."""
     if not isinstance(request_text, str):
         raise TypeError("Authority requires trusted request text")
@@ -298,6 +330,10 @@ def create_request_authority(request_text, *, owner=None, session_id=None, works
         grants.append(OperationGrant(name, actions, inputs))
     authority = RequestAuthority(uuid4().hex, _owner(owner), str(session_id or ""),
                                  str(workspace or ""), tuple(grants))
+    if client_runtime_context is not None:
+        from src.agent_runtime.remote_resources import seal_backends
+        authority = replace(authority, backend_resources=seal_backends(
+            (g.tool for g in authority.grants), context=client_runtime_context, owner=authority.owner))
     return authority.restrict(policy or build_effective_tool_policy(last_user_message=request_text))
 
 
@@ -385,7 +421,8 @@ def with_request_authority(func):
                     owner=parameters.get("owner"), session_id=parameters.get("session_id"),
                     workspace=parameters.get("workspace"),
                     history=getattr(parameters.get("history_session"), "history", ()) or (),
-                    active_document=bool(parameters.get("active_document")))
+                    active_document=bool(parameters.get("active_document")),
+                    client_runtime_context=parameters.get("client_runtime_context"))
         if not isinstance(authority, RequestAuthority):
             raise TypeError("Missing or malformed server request authority")
         if parent is None and parameters.get("exact_approval") is not None:
@@ -423,7 +460,9 @@ def seal_task_authority(prompt, task_type, action, *, owner=None, parent_authori
     if parent is not None:
         authority = parent.intersect(replace(authority, session_id=parent.session_id,
                                             workspace=parent.workspace,
-                                            resource_roots=parent.resource_roots))
+                                            resource_roots=parent.resource_roots,
+                                            backend_resources=parent.backend_resources,
+                                            owned_scopes=parent.owned_scopes))
     return _json({"task_input": [prompt, task_type, action], "authority": authority.to_dict()})
 
 

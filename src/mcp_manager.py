@@ -164,6 +164,10 @@ class McpManager:
         self._owner_tasks: Dict[str, asyncio.Task] = {}
         # Tracking updates to tools/connections for RAG indexing / prompt cache
         self._generation = 0
+        # Identity of the actual connection, not a PID or lifecycle contract.
+        self._resource_connections = {}
+        self._resource_endpoints = {}
+        self._resource_owners = {}
 
     async def connect_server(
         self,
@@ -177,6 +181,13 @@ class McpManager:
     ) -> bool:
         """Connect to an MCP server via stdio, SSE, or Streamable HTTP transport."""
         try:
+            from src.agent_runtime.remote_resources import endpoint_identity, configuration_incarnation
+            self._resource_endpoints[server_id] = (
+                endpoint_identity(url) if transport in {"sse", "http"} else f"stdio:{server_id}",
+                configuration_incarnation((transport, url, command, args, env)))
+            if server_id == "memory":
+                effective_env = {**os.environ, **(env or {})}
+                self._resource_owners[server_id] = str(effective_env.get("ODYSSEUS_MCP_MEMORY_OWNER") or effective_env.get("ODYSSEUS_MEMORY_OWNER") or "").strip()
             if transport == "stdio":
                 res = await self._connect_stdio(server_id, name, command, args or [], env or {})
             elif transport == "sse":
@@ -243,6 +254,7 @@ class McpManager:
                 identity = ", ".join(identity_hints) if identity_hints else ""
 
                 self._sessions[server_id] = session
+                self._register_resource_connection(server_id, session)
                 self._stacks[server_id] = stack
                 self._tools[server_id] = tools
                 self._connections[server_id] = {
@@ -302,6 +314,7 @@ class McpManager:
                     })
 
                 self._sessions[server_id] = session
+                self._register_resource_connection(server_id, session)
                 self._stacks[server_id] = stack
                 self._tools[server_id] = tools
                 self._connections[server_id] = {
@@ -385,6 +398,7 @@ class McpManager:
                 })
 
             self._sessions[server_id] = session
+            self._register_resource_connection(server_id, session)
             self._stacks[server_id] = stack
             self._tools[server_id] = tools
             self._connections[server_id] = {
@@ -445,6 +459,7 @@ class McpManager:
                     logger.warning(f"Error closing MCP server {server_id}: {e}")
 
         self._sessions.pop(server_id, None)
+        self._resource_connections.pop(server_id, None)
         self._tools.pop(server_id, None)
         self._connections.pop(server_id, None)
         self._generation += 1
@@ -516,6 +531,33 @@ class McpManager:
                 "name": srv.name,
             }
 
+    def _register_resource_connection(self, server_id, session):
+        from uuid import uuid4
+        endpoint = self._resource_endpoints.get(server_id)
+        if endpoint:
+            self._resource_connections[server_id] = (endpoint, uuid4().hex, session,
+                                                     self._resource_owners.get(server_id, ""))
+
+    def resource_identity(self, qualified_name):
+        from src.agent_runtime.resources import ExternalResource
+        parts = qualified_name.split("__", 2)
+        if len(parts) != 3 or parts[0] != "mcp" or not parts[1] or not parts[2]:
+            return None
+        _, server, tool = parts
+        # The builtin memory producer uses a fixed owner, not model arguments.
+        # The builtin RAG producer has no owner contract; its legacy global
+        # store cannot acquire private read scope through discovery.
+        if server == "rag" or (server == "memory" and not self._resource_owners.get(server)):
+            return None
+        record = self._resource_connections.get(server)
+        if (not record or self._sessions.get(server) is not record[2]
+                or self._resource_endpoints.get(server) != record[0]
+                or self._resource_owners.get(server, "") != record[3]
+                or not any(row.get("name") == tool for row in self._tools.get(server, []))):
+            return None
+        return ExternalResource("mcp", record[0][0], server, qualified_name, record[1],
+                                owner=record[3])
+
     async def call_tool(self, qualified_name: str, arguments: Dict) -> Dict:
         """Call an MCP tool by its qualified name (mcp__{server_id}__{tool_name}).
 
@@ -531,6 +573,12 @@ class McpManager:
         session = self._sessions.get(server_id)
         if not session:
             return {"error": f"MCP server not connected: {server_id}", "exit_code": 1}
+
+        from src.agent_runtime.remote_resources import active_backend_operation
+        bound_backend = active_backend_operation()
+        if bound_backend is not None and self.resource_identity(qualified_name) != bound_backend.resource:
+            return {"error": "MCP resource binding changed", "exit_code": 1,
+                    "failure_kind": "resource_identity_denied"}
 
         try:
             if server_id == BROWSER_MCP_SERVER_ID:
@@ -554,7 +602,7 @@ class McpManager:
             result = await self._do_call(session, tool_name, arguments)
         except Exception as e:
             # Auto-reconnect for builtin servers whose subprocess may have died
-            if self.is_builtin(server_id):
+            if bound_backend is None and self.is_builtin(server_id):
                 logger.warning(f"MCP call failed for {qualified_name}, attempting reconnect: {e}")
                 reconnected = await self._reconnect_builtin(server_id)
                 if reconnected:

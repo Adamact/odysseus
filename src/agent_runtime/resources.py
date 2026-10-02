@@ -10,6 +10,7 @@ from enum import Enum
 import os
 from pathlib import Path
 import stat
+import sys
 
 from src.agent_runtime.path_policy import _is_sensitive_path
 from src.path_confinement import canonical_root, confine
@@ -30,11 +31,65 @@ def _absolute(value):
 def _control_plane_path(path):
     # Execution snapshots/receipts are server state, even if a workspace root
     # contains the data directory. A writable user file cannot mint authority.
-    from src.constants import BG_JOBS_DIR, BG_JOBS_FILE, CONTAINMENT_STATE_FILE
-    if path in {canonical_root(BG_JOBS_FILE), canonical_root(CONTAINMENT_STATE_FILE)}:
+    from src import constants
+    protected = {canonical_root(getattr(constants, name)) for name in (
+        "BG_JOBS_FILE", "CONTAINMENT_STATE_FILE", "APP_DB", "AUTH_FILE",
+        "SETTINGS_FILE", "SESSIONS_FILE", "USER_PREFS_FILE", "VAULT_FILE",
+        "SCHEDULED_EMAILS_DB", "EMAIL_CACHE_DB", "MEMORY_FILE", "INTEGRATIONS_FILE",
+    )}
+    job_dirs = {canonical_root(constants.BG_JOBS_DIR)}
+    # Producers may have configured paths different from the default constants.
+    # Inspect already-loaded server metadata without initializing a store here.
+    bg = sys.modules.get("src.bg_jobs")
+    if bg is not None:
+        for name, targets in (("_STORE", protected), ("_JOBS_DIR", job_dirs)):
+            value = getattr(bg, name, None)
+            if isinstance(value, (str, os.PathLike)):
+                targets.add(canonical_root(value))
+    containment = sys.modules.get("src.containment")
+    if containment is not None:
+        value = containment._store_path()
+        if isinstance(value, (str, os.PathLike)):
+            protected.add(canonical_root(value))
+    database = sys.modules.get("core.database")
+    url = getattr(getattr(database, "engine", None), "url", None)
+    if url is not None and url.get_backend_name() == "sqlite":
+        location = url.database
+        if isinstance(location, str) and location not in {"", ":memory:"}:
+            from urllib.parse import unquote
+            if location.startswith("file:"):
+                location = unquote(location[5:].split("?", 1)[0])
+            protected.update(canonical_root(location + suffix) for suffix in ("", "-wal", "-shm", "-journal"))
+    from src.tool_utils import get_upload_handler
+    uploader = get_upload_handler()
+    if uploader is not None and isinstance(getattr(uploader, "upload_dir", None), (str, os.PathLike)):
+        protected.add(canonical_root(Path(uploader.upload_dir) / "uploads.json"))
+    for directory in job_dirs:
+        jobs = Path(directory)
+        if Path(path).is_relative_to(jobs):
+            return True
+        if jobs.exists():
+            # Uninspectable state fails closed; hardlinks retain object identity.
+            protected.update(canonical_root(p) for p in jobs.iterdir())
+    protected.update(canonical_root(getattr(constants, name) + suffix)
+                     for name in ("APP_DB", "SCHEDULED_EMAILS_DB", "EMAIL_CACHE_DB")
+                     for suffix in ("-wal", "-shm", "-journal"))
+    protected.add(canonical_root(Path(constants.DATA_DIR) / ".app_key"))
+    protected.add(canonical_root(Path(constants.UPLOAD_DIR) / "uploads.json"))
+    if path in protected:
         return True
-    return (Path(path).is_relative_to(canonical_root(BG_JOBS_DIR))
-            and path.endswith(".authority.json"))
+    try:
+        candidate = os.stat(path)
+    except FileNotFoundError:
+        return False
+    for control in protected:
+        try:
+            observed = os.stat(control)
+        except FileNotFoundError:
+            continue
+        if (candidate.st_dev, candidate.st_ino) == (observed.st_dev, observed.st_ino):
+            return True
+    return False
 
 
 class FilesystemScope(str, Enum):
@@ -201,18 +256,16 @@ def intersect_roots(parent, child):
         for right in child:
             if (left.scope, left.owner) != (right.scope, right.owner):
                 continue
-            if left == right:
-                result.append(left)
-                continue
             try:
+                left.validate()
+                right.validate()
+                if left == right:
+                    result.append(left)
+                    continue
                 if Path(right.path).is_relative_to(left.path):
                     # A newly sealed child may not renew a replaced parent root.
-                    left.validate()
-                    right.validate()
                     result.append(right)
                 elif Path(left.path).is_relative_to(right.path):
-                    left.validate()
-                    right.validate()
                     result.append(left)
             except (OSError, ValueError, RuntimeError):
                 continue
@@ -279,12 +332,44 @@ class ExternalResource:
     tool_id: str
     incarnation: str
     external: bool = True
+    contained: bool = False
+    owner: str = ""
 
     def __post_init__(self):
         for name in ("namespace", "endpoint_id", "server_id", "tool_id", "incarnation"):
             _text(getattr(self, name), name)
-        if self.external is not True:
+        if self.external is not True or self.contained is not False:
             raise ValueError("External resource cannot attest local containment")
+        _text(self.owner, "external owner", optional=True)
+
+    def to_dict(self):
+        return {"kind": "external", **asdict(self)}
+
+
+@dataclass(frozen=True)
+class NativeBackendResource:
+    tool_id: str
+    namespace: str = "native"
+    external: bool = False
+    contained: bool = False
+
+    def __post_init__(self):
+        _text(self.tool_id, "native tool")
+        if self.namespace != "native" or self.external is not False or self.contained is not False:
+            raise ValueError("Malformed native backend identity")
+
+    def to_dict(self):
+        return {"kind": "native", **asdict(self)}
+
+
+def backend_from_dict(value):
+    if not isinstance(value, dict):
+        raise ValueError("Malformed backend snapshot")
+    fields = dict(value)
+    kind = fields.pop("kind", None)
+    if kind not in {"native", "external"}:
+        raise ValueError("Malformed backend kind")
+    return (NativeBackendResource if kind == "native" else ExternalResource)(**fields)
 
 
 @dataclass(frozen=True)
@@ -295,8 +380,77 @@ class OwnedResource:
     collection: str
     record_id: str
     revision: str = ""
+    record_thread_id: str = ""
 
     def __post_init__(self):
         for name in ("namespace", "owner", "thread_id", "collection", "record_id"):
             _text(getattr(self, name), name)
         _text(self.revision, "revision", optional=True)
+        _text(self.record_thread_id, "record thread", optional=True)
+
+    def to_dict(self):
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class OwnedScope:
+    namespace: str
+    owner: str
+    thread_id: str
+    record_ids: frozenset[str] | None = None
+
+    def __post_init__(self):
+        for name in ("namespace", "owner", "thread_id"):
+            _text(getattr(self, name), name)
+        if self.record_ids is not None:
+            if not isinstance(self.record_ids, frozenset):
+                raise ValueError("Owned scope must be immutable")
+            for identifier in self.record_ids:
+                _text(identifier, "record identifier")
+                if identifier == "*":
+                    raise ValueError("Collection authority must be explicit")
+
+    def permits(self, resource):
+        return (isinstance(resource, OwnedResource)
+                and (self.namespace, self.owner, self.thread_id) ==
+                    (resource.namespace, resource.owner, resource.thread_id)
+                and resource.collection == self.namespace
+                and (self.record_ids is None or resource.record_id in self.record_ids))
+
+    def intersect(self, other):
+        if (self.namespace, self.owner, self.thread_id) != (other.namespace, other.owner, other.thread_id):
+            return None
+        ids = (other.record_ids if self.record_ids is None else self.record_ids if other.record_ids is None
+               else self.record_ids & other.record_ids)
+        return OwnedScope(self.namespace, self.owner, self.thread_id, ids)
+
+    def to_dict(self):
+        return {"namespace": self.namespace, "owner": self.owner, "thread_id": self.thread_id,
+                "record_ids": None if self.record_ids is None else sorted(self.record_ids)}
+
+    @classmethod
+    def from_dict(cls, value):
+        if not isinstance(value, dict) or set(value) != {"namespace", "owner", "thread_id", "record_ids"}:
+            raise ValueError("Malformed owned scope snapshot")
+        ids = value["record_ids"]
+        if ids is not None and (not isinstance(ids, list) or any(not isinstance(v, str) for v in ids)):
+            raise ValueError("Malformed owned record limits")
+        return cls(value["namespace"], value["owner"], value["thread_id"],
+                   None if ids is None else frozenset(ids))
+
+
+OWNED_TOOL_NAMESPACES = {
+    **{name: "documents" for name in ("create_document", "edit_document", "update_document", "suggest_document", "manage_documents")},
+    **{name: "threads" for name in ("create_session", "list_sessions", "manage_session", "send_to_session", "search_chats")},
+    **{name: "attachments" for name in ("extract_text", "inspect_media", "transcribe_media")},
+    "manage_notes": "notes",
+    "manage_memory": "memory",
+    **{name: "vault" for name in ("vault_get", "vault_search", "vault_unlock")},
+}
+
+
+def seal_owned_scopes(owner, thread_id, tools):
+    if not owner or not thread_id:
+        return ()
+    return tuple(OwnedScope(namespace, owner, thread_id)
+                 for namespace in sorted({OWNED_TOOL_NAMESPACES[t] for t in tools if t in OWNED_TOOL_NAMESPACES}))

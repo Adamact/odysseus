@@ -689,9 +689,16 @@ async def do_api_call(content: str) -> Dict:
                 pass
 
     integration_name = args.get("integration", "")
+    from src.agent_runtime.remote_resources import active_backend_operation
+    bound = active_backend_operation()
+    if bound is not None:
+        bound.validate()
+        if bound.resource.namespace != "integration":
+            return {"error": "API call has no integration resource binding", "exit_code": 1}
+        integration_name = bound.resource.server_id
     integrations = load_integrations()
     intg = next((i for i in integrations if i["id"] == integration_name
-                 or i["name"].lower() == integration_name.lower()), None)
+                 or (bound is None and i["name"].lower() == integration_name.lower())), None)
     if not intg:
         available = ", ".join(i["name"] for i in integrations if i.get("enabled", True))
         return {"error": f"No integration matching '{integration_name}'. Available: {available or 'none configured'}", "exit_code": 1}

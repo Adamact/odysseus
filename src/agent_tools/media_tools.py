@@ -184,6 +184,9 @@ def _resolve_workspace_path(
         raise ValueError(
             f"{tool_name} {field_name} must stay inside the active workspace"
         ) from exc
+    from src.agent_runtime.resources import _control_plane_path
+    if _control_plane_path(str(resolved)):
+        raise ValueError(f"{tool_name} {field_name} addresses execution-control state")
     if must_exist and not resolved.is_file():
         raise FileNotFoundError(f"media file not found: {raw}")
     return resolved
@@ -445,8 +448,10 @@ class ExtractTextTool:
                 from src.tool_utils import get_upload_handler
                 ref = re.fullmatch(r'odysseus://attachment/([A-Za-z0-9_-]+(?:\.[A-Za-z0-9]+)?)', raw_path)
                 owner = (_ctx or {}).get('owner')
+                from src.agent_runtime.owned_resources import bound_attachment_path
+                bound_path = bound_attachment_path(owner, raw_path)
                 handler = get_upload_handler()
-                info = handler.resolve_upload(ref[1], owner=owner, allow_admin=False) if ref and owner and handler else None
+                info = {"path": bound_path} if bound_path else handler.resolve_upload(ref[1], owner=owner, allow_admin=False) if ref and owner and handler else None
                 if not info or not info.get('path'):
                     raise ValueError('Uploaded image not found or not accessible to this user')
                 path = Path(info['path'])

@@ -32769,6 +32769,7 @@ async def stream_agent_loop(
                         ),
                         request_text=_last_user,
                         request_authority=active_request_authority(),
+                        client_runtime_context=client_runtime_context,
                     )
                     desc = f"{block.tool_type}: APPROVAL REQUIRED"
                     result = {

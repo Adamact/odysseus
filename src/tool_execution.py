@@ -19,7 +19,7 @@ import secrets
 import sys
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Awaitable, Callable, Dict, Iterator, Optional, Tuple
 
 
@@ -48,7 +48,13 @@ from src.agent_runtime.resource_binding import (
     NATIVE_FILESYSTEM_TOOLS, active_resource_operation, bind_resource_operation,
     resolve_filesystem_operation,
 )
-from src.agent_runtime.resources import ResourceIdentityError
+from src.agent_runtime.resources import ExternalResource, NativeBackendResource, ResourceIdentityError
+from src.agent_runtime.remote_resources import (
+    active_backend_operation, bind_backend_operation, bind_backend_for_operation,
+)
+from src.agent_runtime.owned_resources import (
+    active_owned_operation, bind_owned_operation, admit_owned_operation, needs_owned_binding,
+)
 
 
 class _MissingToolSecurityContext:
@@ -88,12 +94,21 @@ class AgentExecutionBridge:
     route_tool: ExecutionBridgeHandler
     supported_tools: frozenset[str]
     name: str = "external_environment"
+    endpoint_id: str = ""
+    incarnation: str = field(default_factory=lambda: secrets.token_hex(16), init=False)
+    configuration_id: str = ""
 
     def __post_init__(self) -> None:
         if not callable(self.route_tool):
             raise TypeError("execution bridge route_tool must be callable")
         if not self.supported_tools:
             raise ValueError("execution bridge supported_tools cannot be empty")
+
+    def resource_identity(self, tool):
+        from src.agent_runtime.resources import ExternalResource
+        from src.agent_runtime.remote_resources import endpoint_identity
+        endpoint = endpoint_identity(self.endpoint_id) if self.endpoint_id else "bridge:" + self.name
+        return ExternalResource("execution_bridge", endpoint, self.name, tool, self.configuration_id or self.incarnation)
 
 
 _active_execution_bridge: contextvars.ContextVar[AgentExecutionBridge | None] = (
@@ -303,7 +318,7 @@ def _client_bridge(client_runtime_context: Optional[Dict]) -> Optional[Dict]:
     context = client_runtime_context if isinstance(client_runtime_context, dict) else {}
     if str(context.get("surface") or "").strip() != "odysseus-tui":
         return None
-    bridge = context.get("host_shell_bridge")
+    bridge = context.get("host_shell_bridge") or context.get("hostShellBridge")
     if not isinstance(bridge, dict):
         return None
     url = str(bridge.get("url") or "").strip()
@@ -1153,8 +1168,13 @@ async def _call_mcp_tool(
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
 ) -> Dict:
     """Route a legacy tool call through the MCP manager, with direct fallbacks."""
+    bound = active_backend_operation()
+    if bound is not None and isinstance(bound.resource, NativeBackendResource):
+        return await _direct_fallback(tool, content, progress_cb=progress_cb) or {"error": f"Native tool '{tool}' unavailable", "exit_code": 1}
     mcp = get_mcp_manager()
     if not mcp:
+        if bound is not None:
+            raise ResourceIdentityError("Pinned MCP backend is unavailable")
         return await _direct_fallback(tool, content, progress_cb=progress_cb) or {"error": f"MCP manager not available for tool '{tool}'", "exit_code": 1}
 
     server_id, tool_name = _MCP_TOOL_MAP[tool]
@@ -1168,7 +1188,7 @@ async def _call_mcp_tool(
     result = _normalize_mcp_text_error(result)
 
     # If MCP server not connected, try direct fallback
-    if isinstance(result, dict) and result.get("exit_code") == 1 and "not connected" in result.get("error", ""):
+    if bound is None and isinstance(result, dict) and result.get("exit_code") == 1 and "not connected" in result.get("error", ""):
         fallback = await _direct_fallback(tool, content, progress_cb=progress_cb)
         if fallback:
             return fallback
@@ -1240,6 +1260,9 @@ async def _direct_fallback(
     _subproc_env = _agent_subprocess_env()
 
     try:
+        owned = active_owned_operation()
+        if owned is not None:
+            owned.validate()
         ctx = {
             "progress_cb": progress_cb,
             "subproc_env": _subproc_env,
@@ -1250,6 +1273,7 @@ async def _direct_fallback(
             "tool_policy": tool_policy,
             "request_authority": active_request_authority(),
             "resource_operation": active_resource_operation(),
+            "owned_operation": active_owned_operation(),
         }
 
         from src.agent_tools import TOOL_HANDLERS
@@ -1273,6 +1297,9 @@ async def _document_tool_dispatch(
 ) -> Optional[Dict]:
     """Route a document tool through TOOL_HANDLERS with the right ctx shape."""
     from src.agent_tools import TOOL_HANDLERS
+    owned = active_owned_operation()
+    if owned is not None:
+        owned.validate()
     ctx = {
         "session_id": session_id,
         "owner": owner,
@@ -1377,15 +1404,30 @@ async def execute_tool_block(
             "exit_code": 1, "failure_kind": "turn_contract_denied",
         }
 
-    # External executors require their own adapters. Local observations must
-    # never stand in for remote resource or containment identities.
-    execution_bridge = get_active_execution_bridge()
     transport = operation.transport_tool
-    external_resource_call = (
-        (execution_bridge is not None and transport in execution_bridge.supported_tools)
-        or (transport in _ROUTED_BRIDGE_TOOLS and _client_bridge(client_runtime_context) is not None)
-        or (transport == "apply_patch" and _tui_host_bridge_patch_url(client_runtime_context))
-    )
+    try:
+        pending = exact_approval.pending if exact_approval is not None else None
+        if pending is not None and pending.backend_operation is None:
+            raise ResourceIdentityError("Approved action has no sealed backend identity")
+        backend_operation = bind_backend_for_operation(
+            authority, operation, context=client_runtime_context,
+            approved=pending.backend_operation if pending is not None else None,
+            exact_admission=exact_admission)
+        external_resource_call = isinstance(backend_operation.resource, ExternalResource)
+        owned_operation = None
+        if needs_owned_binding(operation) and not external_resource_call:
+            if pending is not None and pending.owned_operation is None:
+                raise ResourceIdentityError("Approved action has no sealed owned resource identity")
+            owned_operation = admit_owned_operation(
+                authority, operation, document_id=active_document_id,
+                approved=pending.owned_operation if pending is not None else None,
+                exact_admission=exact_admission)
+    except (ValueError, TypeError, OSError, RuntimeError, AttributeError) as error:
+        return f"{transport}: BLOCKED", {
+            "error": str(error), "exit_code": 1, "blocked": True,
+            "failure_kind": "resource_identity_denied",
+            **({"policy": "exact_tool_approval"} if exact_approval is not None else {}),
+        }
     resource_operation = None
     if operation.tool in NATIVE_FILESYSTEM_TOOLS and not external_resource_call:
         try:
@@ -1498,29 +1540,21 @@ async def execute_tool_block(
 
     token = _active_workspace.set(workspace or None)
     try:
-        with bind_request_authority(authority), bind_resource_operation(resource_operation):
+        backend_operation.validate(client_runtime_context)
+        normalized = resource_operation or owned_operation
+        sealed_document = owned_operation or (exact_approval.pending if approval_claimed else None)
+        with (bind_request_authority(authority), bind_resource_operation(resource_operation),
+              bind_backend_operation(backend_operation), bind_owned_operation(owned_operation)):
             output = await _execute_tool_block_impl(
-                ToolBlock(transport, resource_operation.execution_input) if resource_operation is not None else block,
+                ToolBlock(transport, normalized.execution_input) if normalized is not None else block,
                 session_id=session_id,
                 disabled_tools=disabled_tools,
                 owner=owner,
                 progress_cb=progress_cb,
                 tool_policy=tool_policy,
-                approved_document_id=(
-                    exact_approval.pending.document_id
-                    if approval_claimed
-                    else None
-                ),
-                approved_document_version=(
-                    exact_approval.pending.document_version
-                    if approval_claimed
-                    else None
-                ),
-                approved_document_digest=(
-                    exact_approval.pending.document_digest
-                    if approval_claimed
-                    else None
-                ),
+                approved_document_id=sealed_document.document_id if sealed_document is not None else None,
+                approved_document_version=sealed_document.document_version if sealed_document is not None else None,
+                approved_document_digest=sealed_document.document_digest if sealed_document is not None else None,
                 active_document_id=active_document_id,
                 client_runtime_context=client_runtime_context,
             )
@@ -1664,11 +1698,20 @@ async def _execute_tool_block_impl(
         return desc, result
 
     execution_bridge = get_active_execution_bridge()
+    backend = active_backend_operation()
+    if backend is not None:
+        backend.validate(client_runtime_context)
+    owned = active_owned_operation()
+    if owned is not None:
+        owned.validate()
     bridge_owns_tool = (
         execution_bridge is not None
         and tool in execution_bridge.supported_tools
         and active_resource_operation() is None
+        and (backend is None or backend.resource.namespace == "execution_bridge")
     )
+    if backend is not None and backend.resource.namespace == "execution_bridge" and not bridge_owns_tool:
+        raise ResourceIdentityError("Pinned external execution bridge is unavailable")
 
     # Public-owner restrictions protect tools executed by this deployment.
     # A request-scoped execution bridge is a separate, explicit authority for
@@ -1727,7 +1770,7 @@ async def _execute_tool_block_impl(
                 },
             )
 
-    if (active_resource_operation() is None and tool in _ROUTED_BRIDGE_TOOLS
+    if (active_resource_operation() is None and (backend is None or backend.resource.namespace == "client_bridge") and tool in _ROUTED_BRIDGE_TOOLS
             and _client_bridge(client_runtime_context) is not None):
         return await dispatched(_route_tool_via_bridge(tool, content, session_id, client_runtime_context))
 
@@ -1735,7 +1778,7 @@ async def _execute_tool_block_impl(
     # marker runs DETACHED — returns a job id immediately so the chat stream
     # isn't held open for a multi-minute install/ffmpeg/download. The always-on
     # monitor re-invokes the agent with the full output when the job finishes.
-    if tool == "bash" and session_id:
+    if tool == "bash" and session_id and (backend is None or isinstance(backend.resource, NativeBackendResource)):
         _is_bg, _bg_cmd = _split_bg_marker(content)
         if _is_bg and _bg_cmd:
             from src import bg_jobs

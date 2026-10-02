@@ -204,6 +204,16 @@ async def test_dispatcher_claims_approval_immediately_before_execution(monkeypat
 @pytest.mark.asyncio
 async def test_dispatcher_uses_sealed_document_target(monkeypatch):
     import src.tool_execution as tool_execution
+    from datetime import datetime
+    from types import SimpleNamespace
+    from src.agent_runtime import owned_resources
+    # This dispatcher fixture seals an observed owned row, as production does;
+    # model/document text alone cannot stand in for a resource identity.
+    row = SimpleNamespace(id="document-7", owner="alice", session_id="session-1",
+        version_count=4, current_content="original", created_at=datetime(2026, 1, 1),
+        updated_at=datetime(2026, 1, 2))
+    monkeypatch.setattr(owned_resources, "_row", lambda namespace, identifier, owner: row
+                        if (namespace, identifier, owner) == ("documents", "document-7", "alice") else None)
 
     store = ToolApprovalStore()
     content = '{"content":"replacement"}'
