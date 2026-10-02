@@ -3,6 +3,7 @@ import json
 import os
 import re
 import difflib
+import secrets
 import shutil
 import time
 from typing import Optional, Dict, Any, Tuple, List
@@ -289,6 +290,37 @@ class ReadFileTool:
             data = data[:MAX_READ_CHARS] + f"\n... [truncated at {MAX_READ_CHARS} chars]"
         return {"output": data, "exit_code": 0}
 
+
+def _write_new_file_without_overwrite(path: str, body: str) -> None:
+    """Publish a new file without exposing a writable placeholder at its path.
+
+    Stage beside the destination, then hard-link it into place. The link is
+    atomic and fails if another writer created the destination first.
+    """
+    directory = os.path.dirname(path) or "."
+    temporary_path = os.path.join(
+        directory, f".odysseus-write-{secrets.token_hex(16)}.tmp"
+    )
+    fd = os.open(
+        temporary_path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        0o666,
+    )
+
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as temporary_file:
+            fd = None
+            temporary_file.write(body)
+        os.link(temporary_path, path)
+    finally:
+        if fd is not None:
+            os.close(fd)
+        try:
+            os.unlink(temporary_path)
+        except FileNotFoundError:
+            pass
+
+
 class _EmptyBodyWouldTruncate(Exception):
     """Raised inside the write thread when an undeclared empty body is about to
     replace a file that holds bytes. Carries the size at risk so the caller can be
@@ -358,11 +390,17 @@ class WriteFileTool:
                             raise _EmptyBodyWouldTruncate(path, existing_bytes)
                         return old, 0
 
-                    # Create a missing target exclusively. If another writer wins
-                    # the race, inspect what appeared rather than truncating it.
                     try:
-                        with open(path, "x", encoding="utf-8") as f:
-                            f.write(body)
+                        if body:
+                            # Publish whitespace content atomically. Writing it
+                            # after exclusive creation could overwrite bytes from
+                            # a writer that filled the new placeholder meanwhile.
+                            _write_new_file_without_overwrite(path, body)
+                        else:
+                            # An exact empty body needs no staged data, so create
+                            # the file exclusively and never write through it.
+                            with open(path, "x", encoding="utf-8"):
+                                pass
                     except FileExistsError:
                         if os.path.isfile(path):
                             existing_bytes = os.path.getsize(path)

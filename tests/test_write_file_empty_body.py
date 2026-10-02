@@ -7,6 +7,7 @@ existing file is opened in "w" mode, and the tool answers exit_code=0 with
 path are still there afterwards; each "still works" test guards the write path
 this change must not narrow.
 """
+import builtins
 import json
 import os
 import re
@@ -244,6 +245,36 @@ async def test_empty_body_does_not_truncate_a_file_created_after_the_absence_che
 
     monkeypatch.setattr(os.path, "isfile", create_after_absence_check)
     res = await WriteFileTool().execute(_text_call(target, ""), {})
+    assert res["exit_code"] == 1, res
+    assert _read(target) == "concurrent update"
+
+
+@pytest.mark.asyncio
+async def test_whitespace_body_does_not_clobber_a_concurrent_creation(
+    target, monkeypatch
+):
+    """Whitespace on a missing path must not overwrite a competing writer."""
+    real_open = builtins.open
+    real_link = os.link
+
+    def write_concurrent_content(path):
+        with real_open(path, "w", encoding="utf-8") as concurrent:
+            concurrent.write("concurrent update")
+
+    def interleaved_open(path, mode="r", *args, **kwargs):
+        handle = real_open(path, mode, *args, **kwargs)
+        if path == target and mode == "x":
+            write_concurrent_content(path)
+        return handle
+
+    def interleaved_link(source, destination, *args, **kwargs):
+        if destination == target:
+            write_concurrent_content(destination)
+        return real_link(source, destination, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", interleaved_open)
+    monkeypatch.setattr(os, "link", interleaved_link)
+    res = await WriteFileTool().execute(_text_call(target, "  \n\t"), {})
     assert res["exit_code"] == 1, res
     assert _read(target) == "concurrent update"
 
