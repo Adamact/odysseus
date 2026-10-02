@@ -168,3 +168,13 @@ def test_missing_receipt_publication_cannot_recover_authority(workspace):
     assert resources.prune_foreground_publications() == 1
     assert not resources.launch_path(launch.generation).exists()
     assert not containment._load_records()
+
+
+@pytest.mark.parametrize('receipt_data', ['{corrupt', '[]', '{"receipt":null}'])
+def test_unreadable_receipts_cannot_retire_live_consumers(workspace, receipt_data):
+    admitted = authority(workspace)
+    launch = resources.resolve_process_operation(admitted, ExactOperation.normalize('bash', 'printf pending'), NativeBackendResource('bash')).launch
+    resources.publish_launch(launch, admitted, 'receipt')
+    containment._store_path().write_text(receipt_data)
+    assert resources.prune_foreground_publications() == 0
+    assert resources.launch_path(launch.generation).is_file()

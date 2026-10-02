@@ -452,13 +452,19 @@ def prune_foreground_publications():
 
     A dead/replaced manager cannot resume attachment. A missing receipt also
     makes attachment impossible; publication cannot reconstruct that receipt.
-    Its process tree still
-    belongs to containment recovery; deleting a publication never signals or
+    Its process tree still belongs to containment recovery; deleting a publication never signals or
     asserts tree death. Live/unverifiable managers and background history stay.
     """
     from src import containment
     from src import process_ownership
-    receipts = containment._load_records()
+    try:
+        receipts = json.loads(containment._store_path().read_text())
+    except FileNotFoundError:
+        receipts = {}
+    except (OSError, ValueError):
+        return 0  # Unreadable state is not evidence that consumers are gone.
+    if not isinstance(receipts, dict) or any(not isinstance(r, dict) for r in receipts.values()):
+        return 0
     retired = 0
     for path in _LAUNCH_DIR.glob("*.json"):
         try:
