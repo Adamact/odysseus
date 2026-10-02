@@ -132,8 +132,7 @@ def test_child_cannot_target_sibling_or_replaced_job(store):
     with pytest.raises(ResourceIdentityError):
         resources.resolve_process_operation(inherited, ExactOperation.normalize("manage_bg_jobs", '{"action":"kill","job_id":"second"}'), NativeBackendResource("manage_bg_jobs"))
     seed(store, "first")
-    with pytest.raises(ResourceIdentityError):
-        parent.intersect(child)
+    assert parent.intersect(child).job_resources == ()
 
 
 @pytest.mark.parametrize("field,value", [("generation", "f" * 32), ("owner", "bob"), ("request_id", "other"), ("thread_id", "other")])

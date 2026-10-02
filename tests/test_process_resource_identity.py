@@ -75,8 +75,8 @@ def test_child_cannot_renew_replaced_parent_process(monkeypatch):
     monkeypatch.setattr(process_ownership, "verify", lambda pid, token: process_ownership.FOREIGN if token == "boot:start" else process_ownership.OWNED)
     parent = RequestAuthority("parent", "alice", "thread", "", process_resources=(old,))
     child = replace(parent, request_id="child", process_resources=(fresh,))
-    with pytest.raises(ResourceIdentityError):
-        parent.intersect(child)
+    result = parent.intersect(child)
+    assert result.process_resources == ()
 
 
 def test_legacy_authority_cannot_reconstruct_creation_scope(tmp_path):

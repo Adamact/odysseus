@@ -181,9 +181,24 @@ def seal_jobs(authority):
 def intersect_observed(parent, child, validate):
     # Validate both sides before equality. Seeing a replacement cannot renew a
     # stale parent observation, even when the child has just sealed it.
-    for resource in (*parent, *child):
-        validate(resource)
-    return tuple(resource for resource in parent if resource in child)
+    # Stale/dead/unverifiable resources on EITHER side are conservatively
+    # excluded from the resulting authority — a normal process exit must not
+    # crash child authority intersection.
+    live_parent = []
+    for resource in parent:
+        try:
+            validate(resource)
+            live_parent.append(resource)
+        except ResourceIdentityError:
+            continue
+    live_child = set()
+    for resource in child:
+        try:
+            validate(resource)
+            live_child.add(resource)
+        except ResourceIdentityError:
+            continue
+    return tuple(resource for resource in live_parent if resource in live_child)
 
 
 def intersect_launch_scopes(parent, child):
