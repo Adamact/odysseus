@@ -59,12 +59,17 @@ from core.platform_compat import (
 def _require_admin(request: Request):
     """Reject non-admin callers. Shell exec is admin-only — never expose to
     regular users; that's RCE-after-signup."""
-    # Anonymous loopback is also reachable from an admitted native workload.
-    # It cannot be treated as a human admin or as process creation authority.
+    # Tool authentication is never human administration. Operator-disabled
+    # login has a separate direct-local transport contract below; it supplies
+    # no resource grant to model producers.
     from src.agent_runtime.authority import is_internal_tool_request
-    if is_internal_tool_request(request):
+    from core.middleware import INTERNAL_TOOL_HEADER
+    if is_internal_tool_request(request) or request.headers.get(INTERNAL_TOOL_HEADER):
         raise HTTPException(403, "Internal shell execution requires a dedicated resource-bound producer")
     if _auth_disabled():
+        from src.auth_helpers import is_direct_loopback_request
+        if is_direct_loopback_request(request):
+            return
         raise HTTPException(403, "Anonymous native process control has no resource authority")
     auth_manager = getattr(request.app.state, "auth_manager", None)
     if not auth_manager:

@@ -330,7 +330,7 @@ async def test_anonymous_native_cookbook_control_rejected_before_producer(monkey
     monkeypatch.setattr(asyncio, "create_subprocess_shell", lambda *a, **k: pytest.fail("Anonymous producer reached"))
     app = FastAPI()
     app.include_router(cookbook_routes.setup_cookbook_routes())
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://local") as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, client=("192.0.2.1", 123)), base_url="http://local") as client:
         result = await client.post(path, json=payload)
     assert result.status_code == 403
 

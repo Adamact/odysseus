@@ -523,6 +523,13 @@ def seal_task_authority(prompt, task_type, action, *, owner=None, parent_authori
     if operation is not None:
         authority = replace(authority, grants=(OperationGrant(operation.tool,
             inputs=frozenset({operation.input})),))
+        if task_type == "action" and action == "cookbook_serve":
+            # The direct admin scheduling ingress selects the native Cookbook
+            # producer. Restore never infers this from task names/availability.
+            # Any model-created task still intersects with its parent's ceiling.
+            backend = NativeBackendResource("serve_model")
+            authority = replace(authority, backend_resources=tuple(dict.fromkeys(
+                (*authority.backend_resources, backend))))
     parent = active_request_authority() if parent_authority is MISSING_AUTHORITY else parent_authority
     if parent_authority is None:
         parent = RequestAuthority.empty(owner=owner)

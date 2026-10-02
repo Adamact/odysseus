@@ -772,9 +772,11 @@ async def do_download_model(content: str, owner: Optional[str] = None) -> Dict:
     if env_cfg.get("platform"):   payload["platform"]   = env_cfg["platform"]
     if env_cfg.get("ssh_port"):   payload["ssh_port"]   = env_cfg["ssh_port"]
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(f"{_INTERNAL_BASE}/api/model/download",
-                                     json=payload, headers=_internal_headers())
+        from src.agent_runtime.local_model_control import model_control_headers
+        with model_control_headers("download_model", content, owner, payload) as launch_headers:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(f"{_INTERNAL_BASE}/api/model/download",
+                                         json=payload, headers=launch_headers)
             data = resp.json()
         if data.get("ok"):
             sid = data.get("session_id", "?")
@@ -857,9 +859,11 @@ async def do_serve_model(content: str, owner: Optional[str] = None) -> Dict:
     if env_cfg.get("platform"):   payload["platform"]   = env_cfg["platform"]
     if env_cfg.get("ssh_port"):   payload["ssh_port"]   = env_cfg["ssh_port"]
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(f"{_INTERNAL_BASE}/api/model/serve",
-                                     json=payload, headers=_internal_headers())
+        from src.agent_runtime.local_model_control import model_control_headers
+        with model_control_headers("serve_model", content, owner, payload) as launch_headers:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(f"{_INTERNAL_BASE}/api/model/serve",
+                                         json=payload, headers=launch_headers)
             data = resp.json()
         if data.get("ok"):
             sid = data.get("session_id", "?")
@@ -1908,9 +1912,11 @@ async def do_serve_preset(content: str, owner: Optional[str] = None) -> Dict:
         payload["ssh_port"] = env_cfg["ssh_port"]
 
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(f"{_INTERNAL_BASE}/api/model/serve",
-                                     json=payload, headers=_internal_headers())
+        from src.agent_runtime.local_model_control import model_control_headers
+        with model_control_headers("serve_preset", content, owner, payload) as launch_headers:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(f"{_INTERNAL_BASE}/api/model/serve",
+                                         json=payload, headers=launch_headers)
             data = resp.json()
         if data.get("ok"):
             sid = data.get("session_id", "?")
