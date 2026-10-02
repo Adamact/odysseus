@@ -18,7 +18,7 @@ from src.agent_runtime.resource_binding import (
     bind_resource_operation, resolve_filesystem_operation,
 )
 from src.agent_runtime.resources import (
-    BrowserPageResource, BrowserProducer, ExternalResource, FileObjectIdentity,
+    ExternalResource, FileObjectIdentity,
     FilesystemResource, FilesystemRoot, FilesystemScope, OwnedResource, ProcessResource,
 )
 from src.tool_approvals import ToolApprovalStore
@@ -706,10 +706,6 @@ async def test_resource_identity_never_expands_narrow_request_classes(tmp_path, 
 
 
 def test_nonfilesystem_identities_are_inert_and_distinguish_producers_from_pages():
-    producer = BrowserProducer("browser", "alice", "thread", "session", "incarnation-1")
-    page = BrowserPageResource(producer, "page-1", 2, "https://example.test")
-    assert replace(producer, incarnation="incarnation-2") != producer
-    assert replace(page, navigation_generation=3) != page
     from src.process_lifecycle import ProcessIdentity
     ProcessResource("native:containment", "alice", "request", "thread", ProcessIdentity(123, "boot:start"), "leader", "job", "receipt")
     OwnedResource("documents", "alice", "thread", "documents", "document", "revision")

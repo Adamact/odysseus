@@ -37,7 +37,11 @@ def _control_plane_path(path):
         "SETTINGS_FILE", "SESSIONS_FILE", "USER_PREFS_FILE", "VAULT_FILE",
         "SCHEDULED_EMAILS_DB", "EMAIL_CACHE_DB", "MEMORY_FILE", "INTEGRATIONS_FILE",
     )}
-    job_dirs = {canonical_root(constants.BG_JOBS_DIR), canonical_root(constants.PROCESS_RESOURCES_DIR)}
+    job_dirs = {canonical_root(constants.BG_JOBS_DIR), canonical_root(constants.PROCESS_RESOURCES_DIR),
+                canonical_root(constants.BROWSER_RESOURCES_DIR)}
+    browser = sys.modules.get("src.browser_identity")
+    if browser is not None:
+        job_dirs.add(canonical_root(browser.STATE_ROOT))
     processes = sys.modules.get("src.agent_runtime.process_resources")
     if processes is not None:
         job_dirs.add(canonical_root(processes._LAUNCH_DIR))
@@ -73,7 +77,7 @@ def _control_plane_path(path):
             return True
         if jobs.exists():
             # Uninspectable state fails closed; hardlinks retain object identity.
-            protected.update(canonical_root(p) for p in jobs.iterdir())
+            protected.update(canonical_root(p) for p in jobs.rglob("*") if p.is_file())
     protected.update(canonical_root(getattr(constants, name) + suffix)
                      for name in ("APP_DB", "SCHEDULED_EMAILS_DB", "EMAIL_CACHE_DB")
                      for suffix in ("-wal", "-shm", "-journal"))
@@ -104,6 +108,115 @@ class FilesystemScope(str, Enum):
 
 class ResourceIdentityError(ValueError):
     """An observed execution resource has changed or cannot be resolved."""
+
+
+@dataclass(frozen=True)
+class BrowserSessionObservation:
+    producer_namespace: str
+    producer_version: str
+    platform: str
+    binary_sha256: str
+    configuration_digest: str
+    session_key: str
+    daemon: "ProcessIdentity"
+    browser_instance_digest: str
+    session_incarnation: str
+
+    def __post_init__(self):
+        from src.process_lifecycle import ProcessIdentity
+        from src.browser_identity import PRODUCER_HASHES, incarnation
+        if (self.producer_namespace != "native:agent-browser"
+                or self.producer_version != "0.35.0"
+                or PRODUCER_HASHES.get(self.platform) != self.binary_sha256
+                or not isinstance(self.daemon, ProcessIdentity)
+                or type(self.daemon.pid) is not int or self.daemon.pid <= 0
+                or (self.daemon.pgid is not None and (type(self.daemon.pgid) is not int or self.daemon.pgid <= 0))):
+            raise ValueError("Unsupported browser producer observation")
+        import re
+        _text(self.daemon.start_token, "daemon incarnation")
+        if not re.fullmatch(r"ody-[a-f0-9]{24}", self.session_key):
+            raise ValueError("Malformed browser session selector")
+        for value in (self.configuration_digest, self.browser_instance_digest, self.session_incarnation):
+            if not re.fullmatch(r"[a-f0-9]{64}", value):
+                raise ValueError("Malformed browser digest")
+        if incarnation(self) != self.session_incarnation:
+            raise ValueError("Browser incarnation digest changed")
+
+    def to_dict(self):
+        return {**asdict(self), "daemon": self.daemon.to_record()}
+
+    @classmethod
+    def from_dict(cls, value):
+        from src.process_lifecycle import ProcessIdentity
+        if not isinstance(value, dict) or set(value) != set(cls.__dataclass_fields__):
+            raise ValueError("Malformed browser observation snapshot")
+        daemon = value["daemon"]
+        if not isinstance(daemon, dict) or set(daemon) != {"pid", "start_token", "pgid"}:
+            raise ValueError("Malformed browser daemon observation")
+        return cls(**{**value, "daemon": ProcessIdentity(**daemon)})
+
+
+@dataclass(frozen=True)
+class BrowserSessionResource:
+    owner: str
+    thread_id: str
+    observation: BrowserSessionObservation
+
+    def __post_init__(self):
+        _text(self.owner, "browser owner")
+        _text(self.thread_id, "browser thread")
+        if not isinstance(self.observation, BrowserSessionObservation):
+            raise ValueError("Missing browser session observation")
+
+    def validate(self):
+        from src.browser_identity import validate_session
+        validate_session(self)
+
+    def to_dict(self):
+        return {"owner": self.owner, "thread_id": self.thread_id, "observation": self.observation.to_dict()}
+
+    @classmethod
+    def from_dict(cls, value):
+        if not isinstance(value, dict) or set(value) != {"owner", "thread_id", "observation"}:
+            raise ValueError("Malformed browser resource snapshot")
+        return cls(value["owner"], value["thread_id"], BrowserSessionObservation.from_dict(value["observation"]))
+
+
+@dataclass(frozen=True)
+class BrowserPageResource:
+    session: BrowserSessionResource
+    target_id: str
+    loader_id: str
+    resolved_alias: str = ""
+    observed_url: str = ""
+    scope: str = "document"
+
+    def __post_init__(self):
+        import re
+        if not isinstance(self.session, BrowserSessionResource) or not re.fullmatch(r"[A-F0-9]{32}", self.target_id):
+            raise ValueError("Malformed browser page identity")
+        if self.scope not in {"page", "document"}:
+            raise ValueError("Malformed browser page scope")
+        _text(self.loader_id, "document loader", optional=self.scope == "page")
+        _text(self.observed_url, "observed URL", optional=True)
+        if self.resolved_alias and not re.fullmatch(r"t[1-9][0-9]*", self.resolved_alias):
+            raise ValueError("Malformed browser alias metadata")
+
+    def authority_key(self):
+        return (self.session, self.target_id, self.loader_id if self.scope == "document" else None)
+
+    def validate(self):
+        from src.browser_identity import validate_page
+        validate_page(self)
+
+    def to_dict(self):
+        return {**asdict(self), "session": self.session.to_dict()}
+
+    @classmethod
+    def from_dict(cls, value):
+        if not isinstance(value, dict) or set(value) != set(cls.__dataclass_fields__):
+            raise ValueError("Malformed browser page snapshot")
+        return cls(**{**value, "session": BrowserSessionResource.from_dict(value["session"])})
 
 
 @dataclass(frozen=True)
@@ -437,34 +550,6 @@ class BackgroundJobResource:
         if not isinstance(value, dict) or set(value) != {"namespace", "job_id", "generation", "owner", "request_id", "thread_id", "containment_id", "processes"} or not isinstance(value["processes"], list):
             raise ValueError("Malformed background resource snapshot")
         return cls(**{**value, "processes": tuple(ProcessResource.from_dict(p) for p in value["processes"])})
-
-
-@dataclass(frozen=True)
-class BrowserProducer:
-    namespace: str
-    owner: str
-    thread_id: str
-    session_id: str
-    incarnation: str
-
-    def __post_init__(self):
-        for name in ("namespace", "owner", "thread_id", "session_id", "incarnation"):
-            _text(getattr(self, name), name)
-
-
-@dataclass(frozen=True)
-class BrowserPageResource:
-    producer: BrowserProducer
-    page_id: str
-    navigation_generation: int
-    observed_url: str
-
-    def __post_init__(self):
-        if (not isinstance(self.producer, BrowserProducer)
-                or type(self.navigation_generation) is not int or self.navigation_generation < 0):
-            raise ValueError("Malformed browser page identity")
-        _text(self.page_id, "page")
-        _text(self.observed_url, "observed URL")
 
 
 @dataclass(frozen=True)

@@ -158,7 +158,7 @@ SAFE_ACTIONS = {
     'manage_contact': frozenset({'list', 'search', 'find'}),
     'private_browser': frozenset({
         'open', 'read', 'snapshot', 'find', 'evaluate', 'click', 'fill', 'press',
-        'scroll', 'wait', 'screenshot', 'close', 'batch',
+        'scroll', 'wait', 'screenshot', 'close', 'session_info',
     }),
     # These UI effects are reversible. A model switch is additionally bound
     # below to explicit user wording; keep toggle mutation, mode changes, and
@@ -2472,31 +2472,16 @@ def compact_schemas(schemas, *, model=None):
                 properties['code']['description'] = 'Valid Python source code to execute once.'
         elif function.get('name') == 'private_browser':
             function['description'] = (
-                'Browse and interact with websites. First open then snapshot the page. '
-                'Use returned element refs (such as @e1) for fill/click; never guess selectors. '
-                'press uses a keyboard key such as Enter on the focused element. '
-                'To search a site, fill its search field and submit, then snapshot results. '
-                'find only locates one existing page element/text; it does not search the site. '
-                'To list links, headings, or controls, use snapshot and read its returned DOM.'
+                'Registered session_info metadata only. Page/document reads and effects are '
+                'unavailable because the producer cannot atomically bind a captured page. '
+                'No batch, raw commands, flags, labels or current-tab selectors.'
             )
             for name in ('target', 'selector'):
                 if isinstance(properties.get(name), dict):
                     properties[name]['description'] = (
-                        'For click/fill/read/wait: snapshot ref such as @e2 or CSS selector, not visible text.'
+                        'Disabled page operation: ref such as @e2 or CSS selector, not visible text.'
                     )
-            if isinstance(properties.get('key'), dict):
-                properties['key']['description'] = 'For press: keyboard key such as Enter on the currently focused element.'
-            commands = properties.get('commands')
-            if isinstance(commands, dict):
-                commands['description'] = (
-                    'For action=batch, an array of command arrays such as '
-                    '[["open","https://example.com"],["snapshot"]].'
-                )
-                commands['items'] = {
-                    'type': 'array',
-                    'items': {'type': 'string'},
-                    'minItems': 1,
-                }
+            properties.pop('commands', None)
         elif function.get('name') == 'ui_control':
             function['description'] = (
                 'Control the UI. Themes: get_theme reads current saved colors and available names; '
@@ -2673,28 +2658,6 @@ def normalize_preview_function_args(name, args, *, user_text=''):
         args['content'] += '\n'
     tool_type, normalized = normalize_native_function_args(name, args)
     if (
-        tool_type == 'private_browser'
-        and str(normalized.get('action') or '').casefold() == 'open'
-        and str(normalized.get('url') or '').startswith(('http://', 'https://'))
-    ):
-        # Opening a page invalidates old element references.  The compact
-        # model commonly emits only ``open`` and then answers from the title,
-        # leaving a later conversational turn with no refs it can safely
-        # click.  Make the transport honor the browser schema's documented
-        # open-then-snapshot contract in one atomic call.  This is generic DOM
-        # grounding, not a rule for any particular site or link label.
-        normalized = {
-            'action': 'batch',
-            'commands': [
-                ['open', normalized['url']],
-                ['snapshot'],
-            ],
-            **(
-                {'timeout_ms': normalized['timeout_ms']}
-                if normalized.get('timeout_ms') is not None else {}
-            ),
-        }
-    if (
         tool_type == 'inspect_media'
         and str(normalized.get('sampling') or '').casefold() == 'overview'
         and normalized.get('frames') is None
@@ -2703,6 +2666,7 @@ def normalize_preview_function_args(name, args, *, user_text=''):
         # eight observations per native sheet. Avoid the tool's broader
         # default, which would require lossy second-stage sheet packing.
         normalized['frames'] = 24
+
     return tool_type, normalized
 
 

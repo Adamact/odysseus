@@ -3392,7 +3392,7 @@ def test_skill_update_alias_normalizes_to_edit_before_policy():
     assert args['action'] == 'edit'
 
 
-def test_private_browser_open_normalizes_to_atomic_snapshot_batch():
+def test_private_browser_open_never_creates_an_internal_batch():
     tool, args = normalize_preview_function_args(
         'private_browser',
         {'action': 'open', 'url': 'https://example.com', 'timeout_ms': 12000},
@@ -3400,8 +3400,8 @@ def test_private_browser_open_normalizes_to_atomic_snapshot_batch():
 
     assert tool == 'private_browser'
     assert args == {
-        'action': 'batch',
-        'commands': [['open', 'https://example.com'], ['snapshot']],
+        'action': 'open',
+        'url': 'https://example.com',
         'timeout_ms': 12000,
     }
 
@@ -3495,7 +3495,7 @@ def test_every_compactly_offered_preview_tool_has_valid_policy_permitted_call():
         'chat_with_model': ({'model': 'qwen', 'message': 'hello'}, 'ask model qwen to answer hello'),
         'pipeline': ({'steps': [{'model': 'qwen', 'instruction': 'draft'}]}, 'run a model pipeline to draft'),
         'pdf_extract': ({'url': 'https://example.com/x.pdf', 'query': 'metric'}, 'read this pdf'),
-        'private_browser': ({'action': 'batch', 'commands': [['open', 'https://example.com'], ['snapshot']]}, 'use the private browser'),
+        'private_browser': ({'action': 'session_info'}, 'use the private browser'),
         'read_email': ({'uid': '1'}, 'read my email'),
         'reply_to_email': ({'uid': '1', 'body': 'Thanks'}, 'reply to email UID 1 saying Thanks'),
         'search_chats': ({'query': 'project'}, 'search my chats'),
@@ -4322,23 +4322,19 @@ def test_compact_browser_distinguishes_element_refs_from_keyboard_keys():
     original = next(s for s in FUNCTION_TOOL_SCHEMAS if s['function']['name'] == 'private_browser')
     browser = compact_schemas([original])[0]['function']
     assert 'fill/click/press' not in browser['description']
-    assert 'key' in browser['description'] and 'Enter' in browser['description']
-    assert 'focused' in browser['parameters']['properties']['key']['description']
+    assert 'unavailable' in browser['description']
+    assert 'commands' not in browser['parameters']['properties']
     assert set(browser['parameters']['properties']) == set(original['function']['parameters']['properties'])
 
 
-def test_v3_browser_batch_schema_matches_executor_sequence_contract():
+def test_v3_browser_schema_does_not_offer_batch_or_current_tab_authority():
     browser = next(
         schema for schema in compact_schemas(FUNCTION_TOOL_SCHEMAS)
         if schema['function']['name'] == 'private_browser'
     )['function']
-    commands = browser['parameters']['properties']['commands']
-
-    assert commands['items']['type'] == 'array'
-    assert commands['items']['items'] == {'type': 'string'}
-    assert '[["open"' in commands['description']
-    assert 'snapshot' in browser['description']
-    assert 'does not search the site' in browser['description']
+    assert 'commands' not in browser['parameters']['properties']
+    assert 'batch' not in browser['parameters']['properties']['action']['enum']
+    assert 'unavailable' in browser['description']
 
 
 def test_v3_browser_target_fields_preserve_selector_semantics():

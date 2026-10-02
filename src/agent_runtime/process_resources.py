@@ -347,8 +347,11 @@ def guard_launch_workspace(root):
     They do not claim freedom from concurrent link replacement after checking.
     """
     from src import bg_jobs, containment, constants
+    from src import browser_identity
     from src.agent_runtime.resources import _control_plane_path
     control = (Path(bg_jobs._STORE), Path(bg_jobs._JOBS_DIR), containment._store_path(), _LAUNCH_DIR,
+               Path(constants.BROWSER_RESOURCES_DIR),
+               browser_identity.STATE_ROOT,
                Path(constants.APP_DB), Path(constants.AUTH_FILE), Path(constants.SETTINGS_FILE))
     base = Path(root.path)
     if any(Path(p).resolve().is_relative_to(base) for p in control):

@@ -14,6 +14,7 @@ from uuid import uuid4
 from src.agent_runtime.resources import (
     FilesystemRoot, ExternalResource, NativeBackendResource, OwnedScope,
     ProcessLaunchScope, ProcessResource, BackgroundJobResource,
+    BrowserSessionResource, BrowserPageResource,
     backend_from_dict, intersect_roots, seal_owned_scopes,
 )
 from src.tool_policy import ToolPolicy, build_effective_tool_policy
@@ -124,6 +125,8 @@ class RequestAuthority:
     launch_scopes: tuple[ProcessLaunchScope, ...] | None = None
     process_resources: tuple[ProcessResource, ...] = ()
     job_resources: tuple[BackgroundJobResource, ...] | None = None
+    browser_sessions: tuple[BrowserSessionResource, ...] | None = None
+    browser_pages: tuple[BrowserPageResource, ...] | None = None
 
     def __post_init__(self):
         if (not isinstance(self.request_id, str) or not self.request_id
@@ -178,11 +181,24 @@ class RequestAuthority:
             raise ValueError("Job resource thread changed")
         if any(r.thread_id != (self.session_id or "request:" + self.request_id) for r in self.process_resources):
             raise ValueError("Process resource thread changed")
+        from src.browser_identity import seal_browser_resources
+        sessions, pages = seal_browser_resources(self) if self.browser_sessions is None or self.browser_pages is None else ((), ())
+        if self.browser_sessions is None:
+            object.__setattr__(self, "browser_sessions", sessions)
+        if self.browser_pages is None:
+            object.__setattr__(self, "browser_pages", pages)
+        for values, kind in ((self.browser_sessions, BrowserSessionResource), (self.browser_pages, BrowserPageResource)):
+            if not isinstance(values, tuple) or any(not isinstance(r, kind) for r in values):
+                raise ValueError("Malformed browser resource scope")
+            for r in values:
+                session = r.session if isinstance(r, BrowserPageResource) else r
+                if (session.owner, session.thread_id) != (self.owner, self.session_id):
+                    raise ValueError("Browser owner/thread binding changed")
 
     @classmethod
     def empty(cls, *, owner=None, session_id=None, workspace=None):
         return cls(uuid4().hex, _owner(owner), str(session_id or ""), str(workspace or ""),
-                   resource_roots=(), backend_resources=(), owned_scopes=(), launch_scopes=(), job_resources=())
+                   resource_roots=(), backend_resources=(), owned_scopes=(), launch_scopes=(), job_resources=(), browser_sessions=(), browser_pages=())
 
     def bound_to(self, *, owner=None, session_id=None, workspace=None):
         return (self.owner == _owner(owner) and self.session_id == str(session_id or "")
@@ -211,6 +227,7 @@ class RequestAuthority:
         backends = ()
         owned = ()
         launches = processes = jobs = ()
+        browser_sessions = browser_pages = ()
         if (self.owner, self.session_id, self.workspace) == (child.owner, child.session_id, child.workspace):
             theirs = {g.tool: g for g in child.grants}
             grants = [g.intersect(theirs[g.tool]) for g in self.grants if g.tool in theirs]
@@ -222,11 +239,15 @@ class RequestAuthority:
             launches = intersect_launch_scopes(self.launch_scopes, child.launch_scopes)
             processes = intersect_observed(self.process_resources, child.process_resources, lambda r: r.validate())
             jobs = intersect_observed(self.job_resources, child.job_resources, validate_job)
+            from src.browser_identity import intersect_browser
+            browser_sessions, browser_pages = intersect_browser(self.browser_sessions, self.browser_pages,
+                child.browser_sessions, child.browser_pages)
         return replace(self, grants=tuple(grants), denied=self.denied | child.denied,
                        block_all=self.block_all or child.block_all,
                        disable_mcp=self.disable_mcp or child.disable_mcp, inherited=True,
                        resource_roots=roots, backend_resources=backends, owned_scopes=owned,
-                       launch_scopes=launches, process_resources=processes, job_resources=jobs)
+                       launch_scopes=launches, process_resources=processes, job_resources=jobs,
+                       browser_sessions=browser_sessions, browser_pages=browser_pages)
 
     def continuation(self, *, owner=None, session_id=None):
         """A server continuation may rebind a session, never change owner/grants."""
@@ -236,10 +257,12 @@ class RequestAuthority:
         return replace(self, session_id=rebound, inherited=True,
                        owned_scopes=tuple(replace(s, thread_id=rebound) for s in self.owned_scopes) if rebound else (),
                        process_resources=tuple(r for r in self.process_resources if r.thread_id == rebound),
-                       job_resources=tuple(r for r in self.job_resources if r.thread_id == rebound))
+                       job_resources=tuple(r for r in self.job_resources if r.thread_id == rebound),
+                       browser_sessions=tuple(r for r in self.browser_sessions if r.thread_id == rebound),
+                       browser_pages=tuple(r for r in self.browser_pages if r.session.thread_id == rebound))
 
     def to_dict(self):
-        return {"version": 4, "request_id": self.request_id, "owner": self.owner,
+        return {"version": 5, "request_id": self.request_id, "owner": self.owner,
                 "session_id": self.session_id, "workspace": self.workspace,
                 "grants": [{"tool": g.tool,
                             "actions": None if g.actions is None else sorted(g.actions),
@@ -251,12 +274,14 @@ class RequestAuthority:
                 "owned_scopes": [s.to_dict() for s in self.owned_scopes],
                 "launch_scopes": [s.to_dict() for s in self.launch_scopes],
                 "process_resources": [r.to_dict() for r in self.process_resources],
-                "job_resources": [r.to_dict() for r in self.job_resources]}
+                "job_resources": [r.to_dict() for r in self.job_resources],
+                "browser_sessions": [r.to_dict() for r in self.browser_sessions],
+                "browser_pages": [r.to_dict() for r in self.browser_pages]}
 
     @classmethod
     def from_dict(cls, value):
         if (not isinstance(value, dict) or type(value.get("version")) is not int
-                or value["version"] not in {1, 2, 3, 4}):
+                or value["version"] not in {1, 2, 3, 4, 5}):
             raise ValueError("Unsupported authority snapshot")
         def limits(value):
             if value is None:
@@ -275,6 +300,8 @@ class RequestAuthority:
             raise ValueError("Malformed process resource snapshot")
         if not isinstance(backends, list) or not isinstance(owned, list):
             raise ValueError("Malformed request resource scope snapshot")
+        if value["version"] >= 5 and any(not isinstance(value.get(name), list) for name in ("browser_sessions", "browser_pages")):
+            raise ValueError("Malformed browser resource scope snapshot")
         return cls(value["request_id"], value["owner"], value["session_id"], value["workspace"],
                    tuple(OperationGrant(g["tool"], limits(g["actions"]), limits(g["inputs"]))
                          for g in value["grants"]), limits(value["denied"]),
@@ -283,11 +310,13 @@ class RequestAuthority:
                    tuple(backend_from_dict(r) for r in backends), tuple(OwnedScope.from_dict(s) for s in owned),
                    tuple(ProcessLaunchScope.from_dict(s) for s in process_fields["launch_scopes"]),
                    tuple(ProcessResource.from_dict(r) for r in process_fields["process_resources"]),
-                   tuple(BackgroundJobResource.from_dict(r) for r in process_fields["job_resources"]))
+                   tuple(BackgroundJobResource.from_dict(r) for r in process_fields["job_resources"]),
+                   tuple(BrowserSessionResource.from_dict(r) for r in value["browser_sessions"]) if value["version"] >= 5 else (),
+                   tuple(BrowserPageResource.from_dict(r) for r in value["browser_pages"]) if value["version"] >= 5 else ())
 
 
 _BROWSER_READ_ACTIONS = frozenset({"open", "navigate", "snapshot", "text", "read", "find",
-    "screenshot", "scroll", "back", "forward", "wait", "status", "close", "tabs"})
+    "screenshot", "scroll", "back", "forward", "wait", "status", "close", "tabs", "session_info"})
 
 
 @dataclass(frozen=True)
@@ -505,7 +534,9 @@ def seal_task_authority(prompt, task_type, action, *, owner=None, parent_authori
                                             owned_scopes=parent.owned_scopes,
                                             launch_scopes=parent.launch_scopes,
                                             process_resources=parent.process_resources,
-                                            job_resources=parent.job_resources))
+                                            job_resources=parent.job_resources,
+                                            browser_sessions=parent.browser_sessions,
+                                            browser_pages=parent.browser_pages))
     return _json({"task_input": [prompt, task_type, action], "authority": authority.to_dict()})
 
 

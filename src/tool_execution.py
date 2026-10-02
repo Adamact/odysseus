@@ -1327,6 +1327,10 @@ from src.agent_runtime.authority import (
 from src.agent_runtime.process_resources import (
     active_process_operation, bind_process_operation, needs_process_binding, resolve_process_operation,
 )
+from src.browser_identity import (
+    native_browser, parse_operation as parse_browser_operation, SESSION_ACTIONS,
+    page_unavailable, resolve_browser_operation, bind_browser_operation, revalidate_browser_operation,
+)
 
 
 @record_action
@@ -1411,6 +1415,22 @@ async def execute_tool_block(
         }
 
     transport = operation.transport_tool
+    if operation.tool == "private_browser":
+        try:
+            _, browser_args = parse_browser_operation(operation.input)
+        except (ValueError, TypeError):
+            return f"{transport}: UNSUPPORTED", {**page_unavailable(), "error": "Browser raw commands, flags and batches are unsupported."}
+        if browser_args["action"] not in SESSION_ACTIONS:
+            return f"{transport}: UNSUPPORTED", page_unavailable()
+    # Raw global Playwright MCP has no authoritative session/page observation.
+    # Its transport process and remote backend identity cannot substitute for it.
+    if transport.startswith("mcp__") and transport.rsplit("__", 1)[-1] in {
+        "browser_click", "browser_fill_form", "browser_type", "browser_press_key", "browser_evaluate",
+        "browser_navigate", "browser_navigate_back", "browser_snapshot", "browser_take_screenshot",
+        "browser_wait_for", "browser_tabs", "browser_close", "browser_run_code", "browser_network_requests",
+        "browser_console_messages", "browser_drag", "browser_hover", "browser_select_option",
+        "browser_file_upload", "browser_handle_dialog", "browser_resize", "browser_install"}:
+        return f"{transport}: UNSUPPORTED", page_unavailable()
     try:
         pending = exact_approval.pending if exact_approval is not None else None
         if pending is not None and pending.backend_operation is None:
@@ -1420,8 +1440,20 @@ async def execute_tool_block(
             approved=pending.backend_operation if pending is not None else None,
             exact_admission=exact_admission)
         external_resource_call = isinstance(backend_operation.resource, ExternalResource)
+        if operation.tool == "private_browser" and external_resource_call:
+            raise ResourceIdentityError("External backend cannot supply native browser session authority")
         owned_operation = None
         process_operation = None
+        browser_operation = None
+        if native_browser(operation, backend_operation.resource):
+            _, browser_args = parse_browser_operation(operation.input)
+            if browser_args["action"] not in SESSION_ACTIONS:
+                return f"{transport}: UNSUPPORTED", page_unavailable()
+            if pending is not None and pending.browser_operation is None:
+                raise ResourceIdentityError("Approved action has no sealed browser identity")
+            browser_operation = resolve_browser_operation(authority, operation,
+                approved=pending.browser_operation if pending is not None else None, exact_admission=exact_admission)
+            await revalidate_browser_operation(browser_operation)
         if needs_process_binding(operation, backend_operation.resource):
             if pending is not None and pending.process_operation is None:
                 raise ResourceIdentityError("Approved action has no sealed process/job identity")
@@ -1555,11 +1587,13 @@ async def execute_tool_block(
         backend_operation.validate(client_runtime_context)
         if process_operation is not None and approval_claimed:
             process_operation = replace(process_operation, exact_approval=exact_approval)
+        if browser_operation is not None and approval_claimed:
+            browser_operation = replace(browser_operation, exact_approval=exact_approval)
         normalized = resource_operation or owned_operation
         sealed_document = owned_operation or (exact_approval.pending if approval_claimed else None)
         with (bind_request_authority(authority), bind_resource_operation(resource_operation),
               bind_backend_operation(backend_operation), bind_owned_operation(owned_operation),
-              bind_process_operation(process_operation)):
+              bind_process_operation(process_operation), bind_browser_operation(browser_operation)):
             output = await _execute_tool_block_impl(
                 ToolBlock(transport, normalized.execution_input) if normalized is not None else block,
                 session_id=session_id,
