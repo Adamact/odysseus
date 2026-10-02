@@ -352,3 +352,148 @@ async def test_direct_local_cookbook_control_does_not_enroll_discovered_processe
     # mint a process resource even when the UI supplies a matching name.
     result = await cookbook._cookbook_kill_session("serve-unowned")
     assert result["failure_kind"] == "resource_identity_denied"
+
+
+def test_direct_containment_attachment_skips_unobservable_token(workspace, monkeypatch):
+    import uuid
+    from src.agent_runtime.resources import ProcessResource
+
+    # 1. Unobservable child token: pid exists, start_token is None
+    op = ExactOperation.normalize("bash", "printf test")
+    bound = resources.resolve_process_operation(authority(workspace), op, NativeBackendResource("bash"))
+    launch = bound.launch
+    containment_id = uuid.uuid4().hex
+
+    resources.publish_launch(launch, authority(workspace), containment_id)
+    containment._save_records({
+        containment_id: {
+            "id": containment_id,
+            "launch_generation": launch.generation,
+            "workspace": launch.scope.root.path,
+            "pid": 54321,
+            "start_token": None,
+            "pgid": 54321,
+            "mechanism": "process_group",
+        }
+    })
+
+    # Guard: ensure no attempt is made to rediscover/rebind from process table
+    monkeypatch.setattr(process_ownership, "process_table", lambda *a, **k: pytest.fail("re-read process table"))
+    monkeypatch.setattr(process_ownership, "start_token", lambda *a, **k: pytest.fail("re-read current PID start_token"))
+
+    # Must NOT raise
+    resources.attach_containment_processes(launch, containment_id)
+
+    # Publication remains valid
+    pub_path = resources.launch_path(launch.generation)
+    published = json.loads(pub_path.read_text())
+    assert published["launch"] == launch.to_dict()
+    assert published["containment_id"] == containment_id
+    assert published["processes"] == []
+
+    # 2. Record with pid + valid token still publishes exact ProcessResource
+    op_valid = ExactOperation.normalize("bash", "printf valid")
+    bound_valid = resources.resolve_process_operation(authority(workspace), op_valid, NativeBackendResource("bash"))
+    launch_valid = bound_valid.launch
+    cid_valid = uuid.uuid4().hex
+
+    resources.publish_launch(launch_valid, authority(workspace), cid_valid)
+    containment._save_records({
+        cid_valid: {
+            "id": cid_valid,
+            "launch_generation": launch_valid.generation,
+            "workspace": launch_valid.scope.root.path,
+            "pid": 65432,
+            "start_token": "procfs:boot:token65432",
+            "pgid": 65432,
+            "mechanism": "process_group",
+        }
+    })
+
+    resources.attach_containment_processes(launch_valid, cid_valid)
+    published_valid = json.loads(resources.launch_path(launch_valid.generation).read_text())
+    assert len(published_valid["processes"]) == 1
+    leader_res = ProcessResource.from_dict(published_valid["processes"][0])
+    assert leader_res.role == "leader"
+    assert leader_res.identity.pid == 65432
+    assert leader_res.identity.start_token == "procfs:boot:token65432"
+    assert leader_res.identity.pgid == 65432
+
+
+@pytest.mark.parametrize("tool,command,expected_out", [
+    ("bash", "printf hi", "hi"),
+    ("python", "print('hi', end='')", "hi"),
+])
+async def test_end_to_end_fast_exit_preserves_command_result(workspace, monkeypatch, tool, command, expected_out):
+    import os
+    original_capture = process_ownership.capture
+    def mocked_capture(pid):
+        if pid == os.getpid():
+            return original_capture(pid)
+        return {"pid": pid, "start_token": None}
+    monkeypatch.setattr(process_ownership, "capture", mocked_capture)
+
+    auth = authority(workspace, tool=tool)
+    approval = approval_for(auth, tool, command)
+    _, result = await dispatch(auth, tool, command, approval)
+
+    assert result["exit_code"] == 0
+    assert result.get("output") == expected_out
+    assert "failure_kind" not in result or result["failure_kind"] != "resource_linkage_unavailable"
+
+    launches_dir = resources._LAUNCH_DIR
+    launch_files = list(launches_dir.glob("*.json"))
+    assert launch_files
+    cid = result.get("containment", {}).get("id")
+    assert cid
+    matching = [json.loads(p.read_text()) for p in launch_files if json.loads(p.read_text()).get("containment_id") == cid]
+    assert len(matching) == 1
+    assert matching[0]["processes"] == []
+
+
+def test_missing_start_token_security_negative(workspace, monkeypatch):
+    import uuid
+    import src.process_lifecycle as pl
+    from src.process_lifecycle import ProcessIdentity
+
+    op = ExactOperation.normalize("bash", "printf test")
+    bound = resources.resolve_process_operation(authority(workspace), op, NativeBackendResource("bash"))
+    launch = bound.launch
+    cid = uuid.uuid4().hex
+
+    resources.publish_launch(launch, authority(workspace), cid)
+    containment._save_records({
+        cid: {
+            "id": cid,
+            "launch_generation": launch.generation,
+            "workspace": launch.scope.root.path,
+            "pid": 77777,
+            "start_token": None,
+            "pgid": 77777,
+            "mechanism": "process_group",
+        }
+    })
+
+    created_identities = []
+    orig_identity_init = ProcessIdentity.__init__
+    def spy_identity_init(self, pid, start_token, pgid=None):
+        created_identities.append((pid, start_token, pgid))
+        return orig_identity_init(self, pid, start_token, pgid=pgid)
+
+    monkeypatch.setattr(ProcessIdentity, "__init__", spy_identity_init)
+    monkeypatch.setattr(process_ownership, "process_table", lambda *a, **k: pytest.fail("PID rediscovery attempted via process_table"))
+    monkeypatch.setattr(process_ownership, "start_token", lambda *a, **k: pytest.fail("PID rediscovery attempted via start_token"))
+
+    resources.attach_containment_processes(launch, cid)
+
+    # 1. No ProcessIdentity created for this unobservable process
+    assert not any(pid == 77777 for pid, token, pgid in created_identities)
+
+    # 2. No process authority published
+    published = json.loads(resources.launch_path(launch.generation).read_text())
+    assert published["processes"] == []
+
+    # 3. No signal authority
+    fake_ident = ProcessIdentity(77777, None, 77777)
+    assert fake_ident.verdict() == process_ownership.UNVERIFIABLE
+    assert pl.signal_identity(fake_ident, 15) is False

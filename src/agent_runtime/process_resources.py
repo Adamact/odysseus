@@ -410,10 +410,13 @@ def attach_containment_processes(launch, containment_id):
     processes = []
     for role, pid_key, token_key, group_key in (("leader", "pid", "start_token", "pgid"),
             ("namespace_init", "namespace_pid", "namespace_start_token", None)):
-        if record.get(pid_key):
-            processes.append(ProcessResource("native:containment", launch.owner, launch.request_id,
-                launch.thread_id, ProcessIdentity(record[pid_key], record.get(token_key), record.get(group_key) if group_key else None),
-                role, "", containment_id))
+        pid = record.get(pid_key)
+        token = record.get(token_key)
+        if not pid or not token:
+            continue
+        processes.append(ProcessResource("native:containment", launch.owner, launch.request_id,
+            launch.thread_id, ProcessIdentity(pid, token, record.get(group_key) if group_key else None),
+            role, "", containment_id))
     from core.atomic_io import atomic_write_json
     published["processes"] = [p.to_dict() for p in processes]
     atomic_write_json(path, published)
