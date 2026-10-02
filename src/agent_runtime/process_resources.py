@@ -452,8 +452,10 @@ def prune_foreground_publications():
 
     A dead/replaced manager cannot resume attachment. A missing receipt also
     makes attachment impossible; publication cannot reconstruct that receipt.
-    Its process tree still belongs to containment recovery; deleting a publication never signals or
-    asserts tree death. Live/unverifiable managers and background history stay.
+    Its process tree still belongs to containment recovery; deleting a
+    publication never signals or asserts tree death. Live/unverifiable managers
+    retain publication even after child teardown: attachment may still need it.
+    Background history stays intact.
     """
     from src import containment
     from src import process_ownership
@@ -471,13 +473,16 @@ def prune_foreground_publications():
             published = json.loads(path.read_text())
             launch = ProcessLaunchResource.from_dict(published["launch"])
             receipt = receipts.get(published["containment_id"])
-            abandoned = receipt is not None and process_ownership.verify(receipt.get("manager_pid"), receipt.get("manager_token")) in {
-                process_ownership.GONE, process_ownership.FOREIGN}
+            abandoned = (receipt is not None
+                and type(receipt.get("manager_pid")) is int and receipt["manager_pid"] > 0
+                and isinstance(receipt.get("manager_token"), str) and bool(receipt["manager_token"])
+                and process_ownership.verify(receipt["manager_pid"], receipt["manager_token"]) in {
+                    process_ownership.GONE, process_ownership.FOREIGN})
             if (published.get("job") is None and path == launch_path(launch.generation)
                     and (receipt is None or (
                         receipt.get("launch_generation") == launch.generation
                         and receipt.get("id") == published["containment_id"]
-                        and ((receipt.get("release") or {}).get("dead") is True or abandoned)))):
+                        and abandoned))):
                 # Already under the publication lock; no nested file lock.
                 path.unlink()
                 retired += 1

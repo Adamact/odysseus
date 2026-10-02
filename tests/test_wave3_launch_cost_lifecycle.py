@@ -128,6 +128,7 @@ def test_old_generation_retirement_cannot_delete_replacement(workspace):
 
 @pytest.mark.parametrize('manager,release,retired', [
     (process_ownership.OWNED, False, False), (process_ownership.UNVERIFIABLE, False, False),
+    (process_ownership.OWNED, True, False), (process_ownership.UNVERIFIABLE, True, False),
     (process_ownership.GONE, False, True), (process_ownership.FOREIGN, False, True),
     (process_ownership.GONE, True, True),
 ])
@@ -176,5 +177,16 @@ def test_unreadable_receipts_cannot_retire_live_consumers(workspace, receipt_dat
     launch = resources.resolve_process_operation(admitted, ExactOperation.normalize('bash', 'printf pending'), NativeBackendResource('bash')).launch
     resources.publish_launch(launch, admitted, 'receipt')
     containment._store_path().write_text(receipt_data)
+    assert resources.prune_foreground_publications() == 0
+    assert resources.launch_path(launch.generation).is_file()
+
+
+def test_missing_manager_identity_cannot_retire_attachment(workspace, monkeypatch):
+    admitted = authority(workspace)
+    launch = resources.resolve_process_operation(admitted, ExactOperation.normalize('bash', 'printf pending'), NativeBackendResource('bash')).launch
+    resources.publish_launch(launch, admitted, 'receipt')
+    atomic_write_json(containment._store_path(), {'receipt': {'id': 'receipt',
+        'launch_generation': launch.generation, 'release': {'dead': True}}})
+    monkeypatch.setattr(process_ownership, 'verify', lambda *args: pytest.fail('Missing manager treated as observed'))
     assert resources.prune_foreground_publications() == 0
     assert resources.launch_path(launch.generation).is_file()
