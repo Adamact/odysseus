@@ -1425,7 +1425,7 @@ async def execute_tool_block(
                 owner=owner, session_id=session_id, workspace=workspace,
                 tool_name=getattr(block, "tool_type", None), content=getattr(block, "content", None)))
         admitted = valid and (authority.permits(operation) or exact_admission)
-    except (ValueError, TypeError, AttributeError) as error:
+    except (ValueError, TypeError) as error:
         return f"{getattr(block, 'tool_type', '')}: invalid arguments", {
             "error": (f"Tool arguments are not valid JSON: {error}"
                       if isinstance(error, json.JSONDecodeError) else str(error)),
@@ -1503,7 +1503,7 @@ async def execute_tool_block(
                 authority, operation, document_id=active_document_id,
                 approved=pending.owned_operation if pending is not None else None,
                 exact_admission=exact_admission)
-    except (ValueError, TypeError, OSError, RuntimeError, AttributeError) as error:
+    except (ValueError, TypeError, OSError) as error:
         return f"{transport}: BLOCKED", {
             "error": str(error), "exit_code": 1, "blocked": True,
             "failure_kind": "resource_identity_denied",
