@@ -94,7 +94,18 @@ session, receipts and acknowledgements can stale evidence but never verify.
 
 - One append-only JSONL file per root run lineage under `DATA_DIR/effects`
   (`0600`, directory `0700`, `O_NOFOLLOW`, `st_nlink == 1` required).
-- `claim()` writes and fsyncs before returning; failure raises
+- Every append takes an exclusive `flock` on the log, merges the durable records other
+  writers appended (repairing a torn tail left by a crashed writer), allocates the next
+  position from that merged tail, rejects a record the merged history makes invalid
+  (an outcome for an effect another writer already settled, a recovery outcome for a
+  claim another writer settled or marked RUNNING), then appends, fsyncs and releases.
+  Independent `EffectLog` objects, threads and processes therefore never reuse a
+  position and never settle an effect twice. `history()` merges others' records
+  under a shared lock.
+- `claim()` writes and fsyncs before returning; the first append of each log object
+  also fsyncs the log's directory, and every directory created for it is fsynced in
+  its parent, all under the lock and before the claim returns. A failed write or
+  directory fsync truncates the record back and raises
   `EffectPersistenceError` (a `ResourceIdentityError`). `mark_dispatch` claims before
   assigning `execution_id`, so the dispatcher returns BLOCKED and the backend is never
   invoked; `dispatched()` closes the un-awaited coroutine.
@@ -106,9 +117,16 @@ session, receipts and acknowledgements can stale evidence but never verify.
   claims, leaves RUNNING alone, and is idempotent. `open()` returns the live log or the
   recovered durable one.
 - `launch-<generation>.json` maps a background launch generation to its claim so a
-  later run can settle it.
+  later run can settle it: temp file written and fsynced, `os.replace`d, then the
+  directory fsynced. Durability is POSIX-only (`flock`, directory fsync); neither is
+  claimed elsewhere.
 - The store is a Wave 3 control-plane path (prefix check), so filesystem tools cannot
-  read or write it. Existing containment/process/job stores are not reused.
+  read or write it. Hardlink aliases are caught by `_aliases_effect_store`: logs and
+  index files refuse `st_nlink != 1` and the store is flat, so only a multiply linked
+  regular file on the store's device is checked, by inode, against one non-recursive
+  listing. The store is never added to the recursive control-plane inventory, so cost
+  never grows with accumulated runs. Existing containment/process/job stores are not
+  reused.
 
 ## Adapters (`src/agent_runtime/effect_adapters.py`)
 
@@ -118,10 +136,10 @@ blocks dispatch.
 
 | Family | Claim | Observations / settlement | Verification available |
 | --- | --- | --- | --- |
-| Filesystem write/edit/patch | exact bindings; `write_file` CONTENT_SHA256 of the bytes the producer commits (after fence unwrapping; EXISTS on non-`\n` platforms), `apply_patch` add=CONTENT_SHA256 / delete=ABSENT / update=EXISTS, `edit_file` EXISTS | — | via later admitted `read_file` |
+| Filesystem write/edit/patch | exact bindings; CONTENT_SHA256 of the exact bytes the producer's own transformation writes: `write_file` after fence unwrapping, `edit_file` via the shared pure `_edit_file_text` on the identity-checked pre-state (no newline translation), `apply_patch` add=content / delete=ABSENT / update=`_apply_patch_hunks` on the universal-newline pre-state. If any target's state cannot be derived (unreadable, oversized, undecodable, non-`\n` platform, hunk mismatch) the claim carries no postcondition and stays UNVERIFIED | — | via later admitted complete `read_file` |
 | `read_file` | none (admitted read) | re-reads the exact bound source (identity checked before/after) → COMPLETE digest, or PARTIAL for offset/limit/truncation/structured extraction | decides predicates when COMPLETE |
 | `ls`/`glob`/`grep` | none | PARTIAL existence of the search root | existence only |
-| bash/python launch | unknown scope + launch generation dependency | outcome from containment envelope: TIMED_OUT (`timed_out`), cleanup from `teardown.dead`, RUNNING for `bg_job_id` | none (process exit is not a postcondition) |
+| bash/python launch | unknown scope + launch generation dependency | outcome from containment envelope: TIMED_OUT (`timed_out`), cleanup from `teardown.dead`, RUNNING for `bg_job_id` with a launch reservation, or the host bridge's server-set `detached` | none (process exit is not a postcondition) |
 | `manage_bg_jobs` read | none | JOB_STATE observation; settles the RUNNING launch of the exact generation | none |
 | `manage_bg_jobs` kill | job + its processes | settles the launch as CANCELLED | none |
 | Owned mutation | exact revisioned records (+attachments as dependencies) | — | none (no independent readback contract) |
@@ -133,15 +151,22 @@ blocks dispatch.
 Producer seams added: `job` lifecycle facts on job reads/kills
 (`job_lifecycle_facts`), `timed_out` on containment timeouts, and
 `mutation_attempted` when `write_file`/`edit_file` fail after their truncating open.
-RUNNING is recognized only from the native launch (`bg_job_id`) or a bridge's
-explicit `detached`.
+
+Trust boundary: result keys carry lifecycle meaning only from the producer the
+dispatcher actually bound. An unbound dynamic/registry tool contributes its exit
+status alone (`ProducerFacts(exit_code=...)`); the MCP bridge builds only
+stdout/stderr/exit_code, and `external`/`remote_acknowledged` come from the captured
+`ExternalResource`, not the result. RUNNING requires a bound process producer (and a
+launch reservation for `bg_job_id`); cleanup is attested only by a bound process
+producer; job settlement only by a bound `manage_bg_jobs` read/kill of exactly one
+Wave 3-validated job.
 
 ## Completion integration
 
 No second policy. `completion._ledger()` builds the single `EvidenceLedger` used for
 the decision, `ask_user` filtering and prose filtering, then calls
 `record_effects(entries, action_order, partial_reads)`. Effects change the existing
-`evaluate()` only for declared artifacts and artifact prose:
+`evaluate()` as follows:
 
 - a fresh contradicting readback of a required artifact → FAILED;
 - a required artifact is **unsettled** (BLOCKED, "a later operation may have changed a
@@ -151,7 +176,23 @@ the decision, `ask_user` filtering and prose filtering, then calls
   unknown-scope effects that were cancelled/interrupted, still RUNNING, or failed
   teardown. Settled shell changes remain tracked by existing artifact version capture;
 - partial `read_file` validation events become non-authoritative;
-- `_supports_artifact_claim` applies the same rules, so prose cannot claim the write.
+- `_supports_artifact_claim` applies the same rules, so prose cannot claim the write;
+- with or without declared artifacts, the **latest** effect on any changed file being
+  contradicted by a fresh readback → FAILED (a superseded earlier effect is history);
+- a passing verifier followed by an effect that may have changed state without
+  settled evidence → BLOCKED (the verifier is stale);
+- executed external effects that are not VERIFIED cap the decision at UNVERIFIED
+  (`EXTERNAL_EFFECT_UNVERIFIED`; the run may still end), and `completion_answer`
+  always appends server-authored facts for them ("reported success; any external
+  change it made was not independently verified", "reported failure", "unknown outcome"). This
+  disclosure is structural: it does not depend on recognizing the model's wording.
+  Prose filtering is additionally tightened (remote verbs are mutation claims; an
+  unnamed "I updated it" cannot borrow the single required artifact; bare "Done." is
+  a terminal claim) but is not relied on. A passing verifier still supports test
+  claims beside an unverified external effect; it never speaks for that effect.
+
+A RUNNING background launch alone does not block a run without declared obligations:
+it completes UNVERIFIED.
 
 Ordinary conversation and read-only synthesis are unchanged (no claims, no file).
 `effect_assessments` are added to terminal metrics metadata.
@@ -186,13 +227,14 @@ Tests: `test_effects_foundation.py` (recreated), `test_effect_journal_persistenc
 - **P2 durable integrity:** records carry no MAC. A writer with access to `DATA_DIR`
   outside the tool layer could forge records that a later `load()` accepts — the same
   trust class as the existing job/containment stores.
-- **P2 multi-process:** two processes appending to one log could duplicate sequences;
-  replay then fails closed (never success). No inter-process lock.
+- **P2 concurrent recovery:** a process that opens a log not live in that process
+  recovers its unsettled claims as INTERRUPTED. If the owning run is live in another
+  process at that moment, its later settlement is rejected as a replacement and the
+  effect stays INTERRUPTED (unknown, never success).
 - **P2 unobserved writers:** freshness is relative to recorded history; an external
   change after the last observation is detected only by a new observation.
 - **P2 scope of verification:** VERIFIED is reachable only for filesystem effects.
-  Owned/external effects have no independent readback contract and stay UNVERIFIED;
-  `edit_file` asserts existence only.
+  Owned/external effects have no independent readback contract and stay UNVERIFIED.
 - **P2 conservatism:** unbound tools are unknown scope, so cancelling/interrupting
   even a read-only unbound tool, or a RUNNING background job, blocks later-unsettled
   required artifacts until a new successful mutation.
@@ -200,3 +242,64 @@ Tests: `test_effects_foundation.py` (recreated), `test_effect_journal_persistenc
   background settlement); there is no startup scan. Unopened claims remain on disk
   as unsettled (assessed PENDING/unknown, never success).
 - **P2 retention:** no pruning of effect logs or launch index files.
+
+## Corrective pass (adversarial review verdict B)
+
+| Finding | Disposition |
+| --- | --- |
+| P0-1 log creation lacked directory fsync | Fixed: created directories and the log's entry are fsynced under the lock before the first claim returns; a failed directory fsync rolls the record back and refuses dispatch. |
+| P0-2 `edit_file` verified from existence | Fixed: exact final-content digest from the producer's own pure transformation. A generic "content changed" predicate was rejected: an unrelated write satisfies it. |
+| P0-3 `apply_patch` update verified without the patch | Fixed as P0-2 (universal-newline pre-state, shared hunk application); an underivable target drops all postconditions. |
+| P0-4 unsupported external/MCP prose survived | Fixed structurally: decision cap + mandatory server disclosure; regex tightening is secondary. |
+| P0-5 empty `required_artifacts` bypassed effect obligations | Fixed: latest-effect contradiction, verifier staleness and the external cap apply regardless of declared artifacts. A blanket "any RUNNING effect blocks" rule was rejected (it blocks legitimate background launches and fails runs on superseded effects). |
+| P1-1 result dictionaries influenced RUNNING/cleanup | Fixed: facts scoped to the bound producer (see Adapters). |
+| P1-2 launch index lacked directory fsync | Fixed: fsync temp → replace → fsync directory. |
+| P1-3 `EffectLog.open` not thread-safe | Fixed: `_OPEN_LOCK` around the live check and load; correctness no longer depends on it (file lock + merge). |
+| P1-4 hardlink protection incomplete | Fixed without inventorying the store: `_aliases_effect_store`. |
+| P1-5 child unknown-scope invalidation | Rejected as intended: an unknown-scope child (e.g. a shell command) runs on the parent's host and can change any parent resource, so invalidation is required. Known-scope child effects invalidate only overlapping resources (regression test). |
+| P1-6 concurrent settlement could duplicate sequences | Fixed: lock → merge durable tail → allocate → validate → append → fsync. |
+
+## Wave 3 rebase compatibility checklist
+
+Overlap with the corrective range is `resources.py`, `bg_monitor.py` and
+`subprocess_tools.py`. Trial `git merge-tree` onto `bf697084`: the original candidate
+merges textually clean; the corrected series conflicts in `resources.py` only. After
+the rebase:
+
+1. `resources.py`: Wave 3 splits `_control_plane_path` into `_control_plane_snapshot()`
+   and `_control_plane_path(path, *, snapshot=None)`. **Semantic conflict even where
+   the text merges:** the Wave 4 effect-store prefix check
+   (`if any(Path(path).is_relative_to(d) for d in effect_dirs): return True`) lands
+   inside `_control_plane_snapshot()`, which has no `path` (NameError on first use).
+   This is true of the original candidate's "clean" merge as well. Resolve by putting
+   `_effect_store_dirs()` into the snapshot's prefix `directories` (not the rglob
+   inventory), and calling `_aliases_effect_store(candidate, effect_dirs)` after the
+   candidate `os.stat` in `_control_plane_path` (it needs `st_nlink`, which the identity
+   set does not carry). Keep the alias check per call, not snapshotted: it reads one
+   flat directory, only for multiply linked candidates.
+2. `bg_monitor._run_followup`: Wave 3 returns `FollowupResult`, makes linkage and
+   authority mismatches terminal, and revalidates after the drain. Keep
+   `_settle_launch_effect(resource, rec)` immediately after the first successful
+   `validate_job`, before the authority comparison: settlement is execution evidence
+   from the validated identity only. Confirm a TERMINAL_UNFOLLOWABLE job still settles
+   and that `mark_unfollowable` retirement does not block settlement on later retries.
+3. Launch publication retirement (`retire_launch(..., job=)`,
+   `prune_foreground_publications`): confirm `job_from_record`/`validate_job` still
+   validate a finished background job after its publication is retired, and that the
+   job record keeps the exact launch `generation` used as claim lineage. Otherwise a
+   launch claim stays RUNNING (conservative, but it blocks later artifacts).
+4. `subprocess_tools._run_owned_command`: Wave 3's `finally` retirement block sits
+   next to Wave 4's `"timed_out": True` hunk; keep both.
+5. Process launch validation cost/identity changes (`e23b9b39`, `7445ba70`): confirm
+   `ProcessLaunchResource`/`BackgroundJobResource` fields used by `resource_ref`
+   (`namespace, owner, request_id, thread_id, generation, job_id`) and `to_dict()` are
+   unchanged, and that native `#!bg` launches still bind `process.launch` (RUNNING
+   gating depends on it).
+6. Native local-control capability authorization and scheduled backend authority:
+   confirm newly authorized operations still reach the backend through
+   `dispatched()`/`mark_dispatch`, so each gets a durable claim before invocation, and
+   that no new path invokes a backend outside it.
+7. Diagnostics: Wave 3's preserved resource-denial diagnostics must stay pre-dispatch
+   refusals (no claim, no execution id).
+8. Rerun the four Wave 4 suites plus `test_runtime_resource_integration.py` and the
+   `test_wave3_*` suites on the rebased tree.
