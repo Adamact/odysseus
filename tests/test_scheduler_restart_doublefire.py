@@ -107,11 +107,26 @@ def _drive_scheduler(monkeypatch, pre_start_setup=None):
     monkeypatch.setattr(sch, "_note_pings_loop", _never)
 
     dispatched = []
+
     def _fake_create_task(coro):
-        dispatched.append(coro)
+        name = getattr(getattr(coro, "cr_code", None), "co_name", None)
+
+        # start() schedules the long-lived scheduler loops. This test replaces
+        # asyncio.create_task intentionally, so intercepted coroutine objects
+        # must be closed explicitly instead of being left unawaited.
+        if name != "_never":
+            dispatched.append(coro)
+
+        close = getattr(coro, "close", None)
+        if callable(close):
+            close()
+
         class _T:
-            def cancel(self): pass
+            def cancel(self):
+                pass
+
         return _T()
+
     monkeypatch.setattr("src.task_scheduler.asyncio.create_task", _fake_create_task)
 
     async def _drive():
@@ -120,11 +135,7 @@ def _drive_scheduler(monkeypatch, pre_start_setup=None):
         await sch._check_due_tasks()
         return dispatched
 
-    all_dispatched = asyncio.run(_drive())
-    # start() also fires the long-lived _loop and _note_pings_loop as tasks
-    # (stubbed to _never here); filter those out so the test only counts
-    # real per-poll task dispatches.
-    real_dispatches = [c for c in all_dispatched if c.__name__ != "_never"]
+    real_dispatches = asyncio.run(_drive())
     return cd, ScheduledTask, TaskRun, real_dispatches
 
 

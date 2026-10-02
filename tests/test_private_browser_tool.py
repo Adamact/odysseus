@@ -773,4 +773,3 @@ async def test_shutdown_cleans_up_invalidated_registered_browser_session(monkeyp
     assert cleaned == [(Path("/tmp/test-socket-dir"), "ody-test1234")]
     assert browser._REGISTRY == {}
     record.invalidate.assert_called_once()
-
