@@ -211,7 +211,10 @@ Full-suite skips include smoke/live endpoints without an instance or opt-in,
 the four separately executed release producer probes, the three platform cases,
 missing caldav/chromadb/fitz/openpyxl/markitdown/libmagic/Node Playwright,
 ffmpeg format limitations and missing rsvg-convert. Nothing was silently
-converted into a pass. The two existing strict xfails remain the inferred single-file deletion and inferred CSV overwrite path cases in `test_runtime_behavior_regressions.py`.
+converted into a pass. The two existing strict xfails in
+`test_runtime_behavior_regressions.py` cover negative web-search wording that
+does not yet suppress the offered web tools: "Do not search the web" and
+"No web search please".
 
 Compileall, whitespace, conflict-marker and unmerged-index checks pass.
 The coherent fail-closed implementation is available for independent review;
