@@ -642,14 +642,21 @@ class EffectHistory:
                 raise ValueError("A settled effect outcome cannot be replaced")
             if outcome.execution is not ExecutionOutcome.RUNNING:
                 settled.add(outcome.effect_id)
+        # Derived indexes (not fields): outcomes per effect in sequence order.
+        by_effect: dict[str, list[EffectOutcome]] = {}
+        for outcome in sorted(self.outcomes, key=lambda o: o.sequence):
+            by_effect.setdefault(outcome.effect_id, []).append(outcome)
+        object.__setattr__(self, "_outcomes_by_effect", by_effect)
+        object.__setattr__(self, "_claims_by_id", {c.effect_id: c for c in self.claims})
 
     def claim(self, effect_id: str) -> EffectClaim | None:
-        return next((c for c in self.claims if c.effect_id == effect_id), None)
+        return self._claims_by_id.get(effect_id)
 
     def latest_outcome(self, effect_id: str, before: int | None = None) -> EffectOutcome | None:
-        matching = [o for o in self.outcomes if o.effect_id == effect_id
-                    and (before is None or o.sequence < before)]
-        return max(matching, key=lambda o: o.sequence) if matching else None
+        for outcome in reversed(self._outcomes_by_effect.get(effect_id, ())):
+            if before is None or outcome.sequence < before:
+                return outcome
+        return None
 
     def execution(self, effect_id: str, before: int | None = None) -> ExecutionOutcome:
         outcome = self.latest_outcome(effect_id, before)

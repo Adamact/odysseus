@@ -191,9 +191,12 @@ def _execution(result: Any, facts: ProducerFacts) -> ExecutionOutcome:
         return ExecutionOutcome.INTERRUPTED
     if facts.timed_out:
         return ExecutionOutcome.TIMED_OUT
+    # Only launch-shaped results mean this operation's own work continues:
+    # the native detached launch, or a bridge's explicit detachment. A listing
+    # that merely reports some other thing as "running" is not.
     if isinstance(result.get("bg_job_id"), str) and facts.exit_code == 0:
         return ExecutionOutcome.RUNNING
-    if result.get("detached") is True or result.get("status") == "running" or result.get("running") is True:
+    if result.get("detached") is True:
         return ExecutionOutcome.RUNNING
     denied = bool(result.get("blocked") or result.get("approval_required")
                   or facts.failure_kind.endswith("_denied"))

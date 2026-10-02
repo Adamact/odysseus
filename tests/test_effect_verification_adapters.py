@@ -339,6 +339,40 @@ def test_child_effects_share_lineage_order_and_invalidate_parent_evidence(tmp_pa
     assert fx.freshness(history.observations[0], history) is fx.Freshness.STALE
 
 
+def test_listing_that_reports_other_work_running_is_not_a_running_effect(store, monkeypatch):
+    journal = journal_for(store)
+    act(journal, monkeypatch, adapters.DispatchCapture(), "list_downloads",
+        result={"output": "1 download", "exit_code": 0, "status": "running", "running": True})
+    assert journal.effects.assessments()[0].execution is fx.ExecutionOutcome.REPORTED_SUCCESS
+
+
+def test_scheduler_trigger_is_admission_not_completed_work(store, monkeypatch):
+    journal = journal_for(store)
+    act(journal, monkeypatch, adapters.DispatchCapture(), "manage_tasks",
+        content=json.dumps({"action": "run", "task_id": "t1"}),
+        result={"output": "Task t1 triggered; it completed successfully.", "exit_code": 0})
+    claim = journal.effects.history().claims[0]
+    assessment = journal.effects.assessments()[0]
+    # Unbound task control may change anything; its reply verifies nothing.
+    assert claim.unknown_scope and assessment.verdict is fx.EffectVerdict.UNVERIFIED
+
+
+def test_assessment_scales_to_long_lineages(store):
+    from time import perf_counter
+    log = EffectLog("f" * 32, directory=store, durable=False)
+    owned = [fx.resource_ref(OwnedResource("notes", "u", "t", "notes", f"n{i}", "r"), "record") for i in range(600)]
+    for i, ref in enumerate(owned):
+        log.claim(effect_id=f"e{i}", action_id=f"a{i}", operation=fx.OperationRef("manage_notes", "", "0" * 64),
+                  impact_scope=(ref,), obligations=(fx.Postcondition(ref, fx.Predicate.EXISTS),))
+        log.outcome(effect_id=f"e{i}", execution=fx.ExecutionOutcome.REPORTED_SUCCESS, impact=fx.Impact.POSSIBLE)
+        log.observe(observation_id=f"o{i}", resource=ref, mechanism=fx.ObservationMechanism.OWNED_RECORD_READ,
+                    coverage=fx.Coverage.PARTIAL, source_action_id=f"r{i}", exists=True)
+    started = perf_counter()
+    assessments = log.assessments()
+    assert perf_counter() - started < 10
+    assert {a.verdict for a in assessments} == {fx.EffectVerdict.VERIFIED}
+
+
 def test_classification_failure_claims_unknown_scope(store, monkeypatch):
     journal = journal_for(store)
     monkeypatch.setattr(adapters, "classify", lambda capture: (_ for _ in ()).throw(KeyError("bug")))

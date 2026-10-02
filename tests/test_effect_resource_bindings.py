@@ -33,7 +33,7 @@ def run(ws, tmp_path):
     journal = ActionJournal(workspace=str(ws), observed_artifacts=("a.txt",))
     journal.effects = EffectLog(journal.run_id, directory=tmp_path / "fx")
     authority = RequestAuthority("request", "alice", "thread", str(ws), tuple(
-        OperationGrant(tool) for tool in ("write_file", "read_file", "edit_file", "apply_patch", "ls")))
+        OperationGrant(tool) for tool in ("write_file", "read_file", "edit_file", "apply_patch", "ls", "private_browser")))
 
     async def call(tool, args):
         content = args if isinstance(args, str) else json.dumps(args)
@@ -216,6 +216,20 @@ def test_listing_is_partial_and_does_not_verify_content(run):
     observation = run.journal.effects.history().observations[0]
     assert observation.coverage is fx.Coverage.PARTIAL
     assert verdicts(run.journal) == [fx.EffectVerdict.UNVERIFIED]
+
+
+@pytest.mark.parametrize("args", [
+    {"action": "click", "page": "t1", "selector": "#buy"},
+    {"action": "open", "url": "https://example.com"},
+    {"action": "snapshot", "page": "t1"},
+    {"action": "evaluate", "page": "t1", "script": "1"},
+])
+def test_browser_page_operations_stay_fail_closed_with_effects(run, args):
+    description, result = run("private_browser", args)
+    assert "UNSUPPORTED" in description
+    assert result["failure_kind"] == "browser_page_authority_unavailable" and result["executed"] is False
+    assert run.journal.effects.history().claims == ()
+    assert run.journal.actions[0].execution_id is None
 
 
 def test_ordinary_read_only_turn_completes_normally(run, ws):
