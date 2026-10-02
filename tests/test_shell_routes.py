@@ -338,6 +338,25 @@ async def test_generate_pty_timeout_says_so_when_the_session_survives(
     )
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process groups")
+async def test_terminate_pty_session_never_signals_the_servers_own_group(monkeypatch):
+    """If setsid did not apply, the child's group is ours: reach the child alone."""
+    import routes.shell_routes as shell_routes
+
+    own = os.getpgid(0)
+    sent = []
+    monkeypatch.setattr(shell_routes, "PTY_KILL_GRACE", 0.01)
+    monkeypatch.setattr(shell_routes.process_lifecycle, "pgid_of", lambda _pid: own)
+    monkeypatch.setattr(os, "killpg", lambda pgid, sig: sent.append(("group", pgid, sig)))
+    monkeypatch.setattr(os, "kill", lambda pid, sig: sent.append(("pid", pid, sig)))
+
+    proc = SimpleNamespace(pid=987654, returncode=0, wait=None)
+    assert shell_routes._session_pgid(proc.pid) is None
+    await shell_routes._terminate_pty_session(proc)
+
+    assert sent and all(kind == "pid" and target == 987654 for kind, target, _ in sent), sent
+
+
 def test_session_alive_treats_a_refused_probe_as_alive(monkeypatch):
     """EPERM says the group exists but we may not signal it, not that it died.
 

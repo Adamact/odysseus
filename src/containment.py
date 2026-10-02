@@ -53,7 +53,6 @@ import json
 import logging
 import os
 import shutil
-import select
 import signal
 import subprocess
 import sys
@@ -67,7 +66,7 @@ from typing import Any, Awaitable, Callable, Mapping, Optional
 from core.atomic_io import atomic_write_json, store_transaction
 from core.platform_compat import IS_WINDOWS, find_bash, pid_alive
 
-from src import process_ownership
+from src import process_lifecycle, process_ownership
 from src.constants import (
     CONTAINMENT_STATE_FILE,
     MAX_OUTPUT_CHARS,
@@ -115,7 +114,7 @@ _RETENTION_S = 3600
 # Teardown reads the group liveness probe this often while waiting out the
 # grace period. Short enough that a cooperative child is not waited on for the
 # full grace, long enough not to spin.
-_DEATH_POLL_S = 0.05
+_DEATH_POLL_S = process_lifecycle.POLL_S
 
 # Destinations a bind must never overlay: replacing the private root, the
 # private /tmp or the workspace itself with a host directory would undo the
@@ -285,29 +284,9 @@ class ContainmentResult:
     release: Optional["ReleaseOutcome"] = None
 
 
-@dataclass(frozen=True)
-class ReleaseOutcome:
-    """Whether the tree is actually gone, not whether a signal was sent."""
-
-    dead: bool
-    escalated: bool
-    survivors: tuple[int, ...] = ()
-    mechanism: str = ""
-    #: The ownership verdict, when teardown had to establish one — a grant
-    #: recovered from the durable store after a restart. Empty for an
-    #: in-process teardown, where the caller holds the child and the question
-    #: does not arise. A non-empty value other than
-    #: :data:`process_ownership.OWNED` means **no signal was sent**.
-    ownership: str = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "dead": self.dead,
-            "escalated": self.escalated,
-            "survivors": list(self.survivors),
-            "mechanism": self.mechanism,
-            "ownership": self.ownership,
-        }
+#: The termination receipt is generic lifecycle evidence, not a containment
+#: concept; the name is kept because tool results and records already carry it.
+ReleaseOutcome = process_lifecycle.TerminationOutcome
 
 
 # ── Mechanisms ──────────────────────────────────────────────────────────────
@@ -1285,86 +1264,42 @@ async def _capture_namespace_identity(proc) -> None:
 
 
 # ── release ─────────────────────────────────────────────────────────────────
-# core.platform_compat.kill_process_tree delegates here as well. Native tools,
-# detached jobs and compatibility callers share escalation and death probes.
+# Process mechanics — group probes, signalling, escalation, verified death —
+# live in src.process_lifecycle, shared with the PTY shell, the Cookbook sweep,
+# the browser lifecycle and core.platform_compat.kill_process_tree. What stays
+# here is what a grant means: its record, its namespace init and its gate.
+# The thin wrappers below are this module's seams; teardown resolves them at
+# call time so a test can substitute one probe without replacing the engine.
 def _own_pgid() -> int:
-    try:
-        return os.getpgid(0)
-    except OSError:  # pragma: no cover - getpgid(0) does not fail in practice
-        return -1
+    return process_lifecycle.own_pgid()
 
 
 def _pgid_of(pid: Optional[int]) -> Optional[int]:
-    if not pid or IS_WINDOWS:
+    if IS_WINDOWS:
         return None
-    try:
-        return os.getpgid(int(pid))
-    except (OSError, ProcessLookupError, ValueError):
-        return None
+    return process_lifecycle.pgid_of(pid)
 
 
 def _group_present(pgid: Optional[int]) -> bool:
-    """True while any process remains in ``pgid``.
+    """True while any process remains in ``pgid``; never true for our own group.
 
-    ``killpg(pgid, 0)`` is the authoritative probe: it raises
-    ``ProcessLookupError`` once the group is empty, which a per-pid check cannot
-    tell you — the leader can be gone while its children keep running. The
-    group id outlives the leader's pid, which is why teardown captures it at
-    spawn rather than deriving it afterwards.
-
-    Our own group is never reported as present: if ``setsid`` had not applied,
-    probing it would describe the server, not the child.
+    EPERM is a live group we cannot signal, not verified death.
     """
-    if not pgid or pgid <= 0 or IS_WINDOWS:
+    if IS_WINDOWS:
         return False
-    if pgid == _own_pgid():
-        return False
-    try:
-        os.killpg(pgid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except OSError:
-        return True  # EPERM is a live group we cannot signal, not verified death.
+    return process_lifecycle.group_present(pgid, own=_own_pgid())
 
 
 def _signal_tree(pid: Optional[int], pgid: Optional[int], sig: int) -> None:
-    """Signal the whole group, falling back to the leader alone.
-
-    A group that is also *our* group is never signalled: if setsid failed,
-    killpg would take the server down with the child.
-    """
-    if pgid and pgid > 0 and pgid != _own_pgid():
-        try:
-            os.killpg(pgid, sig)
-            return
-        except (OSError, ProcessLookupError):
-            pass
-    if pid:
-        try:
-            os.kill(int(pid), sig)
-        except (OSError, ProcessLookupError, ValueError):
-            pass
+    """Signal the whole group, falling back to the leader; never our own group."""
+    process_lifecycle.signal_group(pid, pgid, sig, own=_own_pgid())
 
 
 def _reap_if_child(pid: Optional[int]) -> None:
-    """Clear a zombie we parented, so "alive" means running.
-
-    ``os.kill(pid, 0)`` succeeds for a zombie and a zombie is still a member of
-    its process group, so without this a process we just killed is reported as a
-    survivor indefinitely — nothing else is going to reap it. A pid that is not
-    our child raises ``ChildProcessError`` and there is nothing to do.
-
-    Only the synchronous :func:`release` reaps. A child being awaited is reaped
-    through ``proc.wait()`` instead, so this never races the event loop's own
-    child watcher.
-    """
-    if not pid or IS_WINDOWS:
+    """Clear a zombie we parented, so "alive" means running (sync teardown only)."""
+    if IS_WINDOWS:
         return
-    try:
-        os.waitpid(int(pid), os.WNOHANG)
-    except (ChildProcessError, OSError, ValueError):
-        pass
+    process_lifecycle.reap_if_child(pid)
 
 
 def _tree_gone(pid: Optional[int], pgid: Optional[int], *, reap: bool = False) -> bool:
@@ -1413,13 +1348,11 @@ def _ownership_gate(
     refusal is that an unreapable orphan has to remain visible instead of being
     closed out as handled.
     """
-    verdict = process_ownership.verify(pid, token)
+    # A valid leader identity does not establish ownership of an arbitrary
+    # recorded process group: a stale or inconsistent PGID is UNVERIFIABLE.
+    verdict = process_lifecycle.group_ownership_verdict(pid, pgid, token, pgid_of=_pgid_of)
     if verdict == process_ownership.OWNED:
-        if IS_WINDOWS or not pgid or _pgid_of(pid) == pgid:
-            return None
-        # A valid leader identity does not establish ownership of an arbitrary
-        # recorded process group. Refuse a stale or inconsistent PGID.
-        verdict = process_ownership.UNVERIFIABLE
+        return None
 
     if verdict == process_ownership.GONE:
         # The leader is gone. Its group may still hold processes it
@@ -1500,19 +1433,15 @@ def release(grant: ContainmentGrant, *, grace_s: float = 2.0,
                 target = replace(grant, id=grant.id + ":namespace", mechanism="process_group",
                                  pid=namespace_pid, pgid=None, namespace_pid=None,
                                  namespace_start_token=None)
-                namespace_fd = None
+                # Opened before the identity gate inside _release_owner runs:
+                # a pidfd that still verifies afterwards names that process.
+                namespace_fd = process_lifecycle.open_pidfd(namespace_pid)
                 try:
-                    if hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal"):
-                        try:
-                            namespace_fd = os.pidfd_open(namespace_pid)
-                        except OSError:
-                            pass
                     namespace = _release_owner(target, grace_s=grace_s, start_token=namespace_token,
                                                require_identity=True, _record_release=False,
                                                _pidfd=namespace_fd)
                 finally:
-                    if namespace_fd is not None:
-                        os.close(namespace_fd)
+                    process_lifecycle.close_fd(namespace_fd)
         outcome = replace(owner, dead=owner.dead and namespace.dead,
                           escalated=owner.escalated or namespace.escalated,
                           survivors=tuple(dict.fromkeys((*owner.survivors, *namespace.survivors))))
@@ -1570,14 +1499,11 @@ def _release_owner(grant: ContainmentGrant, *, grace_s: float = 2.0,
     grant = replace(grant, pid=pid or None, pgid=pgid)
     def gone():
         if _pidfd is not None:
-            return bool(select.select([_pidfd], [], [], 0)[0])
+            return process_lifecycle.pidfd_exited(_pidfd)
         return _tree_gone(pid, pgid, reap=True)
     def send(sig):
         if _pidfd is not None:
-            try:
-                signal.pidfd_send_signal(_pidfd, sig)
-            except OSError:
-                pass
+            process_lifecycle.pidfd_signal(_pidfd, sig)
         else:
             _signal_tree(pid, pgid, sig)
 
@@ -1593,15 +1519,7 @@ def _release_owner(grant: ContainmentGrant, *, grace_s: float = 2.0,
             return refusal
 
     if IS_WINDOWS:
-        try:
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(pid)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-        except Exception:
-            logger.warning("containment: taskkill failed for pid %s", pid, exc_info=True)
+        process_lifecycle.taskkill_tree(pid)
         deadline = time.monotonic() + max(grace_s, 0.0)
         while time.monotonic() < deadline and pid_alive(pid):
             time.sleep(_DEATH_POLL_S)
@@ -1609,32 +1527,21 @@ def _release_owner(grant: ContainmentGrant, *, grace_s: float = 2.0,
         finish(grant, outcome)
         return outcome
 
-    if gone():
-        outcome = _outcome_for(grant, dead=True, escalated=False)
-        finish(grant, outcome)
-        return outcome
-
-    send(signal.SIGTERM)
-    escalated = False
-    deadline = time.monotonic() + max(grace_s, 0.0)
-    while time.monotonic() < deadline and not gone():
-        time.sleep(_DEATH_POLL_S)
-    if not gone():
-        escalated = True
+    def regate(_sig):
+        # The grace period is long enough for the pid to be freed and reissued;
+        # a recovered claim must be re-proven before SIGKILL.
         if recovered or require_identity:
-            refusal = _ownership_gate(grant, pid, pgid, token)
-            if refusal is not None:
-                finish(grant, refusal)
-                return refusal
-        send(signal.SIGKILL)
-        # SIGKILL cannot be caught, so a short verification window is enough.
-        # Anything still here is out of our reach — a zombie whose parent is
-        # not us, or a pid we never owned.
-        deadline = time.monotonic() + 1.0
-        while time.monotonic() < deadline and not gone():
-            time.sleep(_DEATH_POLL_S)
+            return _ownership_gate(grant, pid, pgid, token)
+        return None
 
-    outcome = _outcome_for(grant, dead=gone(), escalated=escalated)
+    result = process_lifecycle.escalate(
+        gone, send, steps=process_lifecycle.term_kill_steps(grace_s),
+        poll_s=_DEATH_POLL_S, before_step=regate,
+    )
+    if result.refusal is not None:
+        finish(grant, result.refusal)
+        return result.refusal
+    outcome = _outcome_for(grant, dead=result.dead, escalated=result.escalated)
     finish(grant, outcome)
     return outcome
 
@@ -1739,7 +1646,7 @@ async def _release_awaited_impl(
         _update_record(grant.id, namespace_pid=namespace_pid, namespace_start_token=namespace_token)
     def namespace_gone():
         if namespace_fd is not None:
-            return bool(select.select([namespace_fd], [], [], 0)[0])
+            return process_lifecycle.pidfd_exited(namespace_fd)
         if namespace_pid:
             if not pid_alive(namespace_pid):
                 return True
@@ -1749,7 +1656,7 @@ async def _release_awaited_impl(
         return True
     def gone():
         if pidfd is not None:
-            owner_gone = bool(select.select([pidfd], [], [], 0)[0])
+            owner_gone = process_lifecycle.pidfd_exited(pidfd)
         elif grant.mechanism == "bubblewrap":
             owner_gone = proc.returncode is not None
         else:
@@ -1757,41 +1664,20 @@ async def _release_awaited_impl(
         return owner_gone and namespace_gone()
     def send(sig):
         if pidfd is not None:
-            try:
-                signal.pidfd_send_signal(pidfd, sig)
-            except OSError:
-                pass
+            process_lifecycle.pidfd_signal(pidfd, sig)
         elif proc.returncode is None or grant.mechanism != "bubblewrap":
             _signal_tree(pid, pgid, sig)
         if namespace_fd is not None:
-            try:
-                signal.pidfd_send_signal(namespace_fd, sig)
-            except OSError:
-                pass
+            process_lifecycle.pidfd_signal(namespace_fd, sig)
         elif namespace_pid and process_ownership.verify(namespace_pid, namespace_token) == process_ownership.OWNED:
             _signal_tree(namespace_pid, None, sig)
-    send(signal.SIGTERM)
-    try:
-        await asyncio.wait_for(proc.wait(), timeout=max(grace_s, 0.05))
-    except (asyncio.TimeoutError, ProcessLookupError):
-        pass
-    deadline = time.monotonic() + max(grace_s, 0.0)
-    while time.monotonic() < deadline and not gone():
-        await asyncio.sleep(_DEATH_POLL_S)
-
-    escalated = False
-    if not gone():
-        escalated = True
-        send(signal.SIGKILL)
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=1.0)
-        except (asyncio.TimeoutError, ProcessLookupError):
-            pass
-        deadline = time.monotonic() + 1.0
-        while time.monotonic() < deadline and not gone():
-            await asyncio.sleep(_DEATH_POLL_S)
-
-    outcome = _outcome_for(grant, dead=gone(), escalated=escalated)
+    # No precheck: SIGTERM goes out first and the leader is reaped through
+    # proc.wait() before any group probe, or its zombie reads as a survivor.
+    result = await process_lifecycle.escalate_async(
+        gone, send, steps=process_lifecycle.term_kill_steps(grace_s),
+        wait=proc.wait, poll_s=_DEATH_POLL_S, precheck=False,
+    )
+    outcome = _outcome_for(grant, dead=result.dead, escalated=result.escalated)
     if not namespace_gone():
         outcome = replace(outcome, survivors=tuple(dict.fromkeys((*outcome.survivors, namespace_pid))))
     _finish_release(grant, outcome)
