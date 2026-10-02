@@ -404,10 +404,6 @@ def get(job_id: str, *, expected) -> Optional[Dict[str, Any]]:
     return rec
 
 
-def list_for_session(session_id: str) -> List[Dict[str, Any]]:
-    return [r for r in _load().values() if r.get("session_id") == session_id]
-
-
 @store_transaction(lambda: _STORE)
 def kill(job_id: str, *, expected) -> Optional[Dict[str, Any]]:
     """Terminate a running job's process tree and mark it killed. Returns the
