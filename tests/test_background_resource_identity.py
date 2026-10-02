@@ -215,6 +215,38 @@ def test_target_lookup_does_not_wait_on_unrelated_live_handle(store, monkeypatch
     bg_jobs.get("job", expected=resource)
 
 
+@pytest.mark.parametrize("status", ["done", "running"])
+@pytest.mark.parametrize("verdict", [process_ownership.FOREIGN, process_ownership.UNVERIFIABLE])
+def test_historical_lookup_does_not_reap_reused_pid_handle(store, monkeypatch, status, verdict):
+    resource, rec = seed(store, status=status)
+    from pathlib import Path
+    Path(rec["exit_path"]).write_text("0")
+    Path(rec["result_path"]).write_text(json.dumps({
+        "resource_identity": resource.to_dict(),
+        "containment": {"id": resource.containment_id},
+    }))
+    monkeypatch.setattr(process_ownership, "verify", lambda *a: verdict)
+
+    class ReplacementProcess:
+        def poll(self):
+            pytest.fail("Historical lookup reaped the replacement incarnation")
+
+    replacement = ReplacementProcess()
+    monkeypatch.setattr(bg_jobs, "_LIVE_PROCS", {rec["pid"]: replacement})
+    assert bg_jobs.get("job", expected=resource)["status"] == "done"
+    assert bg_jobs._LIVE_PROCS[rec["pid"]] is replacement
+
+
+def test_service_refresh_still_reaps_finished_handles(store, monkeypatch):
+    class FinishedProcess:
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr(bg_jobs, "_LIVE_PROCS", {4321: FinishedProcess()})
+    bg_jobs.refresh()
+    assert bg_jobs._LIVE_PROCS == {}
+
+
 def test_completed_result_outlives_lifecycle_receipt_without_signalling(store, monkeypatch):
     resource, rec = seed(store, status="done")
     from pathlib import Path

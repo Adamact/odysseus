@@ -231,8 +231,16 @@ def refresh(job_id=None) -> Dict[str, Dict[str, Any]]:
     timeout). Idempotent — safe to call from a poll loop. Returns the store."""
     jobs = _load()
     for pid, proc in list(_LIVE_PROCS.items()):
-        if job_id is not None and pid != jobs.get(job_id, {}).get("pid"):
-            continue
+        if job_id is not None:
+            selected = jobs.get(job_id, {})
+            # Historical numeric PIDs can name a replacement child's cached
+            # handle. Targeted reads may poll only the frozen live incarnation;
+            # independent service maintenance may still reap completed handles.
+            if (selected.get("status") != "running"
+                    or pid != selected.get("pid")
+                    or process_ownership.verify(pid, selected.get("start_token"))
+                    != process_ownership.OWNED):
+                continue
         if proc.poll() is not None:
             _LIVE_PROCS.pop(pid, None)
     changed = False

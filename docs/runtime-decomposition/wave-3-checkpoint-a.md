@@ -102,7 +102,11 @@ restoration during cancellation.
 ## Job history and continuations
 
 `peek()` and resolution do not refresh or reap jobs. Output refresh reconciles
-only the selected job, including its owned subprocess handle. Stop/output/ack
+only the selected job. It polls a cached subprocess handle only while the
+selected record is running and its frozen start token still verifies as owned;
+historical or unverifiable identities cannot poll a replacement handle under
+the same numeric PID. Global service refresh still reaps completed handles.
+Stop/output/ack
 require the caller's exact expected resource and revalidate linkage. Results
 can update only an explicit result-field whitelist, never identity, owner,
 generation, receipt, PID, command, path or authority fields.
@@ -198,6 +202,11 @@ the integrated gate spans the 145-file manifest. Validation used
 `/tmp/odysseus-wave3-validation/bin/python` with functional bubblewrap.
 Compileall, diff whitespace, conflict-marker and unmerged-index gates passed.
 The post-commit integrated result is recorded in the final checkpoint report.
+Final adversarial review found a numeric-PID-only cached-handle lookup in that
+commit. A follow-up patch adds frozen-token validation and four PID-reuse/
+unverifiable history regressions, plus a service-cleanup regression. The patched
+focused gate passes 392 tests; the patched 145-file integrated gate passes 3369
+tests, with the same 3 platform skips and 2 existing xfails. Static gates pass.
 Platform skips remain
 explicit: `/tmp` is not a symlink, RLIMIT_AS can be lowered on this host, and the
 Windows-specific Ollama startup guard is not applicable on Linux. No missing
