@@ -1,13 +1,12 @@
 """Permanent linkage loss suppresses continuation without granting authority."""
-import asyncio
-import sys
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 import time
 
 import pytest
 from src import bg_jobs, bg_monitor
 from src.agent_runtime import process_resources as resources
 from tests.test_background_resource_identity import store, seed
+from src.agent_runtime.resources import ResourceIdentityError
 
 
 @pytest.fixture
@@ -15,8 +14,8 @@ def monitor_session(monkeypatch):
     messages = []
     sess = SimpleNamespace(id='thread', owner='alice', model='test-model', get_context_messages=lambda: [])
     sm = SimpleNamespace(get_session=lambda sid: sess, add_message=lambda *args: messages.append(args), save_sessions=lambda: None)
-    ai = ModuleType('src.ai_interaction'); ai.get_session_manager = lambda: sm
-    monkeypatch.setitem(sys.modules, 'src.ai_interaction', ai)
+    import src.ai_interaction as ai
+    monkeypatch.setattr(ai, 'get_session_manager', lambda: sm)
     import src.agent_runs
     monkeypatch.setattr(src.agent_runs, 'is_active', lambda sid: False)
     async def drain(*args, **kwargs):
@@ -47,9 +46,6 @@ async def test_invalid_linkage_is_terminal_without_message(store, monkeypatch, m
     assert not bg_jobs.peek('job').get('followed_up')
     with pytest.raises(ResourceIdentityError):
         resources.validate_job(resource)
-
-
-from src.agent_runtime.resources import ResourceIdentityError
 
 
 async def test_busy_session_retries_then_continues(store, monkeypatch, monitor_session):

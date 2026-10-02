@@ -260,6 +260,8 @@ def needs_owned_binding(operation):
                    "notes", "memory", "vault", "upload", "uploads", "attachments",
                    "shell", "model", "cookbook"}
         segments = path.strip("/").split("/")
+        if len(segments) >= 3 and segments[:3] == ["api", "codex", "cookbook"]:
+            raise ResourceIdentityError("Cookbook wrappers require a dedicated resource-bound tool")
         if len(segments) >= 2 and segments[0] == "api" and segments[1].casefold() in private:
             raise ResourceIdentityError("Owned records require a dedicated resource-bound tool")
         return False

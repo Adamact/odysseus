@@ -207,3 +207,37 @@ async def test_auth_disabled_local_route_usage(control_app, monkeypatch):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, client=('192.0.2.1', 1)), base_url='http://127.0.0.1') as client:
         for path, body in [('/api/shell/exec', {'command': ''}), ('/api/cookbook/state', {'tasks': []}), ('/api/model/download', {'repo_id': 'org/model'})]:
             assert (await client.post(path, json=body)).status_code == 403
+
+
+@pytest.mark.parametrize('host,internal', [('127.0.0.1', True), ('192.0.2.1', False)])
+async def test_scoped_wrapper_cannot_bypass_native_control(control_app, monkeypatch, host, internal):
+    from routes.codex_routes import setup_codex_routes
+    app, spawned, _ = control_app
+    app.include_router(setup_codex_routes())
+    monkeypatch.setenv('AUTH_ENABLED', 'false')
+    headers = {INTERNAL_TOOL_HEADER: INTERNAL_TOOL_TOKEN} if internal else {}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, client=(host, 123)), base_url='http://127.0.0.1') as client:
+        r = await client.post('/api/codex/cookbook/serve', json={'repo_id': 'samplepkg', 'cmd': 'python -m pip install samplepkg'}, headers=headers)
+    assert r.status_code == 403 and not spawned
+
+
+@pytest.mark.parametrize('path', ['/api/codex/cookbook/serve', '/api/codex/cookbook/stop/job', '/api/codex/%63ookbook/serve'])
+async def test_generic_app_api_cannot_substitute_scoped_wrapper(control_app, path):
+    _, spawned, work = control_app
+    authority = RequestAuthority('request', 'alice', 'thread', str(work), (OperationGrant('app_api'),))
+    content = json.dumps({'action': 'call', 'method': 'POST', 'path': path, 'body': {'repo_id': 'samplepkg', 'cmd': 'python -m pip install samplepkg'}})
+    _, result = await tool_execution.execute_tool_block(ToolBlock('app_api', content), owner='alice',
+        session_id='thread', workspace=str(work), request_authority=authority, security_context=ToolRunSecurityContext())
+    assert result['failure_kind'] == 'resource_identity_denied' and not spawned
+
+
+async def test_direct_endpoint_call_keeps_producer_gate(control_app, monkeypatch):
+    from routes.cookbook_helpers import ModelDownloadRequest
+    app, spawned, _ = control_app
+    router = cookbook_routes.setup_cookbook_routes()
+    endpoint = next(route.endpoint for route in router.routes if getattr(route, 'path', '') == '/api/model/download')
+    monkeypatch.setenv('AUTH_ENABLED', 'false')
+    req = request('192.0.2.1')
+    with pytest.raises(HTTPException) as exc:
+        await endpoint(req, ModelDownloadRequest(repo_id='org/model'))
+    assert exc.value.status_code == 403 and not spawned
