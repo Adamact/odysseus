@@ -15,7 +15,7 @@ import secrets
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from src.tool_approval_scopes import (
     CHAT_SESSION_APPROVAL_DECISION,
@@ -26,6 +26,9 @@ from src.tool_approval_scopes import (
 )
 from src.tool_capabilities import ToolCapabilities, capabilities_for_action
 from src.agent_runtime.authority import RequestAuthority
+
+if TYPE_CHECKING:
+    from src.agent_runtime.resource_binding import BoundFilesystemOperation
 
 
 DEFAULT_APPROVAL_TTL_SECONDS = 10 * 60
@@ -119,6 +122,7 @@ def _binding_payload(
     effects: tuple[str, ...],
     result_integrity: str,
     request_authority: RequestAuthority | None = None,
+    resource_operation=None,
 ) -> dict[str, Any]:
     return {
         "owner": _normalized_owner(owner),
@@ -140,6 +144,7 @@ def _binding_payload(
         "effects": list(effects),
         "result_integrity": str(result_integrity),
         "request_authority": request_authority.to_dict() if request_authority is not None else None,
+        "resource_operation": resource_operation.to_dict() if resource_operation is not None else None,
     }
 
 
@@ -169,6 +174,8 @@ class PendingToolApproval:
     # is never displayed or treated as authorization for the sealed action.
     request_text: str = ""
     request_authority: RequestAuthority | None = None
+    # Server-resolved targets at proposal time; never read from the approval UI.
+    resource_operation: BoundFilesystemOperation | None = None
 
     def public_payload(self, *, reason: str | None = None) -> dict[str, Any]:
         return {
@@ -278,6 +285,7 @@ class ExactToolApproval:
             effects=effects,
             result_integrity=result_integrity,
             request_authority=self.pending.request_authority,
+            resource_operation=self.pending.resource_operation,
         )
         return _canonical_digest(expected) == self.pending.digest
 
@@ -366,6 +374,22 @@ class ToolApprovalStore:
         if request_authority is not None and not isinstance(request_authority, RequestAuthority):
             raise TypeError("Approval authority must be server-owned RequestAuthority")
         now = time.time()
+        from src.agent_runtime.authority import ExactOperation
+        from src.agent_runtime.resource_binding import NATIVE_FILESYSTEM_TOOLS, resolve_filesystem_operation
+        from src.agent_runtime.resources import FilesystemRoot
+        resource_operation = None
+        if tool_name in NATIVE_FILESYSTEM_TOOLS:
+            try:
+                roots = request_authority.resource_roots if request_authority is not None else ()
+                if not roots and workspace:
+                    roots = (FilesystemRoot.seal(workspace, owner=_normalized_owner(owner)),)
+                resource_operation = resolve_filesystem_operation(
+                    ExactOperation.normalize(tool_name, content), roots=roots, workspace=workspace or "",
+                    request_id=request_authority.request_id if request_authority is not None else "")
+            except (ValueError, TypeError, OSError, RuntimeError):
+                # An unresolved proposal may be displayed, but it cannot execute
+                # after approval by reconstructing its targets at claim time.
+                pass
         effects = tuple(sorted(effect.value for effect in capabilities.effects))
         result_integrity = capabilities.result_integrity.value
         payload = _binding_payload(
@@ -384,6 +408,7 @@ class ToolApprovalStore:
             effects=effects,
             result_integrity=result_integrity,
             request_authority=request_authority,
+            resource_operation=resource_operation,
         )
         pending = PendingToolApproval(
             approval_id=secrets.token_urlsafe(32),
@@ -408,6 +433,7 @@ class ToolApprovalStore:
             continuation_query=payload["continuation_query"],
             request_text=str(request_text or ""),
             request_authority=request_authority,
+            resource_operation=resource_operation,
         )
         with self._lock:
             self._purge_expired_locked(now)

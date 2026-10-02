@@ -19,7 +19,7 @@ import secrets
 import sys
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Awaitable, Callable, Dict, Iterator, Optional, Tuple
 
 
@@ -43,6 +43,12 @@ from src.constants import (
 )
 from src.path_confinement import canonical_root, confine, is_inside
 from src.tool_utils import _truncate, get_mcp_manager
+from src.tool_types import ToolBlock
+from src.agent_runtime.resource_binding import (
+    NATIVE_FILESYSTEM_TOOLS, active_resource_operation, bind_resource_operation,
+    resolve_filesystem_operation,
+)
+from src.agent_runtime.resources import ResourceIdentityError
 
 
 class _MissingToolSecurityContext:
@@ -830,6 +836,9 @@ def _resolve_tool_path(raw_path: str) -> str:
     When a workspace is active for this turn, paths are confined to it instead
     of the default allowlist (see _resolve_tool_path_in_workspace).
     """
+    resource_operation = active_resource_operation()
+    if resource_operation is not None:
+        return resource_operation.resolve_path(raw_path)
     ws = get_active_workspace()
     if ws:
         return _resolve_tool_path_in_workspace(ws, raw_path)
@@ -972,6 +981,9 @@ def _resolve_search_root(raw_path: str) -> str:
     primary root (project data dir) and a supplied path is confined by the
     global allowlist + sensitive-file policy.
     """
+    resource_operation = active_resource_operation()
+    if resource_operation is not None:
+        return resource_operation.resolve_path(raw_path, search=True)
     raw = (raw_path or "").strip()
     ws = get_active_workspace()
     if ws:
@@ -1237,6 +1249,7 @@ async def _direct_fallback(
             "disabled_tools": frozenset(disabled_tools or ()),
             "tool_policy": tool_policy,
             "request_authority": active_request_authority(),
+            "resource_operation": active_resource_operation(),
         }
 
         from src.agent_tools import TOOL_HANDLERS
@@ -1364,6 +1377,41 @@ async def execute_tool_block(
             "exit_code": 1, "failure_kind": "turn_contract_denied",
         }
 
+    # External executors require their own adapters. Local observations must
+    # never stand in for remote resource or containment identities.
+    execution_bridge = get_active_execution_bridge()
+    transport = operation.transport_tool
+    external_resource_call = (
+        (execution_bridge is not None and transport in execution_bridge.supported_tools)
+        or (transport in _ROUTED_BRIDGE_TOOLS and _client_bridge(client_runtime_context) is not None)
+        or (transport == "apply_patch" and _tui_host_bridge_patch_url(client_runtime_context))
+    )
+    resource_operation = None
+    if operation.tool in NATIVE_FILESYSTEM_TOOLS and not external_resource_call:
+        try:
+            roots = authority.resource_roots
+            approved_resource = exact_approval.pending.resource_operation if exact_approval is not None else None
+            if exact_approval is not None and approved_resource is None:
+                raise ValueError("Approved filesystem action has no sealed resource identity")
+            if exact_admission and not roots and approved_resource is not None:
+                # This single exact action can use only the roots sealed with
+                # its proposal. The request/child authority is never widened.
+                roots = tuple(dict.fromkeys(b.resource.root for b in approved_resource.bindings))
+            if any(r.owner and r.owner != authority.owner for r in roots):
+                raise ValueError("Filesystem resource owner differs from request authority")
+            resource_operation = resolve_filesystem_operation(
+                operation, roots=roots, workspace=authority.workspace, request_id=authority.request_id)
+            if approved_resource is not None:
+                if approved_resource.request_id and approved_resource.request_id != authority.request_id:
+                    raise ValueError("Approved resource belongs to another request")
+                if replace(resource_operation, request_id=approved_resource.request_id) != approved_resource:
+                    raise ValueError("Approved filesystem resource identity changed")
+        except (ValueError, TypeError, OSError, RuntimeError) as error:
+            return f"{transport}: BLOCKED", {
+                "error": str(error), "exit_code": 1, "blocked": True,
+                "failure_kind": "resource_identity_denied",
+            }
+
     approval_claimed = False
     if exact_approval is not None:
         if (
@@ -1450,9 +1498,9 @@ async def execute_tool_block(
 
     token = _active_workspace.set(workspace or None)
     try:
-        with bind_request_authority(authority):
+        with bind_request_authority(authority), bind_resource_operation(resource_operation):
             output = await _execute_tool_block_impl(
-                block,
+                ToolBlock(transport, resource_operation.execution_input) if resource_operation is not None else block,
                 session_id=session_id,
                 disabled_tools=disabled_tools,
                 owner=owner,
@@ -1483,6 +1531,11 @@ async def execute_tool_block(
                 getattr(block, "content", None),
             )
         return output
+    except ResourceIdentityError as error:
+        return f"{transport}: BLOCKED", {
+            "error": str(error), "exit_code": 1, "blocked": True,
+            "failure_kind": "resource_identity_denied",
+        }
     finally:
         _active_workspace.reset(token)
 
@@ -1614,6 +1667,7 @@ async def _execute_tool_block_impl(
     bridge_owns_tool = (
         execution_bridge is not None
         and tool in execution_bridge.supported_tools
+        and active_resource_operation() is None
     )
 
     # Public-owner restrictions protect tools executed by this deployment.
@@ -1673,7 +1727,8 @@ async def _execute_tool_block_impl(
                 },
             )
 
-    if tool in _ROUTED_BRIDGE_TOOLS and _client_bridge(client_runtime_context) is not None:
+    if (active_resource_operation() is None and tool in _ROUTED_BRIDGE_TOOLS
+            and _client_bridge(client_runtime_context) is not None):
         return await dispatched(_route_tool_via_bridge(tool, content, session_id, client_runtime_context))
 
     # Background execution: a `bash` block whose first line is the `#!bg`
@@ -1719,6 +1774,22 @@ async def _execute_tool_block_impl(
         from src.ai_interaction import do_generate_image
         desc = "generate_image"
         result = await dispatched(do_generate_image(content, session_id=session_id, owner=owner))
+    elif (tool in NATIVE_FILESYSTEM_TOOLS
+          and (active_resource_operation() is not None or tool != "apply_patch"
+               or not _tui_host_bridge_patch_url(client_runtime_context))):
+        if active_resource_operation() is None:
+            return f"{tool}: BLOCKED", {
+                "error": "Native filesystem dispatch has no bound resource operation",
+                "exit_code": 1, "blocked": True, "failure_kind": "resource_identity_denied",
+            }
+        # Backend selection is pinned. MCP connection availability cannot
+        # redirect an admitted native resource to a different filesystem.
+        original = active_resource_operation().operation.input
+        desc = f"{tool}: {original.split(chr(10))[0][:80]}"
+        result = await dispatched(_direct_fallback(tool, content, owner=owner, session_id=session_id)) \
+            or {"error": f"{tool}: execution failed", "exit_code": 1}
+        if tool == "edit_file":
+            desc = result.get("output") or result.get("error") or "edit_file"
     elif tool in _MCP_TOOL_MAP:
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"

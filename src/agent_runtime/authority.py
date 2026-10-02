@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 from uuid import uuid4
 
+from src.agent_runtime.resources import FilesystemRoot, intersect_roots
 from src.tool_policy import ToolPolicy, build_effective_tool_policy
 from src.turn_contract import (
     FAMILY_TOOLS, canonical_tool, requested_capabilities,
@@ -111,6 +112,9 @@ class RequestAuthority:
     block_all: bool = False
     disable_mcp: bool = False
     inherited: bool = False
+    # None is only the trusted constructor's instruction to seal a workspace.
+    # Persisted/child authorities always carry an explicit tuple, including ().
+    resource_roots: tuple[FilesystemRoot, ...] | None = None
 
     def __post_init__(self):
         if (not isinstance(self.request_id, str) or not self.request_id
@@ -122,10 +126,23 @@ class RequestAuthority:
                 or any(not isinstance(n, str) or canonical_tool(n) != n for n in self.denied)
                 or any(type(v) is not bool for v in (self.block_all, self.disable_mcp, self.inherited))):
             raise ValueError("Malformed request authority")
+        if self.resource_roots is None:
+            roots = ()
+            if self.workspace:
+                try:
+                    roots = (FilesystemRoot.seal(self.workspace, owner=self.owner),)
+                except (OSError, ValueError, RuntimeError):
+                    pass  # An unresolved workspace grants no filesystem root.
+            object.__setattr__(self, "resource_roots", roots)
+        if (not isinstance(self.resource_roots, tuple)
+                or any(not isinstance(r, FilesystemRoot) or (r.owner and r.owner != self.owner)
+                       for r in self.resource_roots)):
+            raise ValueError("Malformed request resource roots")
 
     @classmethod
     def empty(cls, *, owner=None, session_id=None, workspace=None):
-        return cls(uuid4().hex, _owner(owner), str(session_id or ""), str(workspace or ""))
+        return cls(uuid4().hex, _owner(owner), str(session_id or ""), str(workspace or ""),
+                   resource_roots=())
 
     def bound_to(self, *, owner=None, session_id=None, workspace=None):
         return (self.owner == _owner(owner) and self.session_id == str(session_id or "")
@@ -150,12 +167,15 @@ class RequestAuthority:
         if not isinstance(child, RequestAuthority):
             raise TypeError("Child authority must be server-owned RequestAuthority")
         grants = []
+        roots = ()
         if (self.owner, self.session_id, self.workspace) == (child.owner, child.session_id, child.workspace):
             theirs = {g.tool: g for g in child.grants}
             grants = [g.intersect(theirs[g.tool]) for g in self.grants if g.tool in theirs]
+            roots = intersect_roots(self.resource_roots, child.resource_roots)
         return replace(self, grants=tuple(grants), denied=self.denied | child.denied,
                        block_all=self.block_all or child.block_all,
-                       disable_mcp=self.disable_mcp or child.disable_mcp, inherited=True)
+                       disable_mcp=self.disable_mcp or child.disable_mcp, inherited=True,
+                       resource_roots=roots)
 
     def continuation(self, *, owner=None, session_id=None):
         """A server continuation may rebind a session, never change owner/grants."""
@@ -164,18 +184,19 @@ class RequestAuthority:
         return replace(self, session_id=str(session_id or ""), inherited=True)
 
     def to_dict(self):
-        return {"version": 1, "request_id": self.request_id, "owner": self.owner,
+        return {"version": 2, "request_id": self.request_id, "owner": self.owner,
                 "session_id": self.session_id, "workspace": self.workspace,
                 "grants": [{"tool": g.tool,
                             "actions": None if g.actions is None else sorted(g.actions),
                             "inputs": None if g.inputs is None else sorted(g.inputs)} for g in self.grants],
                 "denied": sorted(self.denied), "block_all": self.block_all,
-                "disable_mcp": self.disable_mcp, "inherited": self.inherited}
+                "disable_mcp": self.disable_mcp, "inherited": self.inherited,
+                "resource_roots": [r.to_dict() for r in self.resource_roots]}
 
     @classmethod
     def from_dict(cls, value):
         if (not isinstance(value, dict) or type(value.get("version")) is not int
-                or value["version"] != 1):
+                or value["version"] not in {1, 2}):
             raise ValueError("Unsupported authority snapshot")
         def limits(value):
             if value is None:
@@ -183,10 +204,14 @@ class RequestAuthority:
             if not isinstance(value, list) or any(not isinstance(v, str) for v in value):
                 raise ValueError("Malformed authority limits")
             return frozenset(value)
+        roots = value["resource_roots"] if value["version"] == 2 else []
+        if not isinstance(roots, list):
+            raise ValueError("Malformed request resource snapshot")
         return cls(value["request_id"], value["owner"], value["session_id"], value["workspace"],
                    tuple(OperationGrant(g["tool"], limits(g["actions"]), limits(g["inputs"]))
                          for g in value["grants"]), limits(value["denied"]),
-                   value["block_all"], value["disable_mcp"], value["inherited"])
+                   value["block_all"], value["disable_mcp"], value["inherited"],
+                   tuple(FilesystemRoot.from_dict(r) for r in roots))
 
 
 _BROWSER_READ_ACTIONS = frozenset({"open", "navigate", "snapshot", "text", "read", "find",
@@ -397,7 +422,8 @@ def seal_task_authority(prompt, task_type, action, *, owner=None, parent_authori
         parent = RequestAuthority.empty(owner=owner)
     if parent is not None:
         authority = parent.intersect(replace(authority, session_id=parent.session_id,
-                                            workspace=parent.workspace))
+                                            workspace=parent.workspace,
+                                            resource_roots=parent.resource_roots))
     return _json({"task_input": [prompt, task_type, action], "authority": authority.to_dict()})
 
 
