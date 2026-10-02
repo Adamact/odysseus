@@ -438,7 +438,8 @@ def retire_launch(launch, containment_id, *, job=None):
         published = json.loads(path.read_text())
     except FileNotFoundError:
         return False
-    if (published.get("launch") != launch.to_dict()
+    if (not isinstance(published, dict)
+            or published.get("launch") != launch.to_dict()
             or published.get("containment_id") != containment_id
             or published.get("job") != (job.to_dict() if job else None)):
         return False

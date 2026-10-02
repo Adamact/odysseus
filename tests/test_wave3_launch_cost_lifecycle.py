@@ -94,6 +94,31 @@ async def test_retired_publication_cannot_replay_bound_reservation(workspace):
         tool_execution._active_workspace.reset(token)
 
 
+@pytest.mark.parametrize('publication', [[], None, 'malformed'])
+def test_nonobject_publication_cannot_be_retired(workspace, publication):
+    resource, rec = seed(workspace, status='done')
+    path = resources.launch_path(resource.generation)
+    path.write_text(json.dumps(publication))
+    launch = identities.ProcessLaunchResource.from_dict(rec['launch_resource'])
+    assert not resources.retire_launch(launch, resource.containment_id, job=resource)
+    assert json.loads(path.read_text()) == publication
+
+
+async def test_corrupt_publication_retirement_preserves_command_result(workspace, monkeypatch):
+    attach = resources.attach_containment_processes
+    paths = []
+    def corrupt_after_attachment(launch, containment_id):
+        observed = attach(launch, containment_id)
+        path = resources.launch_path(launch.generation)
+        path.write_text('[]')
+        paths.append(path)
+        return observed
+    monkeypatch.setattr(resources, 'attach_containment_processes', corrupt_after_attachment)
+    _, result = await dispatch(authority(workspace), 'bash', 'printf completed')
+    assert result['exit_code'] == 0 and result['output'] == 'completed', result
+    assert paths[0].read_text() == '[]'
+
+
 @pytest.mark.parametrize('status,followed_up,old,removed', [
     ('running', True, True, False), ('done', False, True, False),
     ('done', True, False, False), ('done', True, True, True), ('failed', True, True, True),
