@@ -93,6 +93,39 @@ fast lane; the test stays runnable directly, e.g.:
 ./venv/bin/python -m pytest -m slow
 ```
 
+## Parallel shards (`--shard N/M`)
+
+CI no longer runs the whole suite as one workload. The `python-tests` job is a
+four-way matrix, and each job runs one section:
+
+```bash
+./venv/bin/python -m pytest -q --shard 1/4
+```
+
+`tests/_shards.py` owns the partition and `tests/conftest.py` applies it. The
+unit of a shard is a **test file**, so tests that share module state stay
+together, and assignment is a total function of the file path - every file
+lands in exactly one shard, and the four shards together run every test exactly
+once. The partition is deliberately *not* built on the `area_*` markers: those
+do not partition the suite, because a file may carry a hand-applied `area_*`
+mark on top of the one derived from its filename.
+
+Sharding deselects; it does not narrow collection. Every test module is still
+imported, in the same order, in every shard, so the import-time stubbing in
+`conftest.py` behaves identically whether the suite runs whole or in sections.
+Only the deselected tests' call phase is skipped.
+
+Balance comes from the `slow` marker: a `slow` item is weighted far above an
+ordinary one, and files are packed heaviest-first into the lightest shard. The
+plan depends only on the collected file set, so every parallel job computes the
+same one from the same commit. As more tests earn a `slow` mark from duration
+evidence, the sections even out further - no duration table to keep current.
+
+`--shard 1/1` is a no-op, and a selector that is malformed or out of range ends
+the run with a usage error rather than quietly testing a subset. If you change
+the shard count, change `DEFAULT_SHARD_COUNT` and the `ci.yml` matrix together;
+`tests/test_shards.py` fails when they drift apart.
+
 ## Order-sensitivity reporting (report-only)
 
 `tests/run_order_report.py` runs pytest with the collected test items shuffled
