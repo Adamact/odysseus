@@ -90,7 +90,7 @@ class ActionJournal:
             outcome = history.latest_outcome(assessment.effect_id)
             entries.append({
                 'ordinal': order.get(assessment.action_id), 'assessment': assessment,
-                'tool': claim.operation.tool, 'unknown_scope': claim.unknown_scope,
+                'tool': claim.operation.tool, 'unknown_scope': claim.unknown_scope, 'external': claim.external,
                 'paths': tuple(ref.location[-1] for ref in claim.impact_scope if ref.kind.value == 'filesystem'),
                 'mutation_attempted': bool(outcome and outcome.facts.mutation_attempted),
                 'artifact_changes': changes.get(assessment.action_id),
