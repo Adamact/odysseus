@@ -500,8 +500,10 @@ def _owned_spec(cwd: str, env: Optional[dict], timeout: int, readonly_extra: tup
         visible = any(prefix == root or prefix.startswith(root + os.sep) for root in ("/usr", "/etc"))
         if not visible and prefix not in _NAMESPACE_RESERVED_DESTS:
             readonly.append(prefix)
+    from src.tool_execution import _agent_subprocess_env
+    clean_env = _agent_subprocess_env() if env is None else dict(env)
     return containment.agent_spec(
-        cwd, dict(os.environ if env is None else env), timeout,
+        cwd, clean_env, timeout,
         readonly_extra=tuple(dict.fromkeys([*readonly, *readonly_extra])),
     )
 

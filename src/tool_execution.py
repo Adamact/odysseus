@@ -1246,8 +1246,45 @@ def _split_bg_marker(content: str):
     return False, content
 
 
+import re as _re
+
+# Variables a legitimate agent bash/python subprocess needs from the host.
+# Anything not listed here is never inherited.
+_SAFE_SUBPROCESS_VARS = frozenset({
+    # POSIX execution
+    "PATH", "LANG", "LC_ALL", "LC_CTYPE", "LC_MESSAGES", "TZ",
+    "USER", "LOGNAME", "SHELL", "TMPDIR", "TEMP", "TMP",
+    # Python isolation / virtualenvs
+    "PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV",
+    "ODYSSEUS_PYTHON_TOOL_SITE_PACKAGES",
+    # Windows system essentials
+    "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT",
+    "ALLUSERSPROFILE", "PROGRAMDATA", "COMMONPROGRAMFILES",
+    "PROGRAMFILES", "PROGRAMFILES(X86)",
+    # XDG / runtime
+    "XDG_RUNTIME_DIR", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME",
+    # Bubblewrap / container paths
+    "LD_LIBRARY_PATH",
+})
+
+# Defence-in-depth: reject any allowlisted variable whose *name* matches
+# a credential-bearing pattern (e.g. a user who sets PATH_TOKEN=...).
+_SENSITIVE_PATTERN = _re.compile(
+    r"(?:KEY|TOKEN|SECRET|PASSW|AUTH|CREDENTIAL|PRIVATE|DATABASE_URL)",
+    _re.IGNORECASE,
+)
+
+
 def _agent_subprocess_env() -> dict:
-    return {**os.environ, "TERM": "xterm-256color", "COLUMNS": "120", "LINES": "40", "HOME": _AGENT_WORKDIR}
+    base = {
+        key: os.environ[key]
+        for key in _SAFE_SUBPROCESS_VARS
+        if key in os.environ and not _SENSITIVE_PATTERN.search(key)
+    }
+    base.setdefault("PATH", os.environ.get("PATH") or os.defpath or "/usr/local/bin:/usr/bin:/bin")
+    base.setdefault("LANG", "C.UTF-8")
+    base.update({"TERM": "xterm-256color", "COLUMNS": "120", "LINES": "40", "HOME": _AGENT_WORKDIR})
+    return base
 
 
 async def _direct_fallback(
