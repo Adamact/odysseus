@@ -45,6 +45,14 @@ def _control_plane_path(path):
     processes = sys.modules.get("src.agent_runtime.process_resources")
     if processes is not None:
         job_dirs.add(canonical_root(processes._LAUNCH_DIR))
+    # Durable effect claims/outcomes/observations are server evidence state.
+    # The log refuses hardlinked files itself, so a prefix check suffices.
+    effect_dirs = {canonical_root(os.path.join(constants.DATA_DIR, "effects"))}
+    effect_log = sys.modules.get("src.agent_runtime.effect_log")
+    if effect_log is not None:
+        effect_dirs.add(canonical_root(effect_log.EFFECTS_DIR))
+    if any(Path(path).is_relative_to(directory) for directory in effect_dirs):
+        return True
     # Producers may have configured paths different from the default constants.
     # Inspect already-loaded server metadata without initializing a store here.
     bg = sys.modules.get("src.bg_jobs")

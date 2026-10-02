@@ -227,6 +227,28 @@ def _serve_test_static():
         server.server_close()
 
 
+@pytest.fixture(scope="session")
+def _effects_store_root(tmp_path_factory):
+    return tmp_path_factory.mktemp("effects")
+
+
+@pytest.fixture(autouse=True)
+def _isolated_effects_store(_effects_store_root):
+    """Keep durable effect claims out of the developer's real data directory.
+
+    Restored manually: requesting the shared ``monkeypatch`` here would move
+    its teardown after ``_no_leaked_module_stubs`` and misreport test stubs.
+    """
+    from src.agent_runtime import effect_log
+
+    previous = effect_log.EFFECTS_DIR
+    effect_log.EFFECTS_DIR = str(_effects_store_root)
+    try:
+        yield
+    finally:
+        effect_log.EFFECTS_DIR = previous
+
+
 @pytest.fixture(autouse=True)
 def _no_leaked_module_stubs():
     """Fail the test that leaves a bare ``src.*``/``core.*`` stub behind.
