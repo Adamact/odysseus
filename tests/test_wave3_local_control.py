@@ -65,6 +65,9 @@ def test_auth_enabled_administration(monkeypatch, user, allowed):
 
 @pytest.fixture
 def control_app(tmp_path, monkeypatch):
+    # Auth tests can reload middleware after collection. Authenticate the live
+    # transport token used by real producers, rather than a collection snapshot.
+    from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN, INTERNAL_TOOL_USER
     monkeypatch.setenv('AUTH_ENABLED', 'true')
     manager = SimpleNamespace(is_configured=True, users={'alice': {}}, is_admin=lambda u: u == 'alice')
     import core.auth
