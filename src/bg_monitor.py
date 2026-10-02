@@ -140,6 +140,17 @@ async def _run_followup(rec: dict) -> bool:
     from src.settings import get_setting
     authority = restore_background_authority(
         rec["id"], owner=getattr(sess, "owner", None), session_id=sess.id)
+    # A result can trigger a continuation only through the immutable producer
+    # linkage, never merely because it names an existing chat.
+    from src.agent_runtime.process_resources import job_from_record, validate_job
+    try:
+        resource = job_from_record(rec)
+        validate_job(resource)
+        if not authority.grants or (resource.owner, resource.thread_id, resource.request_id) != (
+                str(getattr(sess, "owner", None) or "").strip().casefold(), sess.id, authority.request_id):
+            return False
+    except (ValueError, TypeError, OSError, RuntimeError):
+        return False
     authority = authority.restrict(disabled_tools=get_setting("disabled_tools", []) or ())
     full, tool_events = await _drain_agent(sess, context, request_authority=authority)
 
@@ -169,7 +180,8 @@ async def _loop():
             for rec in bg_jobs.pending_followups():
                 try:
                     if await _run_followup(rec):
-                        bg_jobs.mark_followed_up(rec["id"])
+                        from src.agent_runtime.process_resources import job_from_record
+                        bg_jobs.mark_followed_up(rec["id"], expected=job_from_record(rec))
                 except Exception as e:
                     # Idempotent: leave followed_up=False so the next tick retries.
                     logger.warning("bg-followup failed for %s (will retry): %s", rec.get("id"), e)

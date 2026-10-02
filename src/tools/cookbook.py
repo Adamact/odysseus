@@ -1227,8 +1227,8 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
         )
         target_label = f"{session_id} on {remote}"
     else:
-        cmd = f"tmux kill-session -t {shlex.quote(session_id)}"
-        target_label = session_id
+        return {"error": "Local Cookbook control has no admitted process resource; session discovery is not ownership",
+                "exit_code": 1, "blocked": True, "failure_kind": "resource_identity_denied"}
 
     # Capture what this session owns BEFORE the kill. Once tmux tears the
     # session down the pane is gone, and with it the only evidence linking a

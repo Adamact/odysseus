@@ -86,6 +86,20 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
     A trusted detached supervisor owns the shared containment runner, output,
     wall clock and exit metadata, independently of the request/server lifetime.
     """
+    from src.agent_runtime.process_resources import require_launch, active_process_operation, publish_launch, launch_path, validate_launch_spec
+    from src.agent_runtime.authority import active_request_authority, save_background_authority
+    from src.agent_runtime.resources import ProcessResource, BackgroundJobResource
+    from src.process_lifecycle import ProcessIdentity
+    cwd = cwd or os.getcwd()
+    launch_resource = require_launch("bash", cwd=cwd)
+    bound = active_process_operation()
+    from src.tool_execution import _split_bg_marker
+    marked, proposed = _split_bg_marker(bound.operation.input)
+    if command != (proposed if marked else bound.operation.input).strip() or session_id != launch_resource.thread_id:
+        raise ValueError("Background launch operation or session changed")
+    authority = active_request_authority()
+    if authority is None or (authority.owner, authority.request_id) != (launch_resource.owner, launch_resource.request_id):
+        raise ValueError("Background launch authority changed")
     _JOBS_DIR.mkdir(parents=True, exist_ok=True)
     job_id = uuid.uuid4().hex[:12]
     log_path = _JOBS_DIR / f"{job_id}.log"
@@ -94,6 +108,7 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
     from src import containment
     from src.agent_tools.subprocess_tools import _owned_spec, _replace_workspace_alias
     spec = _owned_spec(cwd or os.getcwd(), env, max_runtime_s)
+    validate_launch_spec(launch_resource, spec)
     grant = containment.acquire(spec, owner=f"bg:{session_id}")
     bounded_command = command
     if containment.FILESYSTEM not in grant.enforced:
@@ -147,16 +162,33 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
         "start_token": process_ownership.capture(proc.pid)["start_token"],
     }
     try:
+        supervisor = ProcessResource("native:bg_jobs", launch_resource.owner, launch_resource.request_id,
+            launch_resource.thread_id, ProcessIdentity(proc.pid, rec["start_token"], rec["pgid"]),
+            "supervisor", job_id, grant.id)
+        supervisor.validate()
+        resource = BackgroundJobResource("native:bg_jobs", job_id, launch_resource.generation,
+            launch_resource.owner, launch_resource.request_id, launch_resource.thread_id, grant.id, (supervisor,))
+        rec["resource_identity"] = resource.to_dict()
+        rec["launch_resource"] = launch_resource.to_dict()
         containment._update_record(grant.id, lifetime="background", supervisor_pid=proc.pid,
-                                   supervisor_token=rec["start_token"])
+                                   supervisor_token=rec["start_token"], launch_generation=resource.generation)
         jobs = _load()
         jobs[job_id] = rec
         _save(jobs)
+        publish_launch(launch_resource, authority, grant.id, job=resource, processes=(supervisor,))
+        save_background_authority(job_id, authority, resource=resource)
+        payload.update(job_store=str(_STORE.resolve()), job_id=job_id,
+                       launch_path=str(launch_path(resource.generation)),
+                       authority_path=str(_JOBS_DIR / (job_id + ".authority.json")),
+                       resource_identity=resource.to_dict(), launch_resource=launch_resource.to_dict())
         # The supervisor cannot execute until the identity and job record are durable.
         proc.stdin.write(json.dumps(payload).encode("utf-8"))
         proc.stdin.close()
     except BaseException:
-        kill_process_tree(proc.pid)
+        # EOF closes the unreleased worker even if identity observation failed.
+        if proc.stdin is not None and not proc.stdin.closed:
+            proc.stdin.close()
+        kill_process_tree(proc.pid, start_token=rec["start_token"], pgid=rec["pgid"], require_identity=True)
         proc.wait(timeout=5)
         containment.release(grant, grace_s=0)
         raise
@@ -194,16 +226,20 @@ def _prune(jobs: Dict[str, Dict[str, Any]], now: float) -> bool:
 
 
 @store_transaction(lambda: _STORE)
-def refresh() -> Dict[str, Dict[str, Any]]:
+def refresh(job_id=None) -> Dict[str, Dict[str, Any]]:
     """Reconcile every running job against disk. Marks done/failed (incl.
     timeout). Idempotent — safe to call from a poll loop. Returns the store."""
     jobs = _load()
     for pid, proc in list(_LIVE_PROCS.items()):
+        if job_id is not None and pid != jobs.get(job_id, {}).get("pid"):
+            continue
         if proc.poll() is not None:
             _LIVE_PROCS.pop(pid, None)
     changed = False
     now = time.time()
-    for rec in jobs.values():
+    for jid, rec in jobs.items():
+        if job_id is not None and jid != job_id:
+            continue
         if rec.get("status") != "running":
             continue
         exit_path = Path(rec.get("exit_path", ""))
@@ -218,7 +254,15 @@ def refresh() -> Dict[str, Dict[str, Any]]:
             if rec.get("result_path"):
                 try:
                     report = json.loads(Path(rec["result_path"]).read_text(encoding="utf-8"))
-                    rec.update(report)
+                    # Result publication is not an identity producer. It cannot
+                    # overwrite ownership, generations, PIDs, paths or authority.
+                    if rec.get("resource_identity") and report.get("resource_identity") != rec["resource_identity"]:
+                        raise ValueError("Result/job linkage mismatch")
+                    if report.get("containment", {}).get("id") != rec.get("containment_id"):
+                        raise ValueError("Result/receipt linkage mismatch")
+                    for key in ("containment", "teardown", "output_truncated", "timed_out", "error", "failure_kind"):
+                        if key in report:
+                            rec[key] = report[key]
                 except (OSError, ValueError):
                     rec["status"], rec["exit_code"] = "failed", 1
                     rec["result_unavailable"] = True
@@ -243,7 +287,7 @@ def refresh() -> Dict[str, Dict[str, Any]]:
             rec["ended_at"] = now
             rec["died"] = True
             changed = True
-    if _prune(jobs, now):
+    if job_id is None and _prune(jobs, now):
         changed = True
     if changed:
         _save(jobs)
@@ -288,28 +332,45 @@ def pending_followups() -> List[Dict[str, Any]]:
 
 
 @store_transaction(lambda: _STORE)
-def mark_followed_up(job_id: str) -> None:
+def mark_followed_up(job_id: str, *, expected) -> None:
     jobs = _load()
     if job_id in jobs:
+        from src.agent_runtime.process_resources import validate_job
+        if expected.job_id != job_id:
+            raise ValueError("Acknowledgement job resource changed")
+        validate_job(expected, mutation=True)
         jobs[job_id]["followed_up"] = True
         _save(jobs)
 
 
-def get(job_id: str) -> Optional[Dict[str, Any]]:
-    refresh()  # reconcile against disk so status/exit_code are current
+def peek(job_id: str) -> Optional[Dict[str, Any]]:
+    """Resolve one record without reaping or changing any job."""
+    return _load().get(job_id)
+
+
+def get(job_id: str, *, expected) -> Optional[Dict[str, Any]]:
+    from src.agent_runtime.process_resources import validate_job
+    if expected.job_id != job_id:
+        raise ValueError("Output job selector changed")
+    validate_job(expected)
+    refresh(job_id)
+    validate_job(expected)
     rec = _load().get(job_id)
     if rec:
+        from src.agent_runtime.process_resources import job_from_record
+        if job_from_record(rec) != expected:
+            raise ValueError("Output job resource changed")
         rec = dict(rec)
         rec["output"] = _read_output(rec)
     return rec
 
 
 def list_for_session(session_id: str) -> List[Dict[str, Any]]:
-    return [r for r in refresh().values() if r.get("session_id") == session_id]
+    return [r for r in _load().values() if r.get("session_id") == session_id]
 
 
 @store_transaction(lambda: _STORE)
-def kill(job_id: str) -> Optional[Dict[str, Any]]:
+def kill(job_id: str, *, expected) -> Optional[Dict[str, Any]]:
     """Terminate a running job's process tree and mark it killed. Returns the
     updated record, or None if the id is unknown. Idempotent: a job that already
     finished is returned unchanged. Sets followed_up so the monitor does not also
@@ -318,6 +379,10 @@ def kill(job_id: str) -> Optional[Dict[str, Any]]:
     rec = jobs.get(job_id)
     if rec is None:
         return None
+    from src.agent_runtime.process_resources import validate_job
+    if expected.job_id != job_id:
+        raise ValueError("Job selector changed")
+    validate_job(expected, mutation=True)
     if rec.get("status") == "running":
         outcome = _kill_record(rec)
         rec["teardown"] = outcome.to_dict()

@@ -10,7 +10,7 @@ from src import containment
 def capture_owned_spawn(monkeypatch, tmp_path):
     captured = {}
     monkeypatch.setattr(containment, "CONTAINMENT_MODE", containment.MODE_REPORT_ONLY)
-    monkeypatch.setattr(containment, "_store_path", lambda: tmp_path / "grants.json")
+    monkeypatch.setattr(containment, "_store_path", lambda: tmp_path.parent / (tmp_path.name + "-control") / "grants.json")
     monkeypatch.setattr(containment, "_pgid_of", lambda pid: pid)
 
     async def fake_exec(*argv, **kwargs):

@@ -184,10 +184,14 @@ async def test_external_record_does_not_grant_authority(tmp_path):
 async def test_native_local_bash_python_behavior_unchanged(tmp_path, monkeypatch):
     """4. Native local Bash/Python behavior is unchanged."""
     tool_bash = subprocess_tools.BashTool()
+    from tests.process_resource_helpers import authorized_handler
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(_te, "agent_cwd", lambda: str(workspace))
     ctx = {
         "session_id": "native-session",
     }
-    result = await tool_bash.execute("echo 'native run'", ctx)
+    result = await authorized_handler(tool_bash.execute, workspace)("echo 'native run'", ctx)
     assert result["exit_code"] == 0
     assert "native run" in result["output"]
     assert "containment" in result

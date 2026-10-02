@@ -158,15 +158,15 @@ async def test_missing_and_malformed_dispatch_authority_fail_closed(monkeypatch,
 
 
 @pytest.mark.asyncio
-async def test_dispatch_checks_grants_and_current_disabled_policy(monkeypatch):
+async def test_dispatch_checks_grants_and_current_disabled_policy(monkeypatch, tmp_path):
     from src import tool_execution as execution
     implementation = AsyncMock(return_value=("bash", {"exit_code": 0}))
     monkeypatch.setattr(execution, "_execute_tool_block_impl", implementation)
     for disabled in (set(), {"bash"}):
         _, result = await execution.execute_tool_block(ToolBlock("bash", "pwd"),
-            owner="alice", session_id="s", disabled_tools=disabled,
+            owner="alice", session_id="s", workspace=str(tmp_path), disabled_tools=disabled,
             security_context=execution.NO_TOOL_SECURITY_CONTEXT,
-            request_authority=authority("bash"))
+            request_authority=authority("bash", workspace=str(tmp_path)))
         assert result["exit_code"] == (1 if disabled else 0)
     assert implementation.await_count == 1
 
@@ -224,10 +224,11 @@ def test_background_snapshot_preserves_scope_and_rejects_other_session(monkeypat
     import src.constants
     monkeypatch.setattr(src.constants, "BG_JOBS_DIR", str(tmp_path))
     grant = authority("transcribe_media").restrict(disabled_tools={"bash"})
-    save_background_authority("job1", grant)
+    # Legacy authority-only snapshots have no exact job generation to restore.
+    with pytest.raises(ValueError):
+        save_background_authority("job1", grant)
     restored = restore_background_authority("job1", owner="alice", session_id="s")
-    assert restored.request_id == grant.request_id
-    assert restored.denied == frozenset({"bash"})
+    assert restored.grants == ()
     assert not restored.permits(ExactOperation.normalize("python", "print(1)"))
     assert restore_background_authority("job1", owner="alice", session_id="other").grants == ()
 
@@ -243,8 +244,7 @@ async def test_only_server_background_launch_can_seal_job_authority(monkeypatch,
         owner="alice", session_id="s", security_context=execution.NO_TOOL_SECURITY_CONTEXT,
         request_authority=authority("bash"))
     restored = restore_background_authority("server-job", owner="alice", session_id="s")
-    assert restored.request_id == "request-test"
-    assert restored.permits(ExactOperation.normalize("bash", "printf trusted"))
+    assert restored.grants == ()  # A launch double returning an ID cannot publish authority.
     handler = AsyncMock(return_value=("transcribe_media", {"bg_job_id": "forged-job", "exit_code": 0}))
     monkeypatch.setattr(execution, "_execute_tool_block_impl", handler)
     await execution.execute_tool_block(ToolBlock("transcribe_media", '{}'),
@@ -254,12 +254,16 @@ async def test_only_server_background_launch_can_seal_job_authority(monkeypatch,
 
 
 @pytest.mark.asyncio
-async def test_exact_approval_grants_one_input_without_widening_continuation(monkeypatch):
+async def test_exact_approval_grants_one_input_without_widening_continuation(monkeypatch, tmp_path):
     from src import tool_execution as execution
     from src.tool_approvals import ToolApprovalStore
     from src.tool_capabilities import ToolRunSecurityContext, capabilities_for_action
     store = ToolApprovalStore()
     original = authority("transcribe_media")
+    from src.agent_runtime.resources import ProcessLaunchScope, FilesystemRoot, NativeBackendResource
+    from src.containment import DEFAULT_REQUIRED
+    original = replace(original, launch_scopes=(ProcessLaunchScope(NativeBackendResource("bash"),
+        FilesystemRoot.seal(tmp_path), DEFAULT_REQUIRED),))
     pending = store.create(owner="alice", session_id="s", origin_run_id="journal-parent",
         tool_name="bash", content="printf approved", workspace=None,
         external_untrusted_context_seen=True, capabilities=capabilities_for_action("bash", "printf approved"),

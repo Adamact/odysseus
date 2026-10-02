@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from src.agent_runtime.resources import (
     FilesystemRoot, ExternalResource, NativeBackendResource, OwnedScope,
+    ProcessLaunchScope, ProcessResource, BackgroundJobResource,
     backend_from_dict, intersect_roots, seal_owned_scopes,
 )
 from src.tool_policy import ToolPolicy, build_effective_tool_policy
@@ -120,6 +121,9 @@ class RequestAuthority:
     resource_roots: tuple[FilesystemRoot, ...] | None = None
     backend_resources: tuple[ExternalResource | NativeBackendResource, ...] | None = None
     owned_scopes: tuple[OwnedScope, ...] | None = None
+    launch_scopes: tuple[ProcessLaunchScope, ...] | None = None
+    process_resources: tuple[ProcessResource, ...] = ()
+    job_resources: tuple[BackgroundJobResource, ...] | None = None
 
     def __post_init__(self):
         if (not isinstance(self.request_id, str) or not self.request_id
@@ -156,11 +160,29 @@ class RequestAuthority:
                 or any(not isinstance(s, OwnedScope) or (s.owner, s.thread_id) != (self.owner, self.session_id)
                        for s in self.owned_scopes)):
             raise ValueError("Malformed backend or owned resource scope")
+        from src.agent_runtime.process_resources import seal_launch_scopes, seal_jobs
+        if self.launch_scopes is None:
+            object.__setattr__(self, "launch_scopes", seal_launch_scopes(self))
+        if self.job_resources is None:
+            object.__setattr__(self, "job_resources", seal_jobs(self))
+        for field, kind in (("launch_scopes", ProcessLaunchScope), ("process_resources", ProcessResource),
+                            ("job_resources", BackgroundJobResource)):
+            values = getattr(self, field)
+            if not isinstance(values, tuple) or any(not isinstance(r, kind) for r in values):
+                raise ValueError("Malformed process resource scope")
+        if any(r.owner != self.owner for r in (*self.process_resources, *self.job_resources)):
+            raise ValueError("Process resource owner changed")
+        if any(s.root.owner and s.root.owner != self.owner for s in self.launch_scopes):
+            raise ValueError("Launch resource owner changed")
+        if any(r.thread_id != self.session_id for r in self.job_resources):
+            raise ValueError("Job resource thread changed")
+        if any(r.thread_id != (self.session_id or "request:" + self.request_id) for r in self.process_resources):
+            raise ValueError("Process resource thread changed")
 
     @classmethod
     def empty(cls, *, owner=None, session_id=None, workspace=None):
         return cls(uuid4().hex, _owner(owner), str(session_id or ""), str(workspace or ""),
-                   resource_roots=(), backend_resources=(), owned_scopes=())
+                   resource_roots=(), backend_resources=(), owned_scopes=(), launch_scopes=(), job_resources=())
 
     def bound_to(self, *, owner=None, session_id=None, workspace=None):
         return (self.owner == _owner(owner) and self.session_id == str(session_id or "")
@@ -188,6 +210,7 @@ class RequestAuthority:
         roots = ()
         backends = ()
         owned = ()
+        launches = processes = jobs = ()
         if (self.owner, self.session_id, self.workspace) == (child.owner, child.session_id, child.workspace):
             theirs = {g.tool: g for g in child.grants}
             grants = [g.intersect(theirs[g.tool]) for g in self.grants if g.tool in theirs]
@@ -195,10 +218,15 @@ class RequestAuthority:
             backends = tuple(r for r in self.backend_resources if r in child.backend_resources)
             owned = tuple(s for left in self.owned_scopes for right in child.owned_scopes
                           if (s := left.intersect(right)) is not None)
+            from src.agent_runtime.process_resources import intersect_observed, intersect_launch_scopes, validate_job
+            launches = intersect_launch_scopes(self.launch_scopes, child.launch_scopes)
+            processes = intersect_observed(self.process_resources, child.process_resources, lambda r: r.validate())
+            jobs = intersect_observed(self.job_resources, child.job_resources, validate_job)
         return replace(self, grants=tuple(grants), denied=self.denied | child.denied,
                        block_all=self.block_all or child.block_all,
                        disable_mcp=self.disable_mcp or child.disable_mcp, inherited=True,
-                       resource_roots=roots, backend_resources=backends, owned_scopes=owned)
+                       resource_roots=roots, backend_resources=backends, owned_scopes=owned,
+                       launch_scopes=launches, process_resources=processes, job_resources=jobs)
 
     def continuation(self, *, owner=None, session_id=None):
         """A server continuation may rebind a session, never change owner/grants."""
@@ -206,10 +234,12 @@ class RequestAuthority:
             return RequestAuthority.empty(owner=owner, session_id=session_id)
         rebound = str(session_id or "")
         return replace(self, session_id=rebound, inherited=True,
-                       owned_scopes=tuple(replace(s, thread_id=rebound) for s in self.owned_scopes) if rebound else ())
+                       owned_scopes=tuple(replace(s, thread_id=rebound) for s in self.owned_scopes) if rebound else (),
+                       process_resources=tuple(r for r in self.process_resources if r.thread_id == rebound),
+                       job_resources=tuple(r for r in self.job_resources if r.thread_id == rebound))
 
     def to_dict(self):
-        return {"version": 3, "request_id": self.request_id, "owner": self.owner,
+        return {"version": 4, "request_id": self.request_id, "owner": self.owner,
                 "session_id": self.session_id, "workspace": self.workspace,
                 "grants": [{"tool": g.tool,
                             "actions": None if g.actions is None else sorted(g.actions),
@@ -218,12 +248,15 @@ class RequestAuthority:
                 "disable_mcp": self.disable_mcp, "inherited": self.inherited,
                 "resource_roots": [r.to_dict() for r in self.resource_roots],
                 "backend_resources": [r.to_dict() for r in self.backend_resources],
-                "owned_scopes": [s.to_dict() for s in self.owned_scopes]}
+                "owned_scopes": [s.to_dict() for s in self.owned_scopes],
+                "launch_scopes": [s.to_dict() for s in self.launch_scopes],
+                "process_resources": [r.to_dict() for r in self.process_resources],
+                "job_resources": [r.to_dict() for r in self.job_resources]}
 
     @classmethod
     def from_dict(cls, value):
         if (not isinstance(value, dict) or type(value.get("version")) is not int
-                or value["version"] not in {1, 2, 3}):
+                or value["version"] not in {1, 2, 3, 4}):
             raise ValueError("Unsupported authority snapshot")
         def limits(value):
             if value is None:
@@ -234,8 +267,12 @@ class RequestAuthority:
         roots = value["resource_roots"] if value["version"] >= 2 else []
         if not isinstance(roots, list):
             raise ValueError("Malformed request resource snapshot")
-        backends = value["backend_resources"] if value["version"] == 3 else []
-        owned = value["owned_scopes"] if value["version"] == 3 else []
+        backends = value["backend_resources"] if value["version"] >= 3 else []
+        owned = value["owned_scopes"] if value["version"] >= 3 else []
+        process_fields = {name: value[name] if value["version"] >= 4 else []
+                          for name in ("launch_scopes", "process_resources", "job_resources")}
+        if any(not isinstance(v, list) for v in process_fields.values()):
+            raise ValueError("Malformed process resource snapshot")
         if not isinstance(backends, list) or not isinstance(owned, list):
             raise ValueError("Malformed request resource scope snapshot")
         return cls(value["request_id"], value["owner"], value["session_id"], value["workspace"],
@@ -243,7 +280,10 @@ class RequestAuthority:
                          for g in value["grants"]), limits(value["denied"]),
                    value["block_all"], value["disable_mcp"], value["inherited"],
                    tuple(FilesystemRoot.from_dict(r) for r in roots),
-                   tuple(backend_from_dict(r) for r in backends), tuple(OwnedScope.from_dict(s) for s in owned))
+                   tuple(backend_from_dict(r) for r in backends), tuple(OwnedScope.from_dict(s) for s in owned),
+                   tuple(ProcessLaunchScope.from_dict(s) for s in process_fields["launch_scopes"]),
+                   tuple(ProcessResource.from_dict(r) for r in process_fields["process_resources"]),
+                   tuple(BackgroundJobResource.from_dict(r) for r in process_fields["job_resources"]))
 
 
 _BROWSER_READ_ACTIONS = frozenset({"open", "navigate", "snapshot", "text", "read", "find",
@@ -462,7 +502,10 @@ def seal_task_authority(prompt, task_type, action, *, owner=None, parent_authori
                                             workspace=parent.workspace,
                                             resource_roots=parent.resource_roots,
                                             backend_resources=parent.backend_resources,
-                                            owned_scopes=parent.owned_scopes))
+                                            owned_scopes=parent.owned_scopes,
+                                            launch_scopes=parent.launch_scopes,
+                                            process_resources=parent.process_resources,
+                                            job_resources=parent.job_resources))
     return _json({"task_input": [prompt, task_type, action], "authority": authority.to_dict()})
 
 
@@ -479,18 +522,27 @@ def restore_task_authority(snapshot, prompt, task_type, action, *, owner=None, s
 def _background_path(job_id):
     if not isinstance(job_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", job_id):
         raise ValueError("Invalid background authority identity")
-    from src.constants import BG_JOBS_DIR
-    return Path(BG_JOBS_DIR) / (job_id + ".authority.json")
+    from src.bg_jobs import _JOBS_DIR
+    return Path(_JOBS_DIR) / (job_id + ".authority.json")
 
 
-def save_background_authority(job_id, authority):
+def save_background_authority(job_id, authority, *, resource=None):
     from core.atomic_io import atomic_write_json
-    atomic_write_json(_background_path(job_id), authority.to_dict())
+    if resource is None or resource.job_id != job_id:
+        raise ValueError("Background authority requires exact job linkage")
+    atomic_write_json(_background_path(job_id), {"authority": authority.to_dict(), "job": resource.to_dict()})
 
 
 def restore_background_authority(job_id, *, owner=None, session_id=None):
     try:
-        authority = RequestAuthority.from_dict(json.loads(_background_path(job_id).read_text()))
+        value = json.loads(_background_path(job_id).read_text())
+        resource = BackgroundJobResource.from_dict(value["job"])
+        from src.agent_runtime.process_resources import validate_job
+        validate_job(resource)
+        authority = RequestAuthority.from_dict(value["authority"])
+        if (resource.job_id, resource.owner, resource.thread_id, resource.request_id) != (
+                job_id, authority.owner, authority.session_id, authority.request_id):
+            raise ValueError("Background authority linkage changed")
         if authority.session_id != str(session_id or ""):
             raise ValueError("Background session changed")
         return authority.continuation(owner=owner, session_id=session_id)

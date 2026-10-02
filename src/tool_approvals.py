@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from src.agent_runtime.resource_binding import BoundFilesystemOperation
     from src.agent_runtime.remote_resources import BoundBackendOperation
     from src.agent_runtime.owned_resources import BoundOwnedOperation
+    from src.agent_runtime.process_resources import BoundProcessOperation
 
 
 DEFAULT_APPROVAL_TTL_SECONDS = 10 * 60
@@ -127,6 +128,7 @@ def _binding_payload(
     resource_operation=None,
     backend_operation=None,
     owned_operation=None,
+    process_operation=None,
 ) -> dict[str, Any]:
     return {
         "owner": _normalized_owner(owner),
@@ -151,6 +153,7 @@ def _binding_payload(
         "resource_operation": resource_operation.to_dict() if resource_operation is not None else None,
         "backend_operation": backend_operation.to_dict() if backend_operation is not None else None,
         "owned_operation": owned_operation.to_dict() if owned_operation is not None else None,
+        "process_operation": process_operation.to_dict() if process_operation is not None else None,
     }
 
 
@@ -184,6 +187,7 @@ class PendingToolApproval:
     resource_operation: BoundFilesystemOperation | None = None
     backend_operation: BoundBackendOperation | None = None
     owned_operation: BoundOwnedOperation | None = None
+    process_operation: BoundProcessOperation | None = None
 
     def public_payload(self, *, reason: str | None = None) -> dict[str, Any]:
         return {
@@ -296,6 +300,7 @@ class ExactToolApproval:
             resource_operation=self.pending.resource_operation,
             backend_operation=self.pending.backend_operation,
             owned_operation=self.pending.owned_operation,
+            process_operation=self.pending.process_operation,
         )
         return _canonical_digest(expected) == self.pending.digest
 
@@ -391,6 +396,7 @@ class ToolApprovalStore:
         resource_operation = None
         backend_operation = None
         owned_operation = None
+        process_operation = None
         from src.agent_runtime.remote_resources import BoundBackendOperation, resolve_backend
         from src.agent_runtime.owned_resources import needs_owned_binding, resolve_owned_operation
         from src.agent_runtime.resources import NativeBackendResource
@@ -403,6 +409,9 @@ class ToolApprovalStore:
             backend_operation = BoundBackendOperation(backend,
                 request_authority.request_id if request_authority is not None else "",
                 _normalized_owner(owner), str(session_id or ""), operation.transport_tool, operation.input)
+            from src.agent_runtime.process_resources import needs_process_binding, resolve_process_operation
+            if request_authority is not None and needs_process_binding(operation, backend):
+                process_operation = resolve_process_operation(request_authority, operation, backend)
             if isinstance(backend, NativeBackendResource) and needs_owned_binding(operation):
                 resolved_owned = resolve_owned_operation(operation, owner=_normalized_owner(owner),
                     thread_id=str(session_id or ""), request_id=backend_operation.request_id,
@@ -450,6 +459,7 @@ class ToolApprovalStore:
             resource_operation=resource_operation,
             backend_operation=backend_operation,
             owned_operation=owned_operation,
+            process_operation=process_operation,
         )
         pending = PendingToolApproval(
             approval_id=secrets.token_urlsafe(32),
@@ -477,6 +487,7 @@ class ToolApprovalStore:
             resource_operation=resource_operation,
             backend_operation=backend_operation,
             owned_operation=owned_operation,
+            process_operation=process_operation,
         )
         with self._lock:
             self._purge_expired_locked(now)

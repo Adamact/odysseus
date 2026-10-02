@@ -978,7 +978,10 @@ def vet_workspace(raw: str) -> Optional[str]:
 def agent_cwd() -> str:
     """Working directory for agent subprocesses (bash/python/background jobs):
     the active workspace when set, else the persistent data dir."""
-    return get_active_workspace() or _AGENT_WORKDIR
+    from src.agent_runtime.process_resources import active_process_operation
+    bound = active_process_operation()
+    return (bound.launch.scope.root.path if bound is not None and bound.launch is not None
+            else get_active_workspace() or _AGENT_WORKDIR)
 
 
 def get_mcp_manager():
@@ -1319,7 +1322,10 @@ async def _document_tool_dispatch(
 from src.agent_runtime.journal import dispatched, mark_authorized, mark_dispatch, record_action
 from src.agent_runtime.authority import (
     MISSING_AUTHORITY, ExactOperation, RequestAuthority, active_request_authority,
-    bind_request_authority, save_background_authority,
+    bind_request_authority,
+)
+from src.agent_runtime.process_resources import (
+    active_process_operation, bind_process_operation, needs_process_binding, resolve_process_operation,
 )
 
 
@@ -1415,6 +1421,12 @@ async def execute_tool_block(
             exact_admission=exact_admission)
         external_resource_call = isinstance(backend_operation.resource, ExternalResource)
         owned_operation = None
+        process_operation = None
+        if needs_process_binding(operation, backend_operation.resource):
+            if pending is not None and pending.process_operation is None:
+                raise ResourceIdentityError("Approved action has no sealed process/job identity")
+            process_operation = resolve_process_operation(authority, operation, backend_operation.resource,
+                approved=pending.process_operation if pending is not None else None, exact_admission=exact_admission)
         if needs_owned_binding(operation) and not external_resource_call:
             if pending is not None and pending.owned_operation is None:
                 raise ResourceIdentityError("Approved action has no sealed owned resource identity")
@@ -1541,10 +1553,13 @@ async def execute_tool_block(
     token = _active_workspace.set(workspace or None)
     try:
         backend_operation.validate(client_runtime_context)
+        if process_operation is not None and approval_claimed:
+            process_operation = replace(process_operation, exact_approval=exact_approval)
         normalized = resource_operation or owned_operation
         sealed_document = owned_operation or (exact_approval.pending if approval_claimed else None)
         with (bind_request_authority(authority), bind_resource_operation(resource_operation),
-              bind_backend_operation(backend_operation), bind_owned_operation(owned_operation)):
+              bind_backend_operation(backend_operation), bind_owned_operation(owned_operation),
+              bind_process_operation(process_operation)):
             output = await _execute_tool_block_impl(
                 ToolBlock(transport, normalized.execution_input) if normalized is not None else block,
                 session_id=session_id,
@@ -1790,7 +1805,6 @@ async def _execute_tool_block_impl(
                 return "bash (background): containment unavailable", containment.unavailable_tool_result(exc, tool="bash")
             # Only this server launch may seal detached-job authority; a
             # handler/bridge output carrying a job id is not a grant source.
-            save_background_authority(rec["id"], active_request_authority())
             short = _bg_cmd.strip().split(chr(10))[0][:80]
             desc = f"bash (background): {short}"
             result = {
@@ -1833,6 +1847,15 @@ async def _execute_tool_block_impl(
             or {"error": f"{tool}: execution failed", "exit_code": 1}
         if tool == "edit_file":
             desc = result.get("output") or result.get("error") or "edit_file"
+    elif tool in {"bash", "python"} and backend is not None and isinstance(backend.resource, NativeBackendResource):
+        # Native reservations are pinned to the native producer. Pass the
+        # application binding explicitly rather than the MCP fallback's empty
+        # owner/session context.
+        first_line = content.split(chr(10))[0][:80]
+        desc = f"{tool}: {first_line}"
+        result = await dispatched(_direct_fallback(tool, content, progress_cb=progress_cb,
+            owner=owner, session_id=session_id, client_runtime_context=client_runtime_context)) \
+            or {"error": f"{tool}: execution failed", "exit_code": 1}
     elif tool in _MCP_TOOL_MAP:
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"

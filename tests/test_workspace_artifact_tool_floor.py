@@ -3,6 +3,19 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def native_resource_authority(tmp_path, monkeypatch):
+    from tests.process_resource_helpers import install_native_authority
+    from src.agent_runtime import process_resources
+    from src import containment
+    workspace = tmp_path / "native-workspace"
+    workspace.mkdir()
+    control = tmp_path.parent / (tmp_path.name + "-control")
+    monkeypatch.setattr(process_resources, "_LAUNCH_DIR", control / "launches")
+    monkeypatch.setattr(containment, "_store_path", lambda: control / "grants.json")
+    install_native_authority(monkeypatch, workspace)
+
+
 def test_unoffered_artifact_recovery_is_bounded():
     from src.agent_loop import _artifact_unoffered_recovery_exhausted
 

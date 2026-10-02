@@ -32,6 +32,15 @@ def _pending(store, **overrides):
         "capabilities": capabilities_for_action("bash", "printf exact"),
     }
     values.update(overrides)
+    if "request_authority" not in values:
+        import tempfile
+        from src.agent_runtime.authority import RequestAuthority, OperationGrant
+        from src.agent_runtime.resources import ProcessLaunchScope, FilesystemRoot, NativeBackendResource
+        from src.containment import DEFAULT_REQUIRED
+        tool = values["tool_name"]
+        scopes = (ProcessLaunchScope(NativeBackendResource(tool), FilesystemRoot.seal(tempfile.mkdtemp(prefix="w3-approval-fixture-")), DEFAULT_REQUIRED),) if tool in {"bash", "python"} else ()
+        values["request_authority"] = RequestAuthority("standalone-test-request", str(values["owner"]).casefold(),
+            str(values["session_id"] or ""), str(values["workspace"] or ""), (OperationGrant(tool),), launch_scopes=scopes)
     return store.create(**values)
 
 

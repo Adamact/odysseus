@@ -405,7 +405,20 @@ def _append_local_ollama_download_command_lines(
 
 
 def setup_cookbook_routes() -> APIRouter:
-    router = APIRouter(tags=["cookbook"])
+    async def protect_native_control(request: Request):
+        if request.method in {"GET", "HEAD"}:
+            return
+        # Cookbook's UI records and session strings are not an application
+        # process registry. No loopback caller can use them as local authority.
+        path = request.url.path
+        from routes.shell_routes import _require_admin
+        if path in {"/api/cookbook/kill-pid", "/api/cookbook/state", "/api/cookbook/ssh-key"}:
+            _require_admin(request)
+        if path in {"/api/model/download", "/api/model/serve"}:
+            payload = await request.json()
+            if not payload.get("remote_host"):
+                _require_admin(request)
+    router = APIRouter(tags=["cookbook"], dependencies=[Depends(protect_native_control)])
     _cookbook_state_path = Path(COOKBOOK_STATE_FILE)
     _state_get_cache = {"ts": 0.0, "mtime": 0.0, "value": None}
     _tasks_status_cache = {"ts": 0.0, "value": None}

@@ -37,7 +37,10 @@ def _control_plane_path(path):
         "SETTINGS_FILE", "SESSIONS_FILE", "USER_PREFS_FILE", "VAULT_FILE",
         "SCHEDULED_EMAILS_DB", "EMAIL_CACHE_DB", "MEMORY_FILE", "INTEGRATIONS_FILE",
     )}
-    job_dirs = {canonical_root(constants.BG_JOBS_DIR)}
+    job_dirs = {canonical_root(constants.BG_JOBS_DIR), canonical_root(constants.PROCESS_RESOURCES_DIR)}
+    processes = sys.modules.get("src.agent_runtime.process_resources")
+    if processes is not None:
+        job_dirs.add(canonical_root(processes._LAUNCH_DIR))
     # Producers may have configured paths different from the default constants.
     # Inspect already-loaded server metadata without initializing a store here.
     bg = sys.modules.get("src.bg_jobs")
@@ -275,25 +278,165 @@ def intersect_roots(parent, child):
 @dataclass(frozen=True)
 class ProcessResource:
     namespace: str
-    incarnation: str
     owner: str
-    pid: int
-    start_token: str
+    request_id: str
+    thread_id: str
+    identity: "ProcessIdentity"
+    role: str
     job_id: str = ""
     containment_id: str = ""
-    namespace_pid: int | None = None
-    namespace_start_token: str = ""
 
     def __post_init__(self):
-        for name in ("namespace", "incarnation", "owner", "start_token"):
+        from src.process_lifecycle import ProcessIdentity
+        for name in ("namespace", "request_id", "thread_id"):
             _text(getattr(self, name), name)
-        for name in ("job_id", "containment_id", "namespace_start_token"):
+        for name in ("owner", "job_id", "containment_id"):
             _text(getattr(self, name), name, optional=True)
-        if (type(self.pid) is not int or self.pid <= 0
-                or (self.namespace_pid is not None and
-                    (type(self.namespace_pid) is not int or self.namespace_pid <= 0))
-                or bool(self.namespace_pid) != bool(self.namespace_start_token)):
+        if (not isinstance(self.identity, ProcessIdentity)
+                or type(self.identity.pid) is not int or self.identity.pid <= 0
+                or (self.identity.pgid is not None and (type(self.identity.pgid) is not int or self.identity.pgid <= 0))
+                or self.role not in {"supervisor", "leader", "namespace_init", "manager", "pty", "service"}):
             raise ValueError("Malformed process resource identity")
+        supported_roles = {"native:containment": {"leader", "namespace_init"},
+                           "native:bg_jobs": {"supervisor"}}
+        if self.role not in supported_roles.get(self.namespace, set()):
+            raise ValueError("Unsupported process producer or role")
+        _text(self.identity.start_token, "process start token")
+
+    def validate(self):
+        if not self.identity.owned() or self.identity.exited():
+            raise ResourceIdentityError("Process resource is stale or unverifiable")
+
+    def to_dict(self):
+        return {"namespace": self.namespace, "owner": self.owner, "request_id": self.request_id,
+                "thread_id": self.thread_id, "identity": self.identity.to_record(), "role": self.role,
+                "job_id": self.job_id, "containment_id": self.containment_id}
+
+    @classmethod
+    def from_dict(cls, value):
+        from src.process_lifecycle import ProcessIdentity
+        if not isinstance(value, dict) or set(value) != {"namespace", "owner", "request_id", "thread_id", "identity", "role", "job_id", "containment_id"}:
+            raise ValueError("Malformed process resource snapshot")
+        identity = value["identity"]
+        if not isinstance(identity, dict) or set(identity) != {"pid", "start_token", "pgid"}:
+            raise ValueError("Malformed lifecycle identity snapshot")
+        return cls(**{**value, "identity": ProcessIdentity(**identity)})
+
+
+@dataclass(frozen=True)
+class ProcessLaunchScope:
+    backend: "NativeBackendResource"
+    root: FilesystemRoot
+    required: frozenset[str]
+    runtime_roots: tuple[PathObservation, ...] = ()
+    network: str = "inherit"
+    max_runtime_s: int = 3600
+
+    def __post_init__(self):
+        if (not isinstance(self.backend, NativeBackendResource) or not isinstance(self.root, FilesystemRoot)
+                or not isinstance(self.required, frozenset) or not self.required
+                or any(not isinstance(v, str) or not v for v in self.required)):
+            raise ValueError("Malformed process launch scope")
+        if self.backend.tool_id not in {"bash", "python"}:
+            raise ValueError("Unsupported native launch producer")
+        if (not isinstance(self.runtime_roots, tuple) or any(not isinstance(r, PathObservation) for r in self.runtime_roots)
+                or self.network not in {"inherit", "none"}
+                or type(self.max_runtime_s) is not int or self.max_runtime_s <= 0):
+            raise ValueError("Malformed launch boundary selectors")
+
+    def validate(self):
+        self.root.validate()
+        for runtime in self.runtime_roots:
+            if canonical_root(runtime.path) != runtime.path or FileObjectIdentity.observe(runtime.path) != runtime.identity:
+                raise ResourceIdentityError("Launch runtime root changed")
+
+    def to_dict(self):
+        return {"backend": self.backend.to_dict(), "root": self.root.to_dict(), "required": sorted(self.required),
+                "runtime_roots": [{"path": r.path, "identity": asdict(r.identity)} for r in self.runtime_roots],
+                "network": self.network, "max_runtime_s": self.max_runtime_s}
+
+    @classmethod
+    def from_dict(cls, value):
+        if not isinstance(value, dict) or set(value) != {"backend", "root", "required", "runtime_roots", "network", "max_runtime_s"} or not isinstance(value["required"], list) or not isinstance(value["runtime_roots"], list):
+            raise ValueError("Malformed launch scope snapshot")
+        return cls(backend_from_dict(value["backend"]), FilesystemRoot.from_dict(value["root"]), frozenset(value["required"]),
+                   tuple(PathObservation(r["path"], FileObjectIdentity(**r["identity"])) for r in value["runtime_roots"]),
+                   value["network"], value["max_runtime_s"])
+
+
+@dataclass(frozen=True)
+class ProcessLaunchResource:
+    namespace: str
+    owner: str
+    request_id: str
+    thread_id: str
+    generation: str
+    tool: str
+    input_digest: str
+    scope: ProcessLaunchScope
+    ceiling_digest: str
+
+    def __post_init__(self):
+        for name in ("namespace", "request_id", "thread_id", "generation", "tool", "input_digest", "ceiling_digest"):
+            _text(getattr(self, name), name)
+        _text(self.owner, "owner", optional=True)
+        if not isinstance(self.scope, ProcessLaunchScope) or self.tool != self.scope.backend.tool_id:
+            raise ValueError("Malformed launch resource")
+        import re
+        if (self.namespace != "native:containment" or not re.fullmatch(r"[a-f0-9]{32}", self.generation)
+                or any(not re.fullmatch(r"[a-f0-9]{64}", v) for v in (self.input_digest, self.ceiling_digest))):
+            raise ValueError("Malformed native launch producer or generation")
+
+    def validate(self):
+        self.scope.validate()
+
+    def to_dict(self):
+        return {**{k: getattr(self, k) for k in ("namespace", "owner", "request_id", "thread_id", "generation", "tool", "input_digest", "ceiling_digest")},
+                "scope": self.scope.to_dict()}
+
+    @classmethod
+    def from_dict(cls, value):
+        if not isinstance(value, dict) or set(value) != {"namespace", "owner", "request_id", "thread_id", "generation", "tool", "input_digest", "scope", "ceiling_digest"}:
+            raise ValueError("Malformed launch resource snapshot")
+        return cls(**{**value, "scope": ProcessLaunchScope.from_dict(value["scope"])})
+
+
+@dataclass(frozen=True)
+class BackgroundJobResource:
+    namespace: str
+    job_id: str
+    generation: str
+    owner: str
+    request_id: str
+    thread_id: str
+    containment_id: str
+    processes: tuple[ProcessResource, ...]
+
+    def __post_init__(self):
+        for name in ("namespace", "job_id", "generation", "request_id", "thread_id", "containment_id"):
+            _text(getattr(self, name), name)
+        _text(self.owner, "owner", optional=True)
+        import re
+        if (not re.fullmatch(r"[A-Za-z0-9_-]+", self.job_id)
+                or not re.fullmatch(r"[a-f0-9]{32}", self.generation)):
+            raise ValueError("Malformed job selector or launch generation")
+        if (not isinstance(self.processes, tuple) or not self.processes
+                or any(not isinstance(p, ProcessResource) or (p.owner, p.request_id, p.thread_id, p.job_id, p.containment_id)
+                       != (self.owner, self.request_id, self.thread_id, self.job_id, self.containment_id) for p in self.processes)
+                or len({p.role for p in self.processes}) != len(self.processes)):
+            raise ValueError("Malformed background job resource")
+        if self.namespace != "native:bg_jobs" or any(p.namespace != "native:bg_jobs" or p.role != "supervisor" for p in self.processes):
+            raise ValueError("Unsupported job producer or process role")
+
+    def to_dict(self):
+        return {**{k: getattr(self, k) for k in ("namespace", "job_id", "generation", "owner", "request_id", "thread_id", "containment_id")},
+                "processes": [p.to_dict() for p in self.processes]}
+
+    @classmethod
+    def from_dict(cls, value):
+        if not isinstance(value, dict) or set(value) != {"namespace", "job_id", "generation", "owner", "request_id", "thread_id", "containment_id", "processes"} or not isinstance(value["processes"], list):
+            raise ValueError("Malformed background resource snapshot")
+        return cls(**{**value, "processes": tuple(ProcessResource.from_dict(p) for p in value["processes"])})
 
 
 @dataclass(frozen=True)

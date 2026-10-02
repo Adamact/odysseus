@@ -1,22 +1,9 @@
-"""Stopping a Cookbook server, on a host with procfs and on one without.
+"""Cookbook selectors and OS observations never mint application authority.
 
-The tmux kill is what actually stops the server; the pid sweep that follows it
-only catches model servers that survive the session's SIGHUP. Two invariants
-live here.
-
-**The stop must not fail because the host cannot be inspected.** Letting a
-procfs scan raise on macOS turned a successful stop into a reported failure and
-skipped the state write that marks the session stopped for the Cookbook UI
-(ODY-94). Skipping the sweep silently fixed the crash and left the other half:
-the stop then claimed success without having looked at all. So the sweep now
-runs through ``ps`` where there is no procfs, and says so when it cannot look.
-
-**The sweep signals only processes the session owns.** It used to kill anything
-whose full command line matched the tracked one. The Cookbook composed that
-command line, so an identical one is just as likely to be a server the user
-started by hand — killing it is indistinguishable from killing ours, which is
-the "stop only what we started" failure. Ownership now comes from the tmux
-pane's process tree, captured before the kill; a lookalike is reported instead.
+These legacy UI-backed targets have no authoritative launch registry. Local
+agent stops therefore fail closed before discovery, signalling or state writes,
+on both procfs and other hosts. Shared Wave 5B lifecycle mechanics are tested
+separately in test_process_lifecycle and test_process_ownership.
 """
 import asyncio
 import json
@@ -160,7 +147,7 @@ def _install_effective_kill(monkeypatch, table):
 
 
 @pytest.mark.asyncio
-async def test_stop_marks_session_stopped_when_the_host_has_no_procfs(
+async def test_unadmitted_stop_refused_when_the_host_has_no_procfs(
     monkeypatch, tmp_path
 ):
     """The ODY-94 regression: no procfs must not turn a working stop into a failure."""
@@ -176,13 +163,12 @@ async def test_stop_marks_session_stopped_when_the_host_has_no_procfs(
         json.dumps({"session_id": "serve-abc123"})
     )
 
-    assert result["exit_code"] == 0
-    assert result["output"].startswith("Stopped server serve-abc123")
-    assert _stopped_statuses(posts, "serve-abc123") == ["stopped"]
+    assert result["failure_kind"] == "resource_identity_denied"
+    assert _stopped_statuses(posts, "serve-abc123") == []
 
 
 @pytest.mark.asyncio
-async def test_stop_says_so_when_the_session_cannot_be_inspected(
+async def test_unadmitted_stop_refused_when_the_session_cannot_be_inspected(
     monkeypatch, tmp_path
 ):
     """A sweep that could not look must not read as a sweep that found nothing.
@@ -209,15 +195,14 @@ async def test_stop_says_so_when_the_session_cannot_be_inspected(
         json.dumps({"session_id": "serve-abc123"})
     )
 
-    assert result["exit_code"] == 0
-    assert "could not identify the session's processes" in result["output"]
+    assert result["failure_kind"] == "resource_identity_denied"
     assert signalled == []
-    assert _stopped_statuses(posts, "serve-abc123") == ["stopped"]
+    assert _stopped_statuses(posts, "serve-abc123") == []
 
 
 @pytest.mark.asyncio
-async def test_stop_kills_the_sessions_own_survivor(monkeypatch, tmp_path):
-    """A process under the session's pane is ours, so it gets signalled."""
+async def test_pane_descendant_is_not_application_owned(monkeypatch, tmp_path):
+    """A process under a named pane still requires prior application admission."""
     tracked_cmd = "python -m vllm.entrypoints.openai.api_server --model org/model"
     state = _tracked_state(cmd=tracked_cmd)
     posts = _install_httpx_client(monkeypatch, state)
@@ -232,14 +217,13 @@ async def test_stop_kills_the_sessions_own_survivor(monkeypatch, tmp_path):
         json.dumps({"session_id": "serve-abc123"})
     )
 
-    assert result["exit_code"] == 0
-    assert (101, signal.SIGTERM) in signalled
-    assert "killed 2 surviving process(es)" in result["output"]
-    assert _stopped_statuses(posts, "serve-abc123") == ["stopped"]
+    assert result["failure_kind"] == "resource_identity_denied"
+    assert signalled == []  # OS lineage alone never establishes app ownership.
+    assert _stopped_statuses(posts, "serve-abc123") == []
 
 
 @pytest.mark.asyncio
-async def test_stop_reports_a_command_line_lookalike_without_signalling_it(
+async def test_unadmitted_stop_never_signals_a_command_line_lookalike(
     monkeypatch, tmp_path
 ):
     """The headline change: matching the command line is not owning the process.
@@ -262,13 +246,9 @@ async def test_stop_reports_a_command_line_lookalike_without_signalling_it(
         json.dumps({"session_id": "serve-abc123"})
     )
 
-    assert result["exit_code"] == 0
+    assert result["failure_kind"] == "resource_identity_denied"
     assert not any(pid == 202 for pid, _sig in signalled)
-    # Reported rather than silently dropped: the old behaviour acted on this
-    # information, so giving it up entirely would be a regression of its own.
-    assert "202" in result["output"]
-    assert "not signalled" in result["output"]
-    assert _stopped_statuses(posts, "serve-abc123") == ["stopped"]
+    assert _stopped_statuses(posts, "serve-abc123") == []
 
 
 @pytest.mark.asyncio
@@ -302,10 +282,10 @@ async def test_stop_does_not_signal_a_pid_whose_identity_changed(
         json.dumps({"session_id": "serve-abc123"})
     )
 
-    assert result["exit_code"] == 0
-    # The pane shell is genuinely ours and is signalled; 101 never is.
+    assert result["failure_kind"] == "resource_identity_denied"
+    # Neither pane discovery nor a matching token creates application scope.
     assert not any(pid == 101 for pid, _sig in signalled)
-    assert _stopped_statuses(posts, "serve-abc123") == ["stopped"]
+    assert _stopped_statuses(posts, "serve-abc123") == []
 
 
 def test_model_process_scan_returns_empty_without_procfs(monkeypatch, tmp_path):
@@ -323,8 +303,8 @@ def test_model_process_scan_returns_empty_without_procfs(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_stop_reports_a_survivor_it_can_no_longer_identify(monkeypatch, tmp_path):
-    """Captured as ours, unverifiable at sweep time: not signalled, and said so."""
+async def test_unadmitted_stop_refused_with_unverifiable_process(monkeypatch, tmp_path):
+    """An unverifiable OS observation cannot create an application grant."""
     from src import process_ownership
 
     tracked_cmd = "python -m vllm.entrypoints.openai.api_server --model org/model"
@@ -347,10 +327,9 @@ async def test_stop_reports_a_survivor_it_can_no_longer_identify(monkeypatch, tm
 
     result = await tools.do_stop_served_model(json.dumps({"session_id": "serve-abc123"}))
 
-    assert result["exit_code"] == 0
+    assert result["failure_kind"] == "resource_identity_denied"
     assert not any(pid == 101 for pid, _sig in signalled)
-    assert "could not be re-identified and were not signalled (pid 101)" in result["output"]
-    assert _stopped_statuses(posts, "serve-abc123") == ["stopped"]
+    assert _stopped_statuses(posts, "serve-abc123") == []
 
 
 @pytest.mark.asyncio
@@ -383,6 +362,6 @@ async def test_stop_never_signals_a_pid_reissued_between_the_table_and_its_captu
 
     result = await tools.do_stop_served_model(json.dumps({"session_id": "serve-abc123"}))
 
-    assert result["exit_code"] == 0
+    assert result["failure_kind"] == "resource_identity_denied"
     assert not any(pid == 101 for pid, _sig in signalled)
-    assert _stopped_statuses(posts, "serve-abc123") == ["stopped"]
+    assert _stopped_statuses(posts, "serve-abc123") == []

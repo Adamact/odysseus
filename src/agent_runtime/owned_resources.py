@@ -257,7 +257,8 @@ def needs_owned_binding(operation):
             raise ResourceIdentityError("Unresolved internal resource selector")
         path = posixpath.normpath(urlsplit(path).path)
         private = {"document", "documents", "session", "sessions", "history", "chat", "chats",
-                   "notes", "memory", "vault", "upload", "uploads", "attachments"}
+                   "notes", "memory", "vault", "upload", "uploads", "attachments",
+                   "shell", "model", "cookbook"}
         segments = path.strip("/").split("/")
         if len(segments) >= 2 and segments[0] == "api" and segments[1].casefold() in private:
             raise ResourceIdentityError("Owned records require a dedicated resource-bound tool")

@@ -17,6 +17,10 @@ def workspace(tmp_path, monkeypatch):
     path.mkdir()
     monkeypatch.setattr(tool_execution, "agent_cwd", lambda: str(path))
     monkeypatch.setattr(containment, "_store_path", lambda: tmp_path / "grants.json")
+    from tests.process_resource_helpers import install_native_authority
+    from src.agent_runtime import process_resources
+    monkeypatch.setattr(process_resources, "_LAUNCH_DIR", tmp_path / "private" / "launches")
+    install_native_authority(monkeypatch, path)
     return path
 
 

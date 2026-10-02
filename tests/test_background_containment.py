@@ -9,10 +9,15 @@ import pytest
 from src import bg_jobs, containment, process_ownership, process_reaper, tool_execution
 from src.tool_execution import NO_TOOL_SECURITY_CONTEXT
 from tests.runtime_evidence_helpers import server_authorized_executor
+from tests.process_resource_helpers import launch, get, kill
 
 
 @pytest.fixture
 def jobs(tmp_path, monkeypatch):
+    from src.agent_runtime import process_resources
+    monkeypatch.setattr(process_resources, "_LAUNCH_DIR", tmp_path / "private" / "launches")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
     monkeypatch.setattr(bg_jobs, "_JOBS_DIR", tmp_path / "jobs")
     monkeypatch.setattr(bg_jobs, "_STORE", tmp_path / "jobs.json")
     monkeypatch.setattr(containment, "_store_path", lambda: tmp_path / "grants.json")
@@ -20,11 +25,11 @@ def jobs(tmp_path, monkeypatch):
     monkeypatch.setattr(containment, "MECHANISMS", tuple(m for m in containment.MECHANISMS if m.name == "process_group"))
     monkeypatch.setattr(tool_execution, "_owner_is_admin", lambda owner: True)
     launched = []
-    yield tmp_path, launched
+    yield workspace, launched
     for record in launched:
-        current = bg_jobs.get(record["id"])
+        current = get(record["id"])
         if current and current["status"] == "running":
-            bg_jobs.kill(record["id"])
+            kill(record["id"])
         proc = bg_jobs._LIVE_PROCS.pop(record["pid"], None)
         if proc:
             proc.wait(timeout=8)
@@ -33,7 +38,7 @@ def jobs(tmp_path, monkeypatch):
 def finished(job_id):
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
-        record = bg_jobs.get(job_id)
+        record = get(job_id)
         if record["status"] != "running":
             return record
         time.sleep(0.03)
@@ -42,7 +47,7 @@ def finished(job_id):
 
 def test_detached_execution_owns_boundary_and_reports_death(jobs):
     path, launched = jobs
-    record = bg_jobs.launch("printf captured", "chat", cwd=str(path))
+    record = launch("printf captured", "chat", cwd=str(path))
     launched.append(record)
     result = finished(record["id"])
     assert result["output"] == "captured"
@@ -73,7 +78,7 @@ def test_supervisor_setup_failure_closes_unstarted_grant(jobs):
     result = subprocess.run([sys.executable, str(worker)], input=json.dumps(payload),
                             capture_output=True, text=True, timeout=10)
     assert result.returncode == 0  # Supervisor publishes the failed job result.
-    assert "FileNotFoundError" in result.stderr
+    assert "KeyError" in result.stderr  # Legacy unlinked payload fails before execution.
     assert not (path / "must-not-exist").exists()
     assert containment.active_grants() == []
     assert (path / "exit").read_text() == "1"
@@ -102,7 +107,7 @@ async def test_bg_marker_refuses_without_spawning_and_authority_still_gates(jobs
 
 def test_detached_supervisor_enforces_timeout(jobs):
     path, launched = jobs
-    record = bg_jobs.launch("sleep 60", "chat", cwd=str(path), max_runtime_s=1)
+    record = launch("sleep 60", "chat", cwd=str(path), max_runtime_s=1)
     launched.append(record)
     result = finished(record["id"])
     assert result["timed_out"] is True
@@ -111,11 +116,11 @@ def test_detached_supervisor_enforces_timeout(jobs):
 
 def test_restart_keeps_verified_background_supervisor(jobs):
     path, launched = jobs
-    record = bg_jobs.launch("sleep 60", "chat", cwd=str(path))
+    record = launch("sleep 60", "chat", cwd=str(path))
     launched.append(record)
     report = process_reaper.reap_containment_grants()
     assert report["background_kept"] == 1
-    killed = bg_jobs.kill(record["id"])
+    killed = kill(record["id"])
     assert killed["killed"] is True
     assert killed["teardown"]["dead"] is True
 
@@ -126,16 +131,14 @@ def test_kill_never_marks_a_foreign_pid_killed(jobs, monkeypatch):
     bg_jobs._save({"stale": record})
     monkeypatch.setattr(process_ownership, "verify", lambda *args: process_ownership.FOREIGN)
     monkeypatch.setattr(bg_jobs, "_kill", lambda *args, **kwargs: pytest.fail("foreign process signalled"))
-    result = bg_jobs.kill("stale")
-    assert result["status"] == "running"
-    assert result.get("killed") is not True
-    assert result["teardown"]["dead"] is False
+    result = bg_jobs._kill_record(record)  # Service cleanup still refuses foreign identity.
+    assert result.dead is False
 
 
 def test_running_detached_output_and_concurrent_grants_are_preserved(jobs):
     path, launched = jobs
     for number in range(3):
-        launched.append(bg_jobs.launch(f"printf job-{number}; sleep 0.3", "chat", cwd=str(path)))
+        launched.append(launch(f"printf job-{number}; sleep 0.3", "chat", cwd=str(path)))
     for number, record in enumerate(launched):
         assert finished(record["id"])["output"] == f"job-{number}"
     grants = containment._load_records()
@@ -145,11 +148,11 @@ def test_running_detached_output_and_concurrent_grants_are_preserved(jobs):
 
 def test_detached_output_is_available_while_running(jobs):
     path, launched = jobs
-    record = bg_jobs.launch("printf progress; sleep 5", "chat", cwd=str(path))
+    record = launch("printf progress; sleep 5", "chat", cwd=str(path))
     launched.append(record)
     deadline = time.monotonic() + 3
     while time.monotonic() < deadline:
-        current = bg_jobs.get(record["id"])
+        current = get(record["id"])
         if "progress" in current["output"]:
             assert current["status"] == "running"
             return

@@ -397,8 +397,10 @@ def test_task_and_background_continuations_keep_original_roots(tmp_path, monkeyp
     import src.constants
     monkeypatch.setattr(src.constants, "BG_JOBS_DIR", str(tmp_path))
     grant = authority(tmp_path, "read_file")
-    save_background_authority("job", grant)
-    assert restore_background_authority("job", owner="alice", session_id="s").resource_roots == grant.resource_roots
+    # A roots-only sidecar is legacy state and cannot invent a job generation.
+    with pytest.raises(ValueError):
+        save_background_authority("job", grant)
+    assert restore_background_authority("job", owner="alice", session_id="s").resource_roots == ()
     assert restore_background_authority("job", owner="bob", session_id="s").resource_roots == ()
     with bind_request_authority(grant):
         sealed = seal_task_authority("Read files in the workspace", "llm", None, owner="alice")
@@ -708,10 +710,11 @@ def test_nonfilesystem_identities_are_inert_and_distinguish_producers_from_pages
     page = BrowserPageResource(producer, "page-1", 2, "https://example.test")
     assert replace(producer, incarnation="incarnation-2") != producer
     assert replace(page, navigation_generation=3) != page
-    ProcessResource("local", "boot/process", "alice", 123, "boot:start", "job", "receipt", 124, "boot:init")
+    from src.process_lifecycle import ProcessIdentity
+    ProcessResource("native:containment", "alice", "request", "thread", ProcessIdentity(123, "boot:start"), "leader", "job", "receipt")
     OwnedResource("documents", "alice", "thread", "documents", "document", "revision")
     assert ExternalResource("mcp", "endpoint", "server", "tool", "connection").external is True
     with pytest.raises(ValueError):
         ExternalResource("mcp", "endpoint", "server", "tool", "connection", external=False)
     with pytest.raises(ValueError):
-        ProcessResource("local", "incarnation", "alice", 123, "", containment_id="receipt")
+        ProcessResource("native:containment", "alice", "request", "thread", ProcessIdentity(123, ""), "leader", containment_id="receipt")
