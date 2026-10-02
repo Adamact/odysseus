@@ -17,6 +17,7 @@ from pathlib import Path
 import re
 import stat
 import threading
+import weakref
 from typing import Any
 
 from src.constants import DATA_DIR
@@ -41,11 +42,17 @@ def effects_dir() -> Path:
 
 
 class EffectLog:
+    # Logs still owned by a live run in this process. A later turn appends to
+    # the same object rather than a second copy with its own sequence counter.
+    _LIVE: "weakref.WeakValueDictionary[tuple[str, str], EffectLog]" = weakref.WeakValueDictionary()
+
     def __init__(self, run_id: str, *, durable: bool = True, directory: str | os.PathLike | None = None) -> None:
         if not isinstance(run_id, str) or not _RUN_ID.fullmatch(run_id):
             raise ValueError("Effect log requires a server-generated run identifier")
         self.run_id = run_id
         self.path = (Path(directory) if directory is not None else effects_dir()) / f"{run_id}.jsonl" if durable else None
+        if self.path is not None:
+            self._LIVE[(str(self.path.parent), run_id)] = self
         self._claims: list[EffectClaim] = []
         self._outcomes: list[EffectOutcome] = []
         self._observations: list[Observation] = []
@@ -166,6 +173,60 @@ class EffectLog:
         log._sequence = max((r.sequence for r in (*history.claims, *history.outcomes, *history.observations)),
                             default=0)
         return log
+
+    @classmethod
+    def open(cls, run_id: str, *, directory: str | os.PathLike | None = None) -> "EffectLog":
+        """The live log for a run, or its replayed durable history.
+
+        A log that is not live belongs to a finished or crashed run, so its
+        unsettled claims are recovered as interrupted before any append.
+        """
+        base = Path(directory) if directory is not None else effects_dir()
+        live = cls._LIVE.get((str(base), run_id))
+        if live is not None:
+            return live
+        log = cls.load(run_id, directory=base)
+        log.recover_interrupted()
+        return log
+
+    # -- background launch lineage ------------------------------------------
+
+    def index_launch(self, generation: str, effect_id: str) -> None:
+        """Durably map an exact Wave 3 launch generation to its claim."""
+        if self.path is None:
+            return
+        if not _RUN_ID.fullmatch(generation or ""):
+            raise ValueError("Malformed launch generation")
+        target = self.path.parent / f"launch-{generation}.json"
+        temporary = target.with_suffix(".tmp")
+        data = json.dumps({"run_id": self.run_id, "effect_id": effect_id}, sort_keys=True).encode()
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(temporary, flags, 0o600)
+        try:
+            os.write(descriptor, data)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        os.replace(temporary, target)
+
+    @staticmethod
+    def launch_owner(generation: str, *, directory: str | os.PathLike | None = None) -> tuple[str, str] | None:
+        if not _RUN_ID.fullmatch(generation or ""):
+            return None
+        base = Path(directory) if directory is not None else effects_dir()
+        try:
+            descriptor = os.open(base / f"launch-{generation}.json", os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            with os.fdopen(descriptor, "rb") as stream:
+                if os.fstat(stream.fileno()).st_nlink != 1:
+                    return None
+                value = json.loads(stream.read(4096))
+        except (OSError, ValueError):
+            return None
+        if (not isinstance(value, dict) or set(value) != {"run_id", "effect_id"}
+                or not isinstance(value["run_id"], str) or not _RUN_ID.fullmatch(value["run_id"])
+                or not isinstance(value["effect_id"], str)):
+            return None
+        return value["run_id"], value["effect_id"]
 
     def recover_interrupted(self) -> tuple[EffectOutcome, ...]:
         """Append INTERRUPTED outcomes for claims that never settled."""

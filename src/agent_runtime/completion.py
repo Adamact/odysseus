@@ -20,7 +20,17 @@ from src.agent_evidence import (
     requirements_from_runtime_context, _execution_obligation, _unquoted_statements,
     _ARTIFACT_PATH,
 )
+from .effect_log import EffectLog
 from .journal import ActionJournal, bind_journal, current_journal
+
+
+def _ledger(journal: ActionJournal, requirements) -> EvidenceLedger:
+    """The single evidence view used for the decision and the prose filter."""
+    ledger = EvidenceLedger.from_tool_events(journal.evidence_events(), requirements)
+    ledger.record_effects(journal.effect_entries(),
+                          {action.action_id: index for index, action in enumerate(journal.actions, 1)},
+                          journal.partial_reads())
+    return ledger
 
 
 _TEST_CLAIM = re.compile(
@@ -192,6 +202,10 @@ def with_completion_gate(func):
         journal = ActionJournal(
             workspace=requirements.workspace_root, observed_artifacts=requirements.required_artifacts,
             parent_run_id=bound.get('_parent_run_id') or (parent.run_id if parent is not None else None))
+        # One durable effect log per run lineage gives child effects and parent
+        # observations a single total order for invalidation.
+        journal.effects = (parent.effects if parent is not None and parent.effects is not None
+                           else EffectLog(journal.run_id))
         answer_events: list[dict] = []
         metrics_events: list[dict] = []
         answer = ''
@@ -241,7 +255,7 @@ def with_completion_gate(func):
                         awaiting = True
                         payload = data.get('data') or {}
                         if isinstance(payload.get('question'), str):
-                            current = EvidenceLedger.from_tool_events(journal.evidence_events(), requirements)
+                            current = _ledger(journal, requirements)
                             question, why = completion_answer(payload['question'], current, current.evaluate(awaiting_user=True))
                             if why:
                                 data = {**data, 'data': {**payload, 'question': question}}
@@ -290,7 +304,7 @@ def with_completion_gate(func):
                         presentation_replaced = True
                         answer = terminal_answer
                         answer_events = [event for event in answer_events if event.get('thinking') is True]
-            ledger = EvidenceLedger.from_tool_events(journal.evidence_events(), requirements)
+            ledger = _ledger(journal, requirements)
             decision = ledger.evaluate(exhausted=exhausted, awaiting_user=awaiting)
             if provider_error:
                 decision = replace(decision, status=CompletionStatus.FAILED,
@@ -334,6 +348,8 @@ def with_completion_gate(func):
                 metadata.update(completion_decision=decision.to_dict(), evidence_events=ledger.to_list(),
                                 action_receipts=journal.to_list(), completion_requirements=requirements.to_dict(),
                                 run_id=journal.run_id, parent_run_id=journal.parent_run_id)
+                if ledger.effects:
+                    metadata['effect_assessments'] = [entry['assessment'].to_dict() for entry in ledger.effects]
                 metadata['completion_gate'] = {
                     'buffer_seconds': released_at - first_answer_at if first_answer_at is not None else 0,
                     'first_visible_answer_seconds': released_at - started,

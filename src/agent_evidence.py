@@ -632,6 +632,84 @@ class EvidenceLedger:
         # Retain receipt command identity privately for presentation matching;
         # model prose and client dictionaries never populate this evidence.
         self._verifier_commands: dict[str, tuple[str, ...]] = {}
+        # Wave 4 effect assessments from the run's journal, plus the journal
+        # order of actions so receipt evidence and effects share one ordering.
+        self.effects: list[dict[str, Any]] = []
+        self._action_order: dict[str, int] = {}
+
+    def record_effects(self, entries: Iterable[Mapping[str, Any]], action_order: Mapping[str, int],
+                       partial_reads: Iterable[str] = ()) -> None:
+        """Consume server-derived effect assessments (never model/client data).
+
+        ``partial_reads`` names read actions whose admitted observation was
+        partial (offset/limit, truncation or extraction): such a read cannot
+        validate omitted content, so its validation event is not authoritative.
+        """
+        from dataclasses import replace
+        from src.agent_runtime.effects import EffectAssessment
+        self.effects = [dict(entry) for entry in entries
+                        if isinstance(entry, Mapping) and isinstance(entry.get("assessment"), EffectAssessment)]
+        self._action_order = {str(k): v for k, v in action_order.items() if type(v) is int}
+        partial = set(partial_reads)
+        self.events = [replace(event, authoritative=False, detail="partial read; omitted content is unvalidated")
+                       if event.kind == EvidenceKind.ARTIFACT_VALIDATION and event.tool == "read_file"
+                       and event.action_id in partial else event for event in self.events]
+
+    def _last_success_ordinal(self, required: str) -> int:
+        return max((self._action_order.get(event.action_id, 0) for event in self.events
+                    if event.kind == EvidenceKind.ARTIFACT_MUTATION and event.authoritative and event.success
+                    and _artifact_path_matches_required(event.artifact_path, required, self.requirements.workspace_root)),
+                   default=0)
+
+    def _later_effects(self, required: str) -> list[tuple[dict[str, Any], bool]]:
+        """Effects after the artifact's last successful mutation, with targeting."""
+        floor = self._last_success_ordinal(required)
+        later = []
+        for entry in self.effects:
+            ordinal = entry.get("ordinal")
+            if type(ordinal) is not int or ordinal <= floor:
+                continue
+            explicit = any(_artifact_path_matches_required(path, required, self.requirements.workspace_root)
+                           for path in entry.get("paths") or ())
+            if explicit or entry.get("unknown_scope"):
+                later.append((entry, explicit))
+        return later
+
+    def _effect_unsettled(self, required: str) -> bool:
+        """A later operation may have partially changed this artifact.
+
+        Explicit targets are unsettled by unknown/timed-out/cancelled outcomes
+        and by failures after the producer reached its mutation stage (atomic
+        refusals keep the earlier artifact). Unknown-scope effects are
+        unsettled when nothing captured their settlement: cancellation,
+        interruption, or failed process teardown; settled shell/Python changes
+        are already tracked through artifact version capture.
+        """
+        from src.agent_runtime.effects import CleanupState, ExecutionOutcome
+        unknown = {ExecutionOutcome.ATTEMPTED, ExecutionOutcome.INTERRUPTED, ExecutionOutcome.CANCELLED}
+        for entry, explicit in self._later_effects(required):
+            assessment = entry["assessment"]
+            if not assessment.unresolved_impact:
+                continue
+            if assessment.execution in unknown or assessment.execution is ExecutionOutcome.RUNNING:
+                return True
+            if explicit and (assessment.execution is ExecutionOutcome.TIMED_OUT
+                             or (assessment.execution is ExecutionOutcome.FAILED and entry.get("mutation_attempted"))):
+                return True
+            if not explicit and assessment.cleanup is CleanupState.FAILED:
+                return True
+        return False
+
+    def _effect_contradicted(self, required: str) -> str:
+        """The latest effect targeting the artifact, if fresh readback contradicts it."""
+        from src.agent_runtime.effects import EffectVerdict
+        targeting = [entry for entry in self.effects if type(entry.get("ordinal")) is int
+                     and any(_artifact_path_matches_required(path, required, self.requirements.workspace_root)
+                             for path in entry.get("paths") or ())]
+        if not targeting:
+            return ""
+        latest = max(targeting, key=lambda entry: entry["ordinal"])["assessment"]
+        return latest.effect_id if latest.verdict is EffectVerdict.CONTRADICTED else ""
 
     @classmethod
     def from_tool_events(
@@ -827,6 +905,8 @@ class EvidenceLedger:
                                        and matching[-1].tool in {'bash', 'python'})
             if not successful or destructive_failure:
                 return False
+            if self.effects and (self._effect_unsettled(path) or self._effect_contradicted(path)):
+                return False
         return True
 
     def record_media_ingress(self, metadata: Mapping[str, Any]) -> None:
@@ -897,8 +977,16 @@ class EvidenceLedger:
                                               'artifact content changed after verification',
                                               (latest_verifier.event_id,))
 
+        for required in self.requirements.required_artifacts if self.effects else ():
+            contradicted = self._effect_contradicted(required)
+            if contradicted:
+                return CompletionDecision(CompletionStatus.FAILED, False,
+                                          "fresh readback contradicts the requested artifact content",
+                                          (), (required,))
+
         satisfied_ids: list[str] = []
         missing: list[str] = []
+        unsettled: list[str] = []
         workspace_root = str(self.requirements.workspace_root or "").strip()
         for required in self.requirements.required_artifacts:
             matches = [
@@ -934,15 +1022,20 @@ class EvidenceLedger:
                     filesystem_missing = True
             if latest_success is None or destructive_failure or filesystem_missing:
                 missing.append(required)
+            elif self.effects and self._effect_unsettled(required):
+                # Earlier success is historical; a later possible change to
+                # this artifact has no settled evidence.
+                unsettled.append(required)
             else:
                 satisfied_ids.append(latest_success.event_id)
-        if missing:
+        if missing or unsettled:
             return CompletionDecision(
                 CompletionStatus.BLOCKED,
                 False,
-                "required artifacts lack successful mutation evidence",
+                "required artifacts lack successful mutation evidence" if missing else
+                "a later operation may have changed a required artifact without settled evidence",
                 tuple(satisfied_ids),
-                tuple(missing),
+                tuple([*missing, *unsettled]),
             )
 
         latest_mutation_index = max(

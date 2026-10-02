@@ -54,6 +54,7 @@ _SHA256 = re.compile(r"[a-f0-9]{64}")
 class ResourceKind(str, Enum):
     FILESYSTEM = "filesystem"
     PROCESS = "process"
+    PROCESS_LAUNCH = "process_launch"
     BACKGROUND_JOB = "background_job"
     OWNED = "owned"
     EXTERNAL = "external"
@@ -108,6 +109,11 @@ class ResourceRef:
         """
         if self.kind is not other.kind:
             return False
+        if self.kind is ResourceKind.OWNED:
+            # A collection binding ("*") covers every record it can create,
+            # list or change; specific records only overlap themselves.
+            return self.location[:-1] == other.location[:-1] and (
+                self.location[-1] == other.location[-1] or "*" in (self.location[-1], other.location[-1]))
         if self.kind is not ResourceKind.FILESYSTEM:
             return self.location == other.location
         if self.location[:-1] != other.location[:-1]:
@@ -153,6 +159,13 @@ def resource_ref(resource: Any, role: str) -> ResourceRef:
         location = ("process", resource.namespace, resource.owner, resource.request_id, resource.thread_id,
                     str(ident.pid), ident.start_token, resource.role)
         return ResourceRef(ResourceKind.PROCESS, role, location, ident.start_token, _sha(resource.to_dict()))
+    if isinstance(resource, wave3.ProcessLaunchResource):
+        # The reservation generation is the exact launch -> job linkage that
+        # Wave 3 validates in ``job_from_record``.
+        location = ("process_launch", resource.namespace, resource.owner, resource.request_id,
+                    resource.thread_id, resource.generation)
+        return ResourceRef(ResourceKind.PROCESS_LAUNCH, role, location, resource.generation,
+                           _sha(resource.to_dict()))
     if isinstance(resource, wave3.BackgroundJobResource):
         location = ("background_job", resource.namespace, resource.owner, resource.request_id,
                     resource.thread_id, resource.job_id, resource.generation)
@@ -378,11 +391,13 @@ class ProducerFacts:
     job_state: str = ""
     remote_acknowledged: bool = False
     external: bool = False
+    # The producer reached its mutation stage before reporting failure.
+    mutation_attempted: bool = False
 
     def __post_init__(self) -> None:
         if self.exit_code is not None and type(self.exit_code) is not int:
             raise ValueError("Malformed producer exit code")
-        for name in ("timed_out", "output_truncated", "remote_acknowledged", "external"):
+        for name in ("timed_out", "output_truncated", "remote_acknowledged", "external", "mutation_attempted"):
             if type(getattr(self, name)) is not bool:
                 raise ValueError("Malformed producer flag")
         for name in ("failure_kind", "job_state"):
@@ -395,7 +410,7 @@ class ProducerFacts:
         return {"exit_code": self.exit_code, "timed_out": self.timed_out,
                 "output_truncated": self.output_truncated, "failure_kind": self.failure_kind,
                 "job_state": self.job_state, "remote_acknowledged": self.remote_acknowledged,
-                "external": self.external}
+                "external": self.external, "mutation_attempted": self.mutation_attempted}
 
     @classmethod
     def from_dict(cls, value: Any) -> "ProducerFacts":
@@ -428,6 +443,7 @@ def producer_facts(result: Any) -> ProducerFacts:
         failure_kind=_label(result.get("failure_kind")),
         job_state=_label(job),
         external=external,
+        mutation_attempted=result.get("mutation_attempted") is True,
     )
 
 
