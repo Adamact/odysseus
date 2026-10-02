@@ -213,10 +213,21 @@ def _prune(jobs: Dict[str, Dict[str, Any]], now: float) -> bool:
     """Drop records (and their on-disk files) for jobs that finished, were
     followed up, and are older than the retention window. Mutates `jobs`."""
     stale = [jid for jid, rec in jobs.items()
-             if rec.get("followed_up") and rec.get("ended_at")
+             if rec.get("status") in {"done", "failed"}
+             and rec.get("followed_up") and rec.get("ended_at")
+             and (rec.get("teardown") or {}).get("dead") is not False
              and (now - rec["ended_at"]) > _RETENTION_S]
     for jid in stale:
-        jobs.pop(jid, None)
+        rec = jobs.pop(jid)
+        from src.agent_runtime.process_resources import job_from_record, retire_launch
+        from src.agent_runtime.resources import ProcessLaunchResource
+        try:
+            resource = job_from_record(rec)
+            retire_launch(ProcessLaunchResource.from_dict(rec["launch_resource"]),
+                          resource.containment_id, job=resource)
+        except (ValueError, TypeError, OSError):
+            # Malformed/replaced publications never become deletion authority.
+            pass
         for p in _JOBS_DIR.glob(f"{jid}.*"):   # .sh .cmd.sh .log .exit
             try:
                 p.unlink()

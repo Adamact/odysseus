@@ -8,12 +8,13 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import threading
 from uuid import uuid4
 from core.atomic_io import store_transaction
 
@@ -220,6 +221,19 @@ def intersect_launch_scopes(parent, child):
     return tuple(dict.fromkeys(narrowed))
 
 
+class _LaunchUse:
+    """Non-persisted one-use producer reservation, shared by approval copies."""
+    def __init__(self):
+        self.used = False
+        self.lock = threading.Lock()
+
+    def claim(self):
+        with self.lock:
+            if self.used:
+                raise ResourceIdentityError("Launch reservation has already been used")
+            self.used = True
+
+
 @dataclass(frozen=True)
 class BoundProcessOperation:
     operation: object
@@ -230,6 +244,7 @@ class BoundProcessOperation:
     jobs: tuple[BackgroundJobResource, ...] = ()
     processes: tuple[ProcessResource, ...] = ()
     exact_approval: object | None = None
+    _launch_use: _LaunchUse = field(default_factory=_LaunchUse, compare=False, repr=False)
 
     def __post_init__(self):
         from src.agent_runtime.authority import ExactOperation
@@ -249,7 +264,8 @@ class BoundProcessOperation:
     def validate(self):
         if self.launch is not None:
             self.launch.validate()
-            guard_launch_workspace(self.launch.scope.root)
+            if self._launch_use.used:
+                raise ResourceIdentityError("Launch reservation has already been used")
         for job in self.jobs:
             validate_job(job, mutation=self.operation.action in {"kill", "stop", "cancel", "terminate", "ack"})
         for process in self.processes:
@@ -321,6 +337,11 @@ def bind_process_operation(operation):
         raise TypeError("Process operation must be server-owned")
     if operation is not None:
         operation.validate()
+        if operation.launch is not None:
+            # One fresh authoritative scan for each execution binding. Resolution
+            # and producer entry retain cheap exact identity checks; no scan is
+            # reused across independent bindings or persisted in an approval.
+            guard_launch_workspace(operation.launch.scope.root)
     token = _ACTIVE.set(operation)
     try:
         yield operation
@@ -363,7 +384,7 @@ def guard_launch_workspace(root):
     """
     from src import bg_jobs, containment, constants
     from src import browser_identity
-    from src.agent_runtime.resources import _control_plane_path
+    from src.agent_runtime.resources import _control_plane_path, _control_plane_snapshot
     control = (Path(bg_jobs._STORE), Path(bg_jobs._JOBS_DIR), containment._store_path(), _LAUNCH_DIR,
                Path(constants.BROWSER_RESOURCES_DIR),
                browser_identity.STATE_ROOT,
@@ -373,12 +394,16 @@ def guard_launch_workspace(root):
         raise ResourceIdentityError("Launch boundary contains server control state")
     def unresolved(error):
         raise ResourceIdentityError("Launch workspace cannot be inspected") from error
+    snapshot = None
     for directory, dirs, files in os.walk(base, followlinks=False, onerror=unresolved):
         for name in (*dirs, *files):
             path = Path(directory) / name
             info = path.lstat()
-            if (path.is_symlink() or info.st_nlink > 1) and _control_plane_path(str(path.resolve())):
-                raise ResourceIdentityError("Launch boundary aliases server control state")
+            if path.is_symlink() or info.st_nlink > 1:
+                if snapshot is None:
+                    snapshot = _control_plane_snapshot()
+                if _control_plane_path(str(path.resolve()), snapshot=snapshot):
+                    raise ResourceIdentityError("Launch boundary aliases server control state")
 
 
 @store_transaction(lambda: _LAUNCH_DIR / "publication")
@@ -390,9 +415,69 @@ def publish_launch(launch, authority, containment_id, *, job=None, processes=())
     path = launch_path(launch.generation)
     if path.exists():
         raise ResourceIdentityError("Launch reservation has already been used")
+    bound = active_process_operation()
+    if bound is not None:
+        if bound.launch != launch:
+            raise ResourceIdentityError("Publication differs from the bound launch")
+        bound._launch_use.claim()
     atomic_write_json(path, {"launch": launch.to_dict(), "authority": authority.to_dict(),
                           "containment_id": containment_id, "job": job.to_dict() if job else None,
                           "processes": [p.to_dict() for p in processes]})
+
+
+@store_transaction(lambda: _LAUNCH_DIR / "publication")
+def retire_launch(launch, containment_id, *, job=None):
+    """Remove only this exact producer publication; never a replacement.
+
+    Callers establish the lifetime end (verified foreground teardown, or exact
+    background history pruning). Missing/malformed/replaced state is retained.
+    One-use launch reservations live in the bound operation, not this file.
+    """
+    path = launch_path(launch.generation)
+    try:
+        published = json.loads(path.read_text())
+    except FileNotFoundError:
+        return False
+    if (published.get("launch") != launch.to_dict()
+            or published.get("containment_id") != containment_id
+            or published.get("job") != (job.to_dict() if job else None)):
+        return False
+    path.unlink()
+    return True
+
+
+@store_transaction(lambda: _LAUNCH_DIR / "publication")
+def prune_foreground_publications():
+    """Startup-only recovery: retire foreground generations without a caller.
+
+    A dead/replaced manager cannot resume attachment. A missing receipt also
+    makes attachment impossible; publication cannot reconstruct that receipt.
+    Its process tree still
+    belongs to containment recovery; deleting a publication never signals or
+    asserts tree death. Live/unverifiable managers and background history stay.
+    """
+    from src import containment
+    from src import process_ownership
+    receipts = containment._load_records()
+    retired = 0
+    for path in _LAUNCH_DIR.glob("*.json"):
+        try:
+            published = json.loads(path.read_text())
+            launch = ProcessLaunchResource.from_dict(published["launch"])
+            receipt = receipts.get(published["containment_id"])
+            abandoned = receipt is not None and process_ownership.verify(receipt.get("manager_pid"), receipt.get("manager_token")) in {
+                process_ownership.GONE, process_ownership.FOREIGN}
+            if (published.get("job") is None and path == launch_path(launch.generation)
+                    and (receipt is None or (
+                        receipt.get("launch_generation") == launch.generation
+                        and receipt.get("id") == published["containment_id"]
+                        and ((receipt.get("release") or {}).get("dead") is True or abandoned)))):
+                # Already under the publication lock; no nested file lock.
+                path.unlink()
+                retired += 1
+        except (ValueError, TypeError, KeyError, OSError):
+            continue
+    return retired
 
 
 @store_transaction(lambda: _LAUNCH_DIR / "publication")

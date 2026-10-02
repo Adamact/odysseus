@@ -284,11 +284,21 @@ def reap_orphans() -> Dict[str, Any]:
     Blocking: a teardown escalates SIGTERM → grace → SIGKILL and waits for the
     process to actually go. Call it off the event loop.
     """
+    # Observe publication consumers before receipt recovery can forget a dead
+    # manager's record. Publication retirement itself neither signals nor
+    # asserts successful teardown; containment remains the recovery authority.
+    from src.agent_runtime.process_resources import prune_foreground_publications
+    try:
+        publications_retired = prune_foreground_publications()
+    except (OSError, ValueError, TypeError):
+        publications_retired = 0
+        logger.warning("process_reaper: foreground publication retirement failed", exc_info=True)
     report = {
         "mechanism": process_ownership.inspection_mechanism(),
         "grants": reap_containment_grants(),
         "bg_jobs": reap_bg_jobs(),
         "agent_tmux": reap_legacy_agent_tmux(),
+        "foreground_publications_retired": publications_retired,
     }
     if report["mechanism"] == process_ownership.MECHANISM_NONE:
         logger.error(

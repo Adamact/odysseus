@@ -433,6 +433,14 @@ async def test_end_to_end_fast_exit_preserves_command_result(workspace, monkeypa
         return {"pid": pid, "start_token": None}
     monkeypatch.setattr(process_ownership, "capture", mocked_capture)
 
+    # Observe the real attachment before foreground lifecycle retirement.
+    published = []
+    attach = resources.attach_containment_processes
+    def observe_attachment(launch, containment_id):
+        attach(launch, containment_id)
+        published.append(json.loads(resources.launch_path(launch.generation).read_text()))
+    monkeypatch.setattr(resources, "attach_containment_processes", observe_attachment)
+
     auth = authority(workspace, tool=tool)
     approval = approval_for(auth, tool, command)
     _, result = await dispatch(auth, tool, command, approval)
@@ -443,10 +451,10 @@ async def test_end_to_end_fast_exit_preserves_command_result(workspace, monkeypa
 
     launches_dir = resources._LAUNCH_DIR
     launch_files = list(launches_dir.glob("*.json"))
-    assert launch_files
+    assert not launch_files
     cid = result.get("containment", {}).get("id")
     assert cid
-    matching = [json.loads(p.read_text()) for p in launch_files if json.loads(p.read_text()).get("containment_id") == cid]
+    matching = [record for record in published if record.get("containment_id") == cid]
     assert len(matching) == 1
     assert matching[0]["processes"] == []
 

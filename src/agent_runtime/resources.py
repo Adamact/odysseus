@@ -28,7 +28,7 @@ def _absolute(value):
         raise ValueError("Resource path must be canonical and absolute")
 
 
-def _control_plane_path(path):
+def _control_plane_snapshot():
     # Execution snapshots/receipts are server state, even if a workspace root
     # contains the data directory. A writable user file cannot mint authority.
     from src import constants
@@ -73,8 +73,6 @@ def _control_plane_path(path):
         protected.add(canonical_root(Path(uploader.upload_dir) / "uploads.json"))
     for directory in job_dirs:
         jobs = Path(directory)
-        if Path(path).is_relative_to(jobs):
-            return True
         if jobs.exists():
             # Uninspectable state fails closed; hardlinks retain object identity.
             protected.update(canonical_root(p) for p in jobs.rglob("*") if p.is_file())
@@ -83,20 +81,28 @@ def _control_plane_path(path):
                      for suffix in ("-wal", "-shm", "-journal"))
     protected.add(canonical_root(Path(constants.DATA_DIR) / ".app_key"))
     protected.add(canonical_root(Path(constants.UPLOAD_DIR) / "uploads.json"))
-    if path in protected:
-        return True
-    try:
-        candidate = os.stat(path)
-    except FileNotFoundError:
-        return False
+    identities = set()
     for control in protected:
         try:
             observed = os.stat(control)
         except FileNotFoundError:
             continue
-        if (candidate.st_dev, candidate.st_ino) == (observed.st_dev, observed.st_ino):
-            return True
-    return False
+        identities.add((observed.st_dev, observed.st_ino))
+    return frozenset(job_dirs), frozenset(protected), frozenset(identities)
+
+
+def _control_plane_path(path, *, snapshot=None):
+    # A scan-local snapshot bounds repeated hardlink checks. Ordinary resource
+    # resolution always observes fresh state. Neither form is an atomic kernel
+    # access policy, and snapshots must never survive a workspace guard call.
+    directories, protected, identities = _control_plane_snapshot() if snapshot is None else snapshot
+    if any(Path(path).is_relative_to(directory) for directory in directories) or path in protected:
+        return True
+    try:
+        candidate = os.stat(path)
+    except FileNotFoundError:
+        return False
+    return (candidate.st_dev, candidate.st_ino) in identities
 
 
 class FilesystemScope(str, Enum):
