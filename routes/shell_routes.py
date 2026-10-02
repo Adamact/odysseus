@@ -695,7 +695,7 @@ def _session_pgid(pid: int) -> int | None:
     return pgid
 
 
-def _signal_session(pgid: int | None, pid: int, sig: int) -> bool:
+def _signal_session(pgid: int | None, pid: int | None, sig: int) -> bool:
     """Send ``sig`` to the whole process group, or to the lone process.
 
     Returns whether anything was signalled, so a caller can tell "the session
@@ -721,6 +721,27 @@ def _session_alive(pgid: int | None, pid: int) -> bool:
     return pid_alive(pid)
 
 
+def _bind_pty_spawn_identity(proc) -> None:
+    """Freeze the PTY leader's identity and its session group at spawn.
+
+    Called immediately after the spawn, while the pid is known to be the child
+    just created: we hold it unreaped, so the slot cannot have been reissued.
+    The group is recorded only when it is the leader's own (``setsid``
+    applied: pgid == pid) and the identity still verifies after reading it.
+    Teardown works from this record alone and never re-derives ownership
+    from ``proc.pid``, which outlives the process it named.
+    """
+    pid = getattr(proc, "pid", None)
+    if not pid:
+        return
+    identity = process_lifecycle.ProcessIdentity.capture(pid)
+    pgid = _session_pgid(pid)
+    if pgid != pid or identity.verdict() != process_lifecycle.OWNED:
+        pgid = None  # No safe session group: teardown reaches the child alone.
+    proc._ody_pty_identity = process_lifecycle.ProcessIdentity(
+        pid=identity.pid, start_token=identity.start_token, pgid=pgid)
+
+
 async def _terminate_pty_session(proc) -> bool:
     """Kill the PTY child and every process in the session it leads.
 
@@ -732,6 +753,18 @@ async def _terminate_pty_session(proc) -> bool:
     outlives the grace period, and return whether the session is actually gone
     so the caller can say so rather than assume it.
 
+    Ownership is the identity frozen at spawn (:func:`_bind_pty_spawn_identity`),
+    re-verified before every signal:
+
+    * leader OWNED and still leading the recorded group → signal the group;
+    * leader GONE (exited and reaped) → the recorded group only, never the
+      pid: a group id is not reissued while the group lives, so a present
+      group with no process in its leader's slot is still ours;
+    * leader FOREIGN → the pid was reissued, which proves our group's
+      lifetime had already ended; nothing of ours is left to signal;
+    * leader UNVERIFIABLE, or no spawn identity at all → nothing is
+      signalled and the session is not reported gone.
+
     The ladder itself is :func:`src.process_lifecycle.escalate_async`; the
     leader is reaped through ``proc.wait()`` inside each window, otherwise its
     own zombie keeps the group alive and the probe can never come back clean.
@@ -739,15 +772,41 @@ async def _terminate_pty_session(proc) -> bool:
     pid = getattr(proc, "pid", None)
     if pid is None:
         return True
-    pgid = _session_pgid(pid)
+    frozen = getattr(proc, "_ody_pty_identity", None)
+    if frozen is None:
+        logger.warning("PTY teardown for pid %s has no spawn identity; not signalling", pid)
+        return False
+    pgid = frozen.pgid
+
+    def _gone() -> bool:
+        verdict = frozen.verdict()
+        if verdict == process_lifecycle.FOREIGN:
+            return True
+        if verdict == process_lifecycle.UNVERIFIABLE:
+            return False
+        if pgid is not None:
+            return not _session_alive(pgid, frozen.pid)
+        return verdict == process_lifecycle.GONE or process_lifecycle.is_zombie(frozen.pid)
+
+    def _send(sig) -> bool:
+        verdict = frozen.verdict()
+        if verdict == process_lifecycle.OWNED:
+            if pgid is not None and process_lifecycle.pgid_of(frozen.pid) == pgid:
+                return _signal_session(pgid, frozen.pid, sig)
+            # Child-only: no safe group, or the leader no longer leads it.
+            return _signal_session(None, frozen.pid, sig)
+        if verdict == process_lifecycle.GONE and pgid is not None:
+            # Never fall back to the pid: it names no process of ours now.
+            return _signal_session(pgid, None, sig)
+        return False
 
     async def _reap_leader():
         if proc.returncode is None:
             await proc.wait()
 
     result = await process_lifecycle.escalate_async(
-        lambda: not _session_alive(pgid, pid),
-        lambda sig: _signal_session(pgid, pid, sig),
+        _gone,
+        _send,
         steps=tuple((sig, PTY_KILL_GRACE) for sig in PTY_KILL_ESCALATION),
         wait=_reap_leader,
         poll_s=PTY_KILL_POLL_INTERVAL,
@@ -801,6 +860,7 @@ async def _generate_pty(cmd: str, timeout: int, request: Request):
         cwd=str(Path.home()),
         preexec_fn=os.setsid,
     )
+    _bind_pty_spawn_identity(proc)
     os.close(slave_fd)  # parent doesn't need the slave side
 
     deadline = (loop.time() + timeout) if timeout else None
