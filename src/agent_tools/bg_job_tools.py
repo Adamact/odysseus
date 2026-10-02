@@ -44,7 +44,7 @@ def _status_label(rec: Dict[str, Any]) -> str:
     return status
 
 
-def _job_facts(rec: Dict[str, Any]) -> Dict[str, Any]:
+def job_lifecycle_facts(rec: Dict[str, Any]) -> Dict[str, Any]:
     """Typed lifecycle facts from the exact admitted job record.
 
     Execution evidence only: completion of a job is not verification of any
@@ -115,19 +115,19 @@ class ManageBgJobsTool:
             if action in _KILL_ACTIONS:
                 if rec.get("status") != "running":
                     return {"output": f"Job `{job_id}` already {_status_label(rec)}; nothing to kill.", "exit_code": 0,
-                            "job": _job_facts(rec)}
+                            "job": job_lifecycle_facts(rec)}
                 killed = bg_jobs.kill(job_id, expected=resource)
                 if not killed or not killed.get("killed"):
                     return {"error": f"Could not verify termination of background job `{job_id}`.",
                             "exit_code": 1, "teardown": (killed or {}).get("teardown")}
                 return {"output": f"Killed background job `{job_id}` ({(killed or {}).get('command', '').splitlines()[0][:80]}).", "exit_code": 0,
-                        "job": _job_facts(killed)}
+                        "job": job_lifecycle_facts(killed)}
 
             out = rec.get("output") or "(no output yet)"
             return {
                 "output": f"Job `{job_id}` [{_status_label(rec)}, {_age(rec)}]\nCommand: {rec.get('command')}\n\nOutput:\n{out}",
                 "exit_code": 0,
-                "job": _job_facts(rec),
+                "job": job_lifecycle_facts(rec),
             }
 
         return {"error": f"manage_bg_jobs: unknown action '{action}'. Use list, output, or kill.", "exit_code": 1}

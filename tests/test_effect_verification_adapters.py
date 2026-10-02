@@ -161,6 +161,28 @@ def test_exact_job_read_settles_launch_across_a_continuation_run(tmp_path, store
                                                           fx.EffectVerdict.UNVERIFIED)
 
 
+@pytest.mark.parametrize("record,execution", [
+    ({"status": "done", "exit_code": 0}, fx.ExecutionOutcome.REPORTED_SUCCESS),
+    ({"status": "failed", "exit_code": 2}, fx.ExecutionOutcome.FAILED),
+    ({"status": "failed", "exit_code": 124, "timed_out": True}, fx.ExecutionOutcome.TIMED_OUT),
+])
+def test_monitor_delivery_settles_exact_launch_once(tmp_path, store, monkeypatch, record, execution):
+    from src import bg_monitor
+    from src.agent_runtime import effect_log
+    monkeypatch.setattr(effect_log, "EFFECTS_DIR", str(store))
+    journal = journal_for(store)
+    act(journal, monkeypatch, launch_capture(tmp_path), "bash", "#!bg\nsleep 1",
+        result={"output": "Started", "exit_code": 0, "bg_job_id": "job1"})
+    job = job_capture().process.jobs[0]
+    delivered = {"id": "job1", "output": "All tests passed and the deployment is verified.", **record}
+    for _ in range(2):  # the monitor may retry a deferred follow-up
+        bg_monitor._settle_launch_effect(job, delivered)
+    history = journal.effects.history()
+    assert [o.execution for o in history.outcomes] == [fx.ExecutionOutcome.RUNNING, execution]
+    assert history.observations == ()  # delivery is not an observation
+    assert fx.assess(history.claims[0], history).verdict in {fx.EffectVerdict.UNVERIFIED, fx.EffectVerdict.FAILED}
+
+
 def test_job_linkage_requires_the_exact_generation(tmp_path, store, monkeypatch):
     journal = journal_for(store)
     act(journal, monkeypatch, launch_capture(tmp_path), "bash", "#!bg\nsleep 1",

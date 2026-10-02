@@ -36,6 +36,22 @@ def _background_result_message(rec):
     return untrusted_context_message("background job output", inject)
 
 
+def _settle_launch_effect(resource, rec):
+    """Record the exact job's settlement against its durable launch claim.
+
+    Uses only the Wave 3-validated job identity and typed lifecycle facts from
+    the server-owned record. Settlement is execution evidence; the delivered
+    output remains attributed content and verifies nothing. Best-effort: a
+    failure leaves the claim running/unknown and never blocks the follow-up.
+    """
+    try:
+        from src.agent_runtime.effect_adapters import settle_background_job
+        from src.agent_tools.bg_job_tools import job_lifecycle_facts
+        settle_background_job(resource, job_lifecycle_facts(rec))
+    except Exception as error:  # noqa: BLE001
+        logger.warning("bg-followup: effect settlement for %s was not recorded: %s", rec.get("id"), error)
+
+
 async def _drain_agent(sess, messages, request_authority=None):
     """Run the agent loop headless against a session. Returns
     (final_prose, tool_events) — tool_events in the same shape the live chat
@@ -146,6 +162,7 @@ async def _run_followup(rec: dict) -> bool:
     try:
         resource = job_from_record(rec)
         validate_job(resource)
+        _settle_launch_effect(resource, rec)
         if not authority.grants or (resource.owner, resource.thread_id, resource.request_id) != (
                 str(getattr(sess, "owner", None) or "").strip().casefold(), sess.id, authority.request_id):
             return False

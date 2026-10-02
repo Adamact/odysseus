@@ -330,20 +330,34 @@ def _settle_background(log: Any, capture: DispatchCapture, result: dict) -> None
     job_facts = result.get("job")
     if not isinstance(job_facts, dict) or len(capture.process.jobs) != 1:
         return
+    settle_background_job(capture.process.jobs[0], job_facts, log=log)
+
+
+def settle_background_job(job: Any, job_facts: Any, *, log: Any = None) -> None:
+    """Settle the RUNNING launch claim of one exact, Wave 3-validated job.
+
+    ``job`` must be a ``BackgroundJobResource`` the caller obtained through
+    Wave 3 validation (an admitted job read, or the monitor's
+    ``job_from_record``/``validate_job``). ``job_facts`` are typed lifecycle
+    facts from that server-owned record; delivered output is never consulted.
+    """
+    from src.agent_runtime.effect_log import EffectLog, EffectPersistenceError, effects_dir
+    from src.agent_runtime.resources import BackgroundJobResource
+    if not isinstance(job, BackgroundJobResource) or not isinstance(job_facts, dict):
+        return
     status = job_facts.get("status")
     if status not in _JOB_SETTLED:
         return
-    job = capture.process.jobs[0]
     lineage = ("process_launch", "native:containment", job.owner, job.request_id, job.thread_id, job.generation)
-    owner = log if any(any(ref.kind is ResourceKind.PROCESS_LAUNCH and ref.location == lineage
-                               for ref in c.dependencies) for c in log.history().claims) else None
-    if owner is None and log.path is not None:
+    owner = log if log is not None and any(any(ref.kind is ResourceKind.PROCESS_LAUNCH and ref.location == lineage
+                                               for ref in c.dependencies) for c in log.history().claims) else None
+    if owner is None:
         # Background continuation: the launch was claimed by an earlier run.
-        from src.agent_runtime.effect_log import EffectLog, EffectPersistenceError
-        indexed = EffectLog.launch_owner(job.generation, directory=log.path.parent)
+        directory = log.path.parent if log is not None and log.path is not None else effects_dir()
+        indexed = EffectLog.launch_owner(job.generation, directory=directory)
         if indexed is not None:
             try:
-                owner = EffectLog.open(indexed[0], directory=log.path.parent)
+                owner = EffectLog.open(indexed[0], directory=directory)
             except (EffectPersistenceError, ValueError):
                 owner = None
     if owner is None:
