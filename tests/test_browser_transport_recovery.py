@@ -59,7 +59,7 @@ async def test_stream_recovers_navigation_then_fetch_without_email_classifier(mo
         return {'tool_calls': [{'index': 0, 'id': name, 'type': 'function',
                 'function': {'name': name, 'arguments': json.dumps(args)}}]}
     responses = iter([
-        call('private_browser', {'action': 'batch', 'commands': [['open', URL], ['find', 'wardrobe'], ['snapshot']]}),
+        call('private_browser', {'action': 'open', 'url': URL}),
         call('web_fetch', {'url': URL}),
         call('web_search', {'query': 'wardrobe'}),
         {'content': 'The site could not be read and no usable product evidence was found.'},

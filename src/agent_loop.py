@@ -7507,10 +7507,9 @@ Get current conditions and a three-day forecast using Open-Meteo. Use this for w
 
     "private_browser": """\
 ```private_browser
-{"action": "open", "url": "https://example.com"}
+{"action": "session_info"}
 ```
-Private browser automation through Odysseus' agent-browser wrapper. Actions include open/read/snapshot/find/evaluate/click/fill/press/wait/screenshot/close/batch. For find, pass visible text in `find`. For evaluate, pass JavaScript in `script`. Use ONLY for specific pages that need JavaScript, login/session state, clicking, forms, waiting, screenshots, or rendered DOM inspection. For open-ended search use `web_search`. For ordinary URL reading use `web_fetch`.
-After opening a page, call `snapshot` before interacting, then use the returned element refs such as `@e12` as `target`; target is a selector/ref, never guessed visible text. Prefer one `batch` for known consecutive steps, e.g. `[["open","https://example.com"],["snapshot"]]`. Batch commands must be non-empty.""",
+Registered browser session metadata only: session_info. Page/document reads and effects are unavailable because the configured local producer cannot guarantee captured-target binding. Do not send batches, raw commands, flags, URLs or guessed page handles. Use web_search/web_fetch for supported web access.""",
 
     "youtube_tool": """\
 ```youtube_tool
@@ -32769,6 +32768,7 @@ async def stream_agent_loop(
                         ),
                         request_text=_last_user,
                         request_authority=active_request_authority(),
+                        client_runtime_context=client_runtime_context,
                     )
                     desc = f"{block.tool_type}: APPROVAL REQUIRED"
                     result = {

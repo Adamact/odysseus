@@ -26,6 +26,18 @@ _BINARY_ARTIFACT_SUFFIXES = _STRUCTURED_DOCUMENT_SUFFIXES | frozenset({
     ".png", ".wav", ".webm", ".webp", ".zip",
 })
 
+
+def _visible_bound_resource(path):
+    from src.agent_runtime.resource_binding import active_resource_operation
+    bound = active_resource_operation()
+    if bound is None:
+        return True
+    try:
+        bound.resolve_path(path)
+        return True
+    except (ValueError, OSError, RuntimeError):
+        return False
+
 # Models frequently put source artifacts in a Markdown code fence even when a
 # tool schema asks for the raw file body. Persisting that fence makes HTML,
 # CSS, JavaScript, and source files invalid. Restrict normalization to
@@ -610,6 +622,8 @@ class LsTool:
                     for entry in it:
                         if entry.name.startswith("."):
                             continue
+                        if not _visible_bound_resource(entry.path):
+                            continue
                         try:
                             is_dir = entry.is_dir(follow_symlinks=False)
                             size = entry.stat(follow_symlinks=False).st_size if not is_dir else 0
@@ -681,7 +695,7 @@ class GlobTool:
                 # .ssh/id_rsa, …) falls through to the walk, which skips it —
                 # otherwise glob would surface secret paths that read_file /
                 # grep already refuse to touch.
-                if inside and os.path.exists(cand) and not _is_sensitive_path(cand):
+                if inside and os.path.exists(cand) and not _is_sensitive_path(cand) and _visible_bound_resource(cand):
                     return [cand], None
                 # Literal not at exact path — fall through to walk so
                 # e.g. "foo.py" still matches at any depth (like rglob).
@@ -705,7 +719,7 @@ class GlobTool:
                         if regex.fullmatch(rel) or regex.fullmatch(name):
                             # Skip deny-listed sensitive files (.env, id_rsa,
                             # known_hosts, …) the same way grep does.
-                            if _is_sensitive_path(os.path.realpath(full)):
+                            if _is_sensitive_path(os.path.realpath(full)) or not _visible_bound_resource(full):
                                 continue
                             try:
                                 mtime = os.stat(full).st_mtime
@@ -766,9 +780,12 @@ class GrepTool:
         def _grep():
             import re as _re
             import shutil
+            from src.agent_runtime.resource_binding import active_resource_operation
             if not os.path.exists(root):
                 return None, f"grep: search target not found: {_display_tool_path(root)}"
-            rg = shutil.which("rg")
+            # The pathname-only fast path scans before individual resources can
+            # be checked. Bound searches must validate every file before read.
+            rg = None if active_resource_operation() is not None else shutil.which("rg")
             if rg:
                 cmd = [rg, "--line-number", "--with-filename", "--no-heading", "--color=never",
                        "--max-count", str(max_hits)]

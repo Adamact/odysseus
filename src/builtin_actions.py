@@ -878,22 +878,28 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
 
 
 async def _run_subprocess(argv, *, shell: bool = False, timeout: int = 120, label: str = "Command") -> Tuple[str, bool]:
-    """Shared subprocess runner. Wraps the blocking subprocess.run in
-    asyncio.to_thread so the event loop stays responsive."""
-    import asyncio
-    import subprocess
+    """Scheduled local work consumes the request's sealed launch ceiling."""
+    from src.agent_runtime.authority import active_request_authority, ExactOperation
+    from src.agent_runtime.process_resources import resolve_process_operation, bind_process_operation
+    from src.agent_runtime.resources import NativeBackendResource
+    from src.agent_tools.subprocess_tools import _run_owned_command
+    authority = active_request_authority()
+    if authority is None:
+        return "Scheduled process launch has no server authority.", False
+    if isinstance(argv, list) and argv and argv[0] == "ssh":
+        return "Remote scheduled workload requires an exact external backend binding.", False
+    command = argv[-1] if isinstance(argv, list) else argv
+    operation = ExactOperation.normalize("bash", command)
+    if not authority.permits(operation):
+        return "Scheduled launch differs from the sealed operation.", False
     try:
-        result = await asyncio.to_thread(
-            subprocess.run, argv, shell=shell, capture_output=True, text=True, timeout=timeout,
-        )
-        output = (result.stdout or "").strip()
-        if result.returncode != 0 and result.stderr:
-            output += "\nSTDERR: " + result.stderr.strip()
-        return output or "(no output)", result.returncode == 0
-    except subprocess.TimeoutExpired:
-        return f"{label} timed out ({timeout}s)", False
-    except Exception as e:
-        return str(e), False
+        bound = resolve_process_operation(authority, operation, NativeBackendResource("bash"))
+        with bind_process_operation(bound):
+            result = await _run_owned_command(command, {"owner": authority.owner,
+                "session_id": authority.session_id}, tool="bash", timeout=timeout)
+        return result.get("output") or result.get("error") or "(no output)", result.get("exit_code") == 0
+    except (ValueError, OSError, RuntimeError) as error:
+        return str(error), False
 
 
 async def action_ssh_command(owner: str, command: str = "", host: str = "localhost", **kwargs) -> Tuple[str, bool]:
@@ -3381,10 +3387,12 @@ async def action_cookbook_serve(
     if srv.get("platform"): body["platform"] = srv["platform"]
 
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.post(f"{internal_api_base()}/api/model/serve",
-                                  json=body, headers=headers)
-            data = r.json() if r.content else {}
+        from src.agent_runtime.local_model_control import model_control_headers
+        with model_control_headers("serve_model", command, owner, body, scheduled=True) as launch_headers:
+            async with httpx.AsyncClient(timeout=30) as client:
+                r = await client.post(f"{internal_api_base()}/api/model/serve",
+                                      json=body, headers=launch_headers)
+                data = r.json() if r.content else {}
     except Exception as e:
         return f"Launch HTTP failed: {e}", False
     if not data.get("ok"):

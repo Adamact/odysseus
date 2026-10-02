@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from src.agent_tools import subprocess_tools
 from src import containment
 from tests.containment_helpers import capture_owned_spawn
+from tests.process_resource_helpers import authorized_handler
 
 
 @pytest.mark.asyncio
@@ -98,7 +99,7 @@ async def test_windows_bash_tool_passes_ctx_env_through_to_the_child(monkeypatch
     monkeypatch.setattr(containment, "find_bash", lambda: r"C:\Program Files\Git\bin\bash.exe")
     monkeypatch.setattr("src.tool_execution.agent_cwd", lambda: str(tmp_path))
 
-    result = await subprocess_tools.BashTool().execute(
+    result = await authorized_handler(subprocess_tools.BashTool().execute, tmp_path)(
         "pwd",
         {"subproc_env": env, "session_id": "chat-1"},
     )
@@ -135,7 +136,7 @@ async def test_bash_tool_returns_install_hint_when_git_bash_is_missing(monkeypat
     monkeypatch.setattr(containment, "find_bash", lambda: None)
     monkeypatch.setattr("src.tool_execution.agent_cwd", lambda: str(tmp_path))
 
-    result = await subprocess_tools.BashTool().execute(
+    result = await authorized_handler(subprocess_tools.BashTool().execute, tmp_path)(
         "pwd",
         {"subproc_env": {}, "session_id": None},
     )
@@ -164,7 +165,7 @@ async def test_windows_bash_does_not_use_a_stray_tmux_executable(monkeypatch, tm
 
     monkeypatch.setattr(subprocess_tools.asyncio, "create_subprocess_shell", fail_tmux)
 
-    result = await subprocess_tools.BashTool().execute(
+    result = await authorized_handler(subprocess_tools.BashTool().execute, workspace)(
         "pwd",
         {"subproc_env": {}, "session_id": "chat-1"},
     )

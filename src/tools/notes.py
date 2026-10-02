@@ -77,6 +77,10 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
     if action == "list" and list_search_query:
         action = "search"
         args.setdefault("query", list_search_query)
+    from src.agent_runtime.owned_resources import active_owned_operation
+    bound = active_owned_operation()
+    if bound is not None:
+        bound.validate()
     db = SessionLocal()
 
     def _norm_note_title(value: str) -> str:
@@ -98,7 +102,7 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
     def _note_by_prefix(note_id: str):
         if not note_id:
             return None
-        q = db.query(Note).filter(Note.id.startswith(note_id))
+        q = db.query(Note).filter(Note.id == note_id if bound is not None else Note.id.startswith(note_id))
         if owner:
             q = q.filter(Note.owner == owner)
         return q.first()
@@ -415,7 +419,7 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
         elif action == "update":
             note_id = _note_id_arg()
             note = _note_by_prefix(note_id)
-            if not note:
+            if not note and bound is None:
                 title_query = str(
                     args.get("title")
                     or args.get("query")
@@ -489,7 +493,7 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
         elif action == "delete":
             note_id = _note_id_arg()
             note = _note_by_prefix(note_id)
-            if not note:
+            if not note and bound is None:
                 title_query = str(
                     args.get("title")
                     or args.get("query")

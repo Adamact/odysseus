@@ -11,13 +11,23 @@ from src.agent_tools import subprocess_tools
 
 @pytest.fixture(autouse=True)
 def native_boundary(tmp_path, monkeypatch):
-    monkeypatch.setattr(tool_execution, "agent_cwd", lambda: str(tmp_path))
-    monkeypatch.setattr(containment, "_store_path", lambda: tmp_path / "grants.json")
+    from src.agent_runtime import process_resources
+    from tests.process_resource_helpers import authorized_handler
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(tool_execution, "agent_cwd", lambda: str(workspace))
+    monkeypatch.setattr(containment, "_store_path", lambda: tmp_path / "private" / "grants.json")
+    monkeypatch.setattr(process_resources, "_LAUNCH_DIR", tmp_path / "private" / "launches")
+    for cls in (subprocess_tools.BashTool, subprocess_tools.PythonTool):
+        original = cls.execute
+        async def execute(self, content, ctx, _original=original):
+            return await authorized_handler(_original.__get__(self), workspace)(content, ctx)
+        monkeypatch.setattr(cls, "execute", execute)
     monkeypatch.setattr(containment, "CONTAINMENT_MODE", containment.MODE_REPORT_ONLY)
     monkeypatch.setattr(containment, "MECHANISMS", tuple(
         m for m in containment.MECHANISMS if m.name == "process_group"
     ))
-    return tmp_path
+    return workspace
 
 
 @pytest.mark.skipif(os.name == "nt", reason="real POSIX group teardown")

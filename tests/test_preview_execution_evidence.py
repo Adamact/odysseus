@@ -9,12 +9,10 @@ from src.clean_agent_preview import preview_tool_result_text
 
 @pytest.mark.asyncio
 async def test_failed_shell_retains_exit_status_and_both_streams_for_followup(tmp_path):
-    from src.tool_execution import _active_workspace
-    token = _active_workspace.set(str(tmp_path))
-    try:
-        result = await BashTool().execute("printf 'PHASE_ONE_DONE\\n'; printf 'CHECK_FAILED\\n' >&2; exit 7", {})
-    finally:
-        _active_workspace.reset(token)
+    from tests.process_resource_helpers import launch_authority
+    cmd = "printf 'PHASE_ONE_DONE\\n'; printf 'CHECK_FAILED\\n' >&2; exit 7"
+    with launch_authority(cmd, tmp_path, session_id="chat"):
+        result = await BashTool().execute(cmd, {"session_id": "chat"})
     assert result['exit_code'] == 7
     observed = preview_tool_result_text(result, 'bash', {})
     assert 'PHASE_ONE_DONE' in observed and 'CHECK_FAILED' in observed

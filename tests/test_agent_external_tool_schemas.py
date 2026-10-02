@@ -432,14 +432,20 @@ def test_known_native_tool_reaches_scoped_bridge_without_redeclared_schema(monke
         name="native_environment",
     )
 
+    from dataclasses import replace
     with bind_execution_bridge(bridge):
+        authority = create_request_authority("Search email for Project Alpha.", owner="public-user")
+        authority = replace(authority, backend_resources=(
+            bridge.resource_identity("search_emails"),
+            bridge.resource_identity("mcp__email__search_emails"),
+        ))
         _collect(agent_loop.stream_agent_loop(
             "https://api.openai.com/v1",
             "policy-model",
             [{"role": "user", "content": "Search email for Project Alpha."}],
             max_rounds=2,
             owner="public-user",
-            request_authority=create_request_authority("Search email for Project Alpha.", owner="public-user"),
+            request_authority=authority,
             relevant_tools={"search_emails"},
             forced_tools={"search_emails"},
             fallbacks=[],

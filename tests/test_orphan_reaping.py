@@ -399,10 +399,16 @@ def test_already_finished_jobs_are_not_reconsidered(job_store, monkeypatch):
     assert bg_jobs.disown_unverified() == {"seen": 0, "retired": 0, "kept": 0}
 
 
-def test_a_launched_job_records_an_identity_next_to_its_pid(job_store):
+def test_a_launched_job_records_an_identity_next_to_its_pid(job_store, tmp_path, monkeypatch):
     """Without this the record is unverifiable forever and the reaper can only
     refuse — the token has to be captured at launch or not at all."""
-    record = bg_jobs.launch("true", "chat-1")
+    from tests.process_resource_helpers import launch
+    from src.agent_runtime import process_resources
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(process_resources, "_LAUNCH_DIR", tmp_path / "private" / "launches")
+    monkeypatch.setattr(containment, "_store_path", lambda: tmp_path / "private" / "grants.json")
+    record = launch("true", "chat-1", cwd=str(workspace))
 
     assert "start_token" in record
     assert process_ownership.verify(record["pid"], record["start_token"]) in (

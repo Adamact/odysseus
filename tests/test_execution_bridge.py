@@ -32,8 +32,8 @@ def test_registry_dispatch_preserves_session_id_for_native_handlers(monkeypatch)
     monkeypatch.setattr(tool_execution, "_direct_fallback", fallback)
 
     async def invoke():
-        block = Block('{"action":"snapshot"}')
-        block.tool_type = "private_browser"
+        block = Block('{"location":"Lisbon"}')
+        block.tool_type = "get_weather"
         return await execute_tool_block(
             block,
             session_id="runtime-session",
@@ -41,7 +41,7 @@ def test_registry_dispatch_preserves_session_id_for_native_handlers(monkeypatch)
         )
 
     description, result = asyncio.run(invoke())
-    assert description.startswith("registry: private_browser")
+    assert description.startswith("registry: get_weather")
     assert result["exit_code"] == 0
     assert seen["session_id"] == "runtime-session"
 

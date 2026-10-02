@@ -405,7 +405,34 @@ def _append_local_ollama_download_command_lines(
 
 
 def setup_cookbook_routes() -> APIRouter:
-    router = APIRouter(tags=["cookbook"])
+    async def protect_native_control(request: Request):
+        if request.method in {"GET", "HEAD"}:
+            return
+        # UI records/session strings are not process authority. Local tool
+        # launches require a one-use capability from their admitted producer.
+        path = request.url.path
+        from routes.shell_routes import _require_admin
+        if path in {"/api/cookbook/kill-pid", "/api/cookbook/state", "/api/cookbook/ssh-key"}:
+            _require_admin(request)
+        if path in {"/api/model/download", "/api/model/serve"}:
+            payload = await request.json()
+            if not payload.get("remote_host"):
+                from src.agent_runtime.local_model_control import consume_model_control
+                from src.agent_runtime.resources import ResourceIdentityError
+                try:
+                    claimed = consume_model_control(request, payload)
+                except (ResourceIdentityError, ValueError, TypeError):
+                    raise HTTPException(403, "Local model capability denied") from None
+                if not claimed:
+                    _require_admin(request)
+    router = APIRouter(tags=["cookbook"], dependencies=[Depends(protect_native_control)])
+
+    def protect_local_model_producer(request, remote_host):
+        # Scoped wrappers can call endpoint functions directly, without FastAPI
+        # dependencies. Enforce native control at the actual producer as well.
+        if not remote_host and getattr(request.state, "local_model_authority", None) is None:
+            from routes.shell_routes import _require_admin
+            _require_admin(request)
     _cookbook_state_path = Path(COOKBOOK_STATE_FILE)
     _state_get_cache = {"ts": 0.0, "mtime": 0.0, "value": None}
     _tasks_status_cache = {"ts": 0.0, "value": None}
@@ -1080,6 +1107,7 @@ def setup_cookbook_routes() -> APIRouter:
         """Download a HuggingFace model in a tmux session.
         Uses `hf download` CLI directly — runs in tmux via `script -qc`
         for real TTY progress, streams ANSI-stripped output via log file."""
+        protect_local_model_producer(request, req.remote_host)
         require_admin(request)
         # Defence-in-depth: even though this endpoint is admin-gated, refuse
         # values that would land in shell contexts with metacharacters.
@@ -1998,6 +2026,7 @@ def setup_cookbook_routes() -> APIRouter:
         keep strict validation, but serving local cached models must not require
         a fake org/name wrapper.
         """
+        protect_local_model_producer(request, req.remote_host)
         require_admin(request)
         # Defence-in-depth: reject values that could break out of shell contexts.
         validate_remote_host(req.remote_host)

@@ -32,10 +32,11 @@ def test_direct_bash_subprocess_has_closed_stdin(monkeypatch, tmp_path):
     from src import tool_execution
 
     from tests.containment_helpers import capture_owned_spawn
+    from tests.process_resource_helpers import authorized_handler
     captured = capture_owned_spawn(monkeypatch, tmp_path)
     monkeypatch.setattr(tool_execution, "agent_cwd", lambda: str(tmp_path))
 
-    result = asyncio.run(subprocess_tools.BashTool().execute("echo ok", {}))
+    result = asyncio.run(authorized_handler(subprocess_tools.BashTool().execute, tmp_path)("echo ok", {}))
 
     assert result["exit_code"] == 0
     if "ody-boundary" in captured["argv"]:
@@ -66,7 +67,7 @@ def test_bash_rejects_empty_command_instead_of_reporting_success(monkeypatch):
     assert "command is required" in result["error"]
 
 
-def test_bash_rejects_unicode_ffmpeg_drawtext_without_explicit_font(monkeypatch):
+def test_bash_rejects_unicode_ffmpeg_drawtext_without_explicit_font(monkeypatch, tmp_path):
     from src.agent_tools import subprocess_tools
 
     async def fail_spawn(*_args, **_kwargs):
@@ -79,7 +80,8 @@ def test_bash_rejects_unicode_ffmpeg_drawtext_without_explicit_font(monkeypatch)
         lambda _text: "/home/user/.local/share/fonts/NotoSansCJK-Regular.ttc",
     )
 
-    result = asyncio.run(subprocess_tools.BashTool().execute(
+    from tests.process_resource_helpers import authorized_handler
+    result = asyncio.run(authorized_handler(subprocess_tools.BashTool().execute, tmp_path)(
         "ffmpeg -i in.mp4 -vf \"drawtext=text='你好':x=10:y=10\" out.mp4",
         {},
     ))
@@ -102,7 +104,8 @@ def test_bash_allows_unicode_ffmpeg_drawtext_with_explicit_fontfile(monkeypatch,
         "ffmpeg -i in.mp4 -vf \"drawtext=fontfile=/fonts/NotoSansCJK.ttc:"
         "text='你好':x=10:y=10\" out.mp4"
     )
-    result = asyncio.run(subprocess_tools.BashTool().execute(command, {}))
+    from tests.process_resource_helpers import authorized_handler
+    result = asyncio.run(authorized_handler(subprocess_tools.BashTool().execute, tmp_path)(command, {}))
 
     assert result["exit_code"] == 0
     assert "drawtext" in captured["command"]

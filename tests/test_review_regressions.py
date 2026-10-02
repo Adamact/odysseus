@@ -563,6 +563,7 @@ async def test_host_shell_uses_tui_bridge_context(monkeypatch):
         ),
         owner="admin",
         client_runtime_context={
+            "surface": "odysseus-tui",
             "host_shell_bridge": {
                 "url": "http://host.docker.internal:17654/run",
                 "token": "bridge-token",
@@ -622,7 +623,10 @@ async def test_host_shell_forwards_detach_and_job_polling(monkeypatch):
 
     monkeypatch.setattr(auth_mod, "AuthManager", lambda: FakeAuth())
     monkeypatch.setattr(subprocess_tools.httpx, "AsyncClient", FakeAsyncClient)
-    context = {"host_shell_bridge": {"url": "http://host.docker.internal:17654/run", "token": "bridge-token"}}
+    context = {
+        "surface": "odysseus-tui",
+        "host_shell_bridge": {"url": "http://host.docker.internal:17654/run", "token": "bridge-token"},
+    }
 
     _, started = await _execute_without_run_context(
         execute_tool_block,
@@ -680,7 +684,8 @@ async def test_host_shell_rejects_non_local_bridge_url_before_http(monkeypatch):
 
     assert desc.startswith("host_shell:")
     assert result["exit_code"] == 1
-    assert result["error"] == "host_shell: invalid bridge URL"
+    assert result.get("failure_kind") == "resource_identity_denied"
+    assert "unresolved" in result["error"].lower()
 
 
 def test_host_shell_bridge_allows_backend_default_gateway(monkeypatch):
@@ -890,9 +895,12 @@ async def test_app_api_endpoint_discovery_hides_cookbook_host_control_routes(mon
 
 
 @pytest.mark.asyncio
-async def test_public_agent_policy_blocks_sensitive_tools(monkeypatch):
+async def test_public_agent_policy_blocks_sensitive_tools(monkeypatch, tmp_path):
     auth_mod = _install_core_auth_stub(monkeypatch)
     from src.tool_execution import execute_tool_block
+    import src.tool_execution as tool_execution
+    mcp = _FakeMcpManager()
+    monkeypatch.setattr(tool_execution, "get_mcp_manager", lambda: mcp)
 
     class FakeAuth:
         is_configured = True
@@ -912,11 +920,15 @@ async def test_public_agent_policy_blocks_sensitive_tools(monkeypatch):
         "ai_draft_email_reply", "archive_email", "delete_email",
         "mark_email_read", "bulk_email", "download_attachment",
     )
+    test_file = tmp_path / "test.txt"
+    test_file.write_text("sample")
     for tool_name in bare_email_tools + ("read_file", "mcp__email__send_email"):
+        content = json.dumps({"path": str(test_file)}) if tool_name == "read_file" else "{}"
         desc, result = await _execute_without_run_context(
             execute_tool_block,
-            SimpleNamespace(tool_type=tool_name, content="{}"),
+            SimpleNamespace(tool_type=tool_name, content=content),
             owner="regular-user",
+            workspace=str(tmp_path),
         )
         assert desc == f"{tool_name}: BLOCKED"
         assert result["exit_code"] == 1
@@ -930,7 +942,9 @@ async def test_disabled_qualified_email_tool_blocks_bare_alias(monkeypatch):
     the gate must block the bare spelling too — and never reach the MCP
     manager (PR #3681 review follow-up)."""
     import src.tool_execution as tool_execution
-    from src.tool_execution import execute_tool_block
+    from src.tool_execution import execute_tool_block, NO_TOOL_SECURITY_CONTEXT
+    from src.turn_contract import canonical_tool
+    from src.agent_runtime.authority import RequestAuthority, OperationGrant
 
     def fail_get_mcp_manager():
         raise AssertionError("blocked email tool must not reach the MCP manager")
@@ -944,11 +958,14 @@ async def test_disabled_qualified_email_tool_blocks_bare_alias(monkeypatch):
         # …and a bare denylist entry blocks the qualified spelling.
         ("mcp__email__delete_email", {"delete_email"}),
     ):
-        desc, result = await _execute_without_run_context(
-            execute_tool_block,
+        canon = canonical_tool(bare)
+        auth = RequestAuthority("test", "admin-user", "", "", (OperationGrant(canon),), backend_resources=())
+        desc, result = await execute_tool_block(
             SimpleNamespace(tool_type=bare, content="{}"),
             owner="admin-user",
             disabled_tools=disabled,
+            request_authority=auth,
+            security_context=NO_TOOL_SECURITY_CONTEXT,
         )
         assert desc == f"{bare}: BLOCKED"
         assert result["exit_code"] == 1
@@ -959,8 +976,9 @@ async def test_disabled_qualified_email_tool_blocks_bare_alias(monkeypatch):
 async def test_tool_policy_qualified_email_block_covers_bare_alias(monkeypatch):
     """Same aliasing rule for the turn ToolPolicy denylist."""
     import src.tool_execution as tool_execution
-    from src.tool_execution import execute_tool_block
+    from src.tool_execution import execute_tool_block, NO_TOOL_SECURITY_CONTEXT
     from src.tool_policy import ToolPolicy
+    from src.agent_runtime.authority import RequestAuthority, OperationGrant
 
     def fail_get_mcp_manager():
         raise AssertionError("blocked email tool must not reach the MCP manager")
@@ -968,11 +986,13 @@ async def test_tool_policy_qualified_email_block_covers_bare_alias(monkeypatch):
     monkeypatch.setattr(tool_execution, "get_mcp_manager", fail_get_mcp_manager)
 
     policy = ToolPolicy(disabled_tools=frozenset({"mcp__email__send_email"}))
-    desc, result = await _execute_without_run_context(
-        execute_tool_block,
+    auth = RequestAuthority("test", "admin-user", "", "", (OperationGrant("send_email"),), backend_resources=())
+    desc, result = await execute_tool_block(
         SimpleNamespace(tool_type="send_email", content="{}"),
         owner="admin-user",
         tool_policy=policy,
+        request_authority=auth,
+        security_context=NO_TOOL_SECURITY_CONTEXT,
     )
     assert desc == "send_email: BLOCKED"
     assert result["exit_code"] == 1
@@ -1053,6 +1073,11 @@ def _install_admin_auth_stub(monkeypatch):
 class _FakeMcpManager:
     def __init__(self):
         self.calls = []
+
+    def resource_identity(self, qualified_name):
+        from src.agent_runtime.resources import ExternalResource
+        server = qualified_name.split("__")[1] if "__" in qualified_name else "email"
+        return ExternalResource("mcp", f"mcp:{server}", server, qualified_name, "fake-incarnation")
 
     async def call_tool(self, name, args):
         self.calls.append((name, args))
@@ -1173,7 +1198,7 @@ async def test_write_file_inline_json_args(monkeypatch):
     from src.tool_parsing import parse_tool_blocks
     blocks = parse_tool_blocks('```write_file {"path": "/tmp/wf.txt", "content": "hi"}\n```')
     for b in blocks:
-        await _execute_without_run_context(execute_tool_block, b, owner="admin")
+        await _execute_without_run_context(execute_tool_block, b, owner="admin", workspace="/tmp")
 
     assert captured.get("path") == "/tmp/wf.txt", (
         f"write_file did not decode inline JSON args; got path {captured.get('path')!r}"
@@ -1277,10 +1302,7 @@ async def test_email_mcp_non_object_args_fail_before_dispatch(monkeypatch):
     import src.tool_execution as tool_execution
     from src.tool_execution import execute_tool_block
 
-    class FakeMcp:
-        def __init__(self):
-            self.calls = []
-
+    class FakeMcp(_FakeMcpManager):
         async def call_tool(self, name, args):
             self.calls.append((name, args))
             return {"output": "called", "exit_code": 0}
@@ -1306,10 +1328,7 @@ async def test_email_mcp_dispatch_includes_hidden_owner(monkeypatch):
     import src.tool_execution as tool_execution
     from src.tool_execution import execute_tool_block
 
-    class FakeMcp:
-        def __init__(self):
-            self.calls = []
-
+    class FakeMcp(_FakeMcpManager):
         async def call_tool(self, name, args):
             self.calls.append((name, args))
             return {"output": "called", "exit_code": 0}

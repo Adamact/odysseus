@@ -252,7 +252,8 @@ async def test_read_file_dispatch_blocks_etc_shadow(monkeypatch):
         owner="admin-user",
         security_context=NO_TOOL_SECURITY_CONTEXT,
     )
-    assert "outside the allowed roots" in (result.get("error") or "")
+    assert result.get("failure_kind") == "resource_identity_denied"
+    assert "sealed resource root" in (result.get("error") or "")
     assert result.get("exit_code") == 1
 
 
@@ -281,7 +282,8 @@ async def test_write_file_dispatch_blocks_authorized_keys(monkeypatch):
         owner="admin-user",
         security_context=NO_TOOL_SECURITY_CONTEXT,
     )
-    assert "sensitive directory" in (result.get("error") or "")
+    assert result.get("failure_kind") == "resource_identity_denied"
+    assert "sealed resource root" in (result.get("error") or "")
     assert result.get("exit_code") == 1
 
 
@@ -344,7 +346,8 @@ async def test_write_file_dispatch_blocks_cron(monkeypatch):
         owner="admin-user",
         security_context=NO_TOOL_SECURITY_CONTEXT,
     )
-    assert "outside the allowed roots" in (result.get("error") or "")
+    assert result.get("failure_kind") == "resource_identity_denied"
+    assert "sealed resource root" in (result.get("error") or "")
     assert result.get("exit_code") == 1
 @pytest.mark.parametrize("filename", ["auth.json", "app.db", "settings.json"])
 def test_application_secrets_are_sensitive_paths(filename):

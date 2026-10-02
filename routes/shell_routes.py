@@ -59,21 +59,22 @@ from core.platform_compat import (
 def _require_admin(request: Request):
     """Reject non-admin callers. Shell exec is admin-only — never expose to
     regular users; that's RCE-after-signup."""
-    # In the explicitly single-user, auth-disabled deployment the middleware
-    # does not attach a current user. AuthManager is still instantiated by the
-    # app, so checking only for its presence incorrectly returns 403 here.
+    # Tool authentication is never human administration. Operator-disabled
+    # login has a separate direct-local transport contract below; it supplies
+    # no resource grant to model producers.
+    from src.agent_runtime.authority import is_internal_tool_request
+    from core.middleware import INTERNAL_TOOL_HEADER
+    if is_internal_tool_request(request) or request.headers.get(INTERNAL_TOOL_HEADER):
+        raise HTTPException(403, "Internal shell execution requires a dedicated resource-bound producer")
     if _auth_disabled():
-        return
+        from src.auth_helpers import is_direct_loopback_request
+        if is_direct_loopback_request(request):
+            return
+        raise HTTPException(403, "Anonymous native process control has no resource authority")
     auth_manager = getattr(request.app.state, "auth_manager", None)
     if not auth_manager:
-        # No auth at all — only safe in fully-trusted localhost dev mode
-        return
+        raise HTTPException(403, "Native process control requires authenticated administration")
     user = getattr(request.state, "current_user", None)
-    # In-process tool loopback. The AuthMiddleware already validated the
-    # internal token + loopback client before setting this marker, so
-    # honour it here as admin-equivalent.
-    if user == INTERNAL_TOOL_USER:
-        return
     if not user or user == "api":
         raise HTTPException(403, "Admin only")
     if not auth_manager.is_admin(user):

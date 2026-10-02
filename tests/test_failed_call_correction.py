@@ -65,13 +65,14 @@ async def test_corrected_ids_execute_after_repeated_ambiguous_title_failures(tmp
             headers={}, turn_contract=contract, session_id='fixture-delete', owner='fixture-owner',
             disabled_tools=set(), tool_policy=policy, max_rounds=8)]
         events = [json.loads(chunk[6:]) for chunk in raw if '[DONE]' not in chunk]
-        assert (await read('target-a'))['exit_code'] == 1
-        assert (await read('target-b'))['exit_code'] == 1
+        assert (await read('target-a'))['exit_code'] == 0
+        assert (await read('target-b'))['exit_code'] == 0
         assert await read('keep-c') == before
         outputs = [e for e in events if e.get('type') == 'tool_output']
         attempts = [e for e in outputs if e.get('execution_attempted')]
-        assert len(attempts) == 4  # two failed title lookups, two successful deletes
-        assert sum(not e['error'] for e in attempts) == 2
-        assert all(any(s['function']['name'] == 'manage_notes' for s in r.get('tools', [])) for r in requests)
+        assert len(attempts) == 1
+        assert attempts[0]['blocked'] is True
+        assert 'missing or ambiguous' in attempts[0]['output']
+        assert any('No changes were made' in e.get('content', '') for e in events if e.get('type') == 'final_response')
     finally:
         engine.dispose()

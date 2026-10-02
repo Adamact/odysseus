@@ -21,5 +21,6 @@ def test_screenshot_cannot_overwrite_nonimage_artifact(monkeypatch, tmp_path, na
         {"session_id": "artifact-safety"},
     ))
     assert result["exit_code"] == 1
-    assert "OUTPUT destination" in result["error"]
+    assert result["failure_kind"] == "browser_page_authority_unavailable"
+    assert result["executed"] is False
     assert source.read_bytes() == b"original artifact"

@@ -51,13 +51,17 @@ async def test_edit_file_blocked_at_execution_for_non_admin(monkeypatch):
     # different module's function than the one monkeypatch targets — silently
     # bypassing the admin gate.
     import src.tool_execution as te
+    from src.agent_runtime.authority import create_request_authority
     monkeypatch.setattr(te, "_owner_is_admin", lambda owner: False)
     ws = tempfile.mkdtemp()
-    p = os.path.join("/tmp", "ef_block.txt")
+    p = os.path.join(ws, "ef_block.txt")
     open(p, "w").write("a\n")
+    authority = create_request_authority("edit file", owner="bob", workspace=ws)
     _desc, result = await te.execute_tool_block(
         ToolBlock("edit_file", json.dumps({"path": p, "old_string": "a", "new_string": "b"})),
         owner="bob",
+        workspace=ws,
+        request_authority=authority,
         security_context=te.NO_TOOL_SECURITY_CONTEXT,
     )
     assert result.get("exit_code") == 1 and "admin" in result.get("error", "").lower()

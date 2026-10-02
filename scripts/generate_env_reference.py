@@ -496,6 +496,21 @@ VARIABLE_NOTES: dict[str, tuple[str, str, str]] = {
         "Security-relevant. Comma-separated allowlist of MCP launcher basenames the "
         "agent may start. Empty by default, and the deny list still wins.",
     ),
+    "ODYSSEUS_MCP_MEMORY_OWNER": (
+        "Memory and skills", USER,
+        "Application owner binding for the configured memory MCP backend. Takes "
+        "precedence over ODYSSEUS_MEMORY_OWNER; missing ownership fails closed.",
+    ),
+    "ODYSSEUS_MEMORY_OWNER": (
+        "Memory and skills", USER,
+        "Fallback application owner binding for the memory MCP backend. This "
+        "configuration identifies ownership; it does not grant read or egress authority.",
+    ),
+    "ODYSSEUS_BROWSER_LIVE_CONTRACT": (
+        "Testing, capture and development tooling", INTERNAL,
+        "Set 1 only in the allowlisted release Docker environment to run the "
+        "browser producer contract tests. Does not enable browser page operations.",
+    ),
     "ODYSSEUS_PYTHON_TOOL_SITE_PACKAGES": (
         "Agent loop and tool execution", USER,
         "Security-relevant. Absolute package roots, separated by the platform path "

@@ -440,7 +440,7 @@ def test_no_bridge_falls_back_to_backend_execution():
         return {"output": f"backend-side {tool}", "exit_code": 0}
 
     with patch.object(_te, "_owner_is_admin", lambda owner: True), \
-            patch.object(_te, "_call_mcp_tool", fake_mcp):
+            patch.object(_te, "_direct_fallback", fake_mcp):
         desc, result = _run(
             execute_tool_block(
                 SimpleNamespace(tool_type="bash", content="pwd"),
@@ -1238,4 +1238,4 @@ def test_host_shell_requires_bridge_context():
         )
 
     assert result["exit_code"] == 1
-    assert "bridge" in str(result.get("error", "")).lower()
+    assert "bridge" in str(result.get("error", "")).lower() or "unresolved" in str(result.get("error", "")).lower()

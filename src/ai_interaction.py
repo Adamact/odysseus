@@ -394,6 +394,11 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
     if not _memory_manager:
         return {"error": "Memory manager not available"}
 
+    from src.agent_runtime.owned_resources import active_owned_operation
+    bound = active_owned_operation()
+    if bound is not None:
+        bound.validate()
+
     lines = _manage_memory_lines(content)
     if not lines:
         return {"error": "Need at least 1 line: action"}
@@ -465,7 +470,7 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
         memories = _memory_manager.load_all()
         found = False
         for m in memories:
-            if m.get("id", "").startswith(memory_id):
+            if (m.get("id", "") == memory_id if bound is not None else m.get("id", "").startswith(memory_id)):
                 # Verify ownership
                 if owner and m.get("owner") != owner:
                     return {"error": f"Memory '{memory_id}' not found"}
@@ -498,7 +503,7 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
         full_id = None
         delete_id = None
         for m in memories:
-            if m.get("id", "").startswith(memory_id):
+            if (m.get("id", "") == memory_id if bound is not None else m.get("id", "").startswith(memory_id)):
                 # Verify ownership
                 if owner and m.get("owner") != owner:
                     return {"error": f"Memory '{memory_id}' not found"}

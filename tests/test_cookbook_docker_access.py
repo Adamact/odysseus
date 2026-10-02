@@ -1,4 +1,5 @@
 from unittest.mock import AsyncMock
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,6 +10,11 @@ import routes.cookbook_routes as cookbook_routes
 from routes.cookbook_helpers import ServeRequest, _validate_serve_cmd
 from src.host_docker_access import HOST_DOCKER_ACCESS_HINT
 from tests.helpers.unix_sockets import bound_unix_socket
+
+
+@pytest.fixture(autouse=True)
+def authenticated_admin_mode(monkeypatch):
+    monkeypatch.setenv("AUTH_ENABLED", "true")
 
 
 def _model_serve_endpoint():
@@ -27,6 +33,8 @@ def _admin_request() -> Request:
             "path": "/api/model/serve",
             "headers": [],
             "state": {},
+            "app": SimpleNamespace(state=SimpleNamespace(auth_manager=SimpleNamespace(
+                is_configured=True, is_admin=lambda user: user == "admin"))),
         }
     )
     request.state.current_user = "admin"
@@ -139,7 +147,6 @@ async def test_local_container_serve_returns_host_docker_opt_in_hint(
         assert cookbook_routes.shutil.which(binary) == "/usr/bin/docker"
         return False
 
-    monkeypatch.setattr(cookbook_routes, "require_admin", lambda request: None)
     monkeypatch.setattr(cookbook_routes, "_binary_available", binary_available)
     monkeypatch.setattr(cookbook_routes, "running_in_container", lambda: True)
     monkeypatch.setattr(
@@ -199,7 +206,6 @@ async def test_local_container_serve_allows_generated_docker_exec_when_enabled(
         launched_commands.append(command)
         return _Process()
 
-    monkeypatch.setattr(cookbook_routes, "require_admin", lambda request: None)
     monkeypatch.setattr(cookbook_routes, "_binary_available", binary_available)
     monkeypatch.setattr(cookbook_routes, "running_in_container", lambda: True)
     monkeypatch.setattr(

@@ -500,8 +500,10 @@ def _owned_spec(cwd: str, env: Optional[dict], timeout: int, readonly_extra: tup
         visible = any(prefix == root or prefix.startswith(root + os.sep) for root in ("/usr", "/etc"))
         if not visible and prefix not in _NAMESPACE_RESERVED_DESTS:
             readonly.append(prefix)
+    from src.tool_execution import _agent_subprocess_env
+    clean_env = _agent_subprocess_env() if env is None else dict(env)
     return containment.agent_spec(
-        cwd, dict(os.environ if env is None else env), timeout,
+        cwd, clean_env, timeout,
         readonly_extra=tuple(dict.fromkeys([*readonly, *readonly_extra])),
     )
 
@@ -511,26 +513,58 @@ async def _run_owned_command(command, ctx: dict, *, tool: str, timeout: int, arg
     from src.tool_execution import agent_cwd, _truncate
 
     grant = None
+    launch = None
+    result = None
     try:
+        from src.agent_runtime.process_resources import require_launch, publish_launch, validate_launch_spec
+        from src.agent_runtime.authority import active_request_authority
+        launch = require_launch(tool, cwd=agent_cwd())
+        authority = active_request_authority()
+        if (str(ctx.get("owner") or "").strip().casefold(), str(ctx.get("session_id") or "")) != (
+                authority.owner, authority.session_id):
+            raise ValueError("Native producer owner or session changed")
+        spec = _owned_spec(agent_cwd(), ctx.get("subproc_env"), timeout, readonly_extra)
+        validate_launch_spec(launch, spec)
         grant = containment.acquire(
-            _owned_spec(agent_cwd(), ctx.get("subproc_env"), timeout, readonly_extra),
+            spec,
             owner=str(ctx.get("session_id") or ctx.get("owner") or tool),
         )
+        containment._update_record(grant.id, launch_generation=launch.generation)
+        publish_launch(launch, authority, grant.id)
         if containment.FILESYSTEM not in grant.enforced:
             if argv:
                 command = [*command[:-1], _replace_workspace_alias(command[-1], grant.workspace)]
             else:
                 command = _replace_workspace_alias(command, grant.workspace)
         result = await containment.run(grant, command, argv=argv, progress_cb=ctx.get("progress_cb"))
+        from src.agent_runtime.process_resources import attach_containment_processes
+        attach_containment_processes(launch, grant.id)
     except containment.ContainmentUnavailable as exc:
         return containment.unavailable_tool_result(exc, tool=tool)
     except (OSError, RuntimeError, ValueError) as exc:
-        boundary = grant.to_dict() if grant else {}
-        boundary["executed"] = bool(getattr(exc, "containment_executed", False))
-        if not getattr(exc, "containment_established", False):
+        if grant is not None:
+            record = containment._load_records().get(grant.id, {})
+            if not record.get("pid") and not record.get("release"):
+                containment.release(grant, grace_s=0)
+        boundary = result.grant.to_dict() if result is not None else grant.to_dict() if grant else {}
+        boundary["executed"] = result is not None or bool(getattr(exc, "containment_executed", False))
+        if result is None and not getattr(exc, "containment_established", False):
             boundary.update(contained=False, enforced=[])
         return {"error": f"{tool}: execution failed: {exc}", "exit_code": 1,
-                "containment": boundary}
+                "containment": boundary,
+                **({"failure_kind": "resource_linkage_unavailable",
+                    "teardown": result.release.to_dict() if result.release else {"dead": False}}
+                   if result is not None else {})}
+    finally:
+        if launch is not None and grant is not None:
+            record = containment._load_records().get(grant.id, {})
+            if (record.get("launch_generation") == launch.generation
+                    and (record.get("release") or {}).get("dead") is True):
+                from src.agent_runtime.process_resources import retire_launch
+                try:
+                    retire_launch(launch, grant.id)
+                except (OSError, ValueError, TypeError):
+                    logger.warning("Foreground launch publication retirement failed", exc_info=True)
 
     boundary = result.grant.to_dict()
     boundary["executed"] = True
@@ -590,6 +624,12 @@ class BashTool:
                 ),
                 "exit_code": 1,
             }
+        from src.agent_runtime.process_resources import require_launch
+        from src.agent_runtime.resources import ResourceIdentityError
+        try:
+            require_launch("bash", cwd=agent_cwd(), content=content)
+        except ResourceIdentityError as error:
+            return {"error": str(error), "exit_code": 1, "blocked": True, "failure_kind": "resource_identity_denied"}
         if _ffmpeg_unicode_drawtext_needs_fontfile(content):
             resolved_font = _resolve_fontfile_for_text(content)
             resolved_hint = (
@@ -879,6 +919,12 @@ class PythonTool:
                 ),
                 "exit_code": 1,
             }
+        from src.agent_runtime.process_resources import require_launch
+        from src.agent_runtime.resources import ResourceIdentityError
+        try:
+            require_launch("python", cwd=agent_cwd(), content=content)
+        except ResourceIdentityError as error:
+            return {"error": str(error), "exit_code": 1, "blocked": True, "failure_kind": "resource_identity_denied"}
         if "/tmp/" in content:
             isolated_tmp = _isolated_tmp_dir(agent_cwd())
             content = content.replace("/tmp/", isolated_tmp.rstrip("/") + "/")

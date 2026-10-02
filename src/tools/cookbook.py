@@ -772,9 +772,11 @@ async def do_download_model(content: str, owner: Optional[str] = None) -> Dict:
     if env_cfg.get("platform"):   payload["platform"]   = env_cfg["platform"]
     if env_cfg.get("ssh_port"):   payload["ssh_port"]   = env_cfg["ssh_port"]
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(f"{_INTERNAL_BASE}/api/model/download",
-                                     json=payload, headers=_internal_headers())
+        from src.agent_runtime.local_model_control import model_control_headers
+        with model_control_headers("download_model", content, owner, payload) as launch_headers:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(f"{_INTERNAL_BASE}/api/model/download",
+                                         json=payload, headers=launch_headers)
             data = resp.json()
         if data.get("ok"):
             sid = data.get("session_id", "?")
@@ -857,9 +859,11 @@ async def do_serve_model(content: str, owner: Optional[str] = None) -> Dict:
     if env_cfg.get("platform"):   payload["platform"]   = env_cfg["platform"]
     if env_cfg.get("ssh_port"):   payload["ssh_port"]   = env_cfg["ssh_port"]
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(f"{_INTERNAL_BASE}/api/model/serve",
-                                     json=payload, headers=_internal_headers())
+        from src.agent_runtime.local_model_control import model_control_headers
+        with model_control_headers("serve_model", content, owner, payload) as launch_headers:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(f"{_INTERNAL_BASE}/api/model/serve",
+                                         json=payload, headers=launch_headers)
             data = resp.json()
         if data.get("ok"):
             sid = data.get("session_id", "?")
@@ -1227,8 +1231,8 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
         )
         target_label = f"{session_id} on {remote}"
     else:
-        cmd = f"tmux kill-session -t {shlex.quote(session_id)}"
-        target_label = session_id
+        return {"error": "Local Cookbook control has no admitted process resource; session discovery is not ownership",
+                "exit_code": 1, "blocked": True, "failure_kind": "resource_identity_denied"}
 
     # Capture what this session owns BEFORE the kill. Once tmux tears the
     # session down the pane is gone, and with it the only evidence linking a
@@ -1908,9 +1912,11 @@ async def do_serve_preset(content: str, owner: Optional[str] = None) -> Dict:
         payload["ssh_port"] = env_cfg["ssh_port"]
 
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(f"{_INTERNAL_BASE}/api/model/serve",
-                                     json=payload, headers=_internal_headers())
+        from src.agent_runtime.local_model_control import model_control_headers
+        with model_control_headers("serve_preset", content, owner, payload) as launch_headers:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(f"{_INTERNAL_BASE}/api/model/serve",
+                                         json=payload, headers=launch_headers)
             data = resp.json()
         if data.get("ok"):
             sid = data.get("session_id", "?")
