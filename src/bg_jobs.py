@@ -214,7 +214,8 @@ def _prune(jobs: Dict[str, Dict[str, Any]], now: float) -> bool:
     followed up, and are older than the retention window. Mutates `jobs`."""
     stale = [jid for jid, rec in jobs.items()
              if rec.get("status") in {"done", "failed"}
-             and rec.get("followed_up") and rec.get("ended_at")
+             and (rec.get("followed_up") or rec.get("followup_state") == "terminal_unfollowable")
+             and rec.get("ended_at")
              and (rec.get("teardown") or {}).get("dead") is not False
              and (now - rec["ended_at"]) > _RETENTION_S]
     for jid in stale:
@@ -344,10 +345,29 @@ def _kill_record(rec):
 
 def pending_followups() -> List[Dict[str, Any]]:
     """Finished jobs the agent hasn't been re-invoked for yet. The monitor
-    drains these; mark_followed_up() flips the flag only on success."""
+    drains these; valid continuations acknowledge success, invalid immutable
+    linkage receives a terminal disposition without fabricating delivery."""
     jobs = refresh()
     return [r for r in jobs.values()
-            if r.get("status") in ("done", "failed") and not r.get("followed_up")]
+            if r.get("status") in ("done", "failed") and not r.get("followed_up")
+            and r.get("followup_state") != "terminal_unfollowable"]
+
+
+@store_transaction(lambda: _STORE)
+def mark_unfollowable(job_id: str, *, expected_record) -> bool:
+    """Suppress only the exact completed snapshot inspected by the monitor.
+
+    This conveys no read/signal/continuation authority and cannot renew a PID.
+    It deliberately needs no invalid/missing authority sidecar to suppress it.
+    """
+    jobs = _load()
+    record = jobs.get(job_id)
+    if (record is None or record != expected_record or record.get("id") != job_id
+            or record.get("status") not in {"done", "failed"}):
+        return False
+    record["followup_state"] = "terminal_unfollowable"
+    _save(jobs)
+    return True
 
 
 @store_transaction(lambda: _STORE)
