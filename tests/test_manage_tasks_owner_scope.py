@@ -12,14 +12,12 @@ permissive than the reader.
 """
 
 import json
-import tempfile
+import sys
 from datetime import datetime
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import NullPool
 
+from tests.helpers.database import disposable_database
 from tests.helpers.import_state import clear_fake_database_modules
 
 clear_fake_database_modules()
@@ -28,17 +26,16 @@ import core.database as cdb
 from core.database import ScheduledTask
 from src.tools.system import do_manage_tasks
 
-_TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-_ENGINE = create_engine(
-    f"sqlite:///{_TMPDB.name}",
-    connect_args={"check_same_thread": False},
-    poolclass=NullPool,
-)
-cdb.Base.metadata.create_all(_ENGINE)
-_TS = sessionmaker(bind=_ENGINE, autoflush=False, autocommit=False)
-# do_manage_tasks does `from core.database import SessionLocal` at call time,
-# so patching the module attribute is enough to point it at the temp DB.
-cdb.SessionLocal = _TS
+
+@pytest.fixture(autouse=True)
+def _task_database(tmp_path):
+    # do_manage_tasks imports SessionLocal at call time. Own this binding for
+    # just one test, including helpers that seed and inspect its rows.
+    with disposable_database(tmp_path) as factory:
+        with pytest.MonkeyPatch.context() as patcher:
+            patcher.setattr(sys.modules[__name__], "_TS", factory, raising=False)
+            patcher.setattr(cdb, "SessionLocal", factory)
+            yield
 
 
 def _seed(task_id, owner, *, name=None):
