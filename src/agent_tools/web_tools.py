@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Dict, Any
 
 from core import platform_compat
-from src import browser_lifecycle
+from src import browser_lifecycle, process_lifecycle
 from src.constants import MAX_OUTPUT_CHARS
 
 PDF_EXTRACT_MAX_BYTES = 80_000_000
@@ -110,6 +110,13 @@ _BROWSER_CALL_PROCS: contextvars.ContextVar[list | None] = contextvars.ContextVa
 
 async def _spawn_browser_cli(*command, **kwargs):
     proc = await asyncio.create_subprocess_exec(*command, **kwargs)
+    # Identity taken while we hold the unreaped child: teardown later signals
+    # its group only while this identity still verifies, never on the pid
+    # alone (the event loop may reap it before returncode is observed).
+    pid = getattr(proc, "pid", None)
+    if isinstance(pid, int) and pid > 0:
+        with contextlib.suppress(Exception):
+            proc._ody_identity = process_lifecycle.ProcessIdentity.capture(pid, pgid=pid)
     tracked = _BROWSER_CALL_PROCS.get()
     if tracked is not None:
         tracked.append(proc)
@@ -2403,12 +2410,22 @@ class PrivateBrowserTool:
 
     @staticmethod
     def _terminate_subprocess(proc) -> None:
-        """Terminate a browser CLI and descendants spawned for its session."""
+        """Terminate a browser CLI and descendants spawned for its session.
 
-        pid = getattr(proc, "pid", None)
-        if pid:
-            with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
-                os.killpg(os.getpgid(pid), signal.SIGKILL)
+        Every browser CLI is spawned with ``start_new_session``, so it leads a
+        group of its own. That group is signalled only while the identity
+        captured at spawn still verifies and still leads it; otherwise only
+        the held handle is killed. A pid alone — or a group derived from a pid
+        that may since have been reaped and reissued — is never signalled,
+        and neither is the server's own group.
+        """
+
+        identity = getattr(proc, "_ody_identity", None)
+        if identity is not None and getattr(proc, "returncode", None) is None:
+            verdict = process_lifecycle.group_ownership_verdict(
+                identity.pid, identity.pid, identity.start_token)
+            if verdict == process_lifecycle.OWNED:
+                process_lifecycle.signal_group(identity.pid, identity.pid, signal.SIGKILL)
         with contextlib.suppress(Exception):
             proc.kill()
 
@@ -2440,21 +2457,20 @@ class PrivateBrowserTool:
             # correctness requirement.  Leave those trees to the daemon's own
             # lifecycle instead of failing the whole shutdown path.
             return
-        pids: list[int] = []
+        owned: list[process_lifecycle.ProcessIdentity] = []
         for entry in platform_compat.PROC_ROOT.iterdir():
             if not entry.name.isdigit():
                 continue
-            try:
-                command_line = (entry / "cmdline").read_bytes().replace(b"\0", b" ").decode(
-                    "utf-8", errors="replace"
-                )
-            except (OSError, UnicodeError):
-                continue
-            if "--user-data-dir=" + profile_prefix in command_line:
-                pids.append(int(entry.name))
-        for pid in sorted(pids, reverse=True):
-            with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
-                os.kill(pid, signal.SIGKILL)
+            # The command line that matches the profile and the identity that
+            # will be signalled are read from the same process.
+            seen = process_lifecycle.observe(int(entry.name), _process_command_line)
+            if seen is not None and "--user-data-dir=" + profile_prefix in seen.facts:
+                owned.append(seen.identity)
+        if owned:
+            process_lifecycle.terminate_identities(
+                sorted(owned, key=lambda identity: identity.pid, reverse=True),
+                steps=((signal.SIGKILL, 1.0),), poll_s=0.02,
+            )
 
     @staticmethod
     def _terminate_owned_daemon(
@@ -2488,7 +2504,10 @@ class PrivateBrowserTool:
                 pid = int(pid_file.read_text().strip())
             except (OSError, ValueError):
                 continue
-            command_line = _process_command_line(pid)
+            # A pid file names a slot, not a process: the command-line match
+            # and the identity that authorises the signal come from one read.
+            seen = process_lifecycle.observe(pid, _process_command_line) if pid > 0 else None
+            command_line = seen.facts if seen is not None else None
             if command_line is None:
                 # Either the daemon exited between writing its pid file and
                 # this pass, or this host has no procfs to ask. Only the first
@@ -2500,10 +2519,12 @@ class PrivateBrowserTool:
                         pid_file.unlink()
                 continue
             if "agent-browser" in command_line:
-                with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
-                    os.kill(pid, signal.SIGKILL)
-                with contextlib.suppress(FileNotFoundError, PermissionError, OSError):
-                    pid_file.unlink()
+                sweep = process_lifecycle.terminate_identities(
+                    [seen.identity], steps=((signal.SIGKILL, 1.0),), poll_s=0.02,
+                )
+                if not sweep.survivors and not sweep.unverified:
+                    with contextlib.suppress(FileNotFoundError, PermissionError, OSError):
+                        pid_file.unlink()
         return receipt
 
     @staticmethod
@@ -3819,7 +3840,7 @@ async def shutdown_private_browser_sessions() -> None:
             ):
                 proc = None
                 try:
-                    proc = await asyncio.create_subprocess_exec(
+                    proc = await _spawn_browser_cli(
                         *command_prefix, "--session", session, "close",
                         stdout=asyncio.subprocess.DEVNULL,
                         stderr=asyncio.subprocess.DEVNULL,

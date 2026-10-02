@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 
 def test_unoffered_artifact_recovery_is_bounded():
     from src.agent_loop import _artifact_unoffered_recovery_exhausted

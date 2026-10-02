@@ -132,3 +132,34 @@ def test_legacy_cleanup_against_a_private_real_tmux_server(tmp_path, monkeypatch
         assert containment.active_grants() == []
     finally:
         subprocess.run([real_tmux, "-S", socket, "kill-server"], capture_output=True)
+
+
+def test_a_descendant_reissued_after_the_table_read_is_never_released(legacy, monkeypatch):
+    reads = {"n": 0}
+
+    def table():
+        reads["n"] += 1
+        rows = {4200: process_ownership.ProcessInfo(4200, 4100, "/bin/bash --noprofile --norc")}
+        if reads["n"] <= 2:
+            rows[4201] = process_ownership.ProcessInfo(4201, 4200, "sleep 60")
+        else:
+            # The child exited and its pid now names an unrelated process.
+            rows[4201] = process_ownership.ProcessInfo(4201, 1, "sshd: stranger")
+        return rows
+
+    monkeypatch.setattr(process_ownership, "process_table", table)
+    process_reaper.reap_legacy_agent_tmux()
+    assert 4201 not in [pid for pid, _ in legacy["released"]]
+
+
+def test_an_unidentifiable_descendant_keeps_the_session_unsignalled(legacy, monkeypatch):
+    def start_token(pid):
+        if pid == 4201:
+            raise process_ownership.InspectionUnavailable("/proc/4201/stat")
+        return f"token:{pid}"
+
+    monkeypatch.setattr(process_ownership, "start_token", start_token)
+    report = process_reaper.reap_legacy_agent_tmux()
+    assert report["unverifiable"] == 1
+    assert legacy["released"] == []
+    assert all(call[1] != "kill-session" for call in legacy["calls"])

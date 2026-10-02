@@ -2,6 +2,7 @@ import asyncio
 import pytest
 import base64
 import json
+import shutil
 from pathlib import Path
 
 from core import platform_compat
@@ -1436,25 +1437,75 @@ def test_private_browser_screenshot_without_path_returns_image_payload(monkeypat
     }]
 
 
-def test_private_browser_timeout_terminates_the_process_group(monkeypatch) -> None:
-    calls = []
-
+def _cli_proc(calls, identity=None):
     class _Proc:
         pid = 1234
+        returncode = None
+        _ody_identity = identity
 
         def kill(self):
             calls.append("fallback-kill")
 
+    return _Proc()
+
+
+def test_private_browser_timeout_terminates_the_process_group(monkeypatch) -> None:
+    from src import process_lifecycle, process_ownership
+
+    calls = []
     monkeypatch.setattr(web_tools.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(process_ownership, "verify", lambda pid, token: process_ownership.OWNED)
     monkeypatch.setattr(
         web_tools.os,
         "killpg",
         lambda pgid, signum: calls.append((pgid, signum)),
     )
 
-    PrivateBrowserTool._terminate_subprocess(_Proc())
+    PrivateBrowserTool._terminate_subprocess(
+        _cli_proc(calls, process_lifecycle.ProcessIdentity(1234, "spawned", pgid=1234)))
 
     assert calls == [(1234, web_tools.signal.SIGKILL), "fallback-kill"]
+
+
+@pytest.mark.parametrize("verdict", ["foreign", "unverifiable", "gone"])
+def test_cli_group_is_not_signalled_once_its_identity_is_lost(monkeypatch, verdict) -> None:
+    """A reaped CLI's pid may be reissued; its group is then not ours to kill."""
+    from src import process_lifecycle, process_ownership
+
+    calls = []
+    monkeypatch.setattr(web_tools.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(process_ownership, "verify", lambda pid, token: verdict)
+    monkeypatch.setattr(web_tools.os, "killpg", lambda *a: pytest.fail("signalled an unowned group"))
+
+    PrivateBrowserTool._terminate_subprocess(
+        _cli_proc(calls, process_lifecycle.ProcessIdentity(1234, "spawned", pgid=1234)))
+
+    assert calls == ["fallback-kill"]
+
+
+def test_cli_without_a_spawn_identity_is_never_group_signalled(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(web_tools.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(web_tools.os, "killpg", lambda *a: pytest.fail("signalled a bare pid's group"))
+
+    PrivateBrowserTool._terminate_subprocess(_cli_proc(calls))
+
+    assert calls == ["fallback-kill"]
+
+
+def test_cli_group_that_moved_is_not_signalled(monkeypatch) -> None:
+    """The identity verifies but no longer leads the recorded group."""
+    from src import process_lifecycle, process_ownership
+
+    calls = []
+    monkeypatch.setattr(web_tools.os, "getpgid", lambda pid: 999)
+    monkeypatch.setattr(process_ownership, "verify", lambda pid, token: process_ownership.OWNED)
+    monkeypatch.setattr(web_tools.os, "killpg", lambda *a: pytest.fail("signalled a group it does not lead"))
+
+    PrivateBrowserTool._terminate_subprocess(
+        _cli_proc(calls, process_lifecycle.ProcessIdentity(1234, "spawned", pgid=1234)))
+
+    assert calls == ["fallback-kill"]
 
 
 def test_private_browser_retries_one_timed_out_local_open(monkeypatch, tmp_path) -> None:
@@ -1900,27 +1951,140 @@ def test_terminate_owned_chrome_kills_only_this_runtimes_profile(
 ) -> None:
     """With procfs present, match on the runtime-owned profile prefix alone."""
 
-    proc = tmp_path / "proc"
+    proc = _fake_procfs(monkeypatch, tmp_path)
     tmpdir = tmp_path / "runtime-tmp"
     tmpdir.mkdir()
     profile_prefix = str(tmpdir.resolve() / "agent-browser-chrome-")
 
-    def _write_pid(pid: str, cmdline: str) -> None:
-        entry = proc / pid
-        entry.mkdir(parents=True)
-        (entry / "cmdline").write_bytes(cmdline.replace(" ", "\0").encode())
-
-    _write_pid("101", f"chrome --user-data-dir={profile_prefix}abc")
-    _write_pid("202", "chrome --user-data-dir=/Users/someone/Library/Chrome")
+    _fake_process(proc, 101, f"chrome --user-data-dir={profile_prefix}abc")
+    _fake_process(proc, 202, "chrome --user-data-dir=/Users/someone/Library/Chrome")
     (proc / "self").mkdir()
 
-    monkeypatch.setattr(platform_compat, "PROC_ROOT", proc)
-    killed: list[int] = []
-    monkeypatch.setattr(web_tools.os, "kill", lambda pid, sig: killed.append(pid))
+    killed = _install_lethal_kill(monkeypatch, proc)
 
     PrivateBrowserTool._terminate_owned_chrome({"TMPDIR": str(tmpdir)})
 
     assert killed == [101]
+
+
+def _fake_procfs(monkeypatch, tmp_path):
+    from src import process_ownership
+
+    proc = tmp_path / "proc"
+    boot = proc / "sys/kernel/random/boot_id"
+    boot.parent.mkdir(parents=True)
+    boot.write_text("fake-boot\n")
+    monkeypatch.setattr(platform_compat, "PROC_ROOT", proc)
+    monkeypatch.setattr(process_ownership, "PROC_ROOT", proc)
+    return proc
+
+
+def _fake_process(proc, pid: int, cmdline: str, *, starttime: int | None = None) -> None:
+    entry = proc / str(pid)
+    entry.mkdir(parents=True)
+    tail = " ".join(["0"] * 15 + [str(starttime if starttime is not None else 1000 + pid)])
+    (entry / "stat").write_text(f"{pid} (x) S 1 {pid} {pid} {tail}")
+    (entry / "cmdline").write_bytes(cmdline.replace(" ", "\0").encode())
+
+
+def _install_lethal_kill(monkeypatch, proc, *, before_kill=None):
+    killed: list[int] = []
+
+    def _kill(pid, sig):
+        if before_kill is not None:
+            before_kill(pid)
+        entry = proc / str(pid)
+        if not entry.exists():
+            raise ProcessLookupError(pid)
+        killed.append(pid)
+        shutil.rmtree(entry)
+
+    monkeypatch.setattr(web_tools.os, "kill", _kill)
+    return killed
+
+
+def test_owned_chrome_sweep_never_signals_a_reused_pid(monkeypatch, tmp_path) -> None:
+    """Matched by profile, then reissued to a stranger before the signal."""
+    from src import process_lifecycle
+
+    proc = _fake_procfs(monkeypatch, tmp_path)
+    tmpdir = tmp_path / "runtime-tmp"
+    tmpdir.mkdir()
+    _fake_process(proc, 101, f"chrome --user-data-dir={tmpdir.resolve()}/agent-browser-chrome-x")
+    killed = _install_lethal_kill(monkeypatch, proc)
+    real_terminate = process_lifecycle.terminate_identities
+
+    def recycle_then_terminate(identities, **kwargs):
+        identities = list(identities)
+        shutil.rmtree(proc / "101")
+        _fake_process(proc, 101, "postgres", starttime=99999)
+        return real_terminate(identities, **kwargs)
+
+    monkeypatch.setattr(process_lifecycle, "terminate_identities", recycle_then_terminate)
+
+    PrivateBrowserTool._terminate_owned_chrome({"TMPDIR": str(tmpdir)})
+
+    assert killed == [] and (proc / "101").exists()
+
+
+def _legacy_pid_file_for(tmp_path, monkeypatch, namespace, session, pid):
+    """A pid file in the legacy namespace layout, which only the fallback loop reads."""
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setenv("ODYSSEUS_BROWSER_NAMESPACE", namespace)
+    legacy_run = (tmp_path / "agent-browser" / "namespaces"
+                  / web_tools._bounded_browser_identity(namespace) / "run")
+    legacy_run.mkdir(parents=True, exist_ok=True)
+    target = legacy_run / f"ody-{web_tools._bounded_browser_identity(session)}.pid"
+    assert target in web_tools._browser_pid_file_candidates(tmp_path, namespace, session)
+    target.write_text(str(pid))
+    return target
+
+
+def test_legacy_daemon_pid_file_kills_only_the_verified_daemon(monkeypatch, tmp_path) -> None:
+    proc = _fake_procfs(monkeypatch, tmp_path)
+    _fake_process(proc, 4401, "node agent-browser --serve")
+    killed = _install_lethal_kill(monkeypatch, proc)
+    pid_file = _legacy_pid_file_for(tmp_path, monkeypatch, "clawmm-test", "session-7", 4401)
+
+    PrivateBrowserTool._terminate_owned_daemon({}, "session-7")
+
+    assert killed == [4401] and not pid_file.exists()
+
+
+def test_legacy_daemon_pid_reused_before_the_signal_is_spared(monkeypatch, tmp_path) -> None:
+    """The pid file still names the slot; the daemon in it was replaced."""
+    from src import process_lifecycle
+
+    proc = _fake_procfs(monkeypatch, tmp_path)
+    _fake_process(proc, 4402, "node agent-browser --serve")
+    killed = _install_lethal_kill(monkeypatch, proc)
+    pid_file = _legacy_pid_file_for(tmp_path, monkeypatch, "clawmm-test", "session-8", 4402)
+    real_terminate = process_lifecycle.terminate_identities
+
+    def recycle_then_terminate(identities, **kwargs):
+        identities = list(identities)
+        shutil.rmtree(proc / "4402")
+        _fake_process(proc, 4402, "node agent-browser --serve", starttime=99999)
+        return real_terminate(identities, **kwargs)
+
+    monkeypatch.setattr(process_lifecycle, "terminate_identities", recycle_then_terminate)
+
+    PrivateBrowserTool._terminate_owned_daemon({}, "session-8")
+
+    # Even a lookalike command line is not the process the match was made on.
+    assert killed == [] and (proc / "4402").exists()
+
+
+def test_legacy_daemon_without_identity_keeps_its_pid_file(monkeypatch, tmp_path) -> None:
+    proc = _fake_procfs(monkeypatch, tmp_path)
+    _fake_process(proc, 4403, "node agent-browser --serve")
+    (proc / "4403" / "stat").write_text("4403 (x) S 1")  # no start time: unidentifiable
+    monkeypatch.setattr(web_tools.os, "kill", lambda *a: pytest.fail("signalled an unidentified pid"))
+    pid_file = _legacy_pid_file_for(tmp_path, monkeypatch, "clawmm-test", "session-9", 4403)
+
+    PrivateBrowserTool._terminate_owned_daemon({}, "session-9")
+
+    assert pid_file.exists()
 
 
 def _pid_file_for(tmp_path, monkeypatch, namespace, session, pid):

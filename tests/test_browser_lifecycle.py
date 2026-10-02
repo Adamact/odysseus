@@ -13,14 +13,18 @@ import pytest
 
 from core import platform_compat
 import src.agent_tools.web_tools as web_tools
-from src import browser_lifecycle
+from src import browser_lifecycle, process_ownership
 from src.agent_tools.web_tools import PrivateBrowserTool
 
 
-def _fake_proc(root: Path, pid: int, *, ppid: int, pgid: int, sid: int, cmdline: str, state: str = "S") -> None:
+def _fake_proc(root: Path, pid: int, *, ppid: int, pgid: int, sid: int, cmdline: str,
+               state: str = "S", starttime: int | None = None) -> None:
     entry = root / str(pid)
     entry.mkdir(parents=True)
-    (entry / "stat").write_text(f"{pid} (x y) {state} {ppid} {pgid} {sid} 0 0 0")
+    # A full stat line: fields after the comm up to starttime (field 22), which
+    # is what process identity is read from.
+    tail = " ".join(["0"] * 15 + [str(starttime if starttime is not None else 1000 + pid)])
+    (entry / "stat").write_text(f"{pid} (x y) {state} {ppid} {pgid} {sid} {tail}")
     (entry / "cmdline").write_bytes(cmdline.replace(" ", "\0").encode())
 
 
@@ -28,7 +32,12 @@ def _fake_proc(root: Path, pid: int, *, ppid: int, pgid: int, sid: int, cmdline:
 def fake_procfs(monkeypatch, tmp_path):
     proc = tmp_path / "proc"
     proc.mkdir()
+    boot = proc / "sys/kernel/random/boot_id"
+    boot.parent.mkdir(parents=True)
+    boot.write_text("fake-boot\n")
     monkeypatch.setattr(platform_compat, "PROC_ROOT", proc)
+    # Identity reads its own binding of the proc root.
+    monkeypatch.setattr(process_ownership, "PROC_ROOT", proc)
     killed: list[tuple[int, int]] = []
 
     def _kill(pid, sig):
@@ -99,6 +108,69 @@ def test_forced_cleanup_kills_tree_and_removes_owned_resources(fake_procfs, tmp_
     assert not profile.exists()
     assert sorted(p.name for p in root.iterdir()) == ["ody-other.pid"]
     assert (proc / "900").exists()
+
+
+def test_member_recycled_between_membership_and_identity_is_never_signalled(
+    fake_procfs, tmp_path, monkeypatch,
+) -> None:
+    """Membership sees the old renderer; its pid is reused before any capture or signal.
+
+    The replacement is an unrelated process occupying the same pid slot. Its
+    identity must never be the one teardown verifies, so it is never hit.
+    """
+    proc, killed = fake_procfs
+    _browser_tree(proc, tmp_path / "agent-browser-chrome-a")
+    lifecycle = browser_lifecycle.process_lifecycle
+    recycled = []
+
+    def recycle_once():
+        if not recycled:
+            recycled.append(True)
+            shutil.rmtree(proc / "502")
+            _fake_proc(proc, 502, ppid=1, pgid=502, sid=502, cmdline="sshd", starttime=99999)
+
+    # Whichever comes first after membership is decided — an identity capture
+    # or the signalling sweep — the old renderer is gone and its pid reissued.
+    real_capture = lifecycle.ProcessIdentity.capture
+    real_terminate = lifecycle.terminate_identities
+
+    def capture(pid, **kwargs):
+        recycle_once()
+        return real_capture(pid, **kwargs)
+
+    def terminate(identities, **kwargs):
+        identities = list(identities)
+        recycle_once()
+        return real_terminate(identities, **kwargs)
+
+    monkeypatch.setattr(lifecycle.ProcessIdentity, "capture", staticmethod(capture))
+    monkeypatch.setattr(lifecycle, "terminate_identities", terminate)
+
+    killed_pids, survivors, _ = browser_lifecycle.kill_browser_tree(500, settle_s=0.1)
+
+    assert recycled, "the race was never staged"
+    assert 502 not in [pid for pid, _ in killed], "the replacement process was signalled"
+    assert (proc / "502").exists()
+    assert killed_pids == [501, 500] and survivors == []
+
+
+def test_member_without_identity_is_a_survivor_and_keeps_its_profile(fake_procfs, tmp_path) -> None:
+    proc, killed = fake_procfs
+    root = tmp_path / "rt"
+    root.mkdir()
+    (root / "ody-k.pid").write_text("500")
+    profile = tmp_path / "agent-browser-chrome-a"
+    profile.mkdir()
+    _browser_tree(proc, profile)
+    # The renderer's stat is unreadable as identity (no start time): this host
+    # cannot say which process holds the pid, so it must not be signalled.
+    (proc / "502" / "stat").write_text("502 (x y) S 501 501 500")
+
+    receipt = browser_lifecycle.force_cleanup(root, "ody-k")
+
+    assert 502 not in [pid for pid, _ in killed]
+    assert receipt.survivors == [502] and not receipt.verified
+    assert profile.exists() and (root / "ody-k.pid").exists()
 
 
 def test_forced_cleanup_without_procfs_never_kills_unverified_processes(monkeypatch, tmp_path) -> None:
