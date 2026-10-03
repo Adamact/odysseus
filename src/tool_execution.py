@@ -1355,7 +1355,7 @@ from src.agent_runtime.process_resources import (
     active_process_operation, bind_process_operation, needs_process_binding, resolve_process_operation,
 )
 from src.browser_identity import (
-    native_browser, parse_operation as parse_browser_operation, SESSION_ACTIONS,
+    native_browser, parse_operation as parse_browser_operation, SESSION_ACTIONS, PAGE_FAILURE,
     page_unavailable, resolve_browser_operation, bind_browser_operation, revalidate_browser_operation,
 )
 
@@ -1642,6 +1642,8 @@ async def execute_tool_block(
             )
         return output
     except ResourceIdentityError as error:
+        if native_browser(operation, backend_operation.resource) and str(error) == PAGE_FAILURE:
+            return f"{transport}: UNSUPPORTED", page_unavailable()
         return f"{transport}: BLOCKED", {
             "error": str(error), "exit_code": 1, "blocked": True,
             "failure_kind": "resource_identity_denied",

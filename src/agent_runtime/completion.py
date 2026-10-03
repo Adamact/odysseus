@@ -20,7 +20,17 @@ from src.agent_evidence import (
     requirements_from_runtime_context, _execution_obligation, _unquoted_statements,
     _ARTIFACT_PATH,
 )
+from .effect_log import EffectLog
 from .journal import ActionJournal, bind_journal, current_journal
+
+
+def _ledger(journal: ActionJournal, requirements) -> EvidenceLedger:
+    """The single evidence view used for the decision and the prose filter."""
+    ledger = EvidenceLedger.from_tool_events(journal.evidence_events(), requirements)
+    ledger.record_effects(journal.effect_entries(),
+                          {action.action_id: index for index, action in enumerate(journal.actions, 1)},
+                          journal.partial_reads())
+    return ledger
 
 
 _TEST_CLAIM = re.compile(
@@ -32,9 +42,10 @@ _TEST_STATUS_CLAIM = re.compile(
     r'(?:pass(?:ed|ing)?|succeeded|successful(?:ly)?|green)\b|'
     r'\b(?:zero|no|0)\s+(?:test\s+)?failures\b', re.I)
 _EXECUTION_CLAIM = re.compile(
-    r'\b(?:(?:I|we|I\'ve|we\'ve|and)\s+(?:have\s+)?(?:successfully\s+)?(?:ran|executed|tested|verified|created|updated|modified|wrote|saved|fixed|completed)|'
-    rf'(?:file|artifact|command|script|service|server|{_ARTIFACT_PATH})\s+(?:was\s+|has\s+been\s+|is\s+)?(?:successfully\s+)?(?:created|updated|written|saved|executed|started)|'
-    r'(?:successfully\s+)(?:ran|executed|created|updated|saved|completed))\b', re.I)
+    r'\b(?:(?:I|we|I\'ve|we\'ve|and)\s+(?:have\s+)?(?:successfully\s+)?(?:ran|executed|tested|verified|created|updated|modified|wrote|saved|fixed|completed|sent|deleted|submitted|published|deployed|configured|uploaded)|'
+    rf'(?:file|artifact|command|script|service|server|email|message|record|resource|{_ARTIFACT_PATH})\s+(?:was\s+|has\s+been\s+|is\s+)?(?:successfully\s+)?(?:created|updated|written|saved|executed|started|sent|deleted|submitted|published|deployed|configured)|'
+    r'(?:successfully\s+)(?:ran|executed|created|updated|saved|completed|sent|deleted|submitted|published|deployed)|'
+    r'(?:the\s+)?(?:remote\s+)?(?:operation|request|call|mutation|action)\s+(?:was\s+|has\s+)?(?:successfully\s+)?(?:completed|succeeded|finished))\b', re.I)
 _UNATTESTED_TEST_METRIC = re.compile(
     r'\b\d+\s+(?:(?:unit|integration)\s+)?tests?\s+pass(?:ed|ing)?\b|'
     r'\b\d+\s+passed\b|\b\d+(?:\.\d+)?%\s+(?:test\s+)?coverage\b', re.I)
@@ -42,7 +53,7 @@ _UNBOUNDED_SUCCESS = re.compile(
     r'\b(?:everything|all\s+(?:bugs|issues))\s+(?:is\s+|are\s+|has\s+been\s+)?'
     r'(?:fixed|resolved|working)\b', re.I)
 _MUTATION_CLAIM = re.compile(
-    r'\b(?:created|updated|modified|wrote|written|saved|fixed)\b', re.I)
+    r'\b(?:created|updated|modified|wrote|written|saved|fixed|sent|deleted|submitted|published|deployed|configured|uploaded)\b', re.I)
 _TEST_IDENTITY = re.compile(r'\b(?:pytest|unittest)\b', re.I)
 _TEST_SUBJECT = re.compile(r'\b(?:tests?|test suite|pytest|unittest|checks?|verification)\b', re.I)
 _CLAIM_PATH = re.compile(_ARTIFACT_PATH)
@@ -96,17 +107,20 @@ def _supported_prose(text: str, ledger: EvidenceLedger, decision: CompletionDeci
     """Remove unsupported assertions at statement boundaries; add no notice."""
     incomplete = decision.reason if not decision.can_complete and decision.status != CompletionStatus.AWAITING_USER else ''
     execution_required = _execution_obligation(ledger.requirements)
+    # Bare "Done." cannot stand for an external effect nobody verified.
+    terminal_claims = execution_required or bool(ledger.unverified_external_effects())
     kept = []
     removed = ''
     for statement, scoped in _unquoted_statements(text):
         why = ''
-        for claim, scope in _current_run_claims(scoped, execution_required=execution_required):
+        for claim, scope in _current_run_claims(scoped, execution_required=terminal_claims):
             paths = tuple(match.group().rstrip('.') for match in _CLAIM_PATH.finditer(scope))
             if claim == 'metric':
                 why = 'test counts, coverage or exhaustive correctness were not established by execution evidence'
             elif claim == 'test':
                 identities = tuple(match.group().lower() for match in _TEST_IDENTITY.finditer(scope))
-                if decision.status != CompletionStatus.VERIFIED or not ledger._supports_verifier_claim(identities, paths):
+                if (decision.status not in {CompletionStatus.VERIFIED, CompletionStatus.UNVERIFIED}
+                        or not ledger._supports_verifier_claim(identities, paths)):
                     why = 'no current passing executable verification supports the claim'
             elif claim == 'mutation':
                 if not ledger._supports_artifact_claim(EvidenceKind.ARTIFACT_MUTATION, paths):
@@ -132,7 +146,28 @@ def completion_answer(text: str, ledger: EvidenceLedger, decision: CompletionDec
     Exit status proves neither test counts nor coverage. A bad assertion is
     removed at statement boundaries instead of erasing an entire explanation.
     The execution outcome remains separate from a discarded model assertion.
+    Unverified external effects are always stated by the server, so no
+    surviving prose can present a reported remote success as a verified one.
     """
+    answer, reason = _completion_answer(text, ledger, decision)
+    return _disclose(answer, ledger), reason
+
+
+def _disclose(answer: str, ledger: EvidenceLedger) -> str:
+    """Append the server's facts for unverified external effects."""
+    disclosure = _disclosure(answer, ledger)
+    return answer.rstrip() + disclosure if disclosure else answer
+
+
+def _disclosure(answer: str, ledger: EvidenceLedger) -> str:
+    """Build the complete server-owned disclosure independently of prose length."""
+    summary = ' '.join(ledger.effect_disclosures())
+    if not summary:
+        return ''
+    return ('\n\n' + summary) if answer.strip() else summary
+
+
+def _completion_answer(text: str, ledger: EvidenceLedger, decision: CompletionDecision) -> tuple[str, str]:
     incomplete = decision.reason if not decision.can_complete and decision.status != CompletionStatus.AWAITING_USER else ''
     execution_required = _execution_obligation(ledger.requirements)
     prose, removed = _supported_prose(text, ledger, decision)
@@ -153,7 +188,7 @@ def completion_answer(text: str, ledger: EvidenceLedger, decision: CompletionDec
         facts = []
         if ledger.requirements.required_artifacts:
             facts.append('Output available: ' + ', '.join(ledger.requirements.required_artifacts) + '.')
-        if decision.status == CompletionStatus.VERIFIED:
+        if decision.status == CompletionStatus.VERIFIED or ledger._supports_verifier_claim():
             facts.append('The latest executable verification passed.')
         elif any(e.kind == EvidenceKind.ARTIFACT_VALIDATION and e.authoritative and e.success for e in ledger.events):
             facts.append('Artifact readback verified. No passing executable test result was recorded.')
@@ -192,6 +227,10 @@ def with_completion_gate(func):
         journal = ActionJournal(
             workspace=requirements.workspace_root, observed_artifacts=requirements.required_artifacts,
             parent_run_id=bound.get('_parent_run_id') or (parent.run_id if parent is not None else None))
+        # One durable effect log per run lineage gives child effects and parent
+        # observations a single total order for invalidation.
+        journal.effects = (parent.effects if parent is not None and parent.effects is not None
+                           else EffectLog(journal.run_id))
         answer_events: list[dict] = []
         metrics_events: list[dict] = []
         answer = ''
@@ -241,7 +280,7 @@ def with_completion_gate(func):
                         awaiting = True
                         payload = data.get('data') or {}
                         if isinstance(payload.get('question'), str):
-                            current = EvidenceLedger.from_tool_events(journal.evidence_events(), requirements)
+                            current = _ledger(journal, requirements)
                             question, why = completion_answer(payload['question'], current, current.evaluate(awaiting_user=True))
                             if why:
                                 data = {**data, 'data': {**payload, 'question': question}}
@@ -290,7 +329,7 @@ def with_completion_gate(func):
                         presentation_replaced = True
                         answer = terminal_answer
                         answer_events = [event for event in answer_events if event.get('thinking') is True]
-            ledger = EvidenceLedger.from_tool_events(journal.evidence_events(), requirements)
+            ledger = _ledger(journal, requirements)
             decision = ledger.evaluate(exhausted=exhausted, awaiting_user=awaiting)
             if provider_error:
                 decision = replace(decision, status=CompletionStatus.FAILED,
@@ -298,7 +337,8 @@ def with_completion_gate(func):
             # Exhaustion limits execution; factual source synthesis can remain
             # useful and must not be replaced merely because the budget ended.
             presentation_decision = ledger.evaluate(awaiting_user=awaiting) if exhausted and not provider_error else decision
-            safe_answer, reason = completion_answer(answer, ledger, presentation_decision)
+            filtered_answer, reason = _completion_answer(answer, ledger, presentation_decision)
+            safe_answer = _disclose(filtered_answer, ledger)
             # Evaluate each earlier draft as well as the final replacement.
             # Never replay an unsupported intermediate success claim.
             draft = ''.join(str(e.get('delta') or e.get('content') or '')
@@ -314,7 +354,14 @@ def with_completion_gate(func):
             released_at = perf_counter()
             if not provider_error:
                 yield _event({'type': 'completion_decision', 'data': decision.to_dict()})
-            replaced_answer = bool(presentation_replaced or reason or unsafe_draft or safe_answer != answer)
+            # When the only change is the server's effect disclosure, the
+            # model's answer events are released unchanged and the disclosure
+            # follows them, so no earlier-round text is dropped.
+            disclosure = _disclosure(filtered_answer, ledger)
+            disclosure_only = bool(disclosure) and not (presentation_replaced or reason or unsafe_draft
+                                                        or filtered_answer != answer)
+            replaced_answer = not disclosure_only and bool(
+                presentation_replaced or reason or unsafe_draft or safe_answer != answer)
             if replaced_answer:
                 reasoning = [event for event in answer_events if event.get('thinking') is True]
                 _, unsafe_reasoning = completion_answer(
@@ -327,6 +374,8 @@ def with_completion_gate(func):
             else:
                 for event in answer_events:
                     yield _event(event)
+                if disclosure_only:
+                    yield _event({'delta': disclosure})
             if provider_error:
                 yield _event({'type': 'completion_decision', 'data': decision.to_dict()})
             for event in metrics_events:
@@ -334,6 +383,8 @@ def with_completion_gate(func):
                 metadata.update(completion_decision=decision.to_dict(), evidence_events=ledger.to_list(),
                                 action_receipts=journal.to_list(), completion_requirements=requirements.to_dict(),
                                 run_id=journal.run_id, parent_run_id=journal.parent_run_id)
+                if ledger.effects:
+                    metadata['effect_assessments'] = [entry['assessment'].to_dict() for entry in ledger.effects]
                 metadata['completion_gate'] = {
                     'buffer_seconds': released_at - first_answer_at if first_answer_at is not None else 0,
                     'first_visible_answer_seconds': released_at - started,
@@ -344,6 +395,10 @@ def with_completion_gate(func):
                     if not provider_error:
                         metadata['round_texts'] = [safe_answer]
                     metadata['completion_gate_reason'] = reason or unsafe_draft or 'receipt_summary'
+                elif disclosure_only and metadata.get('round_texts') and isinstance(metadata['round_texts'], list) \
+                        and isinstance(metadata['round_texts'][-1], str):
+                    # Reload renders round_texts: keep the disclosure with them.
+                    metadata['round_texts'] = [*metadata['round_texts'][:-1], metadata['round_texts'][-1].rstrip() + disclosure]
                 if provider_error and isinstance(metadata.get('round_texts'), list):
                     # Failed rounds stay as per-round diagnostics, but they are
                     # rendered again on reload. Apply the same statement filter

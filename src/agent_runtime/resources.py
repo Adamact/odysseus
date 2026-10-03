@@ -28,6 +28,45 @@ def _absolute(value):
         raise ValueError("Resource path must be canonical and absolute")
 
 
+def _effect_store_dirs():
+    from src import constants
+    directories = {canonical_root(os.path.join(constants.DATA_DIR, "effects"))}
+    effect_log = sys.modules.get("src.agent_runtime.effect_log")
+    if effect_log is not None:
+        directories.add(canonical_root(effect_log.EFFECTS_DIR))
+    return directories
+
+
+def _aliases_effect_store(candidate, directories):
+    """Whether ``candidate`` (an ``os.stat`` result) is a hardlink into the effect store.
+
+    The effect log and launch index refuse any file with more than one link,
+    and the store is flat. So only a multiply linked regular file on the
+    store's device can alias store state, and only then is the store listed,
+    one directory level, by inode. Ordinary single-link files cost nothing,
+    and the cost never depends on recursive store size. Uninspectable store
+    state fails closed.
+    """
+    if not stat.S_ISREG(candidate.st_mode) or candidate.st_nlink < 2:
+        return False
+    for directory in directories:
+        try:
+            if os.stat(directory).st_dev != candidate.st_dev:
+                continue
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    if entry.inode() != candidate.st_ino:
+                        continue
+                    observed = entry.stat(follow_symlinks=False)
+                    if (observed.st_dev, observed.st_ino) == (candidate.st_dev, candidate.st_ino):
+                        return True
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return True
+    return False
+
+
 def _control_plane_snapshot():
     # Execution snapshots/receipts are server state, even if a workspace root
     # contains the data directory. A writable user file cannot mint authority.
@@ -45,6 +84,10 @@ def _control_plane_snapshot():
     processes = sys.modules.get("src.agent_runtime.process_resources")
     if processes is not None:
         job_dirs.add(canonical_root(processes._LAUNCH_DIR))
+    # Durable effect claims/outcomes/observations are server evidence state.
+    # They are prefix-protected below, but never inventoried: the store grows
+    # with every run. Hardlink aliases are caught by ``_aliases_effect_store``.
+    effect_dirs = _effect_store_dirs()
     # Producers may have configured paths different from the default constants.
     # Inspect already-loaded server metadata without initializing a store here.
     bg = sys.modules.get("src.bg_jobs")
@@ -88,7 +131,8 @@ def _control_plane_snapshot():
         except FileNotFoundError:
             continue
         identities.add((observed.st_dev, observed.st_ino))
-    return frozenset(job_dirs), frozenset(protected), frozenset(identities)
+    # Effect directories join the prefix set only after the recursive inventory.
+    return frozenset(job_dirs | effect_dirs), frozenset(protected), frozenset(identities)
 
 
 def _control_plane_path(path, *, snapshot=None):
@@ -102,7 +146,10 @@ def _control_plane_path(path, *, snapshot=None):
         candidate = os.stat(path)
     except FileNotFoundError:
         return False
-    return (candidate.st_dev, candidate.st_ino) in identities
+    if (candidate.st_dev, candidate.st_ino) in identities:
+        return True
+    # Only a multiply linked file can alias the (uninventoried) effect store.
+    return candidate.st_nlink > 1 and _aliases_effect_store(candidate, directories & _effect_store_dirs())
 
 
 class FilesystemScope(str, Enum):

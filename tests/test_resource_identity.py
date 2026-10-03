@@ -615,10 +615,24 @@ async def test_approved_resource_cannot_migrate_to_another_request(tmp_path):
     assert result["failure_kind"] == "resource_identity_denied"
 
 
-async def test_missing_approval_resource_snapshot_cannot_be_reconstructed(tmp_path):
+async def test_missing_approval_resource_snapshot_cannot_be_reconstructed(tmp_path, monkeypatch):
+    grant = authority(tmp_path, "read_file")
+    def unavailable(*args, **kwargs):
+        raise PermissionError("Cannot establish the proposal's resource identity")
+
+    with monkeypatch.context() as patch:
+        patch.setattr("src.agent_runtime.resource_binding.resolve_filesystem_operation", unavailable)
+        exact, security = approval(grant, "read_file", "missing")
+    assert exact.pending.resource_operation is None
+    (tmp_path / "missing").write_text("appeared after proposal")
+    _, result = await dispatch(grant, "read_file", "missing", exact_approval=exact, security_context=security)
+    assert result["failure_kind"] == "resource_identity_denied"
+
+
+async def test_approved_absent_read_cannot_bind_a_file_that_appeared(tmp_path):
     grant = authority(tmp_path, "read_file")
     exact, security = approval(grant, "read_file", "missing")
-    assert exact.pending.resource_operation is None
+    assert exact.pending.resource_operation.bindings[0].resource.identity is None
     (tmp_path / "missing").write_text("appeared after proposal")
     _, result = await dispatch(grant, "read_file", "missing", exact_approval=exact, security_context=security)
     assert result["failure_kind"] == "resource_identity_denied"

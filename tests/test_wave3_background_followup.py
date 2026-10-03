@@ -98,3 +98,18 @@ async def test_stale_terminal_outcome_retries_current_record(store, monkeypatch,
     monkeypatch.setattr(bg_monitor, '_run_followup', terminal)
     assert await bg_monitor._process_followup(old) is bg_monitor.FollowupResult.RETRYABLE_LATER
     assert bg_jobs.pending_followups()
+
+
+@pytest.mark.parametrize('linkage', ['valid', 'damaged'])
+async def test_deleted_session_settles_only_a_validated_launch(store, monkeypatch, monitor_session, linkage):
+    """Wave 4: a job retired for a deleted session must not leave its launch effect RUNNING."""
+    resource, rec = seed(store, status='done')
+    if linkage == 'damaged':
+        (bg_jobs._JOBS_DIR / 'job.authority.json').write_text('{}')
+    import src.ai_interaction as ai
+    monkeypatch.setattr(ai, 'get_session_manager', lambda: SimpleNamespace(get_session=lambda sid: None))
+    settled = []
+    monkeypatch.setattr(bg_monitor, '_settle_launch_effect', lambda job, record: settled.append(job))
+    assert await bg_monitor._process_followup(rec) is bg_monitor.FollowupResult.TERMINAL_UNFOLLOWABLE
+    assert settled == ([resource] if linkage == 'valid' else [])
+    assert not monitor_session

@@ -116,6 +116,20 @@ def _unified_diff(old: str, new: str, path: str) -> Optional[Dict[str, Any]]:
         "file": os.path.basename(path) or (path or "file"),
     }
 
+def _edit_file_text(original: str, old: str, new: str, replace_all: bool) -> tuple[str | None, str]:
+    """The exact text edit_file writes for ``original``, or None and why not.
+
+    Pure: the effect adapter derives the requested post-state from this same
+    function, so the postcondition is the producer's own transformation.
+    """
+    count = original.count(old)
+    if count == 0:
+        return None, "not_found"
+    if count > 1 and not replace_all:
+        return None, f"not_unique:{count}"
+    return (original.replace(old, new) if replace_all else original.replace(old, new, 1)), "ok"
+
+
 class EditFileTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
@@ -150,26 +164,27 @@ class EditFileTool:
             # Exact replacement must not normalize unrelated CRLF/CR newlines.
             with open(path, "r", encoding="utf-8", newline="") as f:
                 original = f.read()
-            count = original.count(old)
-            if count == 0:
-                return original, None, "not_found"
-            if count > 1 and not replace_all:
-                return original, None, f"not_unique:{count}"
-            updated = original.replace(old, new) if replace_all else original.replace(old, new, 1)
+            updated, status = _edit_file_text(original, old, new, replace_all)
+            if updated is None:
+                return original, None, status
+            attempted.append(True)
             with open(path, "w", encoding="utf-8", newline="") as f:
                 f.write(updated)
             return original, updated, "ok"
 
+        # In-place rewrite: a failure after truncation may leave partial bytes.
+        attempted = []
+        partial = lambda: {"mutation_attempted": True} if attempted else {}
         try:
             original, updated, status = await asyncio.to_thread(_apply)
         except FileNotFoundError:
-            return {"error": f"edit_file: {path}: not found (use write_file to create it)", "exit_code": 1}
+            return {"error": f"edit_file: {path}: not found (use write_file to create it)", "exit_code": 1, **partial()}
         except (IsADirectoryError, UnicodeDecodeError):
-            return {"error": f"edit_file: {path}: not an editable text file", "exit_code": 1}
+            return {"error": f"edit_file: {path}: not an editable text file", "exit_code": 1, **partial()}
         except PermissionError:
-            return {"error": f"edit_file: {path}: permission denied", "exit_code": 1}
+            return {"error": f"edit_file: {path}: permission denied", "exit_code": 1, **partial()}
         except OSError as e:
-            return {"error": f"edit_file: {path}: {e}", "exit_code": 1}
+            return {"error": f"edit_file: {path}: {e}", "exit_code": 1, **partial()}
 
         if status == "not_found":
             return {"error": f"edit_file: old_string not found in {path}. Read the file and match it exactly.", "exit_code": 1}
@@ -332,6 +347,9 @@ class WriteFileTool:
                 "exit_code": 1,
                 "binary_artifact_preserved": target_existed,
             }
+        # This writer truncates in place. Once that stage is reached, a failure
+        # may leave a partial file; report it so effect evidence stays honest.
+        attempted = []
         try:
             def _write():
                 old = ""
@@ -343,14 +361,17 @@ class WriteFileTool:
                 d = os.path.dirname(path)
                 if d:
                     os.makedirs(d, exist_ok=True)
+                attempted.append(True)
                 with open(path, "w", encoding="utf-8") as f:
                     f.write(body)
                 return old, len(body)
             old_content, size = await asyncio.to_thread(_write)
         except PermissionError:
-            return {"error": f"write_file: {path}: permission denied", "exit_code": 1}
+            return {"error": f"write_file: {path}: permission denied", "exit_code": 1,
+                    **({"mutation_attempted": True} if attempted else {})}
         except OSError as e:
-            return {"error": f"write_file: {path}: {e}", "exit_code": 1}
+            return {"error": f"write_file: {path}: {e}", "exit_code": 1,
+                    **({"mutation_attempted": True} if attempted else {})}
         diff = _unified_diff(old_content, body, path)
         result = {
             "output": f"Wrote {size} bytes to {_display_tool_path(path)}",

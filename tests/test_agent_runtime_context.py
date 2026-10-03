@@ -1228,6 +1228,8 @@ def test_native_host_shell_call_runs_through_bridge_and_threads_result(monkeypat
     assert host_output["call_id"] == "call_host_1"
     assert host_output["tool_call_id"] == "call_host_1"
     assert any("ajax is at 192.168.1.42" in event.get("delta", "") for event in events)
+    # The host bridge is an external effect: its disclosure follows the answer.
+    assert any("External operation host_shell reported success" in event.get("delta", "") for event in events)
 
 
 def test_workspace_agents_md_lands_in_untrusted_prompt_message(tmp_path, monkeypatch):

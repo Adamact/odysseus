@@ -7,6 +7,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, asdict
 from functools import wraps
 from inspect import signature
+import logging
 from typing import Any
 from uuid import uuid4
 
@@ -67,6 +68,43 @@ class ActionJournal:
     workspace: str = ''
     observed_artifacts: tuple[str, ...] = ()
     parent_run_id: str | None = None
+    # Durable Wave 4 effect log, shared across one run lineage; None disables.
+    effects: Any = field(default=None, repr=False, compare=False)
+    _dispatches: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+
+    def effect_entries(self) -> list[dict[str, Any]]:
+        """Effect assessments ordered against this journal's actions.
+
+        Ordinal is the 1-based position of the action in this journal, so the
+        ledger can compare effects with receipt-derived evidence. Effects from
+        other journals in the lineage carry no ordinal here.
+        """
+        if self.effects is None:
+            return []
+        order = {action.action_id: index for index, action in enumerate(self.actions, 1)}
+        changes = {action.action_id: action.artifact_changes for action in self.actions}
+        history = self.effects.history()
+        entries = []
+        for assessment in self.effects.assessments():
+            claim = history.claim(assessment.effect_id)
+            outcome = history.latest_outcome(assessment.effect_id)
+            entries.append({
+                'ordinal': order.get(assessment.action_id), 'assessment': assessment,
+                'tool': claim.operation.tool, 'unknown_scope': claim.unknown_scope, 'external': claim.external,
+                'paths': tuple(ref.location[-1] for ref in claim.impact_scope if ref.kind.value == 'filesystem'),
+                'mutation_attempted': bool(outcome and outcome.facts.mutation_attempted),
+                'artifact_changes': changes.get(assessment.action_id),
+            })
+        return entries
+
+    def partial_reads(self) -> tuple[str, ...]:
+        """Read actions in this journal whose admitted observation was partial."""
+        if self.effects is None:
+            return ()
+        mine = {action.action_id for action in self.actions}
+        return tuple(o.source_action_id for o in self.effects.history().observations
+                     if o.source_action_id in mine and o.mechanism.value == 'filesystem_read'
+                     and o.coverage.value == 'partial')
 
     def capture_versions(self, action: ActionReceipt) -> None:
         if self.workspace:
@@ -138,6 +176,16 @@ def mark_authorized() -> None:
 def mark_dispatch() -> None:
     action = _ACTION.get()
     if action is not None and action.execution_id is None:
+        journal = _JOURNAL.get()
+        if journal is not None and journal.effects is not None:
+            # Durable claim first. If it cannot be persisted this raises and
+            # the action stays undispatched: the backend is never invoked.
+            from .effect_adapters import begin_effect
+            capture = begin_effect(journal, action)
+            journal._dispatches[action.action_id] = capture
+            if capture.claim is not None:
+                action.transition('effect_claimed', effect_id=capture.claim.effect_id,
+                                  sequence=capture.claim.sequence)
         mark_authorized()
         action.execution_id = action.action_id + ':execution:1'
         action.transition('dispatched', execution_id=action.execution_id)
@@ -145,8 +193,30 @@ def mark_dispatch() -> None:
 
 async def dispatched(operation):
     """Record an actual backend invocation, distinct from router admission."""
-    mark_dispatch()
+    try:
+        mark_dispatch()
+    except BaseException:
+        close = getattr(operation, 'close', None)
+        if close is not None:
+            close()  # never invoked; do not leave an un-awaited coroutine
+        raise
     return await operation
+
+
+def _settle(journal: ActionJournal | None, action: ActionReceipt, **outcome: Any) -> None:
+    if journal is None or journal.effects is None:
+        return
+    capture = journal._dispatches.pop(action.action_id, None)
+    if capture is None:
+        return
+    from .effect_adapters import settle_effect
+    try:
+        settle_effect(journal, action, capture, **outcome)
+    except Exception:  # noqa: BLE001 - bookkeeping must not alter the tool result
+        # The claim stays unsettled (ATTEMPTED), which assesses as pending
+        # with possible impact: conservative, never a manufactured success.
+        journal.effects.degraded = True
+        logging.getLogger(__name__).warning('Effect outcome could not be recorded', exc_info=True)
 
 
 def mark_operation_started(backend: str, **details: Any) -> None:
@@ -197,10 +267,14 @@ def record_action(func):
                     action.finish({**result, 'blocked': True})
                 else:
                     action.finish(result)
+                # Structured producer facts are projected here, before the
+                # receipt reduction drops them.
+                _settle(journal, action, result=result)
             return description, result
         except BaseException as exc:
             if action is not None:
                 action.transition('interrupted', category=type(exc).__name__)
+                _settle(current_journal(), action, error=exc)
             raise
         finally:
             _ACTION.reset(token)

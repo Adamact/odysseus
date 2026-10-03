@@ -582,7 +582,7 @@ async def _run_owned_command(command, ctx: dict, *, tool: str, timeout: int, arg
                 "stderr": _truncate(result.stderr, MAX_OUTPUT_CHARS)}
     if result.timed_out:
         return {**common, "error": f"{tool}: timed out after {timeout}s; process tree terminated.{capture_note}",
-                "exit_code": 124, "stdout": _truncate(result.stdout, MAX_OUTPUT_CHARS),
+                "exit_code": 124, "timed_out": True, "stdout": _truncate(result.stdout, MAX_OUTPUT_CHARS),
                 "stderr": _truncate(result.stderr, MAX_OUTPUT_CHARS)}
     if tool == "python":
         child_failure = _python_child_runtime_failure(result.stdout, result.stderr, result.exit_code)

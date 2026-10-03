@@ -44,6 +44,19 @@ def _status_label(rec: Dict[str, Any]) -> str:
     return status
 
 
+def job_lifecycle_facts(rec: Dict[str, Any]) -> Dict[str, Any]:
+    """Typed lifecycle facts from the exact admitted job record.
+
+    Execution evidence only: completion of a job is not verification of any
+    filesystem, service or external state its command was meant to change.
+    """
+    code = rec.get("exit_code")
+    return {"status": rec.get("status") if rec.get("status") in {"running", "done", "failed"} else "unknown",
+            "exit_code": code if type(code) is int else None,
+            "timed_out": rec.get("timed_out") is True, "killed": rec.get("killed") is True,
+            "died": rec.get("died") is True}
+
+
 def _row(rec: Dict[str, Any]) -> str:
     cmd = (rec.get("command") or "").strip().splitlines()[0][:80]
     return f"[{rec.get('id')}] {_status_label(rec)} | {_age(rec)} | {cmd}"
@@ -101,17 +114,20 @@ class ManageBgJobsTool:
 
             if action in _KILL_ACTIONS:
                 if rec.get("status") != "running":
-                    return {"output": f"Job `{job_id}` already {_status_label(rec)}; nothing to kill.", "exit_code": 0}
+                    return {"output": f"Job `{job_id}` already {_status_label(rec)}; nothing to kill.", "exit_code": 0,
+                            "job": job_lifecycle_facts(rec)}
                 killed = bg_jobs.kill(job_id, expected=resource)
                 if not killed or not killed.get("killed"):
                     return {"error": f"Could not verify termination of background job `{job_id}`.",
                             "exit_code": 1, "teardown": (killed or {}).get("teardown")}
-                return {"output": f"Killed background job `{job_id}` ({(killed or {}).get('command', '').splitlines()[0][:80]}).", "exit_code": 0}
+                return {"output": f"Killed background job `{job_id}` ({(killed or {}).get('command', '').splitlines()[0][:80]}).", "exit_code": 0,
+                        "job": job_lifecycle_facts(killed)}
 
             out = rec.get("output") or "(no output yet)"
             return {
                 "output": f"Job `{job_id}` [{_status_label(rec)}, {_age(rec)}]\nCommand: {rec.get('command')}\n\nOutput:\n{out}",
                 "exit_code": 0,
+                "job": job_lifecycle_facts(rec),
             }
 
         return {"error": f"manage_bg_jobs: unknown action '{action}'. Use list, output, or kill.", "exit_code": 1}

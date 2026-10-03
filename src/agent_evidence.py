@@ -111,6 +111,9 @@ class EvidenceEvent:
         return data
 
 
+EXTERNAL_EFFECT_UNVERIFIED = "an external operation's resulting state was not independently verified"
+
+
 @dataclass(frozen=True)
 class CompletionDecision:
     status: CompletionStatus
@@ -632,6 +635,134 @@ class EvidenceLedger:
         # Retain receipt command identity privately for presentation matching;
         # model prose and client dictionaries never populate this evidence.
         self._verifier_commands: dict[str, tuple[str, ...]] = {}
+        # Wave 4 effect assessments from the run's journal, plus the journal
+        # order of actions so receipt evidence and effects share one ordering.
+        self.effects: list[dict[str, Any]] = []
+        self._action_order: dict[str, int] = {}
+
+    def record_effects(self, entries: Iterable[Mapping[str, Any]], action_order: Mapping[str, int],
+                       partial_reads: Iterable[str] = ()) -> None:
+        """Consume server-derived effect assessments (never model/client data).
+
+        ``partial_reads`` names read actions whose admitted observation was
+        partial (offset/limit, truncation or extraction): such a read cannot
+        validate omitted content, so its validation event is not authoritative.
+        """
+        from dataclasses import replace
+        from src.agent_runtime.effects import EffectAssessment
+        self.effects = [dict(entry) for entry in entries
+                        if isinstance(entry, Mapping) and isinstance(entry.get("assessment"), EffectAssessment)]
+        self._action_order = {str(k): v for k, v in action_order.items() if type(v) is int}
+        partial = set(partial_reads)
+        self.events = [replace(event, authoritative=False, detail="partial read; omitted content is unvalidated")
+                       if event.kind == EvidenceKind.ARTIFACT_VALIDATION and event.tool == "read_file"
+                       and event.action_id in partial else event for event in self.events]
+
+    def _last_success_ordinal(self, required: str) -> int:
+        return max((self._action_order.get(event.action_id, 0) for event in self.events
+                    if event.kind == EvidenceKind.ARTIFACT_MUTATION and event.authoritative and event.success
+                    and _artifact_path_matches_required(event.artifact_path, required, self.requirements.workspace_root)),
+                   default=0)
+
+    def _later_effects(self, required: str) -> list[tuple[dict[str, Any], bool]]:
+        """Effects after the artifact's last successful mutation, with targeting."""
+        floor = self._last_success_ordinal(required)
+        later = []
+        for entry in self.effects:
+            ordinal = entry.get("ordinal")
+            if type(ordinal) is not int or ordinal <= floor:
+                continue
+            explicit = any(_artifact_path_matches_required(path, required, self.requirements.workspace_root)
+                           for path in entry.get("paths") or ())
+            if explicit or entry.get("unknown_scope"):
+                later.append((entry, explicit))
+        return later
+
+    @staticmethod
+    def _entry_unsettled(entry: Mapping[str, Any], explicit: bool) -> bool:
+        """One effect may have changed state with no settled evidence.
+
+        Explicit targets are unsettled by unknown/timed-out/cancelled outcomes
+        and by failures after the producer reached its mutation stage (atomic
+        refusals keep the earlier artifact). Unknown-scope effects are
+        unsettled when nothing captured their settlement: cancellation,
+        interruption, or failed process teardown; settled shell/Python changes
+        are already tracked through artifact version capture.
+        """
+        from src.agent_runtime.effects import CleanupState, ExecutionOutcome
+        unknown = {ExecutionOutcome.ATTEMPTED, ExecutionOutcome.INTERRUPTED, ExecutionOutcome.CANCELLED,
+                   ExecutionOutcome.RUNNING}
+        assessment = entry["assessment"]
+        if not assessment.unresolved_impact:
+            return False
+        if assessment.execution in unknown:
+            return True
+        if explicit:
+            return (assessment.execution is ExecutionOutcome.TIMED_OUT
+                    or (assessment.execution is ExecutionOutcome.FAILED and bool(entry.get("mutation_attempted"))))
+        return assessment.cleanup is CleanupState.FAILED
+
+    def _effect_unsettled(self, required: str) -> bool:
+        """A later operation may have partially changed this artifact."""
+        return any(self._entry_unsettled(entry, explicit) for entry, explicit in self._later_effects(required))
+
+    def _current_effects(self) -> list[dict[str, Any]]:
+        """Effects of this journal's own actions, in action order."""
+        return sorted((entry for entry in self.effects if type(entry.get("ordinal")) is int),
+                      key=lambda entry: entry["ordinal"])
+
+    def _contradicted_target(self) -> str:
+        """A changed file whose latest effect a fresh readback contradicts.
+
+        Only the latest effect per target counts: an earlier effect superseded
+        by a later requested write is history, not a contradiction.
+        """
+        from src.agent_runtime.effects import EffectVerdict
+        latest: dict[str, dict[str, Any]] = {}
+        for entry in self._current_effects():
+            for path in entry.get("paths") or ():
+                latest[path] = entry
+        return next((path for path, entry in latest.items()
+                     if entry["assessment"].verdict is EffectVerdict.CONTRADICTED), "")
+
+    def unverified_external_effects(self) -> list[dict[str, Any]]:
+        """Executed external effects whose resulting state is not verified.
+
+        A remote acknowledgement is execution evidence only. Without an
+        admitted independent readback these effects never support a
+        definitive statement that the external state changed.
+        """
+        from src.agent_runtime.effects import EffectVerdict
+        return [entry for entry in self.effects if entry.get("external")
+                and entry["assessment"].verdict not in {EffectVerdict.VERIFIED, EffectVerdict.NOT_EXECUTED}]
+
+    def effect_disclosures(self) -> tuple[str, ...]:
+        """Server-authored facts for unverified external effects."""
+        from src.agent_runtime.effects import ExecutionOutcome
+        facts = []
+        for entry in self.unverified_external_effects():
+            tool = str(entry.get("tool") or "external operation")
+            execution = entry["assessment"].execution
+            if execution is ExecutionOutcome.REPORTED_SUCCESS:
+                facts.append(f"External operation {tool} reported success; any external change it made was "
+                             "not independently verified.")
+            elif execution is ExecutionOutcome.FAILED:
+                facts.append(f"External operation {tool} reported failure; it may have partially taken effect.")
+            else:
+                facts.append(f"External operation {tool} has an unknown outcome; it may or may not have "
+                             "taken effect.")
+        return tuple(dict.fromkeys(facts))
+
+    def _effect_contradicted(self, required: str) -> str:
+        """The latest effect targeting the artifact, if fresh readback contradicts it."""
+        from src.agent_runtime.effects import EffectVerdict
+        targeting = [entry for entry in self.effects if type(entry.get("ordinal")) is int
+                     and any(_artifact_path_matches_required(path, required, self.requirements.workspace_root)
+                             for path in entry.get("paths") or ())]
+        if not targeting:
+            return ""
+        latest = max(targeting, key=lambda entry: entry["ordinal"])["assessment"]
+        return latest.effect_id if latest.verdict is EffectVerdict.CONTRADICTED else ""
 
     @classmethod
     def from_tool_events(
@@ -795,8 +926,12 @@ class EvidenceLedger:
                     )
 
     def _supports_verifier_claim(self, identities: Sequence[str] = (), paths: Sequence[str] = ()) -> bool:
-        """Only the current passing verifier may support its named runner."""
-        if self.evaluate().status != CompletionStatus.VERIFIED:
+        """Only the current passing verifier may support its named runner.
+
+        A test result stays a test result when an unrelated external effect
+        keeps the whole run unverified; it never speaks for that effect.
+        """
+        if self._evaluate_obligations().status != CompletionStatus.VERIFIED:
             return False
         latest = next((event for event in reversed(self.events)
                        if event.kind == EvidenceKind.VERIFIER_RESULT and event.authoritative), None)
@@ -817,6 +952,9 @@ class EvidenceLedger:
         targets = tuple(paths) or self.requirements.required_artifacts
         if not targets or (not paths and len(targets) != 1):
             return False
+        if not paths and self.unverified_external_effects():
+            # An unnamed "I updated it" may mean the external effect.
+            return False
         for path in targets:
             matching = [event for event in self.events if event.kind == kind and event.authoritative
                         and _artifact_path_matches_required(event.artifact_path, path, self.requirements.workspace_root)]
@@ -826,6 +964,8 @@ class EvidenceLedger:
             destructive_failure = bool(matching and not matching[-1].success
                                        and matching[-1].tool in {'bash', 'python'})
             if not successful or destructive_failure:
+                return False
+            if self.effects and (self._effect_unsettled(path) or self._effect_contradicted(path)):
                 return False
         return True
 
@@ -851,6 +991,21 @@ class EvidenceLedger:
             )
 
     def evaluate(
+        self,
+        *,
+        exhausted: bool = False,
+        awaiting_user: bool = False,
+    ) -> CompletionDecision:
+        decision = self._evaluate_obligations(exhausted=exhausted, awaiting_user=awaiting_user)
+        if decision.status in {CompletionStatus.VERIFIED, CompletionStatus.SATISFIED} and \
+                self.unverified_external_effects():
+            # Reported external execution is not a verified effect: the run
+            # may end, but never as verified or satisfied.
+            return CompletionDecision(CompletionStatus.UNVERIFIED, True, EXTERNAL_EFFECT_UNVERIFIED,
+                                      decision.evidence_ids, decision.missing_artifacts)
+        return decision
+
+    def _evaluate_obligations(
         self,
         *,
         exhausted: bool = False,
@@ -897,8 +1052,32 @@ class EvidenceLedger:
                                               'artifact content changed after verification',
                                               (latest_verifier.event_id,))
 
+        for required in self.requirements.required_artifacts if self.effects else ():
+            contradicted = self._effect_contradicted(required)
+            if contradicted:
+                return CompletionDecision(CompletionStatus.FAILED, False,
+                                          "fresh readback contradicts the requested artifact content",
+                                          (), (required,))
+
+        if self.effects:
+            # Effect obligations hold whether or not artifacts were declared.
+            contradicted = self._contradicted_target()
+            if contradicted:
+                return CompletionDecision(CompletionStatus.FAILED, False,
+                                          "fresh readback contradicts the requested state of a changed file",
+                                          (), (contradicted,))
+            if latest_verifier is not None:
+                floor = self._action_order.get(latest_verifier.action_id, 0)
+                if any(entry["ordinal"] > floor and self._entry_unsettled(entry, bool(entry.get("paths")))
+                       for entry in self._current_effects()):
+                    return CompletionDecision(
+                        CompletionStatus.BLOCKED, False,
+                        "a later operation may have changed state after the latest executable verifier",
+                        (latest_verifier.event_id,))
+
         satisfied_ids: list[str] = []
         missing: list[str] = []
+        unsettled: list[str] = []
         workspace_root = str(self.requirements.workspace_root or "").strip()
         for required in self.requirements.required_artifacts:
             matches = [
@@ -934,15 +1113,20 @@ class EvidenceLedger:
                     filesystem_missing = True
             if latest_success is None or destructive_failure or filesystem_missing:
                 missing.append(required)
+            elif self.effects and self._effect_unsettled(required):
+                # Earlier success is historical; a later possible change to
+                # this artifact has no settled evidence.
+                unsettled.append(required)
             else:
                 satisfied_ids.append(latest_success.event_id)
-        if missing:
+        if missing or unsettled:
             return CompletionDecision(
                 CompletionStatus.BLOCKED,
                 False,
-                "required artifacts lack successful mutation evidence",
+                "required artifacts lack successful mutation evidence" if missing else
+                "a later operation may have changed a required artifact without settled evidence",
                 tuple(satisfied_ids),
-                tuple(missing),
+                tuple([*missing, *unsettled]),
             )
 
         latest_mutation_index = max(
