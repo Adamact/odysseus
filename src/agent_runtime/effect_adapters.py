@@ -98,7 +98,7 @@ def _pre_state_text(resource: Any, *, newline: str | None) -> str | None:
     replaced or undecodable file yields None: a truncated read must never
     stand in for the whole pre-state.
     """
-    data = _read_whole(resource, _PRE_STATE_LIMIT)
+    data = _read_whole(resource, _PRE_STATE_LIMIT).data
     if data is None or len(data) > _PRE_STATE_LIMIT:
         return None
     try:
@@ -336,33 +336,58 @@ def settle_effect(journal: Any, action: Any, capture: DispatchCapture | None, *,
                 and capture.process.launch is None):
             _settle_background(log, capture, result)  # e.g. an exact kill
         return
-    if error is not None or not isinstance(result, dict) or result.get("exit_code") != 0 or result.get("error"):
+    if error is not None or not isinstance(result, dict):
+        return
+    successful = result.get("exit_code") == 0 and not result.get("error")
+    # A missing-file read reports failure, but can independently establish
+    # absence. No other failed read is eligible for an observation.
+    absent_read = (capture.filesystem is not None and capture.filesystem.operation.tool == "read_file"
+                   and capture.filesystem.bindings[0].resource.identity is None)
+    if not successful and not absent_read:
         return
     for fields in _observations(capture, action, result):
-        log.observe(**fields)
+        if successful or fields.get("exists") is False:
+            log.observe(**fields)
     if capture.process is not None and capture.process.launch is None:
         _settle_background(log, capture, result)
 
 
 # -- observations ------------------------------------------------------------
 
-def _read_whole(resource: Any, limit: int) -> bytes | None:
-    """Re-read the exact admitted source binding; None if it is not stable."""
+@dataclass(frozen=True)
+class _WholeFileRead:
+    data: bytes | None = None
+    known_absent: bool = False
+
+
+def _read_whole(resource: Any, limit: int) -> _WholeFileRead:
+    """Read a stable binding, distinguish validated ENOENT from uncertainty.
+
+    Only a binding admitted as absent can prove absence. Disappearance of an
+    existing identity, replacement, or any validation/access failure is unknown.
+    """
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
     try:
         resource.validate()
+        if resource.identity is None:
+            try:
+                os.lstat(resource.path)
+            except FileNotFoundError:
+                resource.validate()
+                return _WholeFileRead(known_absent=True)
+            return _WholeFileRead()
         descriptor = os.open(resource.path, flags)
         with os.fdopen(descriptor, "rb") as stream:
             info = os.fstat(stream.fileno())
             identity = resource.identity
             if (not stat.S_ISREG(info.st_mode) or identity is None
                     or (info.st_dev, info.st_ino) != (identity.device, identity.inode)):
-                return None
+                return _WholeFileRead()
             data = stream.read(limit + 1)
         resource.validate()
-    except (OSError, ValueError):
-        return None
-    return data
+    except (OSError, ValueError, RuntimeError):
+        return _WholeFileRead()
+    return _WholeFileRead(data=data)
 
 
 def _file_observation(capture: DispatchCapture, action: Any) -> dict[str, Any] | None:
@@ -373,17 +398,21 @@ def _file_observation(capture: DispatchCapture, action: Any) -> dict[str, Any] |
     args = json.loads(bound.execution_input)
     partial = bool(args.get("offset") or args.get("limit")) or (
         os.path.splitext(resource.path)[1].lower() in producer._STRUCTURED_DOCUMENT_SUFFIXES)
-    data = _read_whole(resource, producer.MAX_READ_CHARS * 4)
-    if data is None:
+    read = _read_whole(resource, producer.MAX_READ_CHARS * 4)
+    data = read.data
+    if data is None and not read.known_absent:
         return None
-    if len(data) > producer.MAX_READ_CHARS * 4 or len(data.decode("utf-8", errors="replace")) > producer.MAX_READ_CHARS:
+    if read.known_absent:
+        partial = False  # ENOENT establishes absence of the whole bound path.
+    elif len(data) > producer.MAX_READ_CHARS * 4 or len(data.decode("utf-8", errors="replace")) > producer.MAX_READ_CHARS:
         partial = True  # the producer truncated what it read
     complete = not partial
     return dict(observation_id=action.action_id + ":observation", resource=resource_ref(resource, binding.role),
                 mechanism=ObservationMechanism.FILESYSTEM_READ,
                 coverage=Coverage.COMPLETE if complete else Coverage.PARTIAL,
                 source_action_id=action.action_id, source_execution_id=action.execution_id or "",
-                exists=True, content_sha256=hashlib.sha256(data).hexdigest() if complete else "")
+                exists=not read.known_absent,
+                content_sha256=hashlib.sha256(data).hexdigest() if complete and data is not None else "")
 
 
 def _observations(capture: DispatchCapture, action: Any, result: dict) -> list[dict[str, Any]]:

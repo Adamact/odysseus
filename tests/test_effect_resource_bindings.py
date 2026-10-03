@@ -229,6 +229,65 @@ def test_patch_obligations_follow_exact_bindings(run, ws):
     assert {o.predicate for o in claim.obligations} == {fx.Predicate.CONTENT_SHA256, fx.Predicate.ABSENT}
 
 
+def test_deleted_file_read_emits_known_absence(run, ws):
+    (ws / "old.txt").write_text("old\n")
+    _, result = run("apply_patch", {"patch_text": "*** Begin Patch\n*** Delete File: old.txt\n*** End Patch"})
+    assert result["exit_code"] == 0
+    _, result = run("read_file", {"path": "old.txt"})
+    assert result["exit_code"] == 1  # The producer still reports a missing file.
+    history = run.journal.effects.history()
+    observation, = history.observations
+    assert observation.exists is False and observation.content_sha256 == ""
+    assert observation.coverage is fx.Coverage.COMPLETE
+    assert fx.predicate_holds(history.claims[0].obligations[0], observation) is True
+    assert verdicts(run.journal) == [fx.EffectVerdict.VERIFIED]
+
+
+@pytest.mark.parametrize("failure", ["identity_mismatch", "replaced_path", "post_probe_replacement", "permission", "validation"])
+def test_indeterminate_deleted_file_read_cannot_prove_absence(run, ws, monkeypatch, failure):
+    from src.agent_runtime import effect_adapters as adapters
+    from src.agent_runtime.resources import ResourceIdentityError
+
+    target = ws / "old.txt"
+    target.write_text("old\n")
+    run("apply_patch", {"patch_text": "*** Begin Patch\n*** Delete File: old.txt\n*** End Patch"})
+    if failure == "identity_mismatch":
+        target.write_text("replacement\n")
+    original = adapters._read_whole
+
+    def indeterminate(resource, limit):
+        if failure == "identity_mismatch":
+            target.unlink()  # An existing binding disappearing is an identity failure.
+        elif failure == "replaced_path":
+            target.write_text("replacement\n")
+        elif failure == "post_probe_replacement":
+            validate = type(resource).validate
+            calls = []
+
+            def replace_after_probe(self):
+                calls.append(1)
+                if len(calls) == 2:
+                    target.write_text("appeared after ENOENT\n")
+                return validate(self)
+
+            monkeypatch.setattr(type(resource), "validate", replace_after_probe)
+        elif failure == "permission":
+            def denied(path):
+                raise PermissionError("access denied")
+            monkeypatch.setattr(adapters.os, "lstat", denied)
+        else:
+            def invalid(self):
+                raise ResourceIdentityError("unresolved binding")
+            monkeypatch.setattr(type(resource), "validate", invalid)
+        return original(resource, limit)
+
+    monkeypatch.setattr(adapters, "_read_whole", indeterminate)
+    run("read_file", {"path": "old.txt"})
+    history = run.journal.effects.history()
+    assert history.observations == ()
+    assert verdicts(run.journal) == [fx.EffectVerdict.UNVERIFIED]
+
+
 def test_listing_is_partial_and_does_not_verify_content(run):
     run("write_file", {"path": "a.txt", "content": "hello\n"})
     run("ls", {"path": "."})
@@ -243,7 +302,11 @@ def test_listing_is_partial_and_does_not_verify_content(run):
     {"action": "snapshot", "page": "t1"},
     {"action": "evaluate", "page": "t1", "script": "1"},
 ])
-def test_browser_page_operations_stay_fail_closed_with_effects(run, args):
+def test_browser_page_operations_stay_fail_closed_with_effects(run, args, monkeypatch):
+    async def unexpected_dispatch(*args, **kwargs):
+        pytest.fail("Unsupported page operation reached execution")
+
+    monkeypatch.setattr(tool_execution, "_execute_tool_block_impl", unexpected_dispatch)
     description, result = run("private_browser", args)
     assert "UNSUPPORTED" in description
     assert result["failure_kind"] == "browser_page_authority_unavailable" and result["executed"] is False

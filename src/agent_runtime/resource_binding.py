@@ -176,7 +176,7 @@ def resolve_filesystem_operation(operation, *, roots, workspace="", request_id="
                 raise ValueError("Search root is unresolved")
         args["path"] = bind(selector, "search_root" if search else
                             "source" if tool == "read_file" else "destination" if tool == "write_file" else "target",
-                            missing=tool == "write_file")
+                            missing=tool in {"write_file", "read_file"})
         execution_input = json.dumps(args, sort_keys=True, allow_nan=False)
     bound = BoundFilesystemOperation(operation, execution_input, tuple(bindings), request_id)
     bound.validate()

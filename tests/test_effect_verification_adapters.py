@@ -436,6 +436,35 @@ DISCLOSURE = ("External operation mcp__server__send_email reported success; any 
               "not independently verified.")
 
 
+@pytest.mark.parametrize("answer", ["Here is the draft.   \n\n", " \n\n"])
+@pytest.mark.parametrize("final", [False, True])
+async def test_streaming_external_disclosure_survives_trailing_whitespace(store, monkeypatch, answer, final):
+    from src.agent_runtime.completion import completion_answer, with_completion_gate
+    from src.agent_runtime.journal import current_journal
+
+    expected = []
+
+    @with_completion_gate
+    async def stream(messages):
+        journal = current_journal()
+        journal.effects = EffectLog(journal.run_id, directory=store)
+        remote_act(journal, monkeypatch, result={"stdout": "ok", "stderr": "", "exit_code": 0})
+        ledger = _ledger(journal, CompletionRequirements())
+        expected.append(completion_answer(answer, ledger, ledger.evaluate())[0])
+        yield "data: " + json.dumps({"type": "final_response", "content": answer} if final else {"delta": answer}) + "\n\n"
+        yield "data: " + json.dumps({"type": "metrics", "data": {"round_texts": [answer]}}) + "\n\n"
+
+    events = [json.loads(chunk[6:]) async for chunk in stream([])]
+    disclosure = next(event["delta"] for event in events if event.get("delta") != answer and "delta" in event)
+    assert disclosure == ("\n\n" if answer.strip() else "") + DISCLOSURE
+    visible = "".join(event.get("delta", event.get("content", "")) for event in events)
+    assert visible.count(DISCLOSURE) == 1
+    metrics = next(event["data"] for event in events if event.get("type") == "metrics")
+    assert metrics["round_texts"] == expected
+    assert expected[0].count(DISCLOSURE) == 1
+    assert metrics["completion_gate"]["answer_replaced"] is False
+
+
 def test_reported_external_mutation_cannot_complete_as_satisfied(tmp_path, store, monkeypatch):
     from src.agent_evidence import EXTERNAL_EFFECT_UNVERIFIED
     from src.agent_runtime.completion import completion_answer

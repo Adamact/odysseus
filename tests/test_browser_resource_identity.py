@@ -98,6 +98,42 @@ async def test_disabled_page_operations_never_observe_select_or_execute(producer
     assert old.target_id != producer.target
 
 
+@pytest.mark.parametrize("reason,expected", [
+    (browser.PAGE_FAILURE, browser.PAGE_FAILURE),
+    ("Unrelated resource identity changed", "resource_identity_denied"),
+    (browser.PAGE_FAILURE + ": arbitrary detail", "resource_identity_denied"),
+])
+async def test_dispatch_boundary_preserves_only_native_browser_page_failure(producer, tmp_path, monkeypatch, reason, expected):
+    from src import tool_execution
+    from src.agent_runtime.effect_log import EffectLog
+    from src.agent_runtime.journal import ActionJournal, bind_journal
+
+    await observed(producer)
+    producer.calls.clear()
+    producer.cdp_calls.clear()
+    journal = ActionJournal()
+    journal.effects = EffectLog(journal.run_id, directory=tmp_path / "fx")
+    attempts = []
+
+    async def unsupported_operation(*args, **kwargs):
+        attempts.append(1)
+        if reason == browser.PAGE_FAILURE:
+            # The legacy server page helper raises the reserved identity error.
+            await PrivateBrowserTool()._capture_post_click_state()
+        raise ResourceIdentityError(reason)
+
+    monkeypatch.setattr(tool_execution, "_execute_tool_block_impl", unsupported_operation)
+    monkeypatch.setattr(tool_execution, "mark_dispatch", lambda: pytest.fail("Unsupported page operation dispatched"))
+    with bind_journal(journal):
+        _, result = await dispatch(authority(), "private_browser", '{"action":"session_info"}')
+    assert result["failure_kind"] == expected
+    if expected == browser.PAGE_FAILURE:
+        assert result["executed"] is False and result["retryable"] is False
+    assert journal.actions[0].execution_id is None
+    assert journal.effects.history().claims == ()
+    assert attempts == [1]
+
+
 @pytest.mark.parametrize("args", [{"action": "batch", "commands": [["click", "@e1"]]},
     {"action": "tab"}, {"action": "window"}, {"action": "frame"}, {"action": "connect"},
     {"action": "click", "target": "--new-tab"}, {"action": "evaluate", "--cdp": "endpoint"},

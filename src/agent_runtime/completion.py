@@ -155,10 +155,16 @@ def completion_answer(text: str, ledger: EvidenceLedger, decision: CompletionDec
 
 def _disclose(answer: str, ledger: EvidenceLedger) -> str:
     """Append the server's facts for unverified external effects."""
+    disclosure = _disclosure(answer, ledger)
+    return answer.rstrip() + disclosure if disclosure else answer
+
+
+def _disclosure(answer: str, ledger: EvidenceLedger) -> str:
+    """Build the complete server-owned disclosure independently of prose length."""
     summary = ' '.join(ledger.effect_disclosures())
     if not summary:
-        return answer
-    return (answer.rstrip() + '\n\n' + summary) if answer.strip() else summary
+        return ''
+    return ('\n\n' + summary) if answer.strip() else summary
 
 
 def _completion_answer(text: str, ledger: EvidenceLedger, decision: CompletionDecision) -> tuple[str, str]:
@@ -351,7 +357,7 @@ def with_completion_gate(func):
             # When the only change is the server's effect disclosure, the
             # model's answer events are released unchanged and the disclosure
             # follows them, so no earlier-round text is dropped.
-            disclosure = safe_answer[len(filtered_answer):] if safe_answer != filtered_answer else ''
+            disclosure = _disclosure(filtered_answer, ledger)
             disclosure_only = bool(disclosure) and not (presentation_replaced or reason or unsafe_draft
                                                         or filtered_answer != answer)
             replaced_answer = not disclosure_only and bool(
@@ -392,7 +398,7 @@ def with_completion_gate(func):
                 elif disclosure_only and metadata.get('round_texts') and isinstance(metadata['round_texts'], list) \
                         and isinstance(metadata['round_texts'][-1], str):
                     # Reload renders round_texts: keep the disclosure with them.
-                    metadata['round_texts'] = [*metadata['round_texts'][:-1], metadata['round_texts'][-1] + disclosure]
+                    metadata['round_texts'] = [*metadata['round_texts'][:-1], metadata['round_texts'][-1].rstrip() + disclosure]
                 if provider_error and isinstance(metadata.get('round_texts'), list):
                     # Failed rounds stay as per-round diagnostics, but they are
                     # rendered again on reload. Apply the same statement filter
