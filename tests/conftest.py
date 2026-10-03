@@ -195,8 +195,8 @@ def _serve_test_static():
                 return "text/css"
             return super().guess_type(path)
 
-    class _Server(socketserver.TCPServer):
-        allow_reuse_address = True
+    class _Server(socketserver.ThreadingTCPServer):
+        allow_reuse_address = daemon_threads = True
 
     requested = int(os.environ.get("ODYSSEUS_TEST_STATIC_PORT") or 0)
     if not 0 <= requested <= 65535:
@@ -214,6 +214,8 @@ def _serve_test_static():
     previous_origin = os.environ.get("ODYSSEUS_TEST_STATIC_ORIGIN")
     os.environ["ODYSSEUS_TEST_STATIC_ORIGIN"] = origin
 
+    # One thread per connection: Chromium can hold a speculative connection
+    # open without a request, which stalled serial service for ~30s.
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
