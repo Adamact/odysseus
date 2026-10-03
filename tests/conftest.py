@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # core.database initializes its engine during import. Always isolate that
 # bootstrap from an inherited developer DATABASE_URL, before collection can
 # import it. Tests needing files own their disposable databases explicitly.
+# Collection runs before ordinary test fixtures can protect these imports.
 # Restore the caller's environment when pytest's configuration is torn down.
 _database_environment = pytest.MonkeyPatch()
 _database_environment.setenv("DATABASE_URL", "sqlite:///:memory:")
