@@ -351,7 +351,8 @@ def context_probe_ledger(_no_context_window_network_probe):
     return _no_context_window_network_probe
 
 
-@pytest.hookimpl(specname="pytest_configure")
+# Before pytest's tmpdir plugin reads the basetemp this sets.
+@pytest.hookimpl(specname="pytest_configure", tryfirst=True)
 def pytest_configure_worker_runtime(config):
     configure_runtime(config, _runtime_environment)
 

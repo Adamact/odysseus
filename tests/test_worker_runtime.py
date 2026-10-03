@@ -1,6 +1,7 @@
 """The default namespace must protect callers and simultaneous pytest runs."""
 
 import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -70,3 +71,11 @@ def test_subprocess_inherits_private_temp_and_data_directories():
         assert (root / "data" / "child").read_text() == "data"
         assert (root / "tmp" / "child").read_text() == "temp"
     assert not root.exists()
+
+
+@pytest.mark.skipif(not hasattr(socket, "AF_UNIX"), reason="requires AF_UNIX")
+def test_tmp_path_under_private_runtime_fits_unix_socket(tmp_path):
+    # pytest truncates this name to 30 characters, as for the real-tmux
+    # witness. A nested pytest-of-<user> basetemp made it 110 bytes under xdist.
+    with socket.socket(socket.AF_UNIX) as sock:
+        sock.bind(str(tmp_path / "tmux.sock"))

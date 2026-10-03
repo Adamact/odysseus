@@ -14,7 +14,7 @@ def bootstrap_runtime():
     if os.environ.get("APP_PORT") and not worker:
         return None
     runtime = isolated_runtime(worker or "main")
-    runtime.__enter__()
+    runtime.root = runtime.__enter__()
     return runtime
 
 
@@ -22,6 +22,12 @@ def configure_runtime(config, runtime):
     """Register ownership even when configuration or collection fails."""
     if runtime is not None:
         config.add_cleanup(lambda: runtime.__exit__(None, None, None))
+        # pytest's default <TMPDIR>/pytest-of-<user>/pytest-<n> beneath the
+        # private TMPDIR, plus xdist's popen-gw<n>, overflows the 107-byte
+        # AF_UNIX limit for sockets in tmp_path. Workers inherit a basetemp
+        # under the controller's; an explicit --basetemp still wins.
+        if config.option.basetemp is None and not hasattr(config, "workerinput"):
+            config.option.basetemp = str(runtime.root / "pytest")
     parallel = bool(getattr(config.option, "numprocesses", None)) or hasattr(config, "workerinput")
     # This consumes the existing test option; its public read and documented
     # source location remain in the static-server fixture.
