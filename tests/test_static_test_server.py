@@ -7,7 +7,9 @@ running its own suite took the whole session down with it.
 
 import os
 import re
+import socket
 import urllib.request
+from urllib.parse import urlsplit
 from pathlib import Path
 
 
@@ -31,8 +33,12 @@ def test_static_origin_does_not_reuse_the_application_port() -> None:
 
 def test_static_server_serves_this_worktree() -> None:
     origin = os.environ["ODYSSEUS_TEST_STATIC_ORIGIN"]
+    address = urlsplit(origin)
 
-    with urllib.request.urlopen(f"{origin}/static/js/documentStats.js", timeout=5) as r:
+    # Chromium may open a speculative connection and never send a request;
+    # that must not stall the requests queued behind it.
+    with socket.create_connection((address.hostname, address.port), timeout=5), \
+            urllib.request.urlopen(f"{origin}/static/js/documentStats.js", timeout=5) as r:
         assert r.status == 200
         assert r.headers.get_content_type() == "application/javascript"
 

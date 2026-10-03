@@ -8,15 +8,13 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Importing core.database below runs init_db() at import time, and its default
-# (sqlite:///./data/app.db) can't be opened in a clean worktree because SQLite
-# won't create the missing ./data parent dir - pytest then dies during
-# collection, before any test module loads. Default to an in-memory DB for the
-# test session so collection is deterministic and writes no repo-local
-# artifacts. An explicit DATABASE_URL (a real test/CI database) is preserved.
-# This only unblocks collection/import-time init; it does not provide a shared
-# file-backed DB across processes - tests needing that must set DATABASE_URL.
-os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+# Isolate import-time database and filesystem defaults before collection.
+# File-backed databases remain fixture-owned. Cleanup restores the caller.
+# Keep the existing generated environment-reference locations stable.
+_database_environment = pytest.MonkeyPatch()
+_database_environment.setenv("DATABASE_URL", "sqlite:///:memory:")
+from tests.helpers.worker_runtime import bootstrap_runtime, configure_runtime
+_runtime_environment = bootstrap_runtime()
 
 # Pre-import real heavy modules BEFORE any test file's module-level stubs can
 # replace them with MagicMock. Some test files (e.g. test_llm_core_sanitize_*)
@@ -101,6 +99,8 @@ def pytest_configure(config):
     unknown-mark warnings still surface genuine typos outside the taxonomy. This
     only registers marker names; it imports no production module.
     """
+    config.add_cleanup(_database_environment.undo)
+
     import pathlib
     from tests._taxonomy import discover_markers
 
@@ -195,8 +195,8 @@ def _serve_test_static():
                 return "text/css"
             return super().guess_type(path)
 
-    class _Server(socketserver.TCPServer):
-        allow_reuse_address = True
+    class _Server(socketserver.ThreadingTCPServer):
+        allow_reuse_address = daemon_threads = True
 
     requested = int(os.environ.get("ODYSSEUS_TEST_STATIC_PORT") or 0)
     if not 0 <= requested <= 65535:
@@ -214,6 +214,8 @@ def _serve_test_static():
     previous_origin = os.environ.get("ODYSSEUS_TEST_STATIC_ORIGIN")
     os.environ["ODYSSEUS_TEST_STATIC_ORIGIN"] = origin
 
+    # One thread per connection: Chromium can hold a speculative connection
+    # open without a request, which stalled serial service for ~30s.
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -349,3 +351,37 @@ def _no_context_window_network_probe(request):
 def context_probe_ledger(_no_context_window_network_probe):
     """Metadata requests the context resolver attempted during this test."""
     return _no_context_window_network_probe
+
+
+# Before pytest's tmpdir plugin reads the basetemp this sets.
+@pytest.hookimpl(specname="pytest_configure", tryfirst=True)
+def pytest_configure_worker_runtime(config):
+    configure_runtime(config, _runtime_environment)
+
+
+@pytest.hookimpl(specname="pytest_collection_modifyitems", tryfirst=True)
+def pytest_collection_worker_runtime(items):
+    # Mark before pytest applies -m. The final guard also respects --shard.
+    for item in items:
+        if "smoke" in item.path.parts:
+            item.add_marker(pytest.mark.serial)
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_finish(session):
+    """Refuse shared live resources after marker and shard deselection."""
+    config = session.config
+    parallel = bool(getattr(config.option, "numprocesses", None)) or hasattr(config, "workerinput")
+    if (os.environ.get("APP_PORT") and parallel
+            and any(item.get_closest_marker("serial") for item in session.items)):
+        message = (
+            "live smoke tests share one external application, accounts, and endpoints; "
+            "run tests/smoke with -n 0"
+        )
+        # A worker UsageError here races xdist's collection notification and
+        # can lose its message. Emit a normal collection failure before xdist
+        # sees any runnable items. Nothing may contact the external instance.
+        config.hook.pytest_collectreport(report=pytest.CollectReport(
+            nodeid="tests/smoke", outcome="failed", longrepr=message, result=[],
+        ))
+        session.items.clear()

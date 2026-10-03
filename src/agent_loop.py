@@ -8647,6 +8647,11 @@ def _web_search_unavailable_for_turn(
     """
     if "web" not in set(intent_domains or ()):
         return False
+    # Mentioning web only to forbid its use is not affirmative web demand.
+    # Keep the web tools disabled, but let the normal model-only path answer
+    # instead of claiming the request cannot proceed without web access.
+    if _explicitly_avoids_web_lookup(text):
+        return False
     # A turn is unavailable only when every public-web route is disabled.
     # Exact-URL turns intentionally expose web_fetch while keeping broad
     # web_search disabled; the former intersection check incorrectly

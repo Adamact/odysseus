@@ -92,11 +92,11 @@ def test_a_chromadb_we_did_not_start_is_refused_not_adopted(cli, worktree, monke
     ports = cli.derive_ports(worktree)
 
     foreign = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    foreign.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    try:
-        foreign.bind(("127.0.0.1", ports["chroma"]))
-    except OSError:
-        pytest.skip(f"derived chroma port {ports['chroma']} is unavailable on this host")
+    foreign.bind(("127.0.0.1", 0))
+    ports["chroma"] = foreign.getsockname()[1]
+    # Port derivation is covered above. This refusal test owns a held socket
+    # rather than depending on a derived port being free on the host.
+    monkeypatch.setattr(cli, "derive_ports", lambda _root: ports)
     foreign.listen(1)
     try:
         with pytest.raises(SystemExit):

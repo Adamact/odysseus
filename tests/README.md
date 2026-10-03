@@ -15,13 +15,12 @@ reference; that file is the standard the refactor works toward.
 
 ## Running focused subsets (taxonomy markers)
 
-The shared static-server fixture defaults to loopback port 7011 and refuses an
-occupied port rather than reusing another checkout's server. For focused tests
-that do not load that fixed browser URL, use `ODYSSEUS_TEST_STATIC_PORT=0` to
-allocate an ephemeral port. This permits direct subprocess/isolation tests on a
-host already serving the application without stopping or changing that service.
-Browser tests that hard-code port 7011 still need that port in their own isolated
-network namespace; do not run them against an unrelated live server.
+The shared static-server fixture binds an ephemeral loopback port and publishes
+`ODYSSEUS_TEST_STATIC_ORIGIN` to browser tests and their Node subprocesses.
+`ODYSSEUS_TEST_STATIC_PORT` can pin a port for an external client; leave it unset
+for parallel runs. An occupied explicit port is refused rather than reused. The
+server handles each connection on its own thread, so a speculative browser
+connection that never sends a request cannot stall the requests behind it.
 
 `tests/conftest.py` tags every test at collection time with two markers derived
 from its filename by `tests/_taxonomy.py`: an `area_*` marker (e.g.
@@ -125,6 +124,43 @@ evidence, the sections even out further - no duration table to keep current.
 the run with a usage error rather than quietly testing a subset. If you change
 the shard count, change `DEFAULT_SHARD_COUNT` and the `ci.yml` matrix together;
 `tests/test_shards.py` fails when they drift apart.
+
+## Local pytest workers
+
+Install the application environment and parallel test tooling with
+`python -m pip install -r requirements-dev.txt`. Parallelism is opt-in; ordinary
+pytest remains serial, and the four CI shards are unchanged.
+
+```bash
+python -m pytest -q -n 4 -p no:cacheprovider --max-worker-restart=0
+python -m pytest -q -n 0 -p no:cacheprovider  # full serial release oracle
+```
+
+See [the Wave 6 measurements](WAVE6_TEST_PERFORMANCE_REPORT.md) before choosing
+a worker count. `-n auto` uses physical cores through xdist's psutil extra; it
+still needs enough memory for each worker's collection and application imports.
+
+Before collection, `tests.helpers.worker_runtime` gives each process private
+data, attachment, embedding-cache, browser-runtime, and temporary directories.
+pytest's basetemp is the controller root's `pytest` directory, with xdist's
+`popen-gw<n>` beneath it, which keeps `tmp_path` Unix sockets inside the
+107-byte path limit. An explicit `--basetemp` still wins.
+An atomic random suffix separates concurrent invocations with the same worker
+label; paths inside the root have stable names. Function fixtures still own
+their databases and test-specific state. Normal teardown removes the root and
+restores the environment. A hard-killed standalone process can leave its owned
+root behind, but later runs allocate a fresh namespace and never adopt it.
+
+`APP_PORT` opts into tests against an externally launched smoke application.
+Run that suite with `-n 0` so its accounts, endpoints, and application data have
+one owner. Unset `APP_PORT` for ordinary unit/regression invocations. Selected
+live smoke tests are rejected under xdist with a collection failure; `-m
+"not serial"` may exclude them. The existing smoke skips when no application
+is launched remain visible in full-suite counts.
+
+Measurements disable pytest's advisory cache to keep concurrent invocations
+from sharing last-failed metadata. They also disable worker restart so crashes
+remain immediately visible. No test retries or default worker count are added.
 
 ## Order-sensitivity reporting (report-only)
 

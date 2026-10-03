@@ -72,8 +72,8 @@ The source tree reads **112** `ODYSSEUS_*` variables: 81 an operator may want to
 | Variable | Default | Read in | What it does |
 |---|---|---|---|
 | `ODYSSEUS_DISABLE_MCP` | `''` | `src/builtin_mcp.py:89` | Truthy disables MCP entirely, as an escape hatch for compatibility problems with a server. |
-| `ODYSSEUS_MAX_VISUAL_EVIDENCE_FRAMES` | `'3'` | `src/agent_loop.py:15361` | How many video frames one tool result may contribute. Clamped to 1-8. |
-| `ODYSSEUS_MAX_VISUAL_EVIDENCE_IMAGES` | `'1'` | `src/agent_loop.py:15329` | How many images one tool result may contribute to the model turn. Clamped to 1-8. |
+| `ODYSSEUS_MAX_VISUAL_EVIDENCE_FRAMES` | `'3'` | `src/agent_loop.py:15366` | How many video frames one tool result may contribute. Clamped to 1-8. |
+| `ODYSSEUS_MAX_VISUAL_EVIDENCE_IMAGES` | `'1'` | `src/agent_loop.py:15334` | How many images one tool result may contribute to the model turn. Clamped to 1-8. |
 | `ODYSSEUS_MCP_ALLOWED_COMMANDS` | `''` | `src/agent_tools/admin_tools.py:140` | Security-relevant. Comma-separated allowlist of MCP launcher basenames the agent may start. Empty by default, and the deny list still wins. |
 | `ODYSSEUS_PYTHON_TOOL_SITE_PACKAGES` | `''` | `src/agent_runtime/process_resources.py:59` (+2 more) | Security-relevant. Absolute package roots, separated by the platform path separator, exposed to the sandboxed Python tool. Empty exposes none. |
 | `ODYSSEUS_SCRIPT_HOST` | `'localhost'` | `src/builtin_actions.py:925` | Default host for the run-script action. `localhost`, `127.0.0.1`, `local` and empty run locally; any other value runs over SSH. |
