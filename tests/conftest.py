@@ -8,13 +8,13 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# core.database initializes its engine during import. Always isolate that
-# bootstrap from an inherited developer DATABASE_URL, before collection can
-# import it. Tests needing files own their disposable databases explicitly.
-# Collection runs before ordinary test fixtures can protect these imports.
-# Restore the caller's environment when pytest's configuration is torn down.
+# Isolate import-time database and filesystem defaults before collection.
+# File-backed databases remain fixture-owned. Cleanup restores the caller.
+# Keep the existing generated environment-reference locations stable.
 _database_environment = pytest.MonkeyPatch()
 _database_environment.setenv("DATABASE_URL", "sqlite:///:memory:")
+from tests.helpers.worker_runtime import bootstrap_runtime, configure_runtime
+_runtime_environment = bootstrap_runtime()
 
 # Pre-import real heavy modules BEFORE any test file's module-level stubs can
 # replace them with MagicMock. Some test files (e.g. test_llm_core_sanitize_*)
@@ -349,3 +349,36 @@ def _no_context_window_network_probe(request):
 def context_probe_ledger(_no_context_window_network_probe):
     """Metadata requests the context resolver attempted during this test."""
     return _no_context_window_network_probe
+
+
+@pytest.hookimpl(specname="pytest_configure")
+def pytest_configure_worker_runtime(config):
+    configure_runtime(config, _runtime_environment)
+
+
+@pytest.hookimpl(specname="pytest_collection_modifyitems", tryfirst=True)
+def pytest_collection_worker_runtime(items):
+    # Mark before pytest applies -m. The final guard also respects --shard.
+    for item in items:
+        if "smoke" in item.path.parts:
+            item.add_marker(pytest.mark.serial)
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_finish(session):
+    """Refuse shared live resources after marker and shard deselection."""
+    config = session.config
+    parallel = bool(getattr(config.option, "numprocesses", None)) or hasattr(config, "workerinput")
+    if (os.environ.get("APP_PORT") and parallel
+            and any(item.get_closest_marker("serial") for item in session.items)):
+        message = (
+            "live smoke tests share one external application, accounts, and endpoints; "
+            "run tests/smoke with -n 0"
+        )
+        # A worker UsageError here races xdist's collection notification and
+        # can lose its message. Emit a normal collection failure before xdist
+        # sees any runnable items. Nothing may contact the external instance.
+        config.hook.pytest_collectreport(report=pytest.CollectReport(
+            nodeid="tests/smoke", outcome="failed", longrepr=message, result=[],
+        ))
+        session.items.clear()
