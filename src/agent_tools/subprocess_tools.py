@@ -513,6 +513,7 @@ async def _run_owned_command(command, ctx: dict, *, tool: str, timeout: int, arg
     from src.tool_execution import agent_cwd, _truncate
 
     grant = None
+    launch = None
     result = None
     try:
         from src.agent_runtime.process_resources import require_launch, publish_launch, validate_launch_spec
@@ -554,6 +555,16 @@ async def _run_owned_command(command, ctx: dict, *, tool: str, timeout: int, arg
                 **({"failure_kind": "resource_linkage_unavailable",
                     "teardown": result.release.to_dict() if result.release else {"dead": False}}
                    if result is not None else {})}
+    finally:
+        if launch is not None and grant is not None:
+            record = containment._load_records().get(grant.id, {})
+            if (record.get("launch_generation") == launch.generation
+                    and (record.get("release") or {}).get("dead") is True):
+                from src.agent_runtime.process_resources import retire_launch
+                try:
+                    retire_launch(launch, grant.id)
+                except (OSError, ValueError, TypeError):
+                    logger.warning("Foreground launch publication retirement failed", exc_info=True)
 
     boundary = result.grant.to_dict()
     boundary["executed"] = True

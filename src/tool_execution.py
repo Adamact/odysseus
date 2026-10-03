@@ -1246,8 +1246,6 @@ def _split_bg_marker(content: str):
     return False, content
 
 
-import re as _re
-
 # Variables a legitimate agent bash/python subprocess needs from the host.
 # Anything not listed here is never inherited.
 _SAFE_SUBPROCESS_VARS = frozenset({
@@ -1267,19 +1265,11 @@ _SAFE_SUBPROCESS_VARS = frozenset({
     "LD_LIBRARY_PATH",
 })
 
-# Defence-in-depth: reject any allowlisted variable whose *name* matches
-# a credential-bearing pattern (e.g. a user who sets PATH_TOKEN=...).
-_SENSITIVE_PATTERN = _re.compile(
-    r"(?:KEY|TOKEN|SECRET|PASSW|AUTH|CREDENTIAL|PRIVATE|DATABASE_URL)",
-    _re.IGNORECASE,
-)
-
-
 def _agent_subprocess_env() -> dict:
     base = {
         key: os.environ[key]
         for key in _SAFE_SUBPROCESS_VARS
-        if key in os.environ and not _SENSITIVE_PATTERN.search(key)
+        if key in os.environ
     }
     base.setdefault("PATH", os.environ.get("PATH") or os.defpath or "/usr/local/bin:/usr/bin:/bin")
     base.setdefault("LANG", "C.UTF-8")
@@ -1425,7 +1415,7 @@ async def execute_tool_block(
                 owner=owner, session_id=session_id, workspace=workspace,
                 tool_name=getattr(block, "tool_type", None), content=getattr(block, "content", None)))
         admitted = valid and (authority.permits(operation) or exact_admission)
-    except (ValueError, TypeError, AttributeError) as error:
+    except (ValueError, TypeError) as error:
         return f"{getattr(block, 'tool_type', '')}: invalid arguments", {
             "error": (f"Tool arguments are not valid JSON: {error}"
                       if isinstance(error, json.JSONDecodeError) else str(error)),
@@ -1503,7 +1493,7 @@ async def execute_tool_block(
                 authority, operation, document_id=active_document_id,
                 approved=pending.owned_operation if pending is not None else None,
                 exact_admission=exact_admission)
-    except (ValueError, TypeError, OSError, RuntimeError, AttributeError) as error:
+    except (ValueError, TypeError, OSError) as error:
         return f"{transport}: BLOCKED", {
             "error": str(error), "exit_code": 1, "blocked": True,
             "failure_kind": "resource_identity_denied",

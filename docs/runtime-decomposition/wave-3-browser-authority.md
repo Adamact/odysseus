@@ -160,12 +160,12 @@ Re-audit of Checkpoint A seams found:
 
 | Path | Remaining enforcement |
 | --- | --- |
-| PTY/native manager routes | `routes/shell_routes.py:setup_shell_routes.shell_exec/shell_stream` call `_require_admin` before `_exec_shell/_generate_pty/_generate_tmux`; internal/anonymous controls denied, authenticated human administration separate |
+| PTY/native manager routes | `routes/shell_routes.py:setup_shell_routes.shell_exec/shell_stream` call `_require_admin` before `_exec_shell/_generate_pty/_generate_tmux`; internal tool controls denied; auth-enabled human administration and explicit auth-disabled direct-local operator administration remain separate |
 | Additional process producers | `resources.ProcessResource.__post_init__` admits only frozen native producer/role combinations; `process_resources.resolve_process_operation` requires sealed observations |
 | Raw scheduled SSH | `TaskScheduler._execute_action` → `builtin_actions.action_ssh_command` → `_run_subprocess` refuses SSH without an external workload adapter |
 | Local Cookbook scheduled auto-stop | `routes/cookbook_routes.py:setup_cookbook_routes.protect_native_control` applies shell admin boundary to local mutation; `tools/cookbook._cookbook_kill_session` refuses registry-less local control; legacy internal shell route cannot gain administration |
 | Legacy/unscoped tasks | `authority.restore_task_authority` → `process_resources.resolve_process_operation` admits no missing creation scope |
-| Anonymous administration / generic app_api | `owned_resources.needs_owned_binding` rejects shell/model/Cookbook namespaces; `_require_admin` also rejects unlabelled loopback when anonymous or unauthenticated |
+| Anonymous administration / generic app_api | `owned_resources.needs_owned_binding` rejects shell/model/Cookbook namespaces; `_require_admin` rejects auth-enabled anonymous and auth-disabled untrusted/forwarded requests; direct-local operator administration is supported |
 
 No model-reachable page producer entry remains in the native/research wrapper.
 Trusted observation/setup methods are not tools or routes. Native arbitrary

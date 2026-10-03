@@ -67,7 +67,7 @@ def _aliases_effect_store(candidate, directories):
     return False
 
 
-def _control_plane_path(path):
+def _control_plane_snapshot():
     # Execution snapshots/receipts are server state, even if a workspace root
     # contains the data directory. A writable user file cannot mint authority.
     from src import constants
@@ -85,11 +85,9 @@ def _control_plane_path(path):
     if processes is not None:
         job_dirs.add(canonical_root(processes._LAUNCH_DIR))
     # Durable effect claims/outcomes/observations are server evidence state.
-    # The store is not inventoried here: it grows with every run. Aliases are
-    # caught below by ``_aliases_effect_store`` instead.
+    # They are prefix-protected below, but never inventoried: the store grows
+    # with every run. Hardlink aliases are caught by ``_aliases_effect_store``.
     effect_dirs = _effect_store_dirs()
-    if any(Path(path).is_relative_to(directory) for directory in effect_dirs):
-        return True
     # Producers may have configured paths different from the default constants.
     # Inspect already-loaded server metadata without initializing a store here.
     bg = sys.modules.get("src.bg_jobs")
@@ -118,8 +116,6 @@ def _control_plane_path(path):
         protected.add(canonical_root(Path(uploader.upload_dir) / "uploads.json"))
     for directory in job_dirs:
         jobs = Path(directory)
-        if Path(path).is_relative_to(jobs):
-            return True
         if jobs.exists():
             # Uninspectable state fails closed; hardlinks retain object identity.
             protected.update(canonical_root(p) for p in jobs.rglob("*") if p.is_file())
@@ -128,22 +124,32 @@ def _control_plane_path(path):
                      for suffix in ("-wal", "-shm", "-journal"))
     protected.add(canonical_root(Path(constants.DATA_DIR) / ".app_key"))
     protected.add(canonical_root(Path(constants.UPLOAD_DIR) / "uploads.json"))
-    if path in protected:
-        return True
-    try:
-        candidate = os.stat(path)
-    except FileNotFoundError:
-        return False
-    if _aliases_effect_store(candidate, effect_dirs):
-        return True
+    identities = set()
     for control in protected:
         try:
             observed = os.stat(control)
         except FileNotFoundError:
             continue
-        if (candidate.st_dev, candidate.st_ino) == (observed.st_dev, observed.st_ino):
-            return True
-    return False
+        identities.add((observed.st_dev, observed.st_ino))
+    # Effect directories join the prefix set only after the recursive inventory.
+    return frozenset(job_dirs | effect_dirs), frozenset(protected), frozenset(identities)
+
+
+def _control_plane_path(path, *, snapshot=None):
+    # A scan-local snapshot bounds repeated hardlink checks. Ordinary resource
+    # resolution always observes fresh state. Neither form is an atomic kernel
+    # access policy, and snapshots must never survive a workspace guard call.
+    directories, protected, identities = _control_plane_snapshot() if snapshot is None else snapshot
+    if any(Path(path).is_relative_to(directory) for directory in directories) or path in protected:
+        return True
+    try:
+        candidate = os.stat(path)
+    except FileNotFoundError:
+        return False
+    if (candidate.st_dev, candidate.st_ino) in identities:
+        return True
+    # Only a multiply linked file can alias the (uninventoried) effect store.
+    return candidate.st_nlink > 1 and _aliases_effect_store(candidate, directories & _effect_store_dirs())
 
 
 class FilesystemScope(str, Enum):

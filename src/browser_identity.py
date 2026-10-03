@@ -30,6 +30,8 @@ from src.process_lifecycle import ProcessIdentity, observe
 from src.constants import BROWSER_RESOURCES_DIR
 
 PRODUCER_VERSION = "0.35.0"
+# Wave 3 session metadata supports only these observed glibc Linux artifacts.
+# macOS/Windows and other architectures fail closed before any producer call.
 PRODUCER_HASHES = {
     "linux-x64": "b7a28c3a43a7008dd02585e2e60c391c08983f7a099149caed63c9f13f57b752",
     "linux-arm64": "92cd7d0897837ac648b9a6ab1965c69c5920e0f54df57e4295cdb1143b0541c8",

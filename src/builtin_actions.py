@@ -3387,10 +3387,12 @@ async def action_cookbook_serve(
     if srv.get("platform"): body["platform"] = srv["platform"]
 
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.post(f"{internal_api_base()}/api/model/serve",
-                                  json=body, headers=headers)
-            data = r.json() if r.content else {}
+        from src.agent_runtime.local_model_control import model_control_headers
+        with model_control_headers("serve_model", command, owner, body, scheduled=True) as launch_headers:
+            async with httpx.AsyncClient(timeout=30) as client:
+                r = await client.post(f"{internal_api_base()}/api/model/serve",
+                                      json=body, headers=launch_headers)
+                data = r.json() if r.content else {}
     except Exception as e:
         return f"Launch HTTP failed: {e}", False
     if not data.get("ok"):

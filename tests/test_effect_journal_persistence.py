@@ -329,6 +329,14 @@ def test_hardlinked_effect_state_is_control_plane_without_scanning_the_store(tmp
     alias = workspace / "sneaky.jsonl"
     os.link(store / f"{7:032x}.jsonl", alias)
     assert resources._control_plane_path(str(alias)) is True
+    # Wave 3's scan-local snapshot form: the store is a prefix, not inventory.
+    snapshot = resources._control_plane_snapshot()
+    assert str(store) in snapshot[0]
+    assert resources._control_plane_path(str(store / "new.jsonl"), snapshot=snapshot) is True
+    listed.clear()
+    assert resources._control_plane_path(str(ordinary), snapshot=snapshot) is False
+    assert str(store) not in listed
+    assert resources._control_plane_path(str(alias), snapshot=snapshot) is True
     assert str(store) not in globbed, "the effect store is listed one level, never recursively inventoried"
     # Multiply linked files elsewhere stay ordinary.
     elsewhere = tmp_path / "other.txt"

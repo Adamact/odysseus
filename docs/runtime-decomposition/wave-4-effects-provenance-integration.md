@@ -303,3 +303,25 @@ the rebase:
    refusals (no claim, no execution id).
 8. Rerun the four Wave 4 suites plus `test_runtime_resource_integration.py` and the
    `test_wave3_*` suites on the rebased tree.
+
+## Integration with frozen lab `b1666951` (Wave 3 merged)
+
+Merged (not rebased) so the Wave 4 commit SHAs are preserved. Resolution:
+
+- `resources.py`: Wave 3's `_control_plane_snapshot()` / `_control_plane_path(path, *, snapshot=None)`
+  architecture is kept. The snapshot computes `_effect_store_dirs()` and adds them to
+  the returned prefix directories only after the recursive `job_dirs` inventory, and
+  never references `path`. `_control_plane_path` checks inventoried identities after
+  its `os.stat`, then calls `_aliases_effect_store` only for `st_nlink > 1`.
+- `bg_monitor.py`: settlement stays immediately after the first successful
+  `validate_job`, before the authority comparison; Wave 3's post-drain revalidation is
+  unchanged. The deleted-session branch (terminal before linkage validation) now also
+  settles a validated launch, because that job is later pruned and its publication
+  retired, which would otherwise leave its effect RUNNING.
+- Background publication is retired only by `bg_jobs._prune`, after a job is followed
+  up or terminal-unfollowable, so every path that reaches retirement has already had
+  its settlement attempt. A job with invalid linkage is never settled (no authority).
+- Scheduled builtin actions (e.g. `cookbook_serve`) run in the scheduler outside any
+  agent journal and never reached `mark_dispatch`; Wave 3 only added their backend
+  authority. Agent-dispatched local control (`download_model`, `serve_model`,
+  `serve_preset`) is claimed by `dispatched()` before its handler mints a capability.
