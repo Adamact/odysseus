@@ -146,15 +146,8 @@ def test_negative_web_wording_withholds_the_web_tools(monkeypatch, phrasing):
     _assert_negative_web_turn(monkeypatch, phrasing)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=_MemoryOnlyTurnBlocked,
-    reason="negative web wording is recognized but the memory-only turn is "
-           "misclassified as web-dependent and blocked before the model call; "
-           "production intent/short-circuit correction is outside test isolation",
-)
 @pytest.mark.parametrize("phrasing", BLOCKED_MEMORY_ONLY)
-def test_negative_web_wording_withholds_the_web_tools_unhandled(monkeypatch, phrasing):
+def test_negative_web_wording_withholds_the_web_tools_memory_only(monkeypatch, phrasing):
     _assert_negative_web_turn(monkeypatch, phrasing)
 
 
