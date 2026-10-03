@@ -15,6 +15,7 @@ because an absent mechanism read as a successful answer.
 """
 
 import os
+import signal
 import subprocess
 
 import pytest
@@ -35,11 +36,11 @@ def sleeper():
 
     yield _spawn
     for proc in procs:
-        try:
-            proc.kill()
-            proc.wait(timeout=5)
-        except Exception:
-            pass
+        # Each child owns a session/process group. Keep the leader unreaped
+        # until its group is signalled, so the group id cannot be recycled.
+        if proc.returncode is None:
+            os.killpg(proc.pid, signal.SIGKILL)
+        proc.wait(timeout=5)
 
 
 # ── Verdicts, against real processes ────────────────────────────────────────
