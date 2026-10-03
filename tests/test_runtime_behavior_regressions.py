@@ -29,7 +29,8 @@ def _collect(gen):
 
 
 def _delta_chunk(text):
-    payload = {"choices": [{"delta": {"content": text}}]}
+    # stream_llm_with_fallback exposes normalized SSE, not provider wire JSON.
+    payload = {"delta": text}
     return f"data: {json.dumps(payload)}\n\n"
 
 
@@ -57,7 +58,7 @@ def _run_turn(monkeypatch, messages, **kwargs):
         yield "data: [DONE]\n\n"
 
     monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
-    _collect(
+    chunks = _collect(
         al.stream_agent_loop(
             "http://local.test/v1",
             "moonshotai/kimi-k3",
@@ -68,7 +69,7 @@ def _run_turn(monkeypatch, messages, **kwargs):
             **kwargs,
         )
     )
-    return offered
+    return offered, chunks
 
 
 
@@ -100,60 +101,71 @@ def _contract(offered=("ask_user", "update_plan", "manage_notes"),
 # failure this guards is a model that obeys the wording while the runtime
 # contradicted it by offering the tool anyway.
 #
-# SCOPE, and it matters: these cover the inferred path, where the turn has no
-# explicit web toggle and the runtime decides from intent. Measured on
-# lab@c499c01b, detection there is partial: "don't search online" suppresses
-# the intent and the web tools are withheld; "Do not search the web" and "No
-# web search please" do not, and the tools are offered.
-#
-# When the user explicitly enables web for the turn, wording does not withhold
-# anything: confirmed end to end against a local Qwen3.5-9B Q4_K_M, where all
-# three phrasings were offered web_search, web_fetch and private_browser. That
-# may well be correct, an explicit toggle beating an inferred negative, so it
-# is recorded here rather than asserted either way.
-#
-# The two inferred-path cases that do not hold are xfail(strict=True): they
-# document the target, run on every suite, and fail the moment the behaviour
-# lands. Delete the marker then.
+# These cover inferred intent with no explicit web toggle or supplied contract.
+# On the frozen Wave 3 base all three negatives are recognized. Two are still
+# misclassified as web-dependent turns and short-circuit to "web disabled",
+# preventing the requested answer from memory. Only that precise failure is
+# expected below; unrelated exceptions must fail normally.
 
 HELD = ["Answer from memory only, don't search online."]
 
-NOT_HELD_YET = [
+BLOCKED_MEMORY_ONLY = [
     "Summarise what you already know. Do not search the web.",
     "No web search please, just tell me what you know about Python decorators.",
 ]
 
 
-@pytest.mark.parametrize("phrasing", HELD)
-def test_negative_web_wording_withholds_the_web_tools(monkeypatch, phrasing):
-    offered = _run_turn(monkeypatch, [{"role": "user", "content": phrasing}])
+class _MemoryOnlyTurnBlocked(AssertionError):
+    """The real loop blocked a memory-only answer as requiring web access."""
 
+
+def _assert_negative_web_turn(monkeypatch, phrasing):
+    offered, chunks = _run_turn(monkeypatch, [{"role": "user", "content": phrasing}])
+    events = [json.loads(chunk[6:]) for chunk in chunks
+              if chunk.startswith("data: ") and chunk.strip() != "data: [DONE]"]
+    finals = [event for event in events if event.get("type") == "final_response"]
+    if not offered and finals == [{
+        "type": "final_response",
+        "content": "Web access is disabled for this turn. Enable web search and resend the request.",
+    }]:
+        raise _MemoryOnlyTurnBlocked(
+            f"Memory-only turn was blocked before any model call: {phrasing!r}; "
+            f"actual response: {finals[0]['content']}"
+        )
+
+    assert len(offered) == 1, f"Expected one memory-only model call; events: {events!r}"
     names = _schema_names(offered[0])
     assert "web_search" not in names, f"web_search offered despite: {phrasing!r}"
     assert "web_fetch" not in names, f"web_fetch offered despite: {phrasing!r}"
+    assert any(event.get("delta") == "ok" for event in events), events
+    assert chunks[-1] == "data: [DONE]\n\n"
+
+
+@pytest.mark.parametrize("phrasing", HELD)
+def test_negative_web_wording_withholds_the_web_tools(monkeypatch, phrasing):
+    _assert_negative_web_turn(monkeypatch, phrasing)
 
 
 @pytest.mark.xfail(
     strict=True,
-    reason="negative web wording is only partially detected on lab@c499c01b; "
-           "these phrasings still get the web tools offered",
+    raises=_MemoryOnlyTurnBlocked,
+    reason="negative web wording is recognized but the memory-only turn is "
+           "misclassified as web-dependent and blocked before the model call; "
+           "production intent/short-circuit correction is outside test isolation",
 )
-@pytest.mark.parametrize("phrasing", NOT_HELD_YET)
+@pytest.mark.parametrize("phrasing", BLOCKED_MEMORY_ONLY)
 def test_negative_web_wording_withholds_the_web_tools_unhandled(monkeypatch, phrasing):
-    offered = _run_turn(monkeypatch, [{"role": "user", "content": phrasing}])
-
-    names = _schema_names(offered[0])
-    assert "web_search" not in names, f"web_search offered despite: {phrasing!r}"
-    assert "web_fetch" not in names, f"web_fetch offered despite: {phrasing!r}"
+    _assert_negative_web_turn(monkeypatch, phrasing)
 
 
 def test_plain_web_request_still_offers_search(monkeypatch):
     """The guard above must not become a blanket removal of the web tools."""
-    offered = _run_turn(
+    offered, chunks = _run_turn(
         monkeypatch,
         [{"role": "user", "content": "Search the web for the latest Python release."}],
     )
 
+    assert len(offered) == 1, chunks
     assert "web_search" in _schema_names(offered[0])
 
 
