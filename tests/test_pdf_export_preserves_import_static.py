@@ -8,6 +8,6 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_pdf_backed_documents_do_not_offer_destructive_html_pdf_export():
     source = document_source()
 
-    assert "if (!isForm) {" in source
-    assert "label: _isDocxLang(lang) ? 'Convert to PDF' : 'Print as PDF'" in source
+    assert "if (!isForm && (_isDocxLang(lang) || typeof window.print === 'function')) {" in source
+    assert "label: _isDocxLang(lang) ? 'Convert to PDF' : 'Print / save PDF'" in source
     assert "destroy the original page layout, images, and form structure" in source

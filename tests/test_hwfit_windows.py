@@ -6,8 +6,14 @@ FP8 safetensors repos — must be filtered out on Windows so the Cookbook does
 not recommend models the user cannot actually serve.
 """
 
+import pytest
+
 from services.hwfit.fit import rank_models
 from services.hwfit.models import get_models
+from tests.hwfit_publication_fixtures import publication_catalog  # noqa: F401
+
+# Rank authored inputs rather than publication catalog snapshots.
+pytestmark = pytest.mark.usefixtures("publication_catalog")
 
 
 def _windows_system(ram_gb=32.0, vram_gb=16.0):

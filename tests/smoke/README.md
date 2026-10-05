@@ -89,7 +89,7 @@ a status code. `scripts/odysseus-smoke --areas` prints the current list.
 | Email | the fixture inbox lists, opens with its body, and the unread count drops on mark-read |
 | Memory | a fact is listed, found by search, and gone after delete |
 | Uploads | an attachment reads back byte for byte |
-| Cookbook | hardware is detected and recommendations come back sized against it; state persists |
+| Cookbook | hardware is detected; a fresh install's recommendation request returns the explicit empty-catalog Rescan guidance; state persists |
 | Settings | a preference written on one session is still there after a new login |
 
 ## What is not covered, and why

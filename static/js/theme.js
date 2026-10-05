@@ -40,13 +40,17 @@ const LS_KEY = 'odysseus-theme';
 const CUSTOM_THEMES_KEY = 'odysseus-custom-themes';
 
 const FONT_MAP = {
-  gohu: "'GohuFont', monospace",
   mono: "'Fira Code', monospace",
   sans: "system-ui, -apple-system, 'Segoe UI', sans-serif",
   serif: "Georgia, 'Times New Roman', serif",
   opendyslexic: "'OpenDyslexic', sans-serif",
 };
-const DEFAULT_FONT = 'gohu';
+const DEFAULT_FONT = 'mono';
+
+// Compatibility for persisted themes that selected the omitted custom face.
+function normalizeFont(font) {
+  return !font || font === 'gohu' || font === 'GohuFont' ? DEFAULT_FONT : font;
+}
 const DEFAULT_DENSITY = 'comfortable';
 const MAX_CUSTOM_THEMES = 8;
 
@@ -108,7 +112,11 @@ const THEME_DEFAULT_FROSTED = {
 
 // ── Custom theme persistence ──
 function _loadCustomThemes() {
-  return Storage.getJSON(CUSTOM_THEMES_KEY, {});
+  const themes = Storage.getJSON(CUSTOM_THEMES_KEY, {});
+  for (const theme of Object.values(themes)) {
+    if (theme && theme.font) theme.font = normalizeFont(theme.font);
+  }
+  return themes;
 }
 function _saveCustomThemes(obj) {
   Storage.setJSON(CUSTOM_THEMES_KEY, obj);
@@ -121,7 +129,7 @@ export function saveCustomTheme(name, colors, opts) {
   }
   const entry = { ...colors };
   if (opts) {
-    if (opts.font) entry.font = opts.font;
+    if (opts.font) entry.font = normalizeFont(opts.font);
     if (opts.density) entry.density = opts.density;
     if (opts.bgPattern) entry.bgPattern = opts.bgPattern;
     if (opts.bgEffectColor) entry.bgEffectColor = opts.bgEffectColor;
@@ -400,7 +408,7 @@ function _injectFontFace(familyName, variants) {
 }
 
 export function applyFontDensity(font, density) {
-  const f = font || DEFAULT_FONT;
+  const f = normalizeFont(font);
   const d = density || DEFAULT_DENSITY;
   let family = FONT_MAP[f];
   if (!family && _customFonts[f]) {
@@ -506,13 +514,14 @@ export function getSaved() {
     obj.name = replacement[obj.name];
     obj.colors = { ...THEMES[obj.name] };
   }
+  if (obj && obj.font) obj.font = normalizeFont(obj.font);
   return obj;
 }
 
 export function save(name, colors, opts) {
   const obj = { name, colors };
   if (opts) {
-    if (opts.font && opts.font !== DEFAULT_FONT) obj.font = opts.font;
+    if (normalizeFont(opts.font) !== DEFAULT_FONT) obj.font = normalizeFont(opts.font);
     if (opts.density && opts.density !== DEFAULT_DENSITY) obj.density = opts.density;
     if (opts.bgPattern && opts.bgPattern !== 'none') obj.bgPattern = opts.bgPattern;
     if (opts.bgEffectColor) obj.bgEffectColor = opts.bgEffectColor;
@@ -757,7 +766,7 @@ export function initThemeUI() {
         sw.classList.add('active');
         syncPickers(colors);
         const ct = sw.dataset.custom ? customThemes[name] : null;
-        const f = ct && ct.font ? ct.font : DEFAULT_FONT;
+        const f = normalizeFont(ct && ct.font);
         const d = ct && ct.density ? ct.density : DEFAULT_DENSITY;
         const p = ct && ct.bgPattern ? ct.bgPattern : (THEME_DEFAULT_PATTERN[name] || 'none');
         const ec = ct && ct.bgEffectColor ? ct.bgEffectColor : (THEME_DEFAULT_EFFECT_COLOR[name] || '');
@@ -1146,7 +1155,7 @@ export function initThemeUI() {
   syncResetButtons();
 
   // Font, density, background pattern controls
-  const _initFont = (saved && saved.font) || DEFAULT_FONT;
+  const _initFont = normalizeFont(saved && saved.font);
   const _initDensity = (saved && saved.density) || DEFAULT_DENSITY;
   const _initPattern = (saved && saved.bgPattern) || (saved && THEME_DEFAULT_PATTERN[saved.name]) || 'none';
   const _initEffectColor = (saved && saved.bgEffectColor) || (saved && THEME_DEFAULT_EFFECT_COLOR[saved.name]) || '';

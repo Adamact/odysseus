@@ -1,9 +1,10 @@
 """Repository asset ownership guards for issues #1335 and #6175.
 
 Public Markdown and landing-page media belong in website/, while shared
-README/packaging imagery belongs in assets/branding/. Images in either managed
-root must be referenced by tracked text, and every tracked website video must
-be referenced by the site's entry point.
+optional README/packaging imagery belongs in assets/branding/. Retained images
+in either managed root must be referenced by tracked text, and every retained
+website video must be referenced by the site's entry point. Publication can
+operate with no imagery or videos.
 """
 import re
 import subprocess
@@ -41,7 +42,8 @@ def _tracked(*paths_under):
         return None
     if out.returncode != 0:
         return None
-    return [REPO / line for line in out.stdout.splitlines() if line.strip()]
+    return [REPO / line for line in out.stdout.splitlines()
+            if line.strip() and (REPO / line).is_file()]
 
 
 def test_no_orphan_documentation_or_branding_images():
@@ -49,9 +51,6 @@ def test_no_orphan_documentation_or_branding_images():
     if managed_files is None:
         pytest.skip("not a git checkout")
     managed_images = [p for p in managed_files if p.suffix.lower() in IMAGE_EXTS]
-    assert any("assets/branding" in p.as_posix() for p in managed_images), (
-        "expected assets/branding/ to contain the shared project imagery"
-    )
 
     # All tracked text we might reference an image from.
     all_tracked = _tracked(".") or []
@@ -94,7 +93,6 @@ def test_pages_site_owns_its_entrypoint_and_media():
         assert text.startswith("---\nlayout: default\n---\n"), guide
 
     website_videos = [p for p in website_files if p.suffix.lower() in VIDEO_EXTS]
-    assert website_videos, "expected website/ to contain the landing-page videos"
 
     entrypoint = (REPO / "website/index.html").read_text(encoding="utf-8")
     unreferenced = [

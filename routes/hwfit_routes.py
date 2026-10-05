@@ -218,7 +218,7 @@ def setup_hwfit_routes():
         fresh=true bypasses the hardware-detection cache."""
         from services.hwfit.hardware import detect_system
         from services.hwfit.fit import rank_models
-        from services.hwfit.models import get_models, model_catalog_path, refresh_dynamic_catalogs
+        from services.hwfit.models import get_models, refresh_dynamic_catalogs
         host, ssh_port = _validate_detection_target(host, ssh_port)
         system = deepcopy(detect_system(host=host, ssh_port=ssh_port, platform=platform, fresh=fresh))
         if system.get("error"):
@@ -233,7 +233,8 @@ def setup_hwfit_routes():
             return {
                 "system": system,
                 "models": [],
-                "error": f"Model catalog missing or empty: {model_catalog_path()}",
+                "error": "Model catalog is empty. Use Rescan in Cookbook while online to populate runtime model data; offline recommendations require a previously populated cache.",
+                **({"catalog_refresh": catalog_refresh} if catalog_refresh is not None else {}),
             }
 
         if ignore_detected_gpu:

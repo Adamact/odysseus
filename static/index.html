@@ -13,7 +13,6 @@
        in email bodies — was wrapping random digits in <a href="tel:..."> with
        browser-default styling that didn't match the Odysseus theme. -->
   <meta name="format-detection" content="telephone=no, date=no, address=no, email=no">
-  <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <script nonce="{{CSP_NONCE}}">
   window._odysseusLoadTime = Date.now();
   (function(){
@@ -77,9 +76,10 @@
       }
       // Apply font early
       if (t && t.font) {
-        var fm = {gohu:"'GohuFont', monospace",mono:"'Fira Code', monospace",sans:"system-ui, -apple-system, 'Segoe UI', sans-serif",serif:"Georgia, 'Times New Roman', serif",opendyslexic:"'OpenDyslexic', sans-serif"};
-        if (fm[t.font]) { s.setProperty('--font-family', fm[t.font]); }
-        else { s.setProperty('--font-family', "'" + t.font.replace(/'/g,'') + "', sans-serif"); }
+        var font = /^(gohu|GohuFont)$/.test(t.font) ? "mono" : t.font;
+        var fm = {mono:"'Fira Code', monospace",sans:"system-ui, -apple-system, 'Segoe UI', sans-serif",serif:"Georgia, 'Times New Roman', serif",opendyslexic:"'OpenDyslexic', sans-serif"};
+        if (fm[font]) { s.setProperty('--font-family', fm[font]); }
+        else { s.setProperty('--font-family', "'" + font.replace(/'/g,'') + "', sans-serif"); }
       }
       // Apply density class on html
       if (t && t.density && t.density !== 'comfortable') {
@@ -656,7 +656,6 @@
           <div class="theme-fd-group">
             <label class="theme-fd-label">Font</label>
             <select id="theme-font-select" class="theme-fd-select" aria-label="Font">
-              <option value="gohu">GohuFont</option>
               <option value="mono">Monospace</option>
               <option value="sans">Sans-serif</option>
               <option value="serif">Serif</option>

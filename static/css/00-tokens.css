@@ -130,9 +130,6 @@ body {
 @font-face { font-family: 'Fira Code'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-Regular.woff2') format('woff2'); }
 @font-face { font-family: 'Fira Code'; font-weight: 600; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-SemiBold.woff2') format('woff2'); }
 
-/* GohuFont is the default UI face across themes; keep the shipped font local
-   so the default is available before custom-font discovery completes. */
-@font-face { font-family: 'GohuFont'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/custom/GohuFont.ttf') format('truetype'); }
 
 /* Self-hosted OpenDyslexic — dyslexia-friendly accessibility font option (SIL OFL 1.1) */
 @font-face { font-family: 'OpenDyslexic'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/OpenDyslexic-Regular.woff2') format('woff2'); }

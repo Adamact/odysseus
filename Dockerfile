@@ -110,6 +110,9 @@ RUN pip install --no-cache-dir --no-deps /tmp/odysseus-wheels/*.whl \
 
 # Copy app code
 COPY . .
+# Require the redistribution notices in the image build context.
+COPY licenses/ ./licenses/
+COPY THIRD_PARTY_PROVENANCE.json ACKNOWLEDGMENTS.md ./
 
 # Create data directory (mount a volume here for persistence)
 RUN mkdir -p data logs services/cache/search

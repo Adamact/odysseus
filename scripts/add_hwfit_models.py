@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 add_hwfit_models.py — bulk-add Hugging Face models to the hwfit catalog
-(services/hwfit/data/hf_models.json).
+(DATA_DIR/hwfit/hf_models.json, mutable user data).
 
 Adds:
   * every model from one or more HF authors (e.g. cyankiwi's AWQ quants)
@@ -28,8 +28,10 @@ from datetime import datetime
 from huggingface_hub import HfApi, hf_hub_download
 from huggingface_hub.utils import EntryNotFoundError, RepositoryNotFoundError
 
-DATA_PATH = os.path.join(os.path.dirname(__file__), "..", "services", "hwfit", "data", "hf_models.json")
-DATA_PATH = os.path.abspath(DATA_PATH)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from services.hwfit.models import model_catalog_path
+
+DATA_PATH = model_catalog_path()
 
 # Official / major model-provider orgs to refresh into the Cookbook catalog.
 # Keep this broad enough that new first-party releases appear after running the
@@ -437,8 +439,12 @@ def _is_likely_catalog_model(mi):
 
 
 def main():
-    with open(DATA_PATH, encoding="utf-8") as f:
-        catalog = json.load(f)
+    os.makedirs(os.path.dirname(DATA_PATH), exist_ok=True)
+    if os.path.exists(DATA_PATH):
+        with open(DATA_PATH, encoding="utf-8") as f:
+            catalog = json.load(f)
+    else:
+        catalog = []
     by_name = {m["name"]: m for m in catalog}
     existing = set(by_name)
 

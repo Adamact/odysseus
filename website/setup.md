@@ -744,7 +744,7 @@ src/       llm_core, agent_loop, agent_tools, chat_processor, search/
 routes/    chat, session, document, memory, model … endpoints
 services/  docs, memory, search, hwfit (Cookbook) …
 static/    index.html + app.js + style.css + js/ (modular front-end)
-website/   landing page (index.html) + preview clips
+website/   text-only landing page (index.html)
 ```
 
 ## Data

@@ -15060,20 +15060,6 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     return _docxReady;
   }
 
-  let _html2pdfReady = null;
-  function ensureHtml2Pdf() {
-    if (_html2pdfReady) return _html2pdfReady;
-    if (window.html2pdf) return (_html2pdfReady = Promise.resolve());
-    _html2pdfReady = new Promise((resolve, reject) => {
-      const s = document.createElement('script');
-      s.src = '/static/lib/html2pdf.bundle.min.js';
-      s.onload = resolve;
-      s.onerror = () => reject(new Error('Failed to load PDF library'));
-      document.head.appendChild(s);
-    });
-    return _html2pdfReady;
-  }
-
   function _getExportBaseName() {
     const doc = docs.get(activeDocId);
     const title = (doc && doc.title) || 'document';
@@ -15282,11 +15268,11 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     // white paper preview; PDF is converted from its extracted text into an
     // editable DOCX in the browser.
     // PDF-backed documents already have a lossless filled-PDF export above.
-    // Running the generic html2pdf path would rebuild the extracted text and
+    // Running the generic browser print path would rebuild the extracted text and
     // destroy the original page layout, images, and form structure.
-    if (!isForm) {
+    if (!isForm && (_isDocxLang(lang) || typeof window.print === 'function')) {
       options.push({
-        label: _isDocxLang(lang) ? 'Convert to PDF' : 'Print as PDF',
+        label: _isDocxLang(lang) ? 'Convert to PDF' : 'Print / save PDF',
         fn: _isDocxLang(lang) ? () => convertOriginalDocument('pdf') : exportAsPdf,
       });
     }
@@ -15449,15 +15435,13 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     if (!activeDocId) return;
     const textarea = document.getElementById('doc-editor-textarea');
     if (!textarea) return;
-    try {
-      await ensureHtml2Pdf();
-    } catch (e) {
-      if (uiModule) uiModule.showError('Failed to load PDF library');
+    if (typeof window.print !== 'function') {
+      if (uiModule) uiModule.showError('Browser printing is unavailable.');
       return;
     }
     const lang = document.getElementById('doc-language-select')?.value || '';
     const text = textarea.value || '';
-    // Render content as HTML for PDF
+    // Render content as HTML for the browser print dialog.
     let html;
     if (_isRichTextLang(lang)) {
       html = text;
@@ -15470,28 +15454,57 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       html = '<pre style="white-space:pre-wrap;font-size:11px;font-family:monospace;color:#000;background:#fff;">' +
         text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>';
     }
-    const container = document.createElement('div');
-    container.style.cssText = 'padding:20px;font-family:sans-serif;font-size:12px;color:#000;background:#fff;line-height:1.6;';
-    container.innerHTML = html;
-    if (_isRichTextLang(lang)) {
-      const style = document.createElement('style');
-      style.textContent = _richTextExportCss();
-      container.prepend(style);
+    // Use a sandboxed same-origin frame: rich text can render, but scripts,
+    // event handlers and embedded plugins cannot execute in the print view.
+    document.getElementById('doc-browser-print-frame')?.remove();
+    const frame = document.createElement('iframe');
+    frame.id = 'doc-browser-print-frame';
+    frame.title = 'Document print view';
+    frame.setAttribute('sandbox', 'allow-same-origin allow-modals');
+    frame.style.cssText = 'position:fixed;left:-10000px;top:0;width:800px;height:600px;border:0;';
+    document.body.appendChild(frame);
+    try {
+      const printDoc = frame.contentDocument;
+      printDoc.open();
+      printDoc.write('<!DOCTYPE html><html><head><meta charset="utf-8"></head><body></body></html>');
+      printDoc.close();
+      printDoc.title = _getExportBaseName();
+      const container = printDoc.createElement('div');
+      container.style.cssText = 'padding:20px;font-family:sans-serif;font-size:12px;color:#000;background:#fff;line-height:1.6;';
+      container.innerHTML = html;
+      if (_isRichTextLang(lang)) {
+        const style = printDoc.createElement('style');
+        style.textContent = _richTextExportCss();
+        container.prepend(style);
+      }
+      // Typeset deferred math before copying it into the print document.
+      await markdownModule.renderMath(container);
+      const styles = [];
+      document.querySelectorAll('link[rel="stylesheet"]').forEach(link => {
+        if (!link.href.includes('/katex/')) return;
+        const copy = printDoc.createElement('link');
+        copy.rel = 'stylesheet';
+        copy.href = link.href;
+        styles.push(new Promise((resolve, reject) => {
+          copy.onload = resolve;
+          copy.onerror = () => reject(new Error('Math styles could not be loaded'));
+        }));
+        printDoc.head.appendChild(copy);
+      });
+      const printStyle = printDoc.createElement('style');
+      printStyle.textContent = '@page { margin: 10mm; } body { margin: 0; } img { max-width: 100%; } pre { white-space: pre-wrap; overflow-wrap: anywhere; }';
+      printDoc.head.appendChild(printStyle);
+      printDoc.body.appendChild(printDoc.importNode(container, true));
+      await Promise.all(styles);
+      await printDoc.fonts.ready;
+      await Promise.all(Array.from(printDoc.images, img => img.decode().catch(() => {})));
+      frame.contentWindow.addEventListener('afterprint', () => frame.remove(), { once: true });
+      frame.contentWindow.focus();
+      frame.contentWindow.print();
+    } catch (error) {
+      frame.remove();
+      if (uiModule) uiModule.showError('Could not open browser print: ' + (error.message || error));
     }
-    // This container is detached, so the document-scoped flush mdToHtml
-    // schedules never sees it. Typeset the deferred math before html2pdf
-    // rasterises, or the PDF gets raw formula source. renderMath() returns
-    // immediately, without loading KaTeX, when there is nothing pending.
-    await markdownModule.renderMath(container);
-    const baseName = _getExportBaseName();
-    window.html2pdf().set({
-      margin: 10,
-      filename: baseName + '.pdf',
-      image: { type: 'jpeg', quality: 0.95 },
-      html2canvas: { scale: 2 },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-    }).from(container).save();
-    if (uiModule) uiModule.showToast('Exporting PDF...');
   }
 
   function _docxHexColor(value) {

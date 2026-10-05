@@ -2210,11 +2210,11 @@ function _rerenderCachedModels() {
       // custom picker so the dropdown lists "[V] vLLM", "[⚡] SGLang", etc.
       const _BACKEND_GLYPHS = {
         vllm:   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4l7 16 7-16"/><path d="M14 4l4 9 3-9"/></svg>',
-        sglang: '<span aria-hidden="true" style="display:block;width:14px;height:14px;background:currentColor;-webkit-mask:url(/static/icons/sglang-mark.png) center/contain no-repeat;mask:url(/static/icons/sglang-mark.png) center/contain no-repeat;"></span>',
+        sglang: '',
         mlx: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 18V6l4 7 4-7v12"/><path d="M16 6v12"/><path d="M20 6v12"/></svg>',
         mlx_image: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="M21 15l-5-5L5 20"/><path d="M17.5 4v4M15.5 6h4"/></svg>',
         llamacpp: '<svg width="14" height="14" viewBox="0 0 600 600" fill="none" aria-hidden="true"><path d="M600 392L504.249 558L504.137 557.929C487.252 584.069 458.193 600 426.864 600H120L240 392H600Z" fill="currentColor"/><path d="M240 392H0L199.602 46.0254C216.032 17.5463 246.411 0 279.29 0H466.154L240 392Z" fill="currentColor"/></svg>',
-        ollama: '<span aria-hidden="true" style="display:block;width:14px;height:14px;background:currentColor;-webkit-mask:url(/static/icons/ollama-mark-crop.png) center/contain no-repeat;mask:url(/static/icons/ollama-mark-crop.png) center/contain no-repeat;"></span>',
+        ollama: '',
         diffusers: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></svg>',
       };
 
@@ -2234,7 +2234,7 @@ function _rerenderCachedModels() {
         const opt = _backendSource?.querySelector(`option[value="${CSS.escape(v)}"]`);
         const label = opt ? opt.textContent : v;
         if (_backendBtnLabel) _backendBtnLabel.textContent = label;
-        if (_backendBtnIconSlot) _backendBtnIconSlot.innerHTML = _BACKEND_GLYPHS[v] || _BACKEND_GLYPHS.vllm;
+        if (_backendBtnIconSlot) _backendBtnIconSlot.innerHTML = _BACKEND_GLYPHS[v] ?? _BACKEND_GLYPHS.vllm;
       }
 
       function _renderBackendMenu() {
@@ -2242,7 +2242,7 @@ function _rerenderCachedModels() {
         const items = Array.from(_backendSource.options).map(o => ({ value: o.value, label: o.textContent }));
         _backendMenu.innerHTML = items.map(it => `
           <button type="button" role="option" class="hwfit-backend-item" data-value="${it.value}" style="all:unset;display:flex;align-items:center;gap:8px;width:100%;padding:6px 9px;border-radius:5px;font-size:12px;cursor:pointer;color:var(--fg);box-sizing:border-box;">
-            <span class="hwfit-backend-item-icon" style="display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;color:var(--accent, var(--red));flex-shrink:0;">${_BACKEND_GLYPHS[it.value] || _BACKEND_GLYPHS.vllm}</span>
+            <span class="hwfit-backend-item-icon" style="display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;color:var(--accent, var(--red));flex-shrink:0;">${_BACKEND_GLYPHS[it.value] ?? _BACKEND_GLYPHS.vllm}</span>
             <span class="hwfit-backend-item-label" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${it.label}</span>
           </button>
         `).join('');
