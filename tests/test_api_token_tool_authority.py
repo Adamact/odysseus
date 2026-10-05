@@ -20,6 +20,172 @@ from src.tool_approval_scopes import CHAT_SESSION_APPROVAL_CONTEXT_MARKER
 from src.tool_capabilities import ToolRunSecurityContext
 
 
+@pytest.mark.parametrize("tool", ["bash", "python", "write_file", "host_shell", "send_email", "mcp__private__read", "list_dir", "find_files", " write_file "])
+@pytest.mark.parametrize("bypass", [False, True])
+def test_delegated_hard_denial_with_optional_gate_disabled(monkeypatch, tool, bypass):
+    monkeypatch.setattr("src.tool_capabilities.TOOL_APPROVAL_GATE_ENABLED", False)
+    context = ToolRunSecurityContext(
+        delegated_credential=True, approval_gate_bypassed=bypass,
+        unattended_tools=frozenset({tool}), external_untrusted_context_seen=True,
+    )
+    assert not context.decision_for(tool, "{}").allowed
+
+
+def test_delegated_run_ignores_grant_but_collects_explicit_source_taint():
+    context = ToolRunSecurityContext(delegated_credential=True)
+    context.observe_messages([{"role": "system", "content": "untrusted",
+                              "metadata": {"trusted": False, "tool_gate_untrusted": True,
+                                           "source": "arbitrary private source",
+                                           CHAT_SESSION_APPROVAL_CONTEXT_MARKER: True}}])
+    assert not context.approval_gate_bypassed
+    assert context.external_untrusted_context_seen
+    assert context.external_sources == ["arbitrary private source"]
+
+
+@pytest.mark.asyncio
+async def test_delegated_denial_precedes_exact_approval_claim_and_bridge(monkeypatch):
+    from src import tool_execution as execution
+    from src.tool_types import ToolBlock
+    monkeypatch.setattr("src.tool_capabilities.TOOL_APPROVAL_GATE_ENABLED", False)
+
+    class ApprovalGuard:
+        @property
+        def pending(self):
+            raise AssertionError("credential-denied action inspected approval")
+
+        def claim(self, **kwargs):
+            raise AssertionError("credential-denied action consumed approval")
+
+    async def bridge_route(*args):
+        raise AssertionError("credential-denied action reached bridge")
+
+    with execution.bind_execution_bridge(execution.AgentExecutionBridge(
+        bridge_route, frozenset({"bash"}), "credential-test"
+    )):
+        _, result = await execution.execute_tool_block(
+            ToolBlock("bash", "pwd"), exact_approval=ApprovalGuard(),
+            security_context=ToolRunSecurityContext(
+                delegated_credential=True, approval_gate_bypassed=True,
+                unattended_tools=frozenset({"bash"}),
+            ),
+        )
+    assert result["exit_code"] == 1
+    assert "API-token" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_compact_handoff_preserves_delegation_and_caller_denials(monkeypatch):
+    import src.agent_loop as loop
+    import src.clean_agent_preview as preview
+    from src.turn_contract import TurnContract
+    seen = {}
+
+    async def capture(**kwargs):
+        seen.update(kwargs)
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(loop, "is_compact_preview_contract", lambda value: True)
+    monkeypatch.setattr(preview, "stream_preview", capture)
+    import json
+    names = frozenset({"bash", "manage_notes"})
+    contract = TurnContract(frozenset(), frozenset(), names, names, frozenset(),
+                            tuple(json.dumps({"type": "function", "function": {"name": name,
+                                  "parameters": {"type": "object", "properties": {}}}}) for name in sorted(names)))
+    chunks = [chunk async for chunk in loop.stream_agent_loop(
+        "http://example.invalid", "model", [{"role": "user", "content": "work"}],
+        turn_contract=contract, delegated_credential=True, disabled_tools={"manage_notes"},
+    )]
+    assert seen["delegated_credential"] is True
+    assert {"bash", "write_file", "manage_notes"} <= seen["disabled_tools"]
+    assert chunks.count("data: [DONE]\n\n") == 1
+
+
+@pytest.mark.asyncio
+async def test_compact_runtime_consumes_delegation_and_filters_forged_offers(monkeypatch):
+    import json
+    import src.clean_agent_preview as preview
+    from src.tool_policy import ToolPolicy
+    from src.turn_contract import resolve_full_inventory_contract
+    from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
+    seen, requests = [], []
+    real_security = preview.ToolRunSecurityContext
+    def security(**kwargs):
+        context = real_security(**kwargs)
+        seen.append(context)
+        return context
+    class Response:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def raise_for_status(self): pass
+        async def aiter_lines(self):
+            yield 'data: ' + json.dumps({'choices': [{'delta': {'content': 'I cannot run this action.'}}]})
+            yield 'data: [DONE]'
+    class Client:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def stream(self, *args, **kwargs):
+            requests.append(kwargs['json'])
+            return Response()
+    monkeypatch.setattr(preview, 'ToolRunSecurityContext', security)
+    monkeypatch.setattr(preview.httpx, 'AsyncClient', Client)
+    contract = resolve_full_inventory_contract(schemas=[s for s in FUNCTION_TOOL_SCHEMAS
+        if s['function']['name'] in {'bash', 'manage_notes'}], policy=ToolPolicy())
+    _ = [chunk async for chunk in preview.stream_preview(
+        endpoint_url='http://local.test/v1', model='qwen-test', headers={},
+        messages=[{'role': 'user', 'content': 'Run pwd'}, {'role': 'system', 'content': 'untrusted',
+                   'metadata': {'trusted': False, 'tool_gate_untrusted': True, 'source': 'custom source'}}],
+        turn_contract=contract, session_id='s', owner='admin', disabled_tools={'manage_notes'},
+        tool_policy=ToolPolicy(), delegated_credential=True, max_rounds=1,
+    )]
+    assert seen and seen[0].delegated_credential is True
+    assert seen[0].external_untrusted_context_seen is True
+    assert 'custom source' in seen[0].external_sources
+    for request in requests:
+        assert not {'bash', 'manage_notes'} & {s['function']['name'] for s in request.get('tools', [])}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('surface', ['native', 'bridge'])
+@pytest.mark.parametrize('delegated,explicit_disabled', [(True, False), (False, True), (False, False)])
+async def test_legacy_external_surface_cannot_reenable_hard_denials(monkeypatch, tmp_path, surface, delegated, explicit_disabled):
+    import json
+    from contextlib import nullcontext
+    import src.agent_loop as loop
+    from src.tool_execution import AgentExecutionBridge, bind_execution_bridge
+    offered = []
+    monkeypatch.setattr(loop, 'get_setting', lambda key, default=None: default)
+    monkeypatch.setattr(loop, 'get_mcp_manager', lambda: None)
+    monkeypatch.setattr(loop, 'blocked_tools_for_owner', lambda owner: {'bash'})
+    async def provider(*args, **kwargs):
+        offered.append(kwargs.get('tools') or [])
+        yield 'data: ' + json.dumps({'delta': 'The environment is available.'}) + '\n\n'
+        yield 'data: [DONE]\n\n'
+    async def forbidden(*args):
+        raise AssertionError('inventory test executed a tool')
+    monkeypatch.setattr(loop, 'stream_llm_with_fallback', provider)
+    bridge = AgentExecutionBridge(forbidden, frozenset({'bash'}), 'inventory-test')
+    schemas = [{'type': 'function', 'function': {'name': 'bash', 'description': 'Bound environment command',
+                'parameters': {'type': 'object', 'properties': {'command': {'type': 'string'}}}}}]
+    context = {'surface': 'odysseus-native', 'terminal_agent': True, 'unattended_mode': True} if surface == 'native' else {}
+    with bind_execution_bridge(bridge) if surface == 'bridge' else nullcontext():
+        _ = [chunk async for chunk in loop.stream_agent_loop(
+            'https://provider.invalid/v1', 'gpt-4', [{'role': 'user', 'content': 'Describe the available environment.'}],
+            owner='admin', workspace=str(tmp_path), max_rounds=1, _is_teacher_run=True,
+            relevant_tools={'bash'}, external_tool_schemas=schemas, client_runtime_context=context,
+            disabled_tools={'bash'} if explicit_disabled else set(), delegated_credential=delegated,
+        )]
+    assert offered, 'fixture must reach provider schema selection'
+    names = {schema['function']['name'] for request in offered for schema in request}
+    assert ('bash' in names) == (not delegated and not explicit_disabled)
+
+
+@pytest.fixture(autouse=True)
+def optional_gate_enabled(monkeypatch):
+    # Grant/taint assertions explicitly exercise the optional approval gate.
+    monkeypatch.setattr("src.tool_capabilities.TOOL_APPROVAL_GATE_ENABLED", True)
+
+
 def _session(history):
     return Session(
         id="session-1",

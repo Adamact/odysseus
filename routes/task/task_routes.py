@@ -10,7 +10,7 @@ from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from core.database import SessionLocal, ScheduledTask, TaskRun
+from core.database import SessionLocal, ScheduledTask, TaskRun, NotificationLog
 from core.constants import internal_api_base
 from src.auth_helpers import get_current_user
 from src.constants import DATA_DIR, EMAIL_URGENCY_CACHE_DIR
@@ -23,6 +23,14 @@ from src.task_scheduler import compute_next_run, HOUSEKEEPING_DEFAULTS
 from routes.prefs_routes import _load_for_user, _save_for_user
 
 logger = logging.getLogger(__name__)
+
+
+def _seal_request_task_authority(request, prompt, task_type, action, owner):
+    from src.agent_runtime.authority import MISSING_AUTHORITY, is_internal_tool_request, seal_task_authority
+    # A tool HTTP call starts another ASGI context. Its model-produced body is
+    # not a fresh user request, even though the internal token authenticates it.
+    parent = None if is_internal_tool_request(request) else MISSING_AUTHORITY
+    return seal_task_authority(prompt, task_type, action, owner=owner, parent_authority=parent)
 
 
 def _maybe_cascade_calendar_event(task) -> None:
@@ -530,6 +538,8 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 owner=user,
                 name=name,
                 prompt=req.prompt,
+                request_authority_json=_seal_request_task_authority(
+                    request, req.prompt, req.task_type, req.action, user),
                 task_type=req.task_type,
                 action=req.action,
                 schedule=req.schedule,
@@ -568,6 +578,57 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             return {"notifications": []}
         notes = task_scheduler.pop_notifications(owner=user)
         return {"notifications": notes}
+
+    @router.get("/notification-logs")
+    async def get_notification_logs(request: Request, limit: int = 200):
+        """Return persisted task notifications without consuming them."""
+        user = _owner(request)
+        if not user:
+            return {"notifications": []}
+        limit = max(1, min(int(limit or 200), 1000))
+        db = SessionLocal()
+        try:
+            rows = (db.query(NotificationLog)
+                    .filter(NotificationLog.owner == user)
+                    .order_by(NotificationLog.timestamp.desc())
+                    .limit(limit)
+                    .all())
+            return {"notifications": [
+                {
+                    "id": row.id,
+                    "task_name": row.task_name,
+                    "task_id": row.task_id,
+                    "status": row.status,
+                    "body": row.body,
+                    "timestamp": row.timestamp.isoformat() + "Z" if row.timestamp else None,
+                }
+                for row in rows
+            ]}
+        finally:
+            db.close()
+
+    @router.post("/notification-logs")
+    async def create_notification_log(request: Request):
+        """Persist an in-app toast so Settings can show notification history."""
+        user = _owner(request)
+        if not user:
+            raise HTTPException(401, "Authentication required")
+        body = await request.json()
+        message = str(body.get("body") or "").strip()[:2000]
+        if not message:
+            raise HTTPException(400, "Notification body required")
+        row = NotificationLog(
+            id=str(uuid.uuid4()), owner=user,
+            task_name=str(body.get("title") or "Odysseus")[:200],
+            status="error" if body.get("status") == "error" else "success",
+            body=message,
+        )
+        db = SessionLocal()
+        try:
+            db.add(row); db.commit()
+            return {"success": True}
+        finally:
+            db.close()
 
     @router.post("/{task_id}/clear-cache")
     async def clear_task_cache(request: Request, task_id: str):
@@ -686,6 +747,9 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 task.task_type = req.task_type
             if req.action is not None:
                 task.action = req.action
+            if any(value is not None for value in (req.prompt, req.task_type, req.action)):
+                task.request_authority_json = _seal_request_task_authority(
+                    request, task.prompt, task.task_type, task.action, user)
             if req.output_target is not None:
                 task.output_target = req.output_target
             if req.model is not None:
