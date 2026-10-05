@@ -114,7 +114,7 @@ function documentFunction(name, text = source) {
     await page.setContent('<!doctype html><textarea id="doc-editor-textarea"></textarea>');
 
     const ledger = await page.evaluate(async () => {
-      const { recordSessionMetricsCost, getSessionCost } = await import('/static/js/chatRenderer.js');
+      const { recordSessionMetricsCost, getSessionCost, resetSessionCost } = await import('/static/js/chatRenderer.js');
       const metrics = id => ({ model: 'gpt-4o', input_tokens: 100, output_tokens: 10,
         endpoint_cost_tracked: true, _costRecordId: id });
       const before = Object.getOwnPropertyDescriptors(Object.prototype);
@@ -149,11 +149,37 @@ function documentFunction(name, text = source) {
       await navigator.locks.request('odysseus-session-cost-ledger', () => {});
       for (let i = 0; i < 257; i++) recordSessionMetricsCost(metrics('run-' + i), 'overflow-session');
       await navigator.locks.request('odysseus-session-cost-ledger', () => {});
+      // Snapshot all ordinary-ledger results before the reserved-key fixture
+      // deliberately replaces localStorage below.
+      const replayCost = getSessionCost('safe-session');
+      const legacyCost = getSessionCost('legacy-session');
+      const dottedCost = getSessionCost('safe.__proto__.session');
+      const overflowCost = getSessionCost('overflow-session');
+      const runWire = JSON.parse(localStorage.getItem('ody-session-cost-runs') || '{}');
+      const costWire = JSON.parse(localStorage.getItem('ody-session-cost') || '{}');
+      const retainedRuns = Object.keys(runWire['overflow-session']).length;
+      const wireShape = !Array.isArray(runWire)
+        && !Array.isArray(costWire)
+        && !!runWire['overflow-session']
+        && !Array.isArray(runWire['overflow-session']);
+
+      // A persisted legacy/reserved key must remain data rather than becoming
+      // prototype state. Reading and removing it must also be side-effect free.
+      localStorage.setItem('ody-session-cost', '{"__proto__":1}');
+      localStorage.setItem('ody-session-cost-runs', '{"__proto__":{"legacy-run":2}}');
+      const legacyReservedCost = getSessionCost('__proto__');
+      resetSessionCost('__proto__');
+      const clearedReserved = !Object.hasOwn(
+        JSON.parse(localStorage.getItem('ody-session-cost') || '{}'),
+        '__proto__',
+      ) && !Object.hasOwn(
+        JSON.parse(localStorage.getItem('ody-session-cost-runs') || '{}'),
+        '__proto__',
+      );
+
       const after = Object.getOwnPropertyDescriptors(Object.prototype);
-      return { cost, replayCost: getSessionCost('safe-session'), legacyCost: getSessionCost('legacy-session'),
-        dottedCost: getSessionCost('safe.__proto__.session'),
-        overflowCost: getSessionCost('overflow-session'),
-        retainedRuns: Object.keys(JSON.parse(localStorage.getItem('ody-session-cost-runs'))['overflow-session']).length,
+      return { cost, replayCost, legacyCost, dottedCost,
+        overflowCost, retainedRuns, wireShape, legacyReservedCost, clearedReserved,
         unchanged: Reflect.ownKeys(before).length === Reflect.ownKeys(after).length
           && Reflect.ownKeys(before).every(key => Reflect.ownKeys(before[key]).every(field => before[key][field] === after[key]?.[field])) };
     });
@@ -164,6 +190,9 @@ function documentFunction(name, text = source) {
     assert.equal(ledger.dottedCost, ledger.cost);
     assert(Math.abs(ledger.overflowCost - 257 * ledger.cost) < 1e-10);
     assert.equal(ledger.retainedRuns, 256);
+    assert.equal(ledger.wireShape, true);
+    assert.equal(ledger.legacyReservedCost, 3);
+    assert.equal(ledger.clearedReserved, true);
 
     const names = ['_unfoldEmailHeaderLines', '_parseEmailHeader', '_looksLikeWrappedEmailContent', '_decodeBase64EmailWrapper',
       '_sanitizeOutgoingEmailBody', '_emailHtmlToPlainText', '_aiReply',

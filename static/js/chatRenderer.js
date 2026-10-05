@@ -1331,17 +1331,54 @@ const _COST_RUNS_KEY = 'ody-session-cost-runs';
 const _MAX_COST_RUNS_PER_SESSION = 256;
 const _COST_LEDGER_LOCK = 'odysseus-session-cost-ledger';
 
+/**
+ * Decode one persisted ledger object into a Map.
+ *
+ * Ledger keys are external identifiers. Keeping them out of ordinary object
+ * property assignment means values such as "__proto__" can never interact
+ * with Object.prototype. The persisted JSON shape remains an ordinary object
+ * for backwards compatibility.
+ */
+function _readCostLedger(storageKey) {
+  const parsed = JSON.parse(localStorage.getItem(storageKey) || '{}');
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return new Map();
+  return new Map(Object.entries(parsed));
+}
+
+function _writeCostLedger(storageKey, ledger) {
+  localStorage.setItem(storageKey, JSON.stringify(Object.fromEntries(ledger)));
+}
+
+function _readCostRunLedger() {
+  const sessions = _readCostLedger(_COST_RUNS_KEY);
+  for (const [sid, runs] of sessions) {
+    sessions.set(
+      sid,
+      runs && typeof runs === 'object' && !Array.isArray(runs)
+        ? new Map(Object.entries(runs))
+        : new Map(),
+    );
+  }
+  return sessions;
+}
+
+function _writeCostRunLedger(sessions) {
+  const serialized = new Map();
+  for (const [sid, runs] of sessions) {
+    serialized.set(sid, Object.fromEntries(runs));
+  }
+  _writeCostLedger(_COST_RUNS_KEY, serialized);
+}
+
 /** Return the accumulated cost for the current (or given) session. */
 export function getSessionCost(sessionId) {
   const sid = sessionId || (window.sessionModule && window.sessionModule.getCurrentSessionId());
   if (!sid) return 0;
   try {
-    const costs = JSON.parse(localStorage.getItem(_COST_KEY) || '{}');
-    const runCosts = JSON.parse(localStorage.getItem(_COST_RUNS_KEY) || '{}');
-    const recordedRuns = runCosts[sid] && typeof runCosts[sid] === 'object'
-      ? Object.values(runCosts[sid])
-      : [];
-    return (costs[sid] || 0) + recordedRuns.reduce(
+    const costs = _readCostLedger(_COST_KEY);
+    const runCosts = _readCostRunLedger();
+    const recordedRuns = runCosts.get(sid) || new Map();
+    return (costs.get(sid) || 0) + Array.from(recordedRuns.values()).reduce(
       (total, value) => total + (Number(value) || 0),
       0,
     );
@@ -1353,12 +1390,12 @@ export function resetSessionCost(sessionId) {
   const sid = sessionId || (window.sessionModule && window.sessionModule.getCurrentSessionId());
   if (!sid) return;
   try {
-    const costs = JSON.parse(localStorage.getItem(_COST_KEY) || '{}');
-    delete costs[sid];
-    localStorage.setItem(_COST_KEY, JSON.stringify(costs));
-    const runCosts = JSON.parse(localStorage.getItem(_COST_RUNS_KEY) || '{}');
-    delete runCosts[sid];
-    localStorage.setItem(_COST_RUNS_KEY, JSON.stringify(runCosts));
+    const costs = _readCostLedger(_COST_KEY);
+    costs.delete(sid);
+    _writeCostLedger(_COST_KEY, costs);
+    const runCosts = _readCostRunLedger();
+    runCosts.delete(sid);
+    _writeCostRunLedger(runCosts);
   } catch (_e) { /* ignore */ }
   updateSessionCostUI();
 }
@@ -1407,34 +1444,34 @@ export function recordSessionMetricsCost(metrics, sessionId, selectedEndpointUrl
   const writeCost = () => {
     if (runId) {
       try {
-        const runCosts = JSON.parse(localStorage.getItem(_COST_RUNS_KEY) || '{}');
-        const sessionRuns = runCosts[sid] && typeof runCosts[sid] === 'object'
-          ? runCosts[sid]
-          : {};
-        // Assigning by detached-run identity is replay-idempotent even when a
-        // refresh produces a fresh metrics object. The Web Lock around this
-        // read/modify/write also keeps distinct runs from two tabs from
-        // overwriting one another's stale snapshot.
-        sessionRuns[runId] = cost;
-        const entries = Object.entries(sessionRuns);
+        const runCosts = _readCostRunLedger();
+        const sessionRuns = runCosts.get(sid) || new Map();
+        // Detached-run identity is replay-idempotent even when a refresh
+        // produces a fresh metrics object. Map keys also avoid all
+        // Object.prototype lookup and assignment semantics.
+        sessionRuns.set(runId, cost);
+        const entries = Array.from(sessionRuns.entries());
         if (entries.length > _MAX_COST_RUNS_PER_SESSION) {
           const overflow = entries.slice(0, entries.length - _MAX_COST_RUNS_PER_SESSION);
-          const costs = JSON.parse(localStorage.getItem(_COST_KEY) || '{}');
-          costs[sid] = (costs[sid] || 0) + overflow.reduce(
-            (total, entry) => total + (Number(entry[1]) || 0),
-            0,
+          const costs = _readCostLedger(_COST_KEY);
+          costs.set(
+            sid,
+            (costs.get(sid) || 0) + overflow.reduce(
+              (total, entry) => total + (Number(entry[1]) || 0),
+              0,
+            ),
           );
-          overflow.forEach(([oldRunId]) => delete sessionRuns[oldRunId]);
-          localStorage.setItem(_COST_KEY, JSON.stringify(costs));
+          overflow.forEach(([oldRunId]) => sessionRuns.delete(oldRunId));
+          _writeCostLedger(_COST_KEY, costs);
         }
-        runCosts[sid] = sessionRuns;
-        localStorage.setItem(_COST_RUNS_KEY, JSON.stringify(runCosts));
+        runCosts.set(sid, sessionRuns);
+        _writeCostRunLedger(runCosts);
       } catch (_e) { /* ignore */ }
     } else {
       try {
-        const costs = JSON.parse(localStorage.getItem(_COST_KEY) || '{}');
-        costs[sid] = (costs[sid] || 0) + cost;
-        localStorage.setItem(_COST_KEY, JSON.stringify(costs));
+        const costs = _readCostLedger(_COST_KEY);
+        costs.set(sid, (costs.get(sid) || 0) + cost);
+        _writeCostLedger(_COST_KEY, costs);
       } catch (_e) { /* ignore */ }
     }
     metrics._costRecorded = true;
