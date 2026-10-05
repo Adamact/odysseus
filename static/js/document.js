@@ -3416,9 +3416,9 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     }).join('');
 
     if (!changed && /<[^>]+>/.test(text) && typeof document !== 'undefined') {
-      const probe = document.createElement('div');
+      const probe = document.createElement('template');
       probe.innerHTML = text;
-      const plain = (probe.innerText || probe.textContent || '').trim();
+      const plain = (probe.content.textContent || '').trim();
       const plainClean = plain ? _sanitizeOutgoingEmailBody(plain) : plain;
       if (plainClean !== plain) return plainClean;
     }
@@ -3530,9 +3530,9 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
 
   function _emailHtmlToPlainText(html) {
     if (typeof document === 'undefined') return String(html || '');
-    const d = document.createElement('div');
+    const d = document.createElement('template');
     d.innerHTML = String(html || '');
-    return d.innerText || d.textContent || '';
+    return d.content.textContent || '';
   }
 
   function _sanitizedRichTextHtml(rich) {
@@ -5393,15 +5393,20 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         row.dataset.id = item.id || '';
         row.dataset.kind = kind;
         if (kind === 'gallery') {
-          const src = item.url ? `${API_BASE}${item.url}` : '';
           row.innerHTML = `
             <span class="email-odysseus-attach-dot" aria-hidden="true"></span>
-            <span class="email-odysseus-attach-thumb">${src ? `<img src="${_escHtml(src)}" alt="">` : ''}</span>
+            <span class="email-odysseus-attach-thumb"></span>
             <span class="email-odysseus-attach-main">
               <span class="email-odysseus-attach-title">${_escHtml(label)}</span>
               <span class="email-odysseus-attach-meta">${_escHtml(item.filename || 'image')}</span>
             </span>
           `;
+          if (item.url) {
+            const img = document.createElement('img');
+            img.alt = '';
+            img.src = `${API_BASE}${item.url}`;
+            row.querySelector('.email-odysseus-attach-thumb').appendChild(img);
+          }
         } else {
           row.innerHTML = `
             <span class="email-odysseus-attach-dot" aria-hidden="true"></span>
@@ -6730,10 +6735,10 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         .trim();
     };
     const splitCurrent = _splitEmailReplyQuote(currentBody);
-    const ownBody = document.createElement('div');
+    const ownBody = document.createElement('template');
     ownBody.innerHTML = String(splitCurrent.body || '');
-    const ownText = (ownBody.textContent || '').trim();
-    const isReplaceableDraft = (!ownText && !ownBody.querySelector('img,video,audio,iframe,table')) || /^(\[AI reply draft will appear here\]|Drafting AI reply)/i.test(ownText);
+    const ownText = (ownBody.content.textContent || '').trim();
+    const isReplaceableDraft = (!ownText && !ownBody.content.querySelector('img,video,audio,iframe,table')) || /^(\[AI reply draft will appear here\]|Drafting AI reply)/i.test(ownText);
     if (!isReplaceableDraft) {
       if (uiModule) uiModule.showToast('Reply already has text');
       return;

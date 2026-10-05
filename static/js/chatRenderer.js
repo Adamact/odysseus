@@ -1392,10 +1392,13 @@ export function recordSessionMetricsCost(metrics, sessionId, selectedEndpointUrl
   const sid = sessionId || (
     window.sessionModule && window.sessionModule.getCurrentSessionId()
   );
-  if (!sid || cost === null) return cost;
+  if (typeof sid !== 'string' || !sid || cost === null) return cost;
   const runId = typeof metrics._costRecordId === 'string'
     ? metrics._costRecordId.trim()
     : '';
+  // Never resolve ledger entries through Object.prototype or its constructor.
+  if (['__proto__', 'prototype', 'constructor'].includes(sid)
+      || ['__proto__', 'prototype', 'constructor'].includes(runId)) return cost;
   if ((metrics._costRecorded || metrics._costRecordPending) && !runId) return cost;
   // Recorded is only set once the write actually runs; pending covers the
   // window while the write waits on the cross-tab lock, so a replay in that
