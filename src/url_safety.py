@@ -12,7 +12,7 @@ break the primary use case. What it *always* rejects:
   - a non-HTTP(S) scheme (``file://``, ``gopher://``, ``ftp://`` …), and
   - the link-local range (``169.254.0.0/16`` / ``fe80::/10``), i.e. the cloud
     instance-metadata SSRF credential-exfil vector — nobody serves embeddings
-    there — plus multicast / reserved / unspecified addresses.
+    there, plus multicast / non-loopback reserved / unspecified addresses.
 
 For exposed multi-tenant deployments, set ``EMBEDDING_BLOCK_PRIVATE_IPS=true`` to
 additionally reject all private and loopback targets (full SSRF lockdown).
@@ -94,11 +94,15 @@ def _classify(ip: ipaddress._BaseAddress, *, block_private: bool) -> Optional[st
             return None
     if ip.is_link_local:
         return f"link-local address blocked (SSRF metadata risk): {ip}"
+    # IPv6 loopback is also reserved; its policy must match IPv4 loopback.
+    if ip.is_loopback:
+        if block_private:
+            return f"private/shared/loopback address blocked: {ip}"
+        return None
     if ip.is_multicast or ip.is_reserved or ip.is_unspecified:
         return f"disallowed address: {ip}"
     if block_private and (
         ip.is_private
-        or ip.is_loopback
         or (isinstance(ip, ipaddress.IPv4Address) and ip in _SHARED_ADDRESS_SPACE_V4)
     ):
         return f"private/shared/loopback address blocked: {ip}"

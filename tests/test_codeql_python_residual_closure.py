@@ -227,6 +227,52 @@ def test_smtp_connects_to_the_checked_address_only(rebinding_dns, tls):
     assert rebinding_dns == ["rebind.test"]
 
 
+@pytest.mark.parametrize("protocol", ["imap", "smtp"])
+@pytest.mark.parametrize("tls", [False, True])
+@pytest.mark.parametrize("ipv6_first", [False, True])
+def test_mail_connects_to_dual_stack_localhost(monkeypatch, protocol, tls, ipv6_first):
+    from routes.email.email_helpers import (
+        _PolicyIMAP4, _PolicyIMAP4_SSL, _PolicySMTP, _PolicySMTP_SSL,
+    )
+
+    real = socket.getaddrinfo
+    lookups = []
+    ips = ["::1", "127.0.0.1"] if ipv6_first else ["127.0.0.1", "::1"]
+
+    def resolve(host, port, *args, **kwargs):
+        if host != "localhost":
+            return real(host, port, *args, **kwargs)
+        lookups.append(host)
+        assert lookups == ["localhost"]
+        return [info for ip in ips for info in real(ip, port, *args, **kwargs)]
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    server = _LineServer(protocol)
+    context = _RecordingTLS()
+    try:
+        if protocol == "imap":
+            cls = _PolicyIMAP4_SSL if tls else _PolicyIMAP4
+            kwargs = {"ssl_context": context} if tls else {}
+        else:
+            cls = _PolicySMTP_SSL if tls else _PolicySMTP
+            kwargs = {"context": context} if tls else {}
+        conn = cls("localhost", server.port, block_private=False, timeout=5, **kwargs)
+        try:
+            assert conn.sock.getpeername()[0] == "127.0.0.1"
+            if tls:
+                assert context.server_hostname == "localhost"
+            if protocol == "smtp":
+                assert conn.ehlo()[0] == 250
+        finally:
+            if protocol == "imap":
+                conn.logout()
+            else:
+                conn.quit()
+    finally:
+        server.close()
+    assert lookups == ["localhost"]
+
+
 def test_any_denied_answer_in_a_mixed_resolution_blocks_the_connection():
     from src.url_safety import OutboundAddressBlocked, connect_outbound_tcp
 
@@ -245,9 +291,11 @@ def test_any_denied_answer_in_a_mixed_resolution_blocks_the_connection():
 _ALWAYS_DENIED = [
     "169.254.169.254", "fe80::1", "0.0.0.0", "::", "224.0.0.1", "240.0.0.1",
     "::ffff:169.254.169.254", "64:ff9b::a9fe:a9fe", "64:ff9b::a00:5",
-    "::1",  # IPv6 loopback sits in ::/8, which the existing policy treats as reserved
+    "ff02::1", "::2", "100::1", "::ffff:0.0.0.0", "::ffff:224.0.0.1",
+    "::ffff:240.0.0.1", "64:ff9b::7f00:1", "64:ff9b::6440:1",
+    "64:ff9b::f000:1", "64:ff9b:1::7f00:1",
 ]
-_PRIVATE = ["127.0.0.1", "10.0.0.5", "172.16.0.1", "192.168.1.10", "100.64.0.1", "fd00::1"]
+_PRIVATE = ["127.0.0.1", "::1", "::ffff:127.0.0.1", "10.0.0.5", "172.16.0.1", "192.168.1.10", "100.64.0.1", "fd00::1"]
 _PUBLIC = ["93.184.216.34", "2606:2800:220:1::1"]
 
 
@@ -300,6 +348,31 @@ def test_private_ranges_follow_the_principal_policy(fake_sockets, ip):
     assert fake_sockets == [ip]
     with pytest.raises(OutboundAddressBlocked):
         connect_outbound_tcp("h", 993, block_private=True, resolver=_answer(ip))
+    assert fake_sockets == [ip]
+
+
+@pytest.mark.parametrize("block_private", [False, True])
+@pytest.mark.parametrize("ipv6_first", [False, True])
+def test_dual_stack_localhost_tcp_resolves_once(fake_sockets, block_private, ipv6_first):
+    from src.url_safety import OutboundAddressBlocked, connect_outbound_tcp
+
+    lookups = []
+    ips = ["::1", "127.0.0.1"] if ipv6_first else ["127.0.0.1", "::1"]
+
+    def resolve(host, port, *args):
+        lookups.append(host)
+        assert lookups == ["localhost"]
+        return [info for ip in ips for info in _answer(ip)(host, port, *args)]
+
+    if block_private:
+        with pytest.raises(OutboundAddressBlocked, match="loopback address blocked"):
+            connect_outbound_tcp("localhost", 993, block_private=True, resolver=resolve)
+        assert fake_sockets == []
+    else:
+        sock = connect_outbound_tcp("localhost", 993, block_private=False, resolver=resolve)
+        sock.close()
+        assert fake_sockets == [ips[0]]
+    assert lookups == ["localhost"]
 
 
 @pytest.mark.parametrize("ip", _PUBLIC)
@@ -339,7 +412,8 @@ def test_single_user_mode_allows_lan_mail_servers(monkeypatch):
     assert _mail_private_blocked("") is False
 
 
-def test_non_admin_cannot_probe_loopback_through_the_connection_test(monkeypatch):
+@pytest.mark.parametrize("host", ["127.0.0.1", "::1", "localhost"])
+def test_non_admin_cannot_probe_loopback_through_the_connection_test(monkeypatch, host):
     import routes.email_routes as email_routes
     import src.tool_security as tool_security
 
@@ -350,7 +424,7 @@ def test_non_admin_cannot_probe_loopback_through_the_connection_test(monkeypatch
 
     class _Request:
         async def json(self):
-            return {"imap_host": "127.0.0.1", "imap_port": 6379, "imap_user": "u", "imap_password": "p",
+            return {"imap_host": host, "imap_port": 6379, "imap_user": "u", "imap_password": "p",
                     "smtp_host": "10.0.0.5", "smtp_port": 25}
 
     result = asyncio.run(endpoint(req=_Request(), owner="bob"))

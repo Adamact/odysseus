@@ -3,6 +3,8 @@
 A stub resolver is injected so the tests never touch real DNS.
 """
 
+import pytest
+
 from src.url_safety import check_outbound_url
 
 
@@ -62,6 +64,39 @@ def test_strict_mode_blocks_private_and_loopback():
     assert ok is False and "private" in reason
     ok, reason = check_outbound_url("http://nas.local", block_private=True, resolver=LAN)
     assert ok is False and "private" in reason
+
+
+@pytest.mark.parametrize("block_private", [False, True])
+@pytest.mark.parametrize("host,ips", [
+    ("127.0.0.1", ["127.0.0.1"]),
+    ("[::1]", ["::1"]),
+    ("[::ffff:127.0.0.1]", ["::ffff:127.0.0.1"]),
+    ("localhost", ["127.0.0.1", "::1"]),
+    ("localhost", ["::1", "127.0.0.1"]),
+])
+def test_loopback_urls_follow_private_policy(host, ips, block_private):
+    ok, reason = check_outbound_url(
+        f"http://{host}:8080", block_private=block_private,
+        resolver=_resolver({host.strip("[]"): ips}),
+    )
+    assert ok is (not block_private), reason
+    if block_private:
+        assert "loopback address blocked" in reason
+
+
+@pytest.mark.parametrize("block_private", [False, True])
+@pytest.mark.parametrize("ip", [
+    "169.254.169.254", "fe80::1", "0.0.0.0", "::", "224.0.0.1", "ff02::1",
+    "240.0.0.1", "::2", "100::1", "::ffff:169.254.169.254",
+    "::ffff:0.0.0.0", "::ffff:224.0.0.1", "::ffff:240.0.0.1",
+])
+def test_special_ranges_stay_blocked_alongside_loopback(ip, block_private):
+    ok, reason = check_outbound_url(
+        "http://localhost:8080", block_private=block_private,
+        resolver=_resolver({"localhost": [ip, "127.0.0.1", "::1"]}),
+    )
+    assert ok is False
+    assert "link-local" in reason or "disallowed address" in reason
 
 
 def test_strict_mode_blocks_cgnat_shared_space():
@@ -247,14 +282,3 @@ def test_ordinary_ipv6_behaviour_is_unchanged():
     LL6 = _resolver({"ll.example": ["fe80::1"]})
     ok, reason = check_outbound_url("http://ll.example/", resolver=LL6)
     assert ok is False and "link-local" in reason
-
-    # Pre-existing behaviour, unchanged here: CPython reports ::1 as
-    # is_reserved, so IPv6 loopback is rejected in both modes (unlike 127.0.0.1,
-    # which the local-first default allows).
-    LOOP6 = _resolver({"loop6.example": ["::1"]})
-    for strict in (False, True):
-        ok, reason = check_outbound_url(
-            "http://loop6.example/", block_private=strict, resolver=LOOP6
-        )
-        assert ok is False, strict
-        assert "NAT64" not in reason
