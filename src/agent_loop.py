@@ -16711,16 +16711,15 @@ def _existing_workspace_files(paths: list[str], workspace: Optional[str]) -> lis
     """
     if not workspace:
         return []
-    root = Path(str(workspace)).expanduser()
+    from src.tool_execution import _resolve_tool_path_in_workspace
+
     existing: list[str] = []
     for path in paths:
-        candidate = Path(path).expanduser()
-        if not candidate.is_absolute():
-            candidate = root / candidate
         try:
-            if candidate.is_file():
+            resolved = _resolve_tool_path_in_workspace(str(workspace), str(path))
+            if os.path.isfile(resolved):
                 existing.append(path)
-        except OSError:
+        except (OSError, ValueError):
             continue
     return existing
 
