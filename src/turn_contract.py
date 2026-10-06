@@ -2304,6 +2304,9 @@ def _terminal_clause_match(text: str, core_pattern: str) -> re.Match[str] | None
     while end and text[end - 1] in ".!?":
         end -= 1
     possessive = core_pattern.replace(r"\s+", r"\s++").replace(r"\s*", r"\s*+")
+    # An optional leading " and" branch must start at a whitespace boundary;
+    # otherwise search retries the whole possessive run at every suffix.
+    possessive = possessive.replace(r"|\s++and", r"|(?<!\s)\s++and")
     return re.search(possessive + r"$", text[:end], re.I)
 
 
@@ -2403,7 +2406,7 @@ def _read_request_and_limit(message: str) -> tuple[str, int | None]:
     if safety_tail:
         text = text[:safety_tail.start()].strip()
     text = re.sub(
-        r"[.!?]\s*read[- ]only(?:\s+(?:please|pls|plz))?\s*,?\s*"
+        r"[.!?]\s*+read[- ]only(?:\s++(?:please|pls|plz))?\s*+(?:,\s*+)?"
         r"(?:do\s+not|don['’]?t|dont)\s+(?:change|edit|modify)\s+"
         r"(?:or\s+send\s+)?anything[.!?]*\s*$",
         "", text, flags=re.I,
@@ -2469,11 +2472,11 @@ def _read_request_and_limit(message: str) -> tuple[str, int | None]:
         maximum = int(raw) if raw.isdecimal() else _READ_COUNT_WORDS[raw.lower()]
         text = text[:approximate_limit.start()].strip()
     natural_limit = re.search(
-        r"(?:[,.;?]|[—–-]|\s+but\s+|\s+)\s*(?:"
-        r"(?:i\s+)?only\s+(?:need|want|show(?:\s+me)?)?\s*(?:(?:the\s+)?first\s+)?"
-        r"|just\s+(?:(?:the\s+)?first\s+)?|(?:show\s+me\s+)?like\s+|no\s+more\s+than\s+"
-        r"|cap(?:\s+(?:it|them|the\s+(?:answer|list)))?\s+at\s+"
-        r"|(?:maybe\s+)?(?:first|same)\s+)"
+        r"(?:[,.;?]|[—–-]|(?<!\s)\s++but\s++|(?<!\s)\s++)\s*+(?:"
+        r"(?:i\s++)?only\s++(?:need|want|show(?:\s++me)?)?\s*+(?:(?:the\s++)?first\s++)?"
+        r"|just\s++(?:(?:the\s++)?first\s++)?|(?:show\s++me\s++)?like\s++|no\s++more\s++than\s++"
+        r"|cap(?:\s++(?:it|them|the\s++(?:answer|list)))?\s++at\s++"
+        r"|(?:maybe\s++)?(?:first|same)\s++)"
         r"(" + _READ_COUNT + r")"
         r"(?:\s+(?:short\s+)?(?:titles?|items?|results?|entries?|names?|ones?|bits?|things?))?"
         r"(?:\s*(?:and|\+)\s+(?:their\s+)?(?:status(?:es)?|states?))?"
@@ -2511,7 +2514,7 @@ def _read_request_and_limit(message: str) -> tuple[str, int | None]:
         maximum = int(raw) if raw.isdecimal() else _READ_COUNT_WORDS[raw.lower()]
         text = text[:compact_limit.start()].strip()
     conversational_limit = re.search(
-        r"(?:[,.;?]\s*|\s+)(?:maybe\s+)?(?:keep\s+it\s+to\s+|stick\s+to\s+|(?:first|top)\s+)"
+        r"(?:[,.;?]\s*|(?<!\s)\s++)(?:maybe\s+)?(?:keep\s+it\s+to\s+|stick\s+to\s+|(?:first|top)\s+)"
         r"(" + _READ_COUNT + r")(?:\s+(?:short\s+)?(?:titles?|items?|results?|entries?|names?|ones?))?"
         r"[.!?]*\s*$",
         text, re.I,

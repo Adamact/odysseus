@@ -65,15 +65,15 @@ The source tree reads **117** `ODYSSEUS_*` variables: 81 an operator may want to
 | `ODYSSEUS_LOCAL_MODEL_GATE` | `'true'` | `src/llm_core.py:95` | On by default. Set 0, false, no or off to drop the gate that checks a local endpoint before routing a request to it. |
 | `ODYSSEUS_MISTRAL_REASONING_EFFORT` | `'high'` | `src/llm_core.py:1723` | Reasoning effort sent to Mistral thinking-capable models. The API accepts high, medium, low and none. |
 | `ODYSSEUS_MLX_IMAGE_VLM_MODEL` | *unset* | `scripts/mlx_image_server.py:299` | Vision-language model id for the MLX image server script. Required unless `--vlm-model` is passed on the command line. |
-| `ODYSSEUS_QWEN_ROUTE_THINKING` | `'auto'` | `src/agent_loop.py:180` | Thinking policy for the Qwen routing step. An unrecognized value falls back to `auto`. |
+| `ODYSSEUS_QWEN_ROUTE_THINKING` | `'auto'` | `src/agent_loop.py:182` | Thinking policy for the Qwen routing step. An unrecognized value falls back to `auto`. |
 
 ### Agent loop and tool execution
 
 | Variable | Default | Read in | What it does |
 |---|---|---|---|
 | `ODYSSEUS_DISABLE_MCP` | `''` | `src/builtin_mcp.py:89` | Truthy disables MCP entirely, as an escape hatch for compatibility problems with a server. |
-| `ODYSSEUS_MAX_VISUAL_EVIDENCE_FRAMES` | `'3'` | `src/agent_loop.py:15867` | How many video frames one tool result may contribute. Clamped to 1-8. |
-| `ODYSSEUS_MAX_VISUAL_EVIDENCE_IMAGES` | `'1'` | `src/agent_loop.py:15835` | How many images one tool result may contribute to the model turn. Clamped to 1-8. |
+| `ODYSSEUS_MAX_VISUAL_EVIDENCE_FRAMES` | `'3'` | `src/agent_loop.py:15986` | How many video frames one tool result may contribute. Clamped to 1-8. |
+| `ODYSSEUS_MAX_VISUAL_EVIDENCE_IMAGES` | `'1'` | `src/agent_loop.py:15954` | How many images one tool result may contribute to the model turn. Clamped to 1-8. |
 | `ODYSSEUS_MCP_ALLOWED_COMMANDS` | `''` | `src/agent_tools/admin_tools.py:140` | Security-relevant. Comma-separated allowlist of MCP launcher basenames the agent may start. Empty by default, and the deny list still wins. |
 | `ODYSSEUS_PYTHON_TOOL_SITE_PACKAGES` | `''` | `src/agent_runtime/process_resources.py:59` (+2 more) | Security-relevant. Absolute package roots, separated by the platform path separator, exposed to the sandboxed Python tool. Empty exposes none. |
 | `ODYSSEUS_SCRIPT_HOST` | `'localhost'` | `src/builtin_actions.py:925` | Default host for the run-script action. `localhost`, `127.0.0.1`, `local` and empty run locally; any other value runs over SSH. |
@@ -197,8 +197,8 @@ Listed for completeness. Setting one of these on a real install is either a no-o
 
 | Variable | Default | Read in | What it does |
 |---|---|---|---|
-| `ODYSSEUS_CAPTURE_MODEL_REQUESTS` | `''` | `src/agent_loop.py:4036` | Truthy writes model-request snapshots for local debugging. The marker file `/tmp/odysseus_capture_model_requests` enables the same thing. |
-| `ODYSSEUS_EXPOSE_RAW_BROWSER_MCP` | `''` | `src/agent_loop.py:4241` | Truthy stops hiding the raw Playwright MCP tools from agent prompts when the private-browser tool is available. |
+| `ODYSSEUS_CAPTURE_MODEL_REQUESTS` | `''` | `src/agent_loop.py:4131` | Truthy writes model-request snapshots for local debugging. The marker file `/tmp/odysseus_capture_model_requests` enables the same thing. |
+| `ODYSSEUS_EXPOSE_RAW_BROWSER_MCP` | `''` | `src/agent_loop.py:4336` | Truthy stops hiding the raw Playwright MCP tools from agent prompts when the private-browser tool is available. |
 | `ODYSSEUS_TOOL_CONTRACT_ROOT` | `str(Path(__file__).resolve().parents[1] / 'scripts')` | `src/clean_agent_preview.py:2324` (+1 more) | Directory holding the tool-contract scripts the clean-agent preview loads. The default resolves to the bundled scripts directory relative to the installed/source tree. |
 
 ### Email
@@ -229,7 +229,7 @@ Listed for completeness. Setting one of these on a real install is either a no-o
 | `ODYSSEUS_QA_TEACHER_TIMEOUT` | `'120'` | `scripts/odysseus_conversation_qa.py:370` | Timeout in seconds for that call. Clamped to 15-120. |
 | `ODYSSEUS_RUNTIME_REVISION` | `''` | `routes/chat_helpers.py:200` (+1 more) | Revision string stamped into each captured SFT trace record, so a trace can be tied back to the build that produced it. |
 | `ODYSSEUS_SFT_DIR` | *unset* | `scripts/run_odysseus_search_teacher_pipeline.py:19` (+1 more) | Base directory containing SFT training datasets for the search teacher pipeline. |
-| `ODYSSEUS_SFT_DISABLE_WORKSPACE_TOOLS` | `'1'` | `src/agent_loop.py:7753` | On by default. Keeps synthetic personal-assistant fixtures out of workspace mode; set 0, false, no or off to let them through. |
+| `ODYSSEUS_SFT_DISABLE_WORKSPACE_TOOLS` | `'1'` | `src/agent_loop.py:7844` | On by default. Keeps synthetic personal-assistant fixtures out of workspace mode; set 0, false, no or off to let them through. |
 | `ODYSSEUS_SFT_FORCE_UTC_TIMEZONE` | `'0'` | `routes/chat_routes.py:2145` | Truthy forces `sft_` accounts to UTC for deterministic batch generation. Interactive accounts still follow the browser timezone. |
 | `ODYSSEUS_SFT_TRACE_CAPTURE` | `'1'` | `routes/chat_helpers.py:163` (+1 more) | On by default, but only for owners whose name starts with `sft_`. Set 0, false, no or off to stop writing training traces. |
 | `ODYSSEUS_SFT_TRACE_DIR` | *unset* | `routes/chat_helpers.py:197` (+2 more) | Directory the SFT trace JSONL files are written to. Defaults to `sft_traces` under the data directory. |

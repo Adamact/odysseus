@@ -86,6 +86,8 @@ from src.tool_parsing import iter_email_addresses, strip_angle_tags
 from src.text_scanning import (
     contains_detailed_sequence_request,
     has_prefixed_token_match,
+    space_delimited_fields,
+    terminal_dot_field,
     first_tag_content,
     iter_angle_contents,
     iter_markdown_links,
@@ -2155,7 +2157,7 @@ def _looks_like_agent_reasoning_preamble(text: str) -> bool:
         r"(?:let me|i(?:'ll| will)(?:\s+need\s+to)?|i\s+can(?:\s+now)?|i(?:'m| am)\s+(?:preparing|planning)\s+to)\s+"
         r"(?:(?:carefully|methodically|systematically|closely|further)\s+){0,2}"
         r"(?:continue|continuing|analy[sz]e|scan|check|verify|inspect|confirm|look up|fetch|open|list|search|refine|request|review|track|read|watch|(?:re-?)?examine|provide|give|state|report|answer|respond|summarize|conclude)\b"
-        r"[^.!?]*[.!?]?\s*$",
+        r"[^.!?]*+[.!?]?\s*$",
         trailing_segment,
     ):
         return True
@@ -2475,6 +2477,91 @@ def _parse_qwen_explicit_note_delete(text: str) -> Optional[str]:
     return match.group(1).strip().strip("\"'`").rstrip(".") if match else None
 
 
+def _space_field_leaders(patterns, flags=re.IGNORECASE):
+    return [(re.compile(pattern, flags), minimum) for pattern, minimum in patterns]
+
+
+def _payload_fields(value, grammar, flags=re.IGNORECASE):
+    """Scan the finite command payload grammars without whitespace partitions."""
+    simple = [(r"\s++", 1)]
+    the = [(r"\s++the\s++", 1), *simple]
+    if grammar == "note_update":
+        leaders = simple
+        separator = r"(?<!\s)(\s++)so\s++its\s++content\s++is(?=\s)"
+        quoted = re.compile(r"\s++['\"]([^'\"]+)['\"]", flags)
+        def tail(match):
+            result = quoted.match(value, match.end())
+            return result.groups() if result else None
+    elif grammar == "email_mutation":
+        leaders = [
+            (r"\s++(?:all|every|the)\s*+my\s++", 1),
+            (r"\s++(?:all|every|the)\s*+", 0),
+            (r"\s++my\s++", 1), *simple,
+        ]
+        separator = r"(?<!\s)(\s++)(?:emails?|mail|messages?)\b"
+        tail = lambda match: ()
+    elif grammar in ("checklist", "replace", "change"):
+        leaders = simple
+        word = "to" if grammar == "change" else "with"
+        separator = rf"(?<!\s)(\s++){word}"
+        if grammar == "checklist":
+            last_newline = value.rfind("\n", 0, len(value) - int(value.endswith("\n")))
+            tail = lambda match: terminal_dot_field(value, match.end(), last_newline=last_newline)
+        else:
+            markers = list(re.finditer(r"(?<!\s)(\s++)(?:in|and|then|before)\b|[.;]|$", value, flags))
+            marker_index = 0
+            previous_start = -1
+            newline = value.find("\n")
+            def tail(match):
+                nonlocal marker_index, previous_start, newline
+                start = match.end()
+                if start >= len(value) or not value[start].isspace():
+                    return None
+                cursor = start
+                while cursor < len(value) and value[cursor].isspace():
+                    cursor += 1
+                if start < previous_start:
+                    marker_index = 0
+                    newline = value.find("\n")
+                previous_start = start
+                while marker_index < len(markers) and markers[marker_index].start() <= cursor:
+                    marker_index += 1
+                if 0 <= newline < cursor:
+                    newline = value.find("\n", cursor)
+                if marker_index < len(markers):
+                    end = markers[marker_index].start()
+                    if newline < 0 or newline >= end:
+                        return (value[cursor:end],)
+                # Only after the greedy whitespace-led field fails may its
+                # leading run give a single dot character back to the value.
+                prior = marker_index - 1
+                if prior >= 0:
+                    marker = markers[prior]
+                    if marker.start() <= cursor and (
+                        marker.start() == cursor or marker.end(1) == cursor
+                    ):
+                        candidate = cursor - (2 if marker.group(1) else 1)
+                        while candidate > start and value[candidate] == "\n":
+                            candidate -= 1
+                        if candidate > start:
+                            return (value[candidate:candidate + 1],)
+                return None
+    elif grammar == "tag":
+        leaders = the
+        separator = r"(?<!\s)(\s++)tag\s++to(?=\s)"
+        tag = re.compile(r"\s++#?([a-z][a-z0-9_-]{1,30})\b", flags)
+        def tail(match):
+            result = tag.match(value, match.end())
+            return result.groups() if result else None
+    elif grammar == "remaining_checklist":
+        leaders = the
+        separator = r"(?<!\s)(\s++)checklist\b"
+        tail = lambda match: ()
+    else:
+        raise ValueError(f"Unknown payload grammar: {grammar}")
+    return space_delimited_fields(value, _space_field_leaders(leaders, flags), re.compile(separator, flags), tail)
+
+
 def _captures_after_first_prefix(
     value: str,
     prefix_pattern: str,
@@ -2482,12 +2569,20 @@ def _captures_after_first_prefix(
     *,
     flags: int = re.IGNORECASE,
 ) -> tuple[str | None, ...] | None:
-    """Match a suffix once after the first prefix that can own all later text."""
+    """Match the staged production payload grammars with forward scans."""
     prefix = re.search(prefix_pattern, value, flags)
     if prefix is None:
         return None
-    remainder = re.match(remainder_pattern, value[prefix.end():], flags)
-    return remainder.groups() if remainder is not None else None
+    grammars = {
+        r"\s+(.+?)\s+so\s+its\s+content\s+is\s+['\"]([^'\"]+)['\"]": "note_update",
+        r"\s+(?:all|every|the)?\s*(?:my\s+)?(.+?)\s+(?:emails?|mail|messages?)\b": "email_mutation",
+        r"\s+(.+?)\s+with\s+(.+?)$": "checklist",
+        r"\s+(?:the\s+)?(.+?)\s+tag\s+to\s+#?([a-z][a-z0-9_-]{1,30})\b": "tag",
+        r"\s+(.+?)\s+to\s+(.+?)(?=\s+(?:in|and|then|before)\b|[.;]|$)": "change",
+        r"\s+(.+?)\s+with\s+(.+?)(?=\s+(?:in|and|then|before)\b|[.;]|$)": "replace",
+        r"\s+(?:all)?\s*(.+?)\s+emails?\b": "email_mutation",
+    }
+    return _payload_fields(value[prefix.end():], grammars[remainder_pattern], flags)
 
 
 def _parse_qwen_explicit_note_update(text: str) -> Optional[tuple[str, str]]:
@@ -2605,14 +2700,14 @@ def _pipeline_request_parts(value: str) -> tuple[str, str, str, str] | None:
     )
     if prefix is None:
         return None
-    remainder = re.match(
-        r"\s+(.+?),\s*then\s+([^\s,]+)\s+to\s+(.+?)(?:[.!?]\s*)?$",
-        value[prefix.end():],
-        re.IGNORECASE,
-    )
-    if remainder is None:
-        return None
-    return prefix.group(1), remainder.group(1), remainder.group(2), remainder.group(3)
+    rest = value[prefix.end():]
+    last_newline = rest.rfind("\n", 0, len(rest) - int(rest.endswith("\n")))
+    separator = re.compile(r"(),\s*+then\s++([^\s,]+)\s++to(?=\s)", re.I)
+    def tail(match):
+        final = terminal_dot_field(rest, match.end(), punctuation=True, last_newline=last_newline)
+        return (match.group(2), *final) if final is not None else None
+    fields = space_delimited_fields(rest, _space_field_leaders([(r"\s++", 1)]), separator, tail)
+    return (prefix.group(1), *fields) if fields is not None else None
 
 
 def _parse_explicit_pipeline_request(text: str) -> Optional[tuple[str, str]]:
@@ -3018,7 +3113,7 @@ def _parse_qwen_explicit_session_find(text: str) -> Optional[tuple[str, str]]:
     ):
         return None
     if re.search(
-        r"\b(?:list|show|view)\b.{0,30}\b(?:my\s+)?(?:recent|latest|all)?\s*(?:chats?|sessions?|conversations?)\b"
+        r"\b(?:list|show|view)\b.{0,30}\b(?:my\s++)?(?:recent|latest|all)?\s*+(?:chats?|sessions?|conversations?)\b"
         r"|\b(?:recent|latest|all)\s+(?:chats?|sessions?|conversations?)\b",
         value,
         re.IGNORECASE,
@@ -4519,12 +4614,8 @@ def _remaining_checklist_name(value: str) -> str | None:
     )
     if location is None:
         return None
-    name = re.match(
-        r"\s+(?:the\s+)?(.+?)\s+checklist\b",
-        value[location.end():line_end],
-        re.IGNORECASE,
-    )
-    return name.group(1) if name is not None else None
+    fields = _payload_fields(value[location.end():line_end], "remaining_checklist")
+    return fields[0] if fields is not None else None
 
 
 def _parse_simple_notes_tool_request(text: str) -> Optional[tuple[str, str]]:
@@ -4600,7 +4691,7 @@ def _parse_simple_notes_tool_request(text: str) -> Optional[tuple[str, str]]:
             return "manage_notes", json.dumps({"action": "search", "query": query})
 
     note_saying_match = re.search(
-        r"\b(?:create|add|make|save)\s+(?:a\s+)?note\s+(?:saying|that says|with)\s+(.+?)\s*$",
+        r"\b(?:create|add|make|save)\s++(?:a\s++)?note\s++(?:saying|that says|with)\s++(.+?)$",
         value,
         re.IGNORECASE,
     )
@@ -12924,6 +13015,38 @@ def _contextual_summary_fragment(text: str) -> str:
     return text[prefix.end():newline] if newline >= 0 else ""
 
 
+def _contextual_email_subject(text):
+    """Read the legacy Subject heading without partitioning newline runs."""
+    for keyword in re.finditer(r"\bsubject", text, re.I):
+        # Optional formatting is tried in the regex's original greedy order.
+        # There are only twelve prefix alternatives, each with disjoint spaces.
+        for bold in (True, False):
+            for colon in (True, False):
+                for quote in ('"', '*"', ''):
+                    pattern = r"\s*+" + (r"\*\*\s*+" if bold else "")
+                    pattern += (r":\s*+" if colon else "") + re.escape(quote)
+                    prefix = re.compile(pattern).match(text, keyword.end())
+                    if prefix is None:
+                        continue
+                    start = prefix.end()
+                    if start < len(text) and text[start] != "\n":
+                        # The first capture character is mandatory, even when
+                        # it is itself a quote. Only later quotes terminate it.
+                        newline = text.find("\n", start + 1)
+                        closer = text.find('"', start + 1)
+                        ends = [end for end in (newline, closer) if end >= 0]
+                        end = min(ends) if ends else len(text)
+                        return text[start:end]
+                    # Greedy whitespace can give back its last non-LF dot
+                    # character. This also preserves whitespace-only subjects.
+                    candidate = start - 1
+                    while candidate >= keyword.end() and text[candidate].isspace():
+                        if text[candidate] != "\n":
+                            return text[candidate:candidate + 1]
+                        candidate -= 1
+    return None
+
+
 def _contextual_reply_body_from_recent_email_context(messages: List[Dict]) -> str:
     """Build a bounded draft body from the latest assistant email summary.
 
@@ -12947,13 +13070,9 @@ def _contextual_reply_body_from_recent_email_context(messages: List[Dict]) -> st
         if link_match:
             subject = _clean_fragment(link_match.group(1))
         if not subject:
-            subject_match = re.search(
-                r"\bsubject\s*(?:\*\*)?\s*:?\s*(?:\"|\*\")?(.+?)(?:\"|\n|$)",
-                text,
-                re.IGNORECASE,
-            )
-            if subject_match:
-                subject = _clean_fragment(subject_match.group(1))
+            subject_fragment = _contextual_email_subject(text)
+            if subject_fragment is not None:
+                subject = _clean_fragment(subject_fragment)
         summary_fragment = _contextual_summary_fragment(text)
         if summary_fragment:
             summary = _clean_fragment(summary_fragment)
@@ -13395,7 +13514,7 @@ def _normalize_ody_qwen_text_artifacts(text: str, *, strip_edges: bool = True) -
 
 
 _ODY_QWEN_LEAKED_TOOL_TEXT_RE = re.compile(
-    r"(<\s*/?\s*(?:function|parameter|tool_call)\b"
+    r"(<\s*+(?:/\s*+)?(?:function|parameter|tool_call)\b"
     r"|\bmanage_(?:notes|calendar|memory|documents|contact)\s*\("
     r"|\"function\"\s*:\s*\"(?:manage_|mcp__)"
     r"|mcp__email__"

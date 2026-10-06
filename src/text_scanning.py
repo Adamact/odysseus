@@ -208,3 +208,79 @@ def first_tag_content(text: str, tag: str, *, allow_attributes: bool = False) ->
             return None
         return text[body_start:closer.start()]
     return None
+
+
+def space_delimited_fields(text, leaders, separator_re, tail):
+    """Match a lazy dot field after a finite set of greedy leading grammars.
+
+    Separators consume a maximal whitespace run (group 1) and a fixed grammar.
+    Test each run once, rather than repartitioning it between a leading space
+    quantifier, a dot capture, and the separator. ``tail`` must also scan
+    monotonically or use only a fixed/bounded grammar.
+    """
+    separators = list(separator_re.finditer(text))
+    for leader_re, minimum_space in leaders:
+        leader = leader_re.match(text)
+        if leader is None:
+            continue
+        start = leader.end()
+        newline = text.find("\n", start)
+        line_end = len(text) if newline < 0 else newline
+        for separator in separators:
+            end = separator.start(1)
+            if start < end <= line_end:
+                remainder = tail(separator)
+                if remainder is not None:
+                    return (text[start:end], *remainder)
+        # A greedy leading run may give back a dot character when the field
+        # consists entirely of whitespace. Only the last non-LF character
+        # that leaves the mandatory separator can win; do not retry suffixes.
+        run_start = start
+        while run_start and text[run_start - 1].isspace():
+            run_start -= 1
+        earliest = run_start + minimum_space
+        for separator in separators:
+            if separator.end(1) != start:
+                continue
+            end = start - (1 if separator.group(1) else 0)
+            candidate = end - 1
+            while candidate >= earliest and text[candidate] == "\n":
+                candidate -= 1
+            if candidate >= earliest:
+                remainder = tail(separator)
+                if remainder is not None:
+                    return (text[candidate:candidate + 1], *remainder)
+    return None
+
+
+def terminal_dot_field(text, start, *, punctuation=False, last_newline=None):
+    """Read a whitespace-led dot field ending at Python's dollar boundary."""
+    if start >= len(text) or not text[start].isspace():
+        return None
+    cursor = start
+    while cursor < len(text) and text[cursor].isspace():
+        cursor += 1
+    end = len(text) - (1 if text.endswith("\n") else 0)
+    if cursor >= end:
+        cursor = end - 1
+        while cursor > start and text[cursor] == "\n":
+            cursor -= 1
+        if cursor <= start or text[cursor] == "\n":
+            return None
+    # Newlines before the field can be leading whitespace; newlines inside
+    # the dot capture cannot be consumed. The last LF is a constant-time veto.
+    if last_newline is None:
+        last_newline = text.rfind("\n", 0, end)
+    if last_newline >= cursor:
+        return None
+    capture_end = end
+    if punctuation:
+        while capture_end > cursor and text[capture_end - 1].isspace():
+            capture_end -= 1
+        if capture_end > cursor and text[capture_end - 1] in ".!?":
+            capture_end -= 1
+        else:
+            capture_end = end
+        if capture_end == cursor:
+            capture_end = end
+    return (text[cursor:capture_end],)
