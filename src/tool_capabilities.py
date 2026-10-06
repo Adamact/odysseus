@@ -678,9 +678,13 @@ POST_EXTERNAL_BLOCKED_EFFECTS = frozenset(
 )
 
 
+# On by default: until agent processes run without network and side-effecting
+# non-process tools have their own exact-approval boundary, this gate is the
+# only check between injected external content and those tools. Set it to a
+# falsy value to opt out.
 TOOL_APPROVAL_GATE_ENABLED = (
-    str(os.getenv("ODYSSEUS_TOOL_APPROVAL_GATE", "0")).strip().lower()
-    in {"1", "true", "yes", "on"}
+    str(os.getenv("ODYSSEUS_TOOL_APPROVAL_GATE", "1")).strip().lower()
+    not in {"0", "false", "no", "off"}
 )
 
 

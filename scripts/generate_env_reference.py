@@ -488,8 +488,9 @@ VARIABLE_NOTES: dict[str, tuple[str, str, str]] = {
     # -- Agent loop and tool execution -------------------------------------
     "ODYSSEUS_TOOL_APPROVAL_GATE": (
         "Agent loop and tool execution", USER,
-        "Security-relevant. Truthy makes tool calls pass through the approval gate. "
-        "Off by default.",
+        "Security-relevant. On by default: after external content enters a run, "
+        "tools that execute code, mutate state or cause external side effects need "
+        "a separate approval. Set to 0 to opt out.",
     ),
     "ODYSSEUS_MCP_ALLOWED_COMMANDS": (
         "Agent loop and tool execution", USER,

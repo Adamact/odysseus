@@ -1109,6 +1109,9 @@ def test_tui_local_workspace_turn_hides_backend_file_tools(monkeypatch):
 
 
 def test_native_host_shell_call_runs_through_bridge_and_threads_result(monkeypatch):
+    # Routing test written for the opt-out posture; the gate default is pinned in
+    # tests/test_tool_approval_gate_default.py.
+    monkeypatch.setattr("src.tool_capabilities.TOOL_APPROVAL_GATE_ENABLED", False)
     monkeypatch.setattr(al, "get_setting", lambda key, default=None: default, raising=False)
     monkeypatch.setattr(al, "get_mcp_manager", lambda: None, raising=False)
     monkeypatch.setattr(al, "estimate_tokens", lambda *args, **kwargs: 10, raising=False)

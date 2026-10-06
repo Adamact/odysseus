@@ -1613,6 +1613,9 @@ def test_agent_loop_synthesizes_web_answer_after_tool_preamble(monkeypatch):
 
 
 def test_open_calendar_request_uses_ui_control_panel_not_event_dump(monkeypatch):
+    # Routing test written for the opt-out posture; the gate default is pinned in
+    # tests/test_tool_approval_gate_default.py.
+    monkeypatch.setattr("src.tool_capabilities.TOOL_APPROVAL_GATE_ENABLED", False)
     _patch_loop_basics(monkeypatch)
     src = Path(__file__).resolve().parent.parent.joinpath("src", "agent_loop.py").read_text(encoding="utf-8")
     assert 'if isinstance(_ev, dict) and _ev.get("context_only"):' in src
@@ -1679,6 +1682,9 @@ def test_open_calendar_request_uses_ui_control_panel_not_event_dump(monkeypatch)
 
 
 def test_calendar_create_response_includes_persistent_event_link(monkeypatch):
+    # Routing test written for the opt-out posture; the gate default is pinned in
+    # tests/test_tool_approval_gate_default.py.
+    monkeypatch.setattr("src.tool_capabilities.TOOL_APPROVAL_GATE_ENABLED", False)
     _patch_loop_basics(monkeypatch)
     from src.user_time import clear_user_time_context, set_user_timezone
 
@@ -3505,6 +3511,9 @@ def test_notes_about_calendar_context_still_route_to_notes():
 
 
 def test_notes_panel_open_plus_create_keeps_both_tool_calls(monkeypatch):
+    # Routing test written for the opt-out posture; the gate default is pinned in
+    # tests/test_tool_approval_gate_default.py.
+    monkeypatch.setattr("src.tool_capabilities.TOOL_APPROVAL_GATE_ENABLED", False)
     _patch_loop_basics(monkeypatch)
     seen_blocks = []
 

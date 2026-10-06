@@ -60,13 +60,11 @@ External content that reaches the LLM is treated as untrusted via `src/prompt_se
 
 **Untrusted surfaces that must go through this wrapper:** web search results, fetched URLs, emails (read), saved memories, skill text, notes, and any tool output sourced from outside the server. Injecting untrusted content directly into the system role is a security bug.
 
-### Post-external-context tool approval gate — off by default
+### Post-external-context tool approval gate — on by default
 
 `src/tool_capabilities.py` carries a second layer: once untrusted content has entered a run, `ToolRunSecurityContext.decision_for()` blocks tools that execute code, mutate state, or cause external side effects until the user authorises the action separately.
 
-**It is disabled unless `ODYSSEUS_TOOL_APPROVAL_GATE` is set** (`1`/`true`/`yes`/`on`). The default is off because the gate is conservative enough to interrupt ordinary agent work. That is a deliberate usability trade, and it means a default deployment relies on the wrapper above — not on the gate — to contain injected instructions.
-
-Operators who run the agent against untrusted web or email content with side-effecting tools enabled should turn it on. With the gate off, a successful injection can reach `bash`, `host_shell`, `send_email` and `delete_email` without a separate confirmation; with it on, each of those is refused until approved.
+It is on unless `ODYSSEUS_TOOL_APPROVAL_GATE` is set to a falsy value (`0`/`false`/`no`/`off`). Request authority narrows which tool families a turn may use, but within an admitted family it does not bind the exact action: a request to read email admits `send_email` and `delete_email`, and agent processes inherit the host network. Until those are covered by their own boundaries, this gate is what stops an injected instruction from reaching them. Turning it off lets a successful injection reach `bash`, `host_shell`, `send_email` and `delete_email` without a separate confirmation.
 
 Two exemptions apply even when the gate is on, both deliberate:
 
@@ -85,7 +83,7 @@ Two exemptions apply even when the gate is on, both deliberate:
 
 These are open, acknowledged, and contributor help is welcome:
 
-1. **No shell/filesystem sandbox.** The agent `bash` and `read_file`/`write_file` tools run as the app process user with no network egress filtering or filesystem confinement. A successful prompt-injection reaching a shell-enabled admin session can make outbound requests to internal services. See #1058 for the sandbox proposal. The tool approval gate above is the compensating control, and it is off by default — so on a default deployment this gap is unmitigated beyond the untrusted-context wrapper.
+1. **No shell/filesystem sandbox.** The agent `bash` and `read_file`/`write_file` tools run as the app process user with no network egress filtering or filesystem confinement. A successful prompt-injection reaching a shell-enabled admin session can make outbound requests to internal services. See #1058 for the sandbox proposal. The tool approval gate above is the compensating control and is on by default; turning it off leaves this gap unmitigated beyond the untrusted-context wrapper.
 
 2. **SSRF via `/api/v1/chat` `base_url` parameter.** A chat-scoped API token can supply an arbitrary `base_url`; the server forwards the LLM request to that host without validating the scheme or address. PR #1039 fixes this.
 
