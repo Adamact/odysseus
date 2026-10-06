@@ -1969,21 +1969,20 @@ class TaskScheduler:
             messages.append(datetime_context_msg)
         messages.append({"role": "user", "content": user_content})
 
-        # Resolve headers from the endpoint's API key
+        # Recover the registered runtime URL and credentials for this chat route.
         headers = {}
         try:
-            from core.database import SessionLocal, ModelEndpoint
-            from src.endpoint_resolver import normalize_base, build_headers, same_endpoint_base
-            from src.auth_helpers import owner_filter
+            from core.database import SessionLocal
+            from src.endpoint_resolver import (
+                build_chat_url, build_headers, resolve_endpoint_runtime,
+                resolve_owner_registered_endpoint,
+            )
             db2 = SessionLocal()
             try:
-                ep_q = db2.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
-                ep_q = owner_filter(ep_q, ModelEndpoint, task.owner or None)
-                eps = ep_q.all()
-                for ep in eps:
-                    if same_endpoint_base(endpoint_url, ep.base_url):
-                        headers = build_headers(ep.api_key, normalize_base(ep.base_url))
-                        break
+                ep = resolve_owner_registered_endpoint(db2, endpoint_url, task.owner or None)
+                base, api_key = resolve_endpoint_runtime(ep, owner=task.owner or None)
+                endpoint_url = build_chat_url(base)
+                headers = build_headers(api_key, base)
             finally:
                 db2.close()
         except Exception:
@@ -2170,26 +2169,23 @@ class TaskScheduler:
             endpoint_url, model = self._resolve_defaults(db, task.owner)
         if not endpoint_url or not model:
             raise RuntimeError("No model/endpoint configured for research")
-        endpoint_url = _normalize_chat_endpoint(endpoint_url)
         # Record the resolved model for the run record (see _execute_task_locked).
         self._last_run_model = model
 
-        # Resolve headers
+        # Authorize the selected URL before normalization can collapse service paths.
         try:
-            from core.database import ModelEndpoint
-            from src.endpoint_resolver import normalize_base, build_headers, same_endpoint_base
-            from src.auth_helpers import owner_filter
-            db2 = db
+            from src.endpoint_resolver import (
+                build_chat_url, build_headers, resolve_endpoint_runtime,
+                resolve_owner_registered_endpoint,
+            )
             if not headers_from_resolver:
-                ep_q = db2.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
-                ep_q = owner_filter(ep_q, ModelEndpoint, task.owner or None)
-                eps = ep_q.all()
-                for ep in eps:
-                    if same_endpoint_base(endpoint_url, ep.base_url):
-                        headers = build_headers(ep.api_key, normalize_base(ep.base_url))
-                        break
+                ep = resolve_owner_registered_endpoint(db, endpoint_url, task.owner or None)
+                base, api_key = resolve_endpoint_runtime(ep, owner=task.owner or None)
+                endpoint_url = build_chat_url(base)
+                headers = build_headers(api_key, base)
         except Exception:
             pass
+        endpoint_url = _normalize_chat_endpoint(endpoint_url)
 
         max_tokens = int(get_setting("research_max_tokens", 8192))
         extraction_timeout = int(get_setting("research_extraction_timeout_seconds", 90) or 90)
