@@ -36,6 +36,7 @@ from pathlib import Path
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
+from starlette.concurrency import run_in_threadpool
 from fastapi import APIRouter, Query, UploadFile, File, BackgroundTasks, HTTPException, Depends, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from src.constants import DATA_DIR
@@ -60,6 +61,7 @@ from .email_helpers import (
     _fetch_sender_thread_context, _pre_retrieve_context,
     _EMAIL_REPLY_SYS_PROMPT_BASE, _POOL_HOOKS,
     _friendly_email_auth_error, _email_summary_failure_log_detail,
+    _mail_connection_test_error, _mail_private_blocked, _PolicySMTP, _PolicySMTP_SSL,
     _generate_email_summary, EMAIL_SUMMARY_ERROR_CODE, EMAIL_SUMMARY_ERROR_MESSAGE,
     SendEmailRequest, ExtractStyleRequest,
     ATTACHMENTS_DIR, COMPOSE_UPLOADS_DIR, SCHEDULED_DB,
@@ -1523,6 +1525,44 @@ def _envelope_recipients(*fields: str) -> list:
     return out
 
 
+_MD_LINK_URL_RE = re.compile(r"\((https?://)[^)\s]*")
+
+
+def _md_links_to_html(s: str) -> str:
+    """Linear ``re.sub(r"\\[([^\\]]+)\\]\\((https?://[^)\\s]+)\\)", '<a href="\\2">\\1</a>', s)``.
+
+    Every `[` before the next `]` shares that `]`, so only the first can match;
+    and when a URL runs into whitespace/end without `)`, every later `[` whose
+    `]` also lies before that stop fails the same way. Skipping those spans
+    keeps a `[[[` or `[a](http://x[a](http://x` flood O(n) instead of the
+    regex's O(n^2).
+    """
+    out: list[str] = []
+    emitted = scan = 0
+    while True:
+        open_at = s.find("[", scan)
+        if open_at < 0:
+            break
+        close_at = s.find("]", open_at + 1)
+        if close_at < 0:
+            break
+        scan = close_at + 1
+        if close_at == open_at + 1:
+            continue
+        url = _MD_LINK_URL_RE.match(s, close_at + 1)
+        if url is None:
+            continue
+        end = url.end()
+        if end < len(s) and s[end] == ")" and end > url.end(1):
+            out.append(s[emitted:open_at])
+            out.append(f'<a href="{s[url.start(1):end]}">{s[open_at + 1:close_at]}</a>')
+            emitted = scan = end + 1
+        elif end > url.end(1):
+            scan = max(scan, s.rfind("]", scan, end) + 1)
+    out.append(s[emitted:])
+    return "".join(out)
+
+
 def _md_to_email_html(text: str) -> str:
     """Render the compose markdown body to a SAFE HTML fragment for the email's
     text/html part. Everything is HTML-escaped FIRST (so a pasted <script> /
@@ -1538,7 +1578,7 @@ def _md_to_email_html(text: str) -> str:
         s = re.sub(r"~~([^~]+)~~", r"<del>\1</del>", s)
         s = re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
         # links: text + http(s) url only (escape() already neutralised quotes)
-        s = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", r'<a href="\2">\1</a>', s)
+        s = _md_links_to_html(s)
         return s
 
     parts: list[str] = []
@@ -3900,7 +3940,7 @@ def setup_email_routes():
             _row, att = fixture_att
             filename = str(att.get("filename") or f"attachment-{index}.txt")
             safe_name = re.sub(r"[^\w\s\-.]", "_", filename).strip() or f"attachment-{index}.txt"
-            target_dir = attachment_extract_dir(folder, uid)
+            target_dir = attachment_extract_dir(folder, uid, owner=owner, account_id=account_id)
             target_dir.mkdir(parents=True, exist_ok=True)
             filepath = target_dir / safe_name
             filepath.write_bytes(str(att.get("content") or "").encode("utf-8"))
@@ -3919,7 +3959,7 @@ def setup_email_routes():
             msg = email_mod.message_from_bytes(raw)
 
             # Extract to a per-email folder
-            target_dir = attachment_extract_dir(folder, uid)
+            target_dir = attachment_extract_dir(folder, uid, owner=owner, account_id=account_id)
             filepath = _extract_attachment_to_disk(msg, index, target_dir)
             if not filepath:
                 return {"error": f"Attachment index {index} not found"}
@@ -3951,7 +3991,7 @@ def setup_email_routes():
             if not attachments:
                 raise HTTPException(status_code=404, detail="No downloadable attachments")
 
-            target_dir = attachment_extract_dir(folder, uid)
+            target_dir = attachment_extract_dir(folder, uid, owner=owner, account_id=account_id)
             zip_buf = io.BytesIO()
             used_names: dict[str, int] = {}
             with zipfile.ZipFile(zip_buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -4091,7 +4131,7 @@ def setup_email_routes():
                                     att for att in _list_attachments_from_msg(msg)
                                     if not _is_likely_signature_image_attachment(att)
                                 ]
-                                target_dir = attachment_extract_dir(folder, uid)
+                                target_dir = attachment_extract_dir(folder, uid, owner=owner, account_id=acct)
                                 for att in attachments:
                                     idx = att.get("index")
                                     if idx is None:
@@ -4156,7 +4196,7 @@ def setup_email_routes():
                     continue
                 if not ct.lower().startswith("image/"):
                     raise HTTPException(status_code=415, detail="Content-ID is not an image")
-                target_dir = attachment_extract_dir(folder, uid)
+                target_dir = attachment_extract_dir(folder, uid, owner=owner, account_id=account_id)
                 filepath = _extract_attachment_to_disk(msg, idx, target_dir)
                 if not filepath:
                     raise HTTPException(status_code=404, detail="Inline image not found")
@@ -4194,7 +4234,7 @@ def setup_email_routes():
             raw = msg_data[0][1]
             msg = email_mod.message_from_bytes(raw)
 
-            target_dir = attachment_extract_dir(folder, uid)
+            target_dir = attachment_extract_dir(folder, uid, owner=owner, account_id=account_id)
             filepath = _extract_attachment_to_disk(msg, index, target_dir)
             if not filepath:
                 return {"error": f"Attachment index {index} not found"}
@@ -4522,7 +4562,9 @@ def setup_email_routes():
                 try:
                     content = filepath.read_text(encoding="utf-8", errors="replace")
                 except Exception as e:
-                    return {"error": f"Failed to read text file: {e}", "filename": base}
+                    # OSError text includes the server-side extraction path.
+                    logger.warning("Failed to read text attachment %s: %s", base, e)
+                    return {"error": "Failed to read text file", "filename": base}
                 doc_id = _create_markdown_doc(content, "Imported from email attachment")
                 return {"doc_id": doc_id, "filename": filepath.name}
 
@@ -4539,7 +4581,7 @@ def setup_email_routes():
             _row, att = fixture_att
             filename = str(att.get("filename") or f"attachment-{index}.txt")
             safe_name = re.sub(r"[^\w\s\-.]", "_", filename).strip() or f"attachment-{index}.txt"
-            target_dir = attachment_extract_dir(folder, uid)
+            target_dir = attachment_extract_dir(folder, uid, owner=owner, account_id=account_id)
             target_dir.mkdir(parents=True, exist_ok=True)
             filepath = target_dir / safe_name
             filepath.write_bytes(str(att.get("content") or "").encode("utf-8"))
@@ -4553,7 +4595,7 @@ def setup_email_routes():
             raw = msg_data[0][1]
             msg = email_mod.message_from_bytes(raw)
 
-            target_dir = attachment_extract_dir(folder, uid)
+            target_dir = attachment_extract_dir(folder, uid, owner=owner, account_id=account_id)
             filepath = _extract_attachment_to_disk(msg, index, target_dir)
             if not filepath:
                 return {"error": f"Attachment index {index} not found"}
@@ -5162,7 +5204,7 @@ def setup_email_routes():
                 return {"success": False, "error": "Email not found"}
             raw = msg_data[0][1]
             msg = email_mod.message_from_bytes(raw)
-            target_dir = attachment_extract_dir(folder, uid)
+            target_dir = attachment_extract_dir(folder, uid, owner=owner, account_id=account_id)
             filepath = _extract_attachment_to_disk(msg, index, target_dir)
             if not filepath:
                 return {"success": False, "error": f"Attachment index {index} not found"}
@@ -6860,6 +6902,158 @@ def setup_email_routes():
         finally:
             db.close()
 
+    def _test_mail_connections(body: dict, owner: str) -> dict:
+        """Blocking IMAP/SMTP connection test for /accounts/test.
+
+        Runs in the threadpool: each probe can block for its full socket
+        timeout, which on the event loop stalled every other request. The
+        connections go through the outbound mail address policy for `owner`
+        (the user who chose the hosts)."""
+        imap_result = {"ok": False}
+        smtp_result = None
+
+        imap_host = (body.get("imap_host") or "").strip()
+        imap_port, imap_port_err = _coerce_port(body.get("imap_port"), 993)
+        imap_user = (body.get("imap_user") or "").strip()
+        imap_pass = body.get("imap_password") or ""
+        imap_starttls = bool(body.get("imap_starttls"))
+        oauth_provider = body.get("oauth_provider") or ""
+
+        google_token = None
+        google_token_loaded = False
+        google_ssl_context = (
+            ssl.create_default_context()
+            if oauth_provider == "google"
+            else None
+        )
+
+        def _google_token():
+            nonlocal google_token, google_token_loaded
+            if not google_token_loaded:
+                google_token = _get_valid_google_token(body.get("account_id"), body)
+                google_token_loaded = True
+            if not google_token:
+                raise RuntimeError("Google OAuth token unavailable — reconnect the account")
+            return google_token
+
+        if imap_port_err:
+            imap_result = {"ok": False, "error": imap_port_err}
+        elif not (imap_host and imap_user and (imap_pass or oauth_provider == "google")):
+            imap_result = {"ok": False, "error": "Need IMAP host, username, and password"}
+        elif oauth_provider == "google" and _normalized_mail_host(imap_host) != _GOOGLE_OAUTH_IMAP_HOST:
+            imap_result = {"ok": False, "error": "Google OAuth IMAP requires imap.gmail.com"}
+        elif oauth_provider == "google" and not _google_oauth_imap_transport_allowed(imap_port, imap_starttls):
+            imap_result = {"ok": False, "error": "Google OAuth IMAP requires TLS on port 993 or STARTTLS on port 143"}
+        else:
+            # Connection mode resolution:
+            #   STARTTLS on  → plain IMAP4 + .starttls() (upgrade)
+            #   STARTTLS off + port 993 → IMAP4_SSL (implicit SSL, "IMAPS")
+            #   STARTTLS off + any other port → plain IMAP4 (no encryption)
+            # Without the last branch, local servers exposed on a non-993
+            # port (Dovecot on 31143, etc.) would always fail the SSL
+            # handshake because they're not actually wrapped in TLS.
+            try:
+                imap_kwargs = {
+                    "starttls": imap_starttls,
+                    "timeout": _IMAP_TIMEOUT_SECONDS,
+                    "owner": owner,
+                }
+                if google_ssl_context:
+                    imap_kwargs["ssl_context"] = google_ssl_context
+                conn = _open_imap_connection(
+                    imap_host,
+                    imap_port,
+                    **imap_kwargs,
+                )
+                try:
+                    if oauth_provider == "google":
+                        token = _google_token()
+                        conn.authenticate("XOAUTH2", lambda x: _xoauth2_bytes(imap_user, token))
+                    else:
+                        conn.login(imap_user, imap_pass)
+                    imap_result = {"ok": True}
+                finally:
+                    try: conn.logout()
+                    except Exception: pass
+            except Exception as e:
+                imap_result = {"ok": False, "error": _mail_connection_test_error("IMAP", imap_host, e)}
+
+        smtp_host = (body.get("smtp_host") or "").strip()
+        smtp_port, smtp_port_err = _coerce_port(body.get("smtp_port"), 465)
+        if smtp_host and smtp_port_err:
+            smtp_result = {"ok": False, "error": smtp_port_err}
+        elif oauth_provider == "google" and smtp_host and _normalized_mail_host(smtp_host) != _GOOGLE_OAUTH_SMTP_HOST:
+            smtp_result = {"ok": False, "error": "Google OAuth SMTP requires smtp.gmail.com"}
+        elif (
+            oauth_provider == "google"
+            and smtp_host
+            and not _google_oauth_smtp_transport_allowed(
+                smtp_port,
+                _smtp_security_mode({"smtp_security": body.get("smtp_security"), "smtp_port": smtp_port}),
+            )
+        ):
+            smtp_result = {"ok": False, "error": "Google OAuth SMTP requires TLS on port 465 or STARTTLS on port 587"}
+        elif smtp_host:
+            smtp_security = _smtp_security_mode({"smtp_security": body.get("smtp_security"), "smtp_port": smtp_port})
+            smtp_user = (body.get("smtp_user") or imap_user).strip()
+            smtp_pass = body.get("smtp_password") or imap_pass
+            smtp = None
+            try:
+                if smtp_security == "ssl":
+                    smtp_kwargs = (
+                        {"context": google_ssl_context}
+                        if google_ssl_context
+                        else {}
+                    )
+                    smtp = _PolicySMTP_SSL(
+                        smtp_host,
+                        smtp_port,
+                        timeout=10,
+                        block_private=_mail_private_blocked(owner),
+                        **smtp_kwargs,
+                    )
+                else:
+                    smtp = _PolicySMTP(smtp_host, smtp_port, timeout=10, block_private=_mail_private_blocked(owner))
+                    if smtp_security == "starttls":
+                        try:
+                            if google_ssl_context:
+                                smtp.starttls(context=google_ssl_context)
+                            else:
+                                smtp.starttls()
+                        except Exception:
+                            # STARTTLS failed before the auth cleanup block.
+                            # Close the still-open plaintext socket explicitly.
+                            try:
+                                smtp.close()
+                            except Exception:
+                                pass
+                            smtp = None
+                            raise
+                if oauth_provider == "google":
+                    token = _google_token()
+                    smtp.ehlo()
+                    smtp.auth("XOAUTH2", lambda challenge=None: _xoauth2_raw(smtp_user, token), initial_response_ok=True)
+                else:
+                    smtp.login(smtp_user, smtp_pass)
+                smtp_result = {"ok": True}
+            except Exception as e:
+                smtp_result = {"ok": False, "error": _mail_connection_test_error("SMTP", smtp_host, e)}
+            finally:
+                if smtp is not None:
+                    try:
+                        smtp.quit()
+                    except Exception:
+                        try:
+                            smtp.close()
+                        except Exception:
+                            pass
+
+        return {
+            "ok": imap_result["ok"] and (smtp_result is None or smtp_result["ok"]),
+            "imap": imap_result,
+            "smtp": smtp_result,
+        }
+
     @router.post("/accounts/test")
     async def test_account_config(req: Request, owner: str = Depends(require_user)):
         """Try to actually connect to the provided IMAP (and optionally SMTP)
@@ -6923,148 +7117,7 @@ def setup_email_routes():
             # inline test payloads select the OAuth branch or supply token data.
             body = {key: value for key, value in body.items() if key not in _SERVER_OWNED_OAUTH_FIELDS}
 
-        imap_result = {"ok": False}
-        smtp_result = None
-
-        imap_host = (body.get("imap_host") or "").strip()
-        imap_port, imap_port_err = _coerce_port(body.get("imap_port"), 993)
-        imap_user = (body.get("imap_user") or "").strip()
-        imap_pass = body.get("imap_password") or ""
-        imap_starttls = bool(body.get("imap_starttls"))
-        oauth_provider = body.get("oauth_provider") or ""
-
-        google_token = None
-        google_token_loaded = False
-        google_ssl_context = (
-            ssl.create_default_context()
-            if oauth_provider == "google"
-            else None
-        )
-
-        def _google_token():
-            nonlocal google_token, google_token_loaded
-            if not google_token_loaded:
-                google_token = _get_valid_google_token(body.get("account_id"), body)
-                google_token_loaded = True
-            if not google_token:
-                raise RuntimeError("Google OAuth token unavailable — reconnect the account")
-            return google_token
-
-        if imap_port_err:
-            imap_result = {"ok": False, "error": imap_port_err}
-        elif not (imap_host and imap_user and (imap_pass or oauth_provider == "google")):
-            imap_result = {"ok": False, "error": "Need IMAP host, username, and password"}
-        elif oauth_provider == "google" and _normalized_mail_host(imap_host) != _GOOGLE_OAUTH_IMAP_HOST:
-            imap_result = {"ok": False, "error": "Google OAuth IMAP requires imap.gmail.com"}
-        elif oauth_provider == "google" and not _google_oauth_imap_transport_allowed(imap_port, imap_starttls):
-            imap_result = {"ok": False, "error": "Google OAuth IMAP requires TLS on port 993 or STARTTLS on port 143"}
-        else:
-            # Connection mode resolution:
-            #   STARTTLS on  → plain IMAP4 + .starttls() (upgrade)
-            #   STARTTLS off + port 993 → IMAP4_SSL (implicit SSL, "IMAPS")
-            #   STARTTLS off + any other port → plain IMAP4 (no encryption)
-            # Without the last branch, local servers exposed on a non-993
-            # port (Dovecot on 31143, etc.) would always fail the SSL
-            # handshake because they're not actually wrapped in TLS.
-            try:
-                imap_kwargs = {
-                    "starttls": imap_starttls,
-                    "timeout": _IMAP_TIMEOUT_SECONDS,
-                }
-                if google_ssl_context:
-                    imap_kwargs["ssl_context"] = google_ssl_context
-                conn = _open_imap_connection(
-                    imap_host,
-                    imap_port,
-                    **imap_kwargs,
-                )
-                try:
-                    if oauth_provider == "google":
-                        token = _google_token()
-                        conn.authenticate("XOAUTH2", lambda x: _xoauth2_bytes(imap_user, token))
-                    else:
-                        conn.login(imap_user, imap_pass)
-                    imap_result = {"ok": True}
-                finally:
-                    try: conn.logout()
-                    except Exception: pass
-            except Exception as e:
-                imap_result = {"ok": False, "error": _friendly_email_auth_error("IMAP", imap_host, e)}
-
-        smtp_host = (body.get("smtp_host") or "").strip()
-        smtp_port, smtp_port_err = _coerce_port(body.get("smtp_port"), 465)
-        if smtp_host and smtp_port_err:
-            smtp_result = {"ok": False, "error": smtp_port_err}
-        elif oauth_provider == "google" and smtp_host and _normalized_mail_host(smtp_host) != _GOOGLE_OAUTH_SMTP_HOST:
-            smtp_result = {"ok": False, "error": "Google OAuth SMTP requires smtp.gmail.com"}
-        elif (
-            oauth_provider == "google"
-            and smtp_host
-            and not _google_oauth_smtp_transport_allowed(
-                smtp_port,
-                _smtp_security_mode({"smtp_security": body.get("smtp_security"), "smtp_port": smtp_port}),
-            )
-        ):
-            smtp_result = {"ok": False, "error": "Google OAuth SMTP requires TLS on port 465 or STARTTLS on port 587"}
-        elif smtp_host:
-            smtp_security = _smtp_security_mode({"smtp_security": body.get("smtp_security"), "smtp_port": smtp_port})
-            smtp_user = (body.get("smtp_user") or imap_user).strip()
-            smtp_pass = body.get("smtp_password") or imap_pass
-            smtp = None
-            try:
-                if smtp_security == "ssl":
-                    smtp_kwargs = (
-                        {"context": google_ssl_context}
-                        if google_ssl_context
-                        else {}
-                    )
-                    smtp = smtplib.SMTP_SSL(
-                        smtp_host,
-                        smtp_port,
-                        timeout=10,
-                        **smtp_kwargs,
-                    )
-                else:
-                    smtp = smtplib.SMTP(smtp_host, smtp_port, timeout=10)
-                    if smtp_security == "starttls":
-                        try:
-                            if google_ssl_context:
-                                smtp.starttls(context=google_ssl_context)
-                            else:
-                                smtp.starttls()
-                        except Exception:
-                            # STARTTLS failed before the auth cleanup block.
-                            # Close the still-open plaintext socket explicitly.
-                            try:
-                                smtp.close()
-                            except Exception:
-                                pass
-                            smtp = None
-                            raise
-                if oauth_provider == "google":
-                    token = _google_token()
-                    smtp.ehlo()
-                    smtp.auth("XOAUTH2", lambda challenge=None: _xoauth2_raw(smtp_user, token), initial_response_ok=True)
-                else:
-                    smtp.login(smtp_user, smtp_pass)
-                smtp_result = {"ok": True}
-            except Exception as e:
-                smtp_result = {"ok": False, "error": _friendly_email_auth_error("SMTP", smtp_host, e)}
-            finally:
-                if smtp is not None:
-                    try:
-                        smtp.quit()
-                    except Exception:
-                        try:
-                            smtp.close()
-                        except Exception:
-                            pass
-
-        return {
-            "ok": imap_result["ok"] and (smtp_result is None or smtp_result["ok"]),
-            "imap": imap_result,
-            "smtp": smtp_result,
-        }
+        return await run_in_threadpool(_test_mail_connections, body, owner)
 
     @router.post("/accounts/{account_id}/set-default")
     async def set_default_account(account_id: str, owner: str = Depends(require_user)):

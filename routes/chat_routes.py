@@ -327,13 +327,31 @@ def _is_external_discovery_request(text: str) -> bool:
     ))
 
 
+_URL_SCHEME_RE = re.compile(r"https?://", re.I)
+_PDF_URL_TAIL_RE = re.compile(r"\.pdf\b|/pdf/", re.I)
+
+
+def _mentions_pdf_url(value: str) -> bool:
+    """Same as ``re.search(r"https?://[^\\s]+(?:\\.pdf\\b|/pdf/)", value, re.I)``.
+
+    Checked per whitespace-free token from its first scheme only (a later
+    scheme's tail is a suffix of the first's), so a token packed with
+    `http://` repeats is scanned once instead of once per repeat (ReDoS).
+    """
+    for token in value.split():
+        scheme = _URL_SCHEME_RE.search(token)
+        if scheme and _PDF_URL_TAIL_RE.search(token, scheme.end() + 1):
+            return True
+    return False
+
+
 def _prefers_structured_document_tools(text: str) -> bool:
     """Identify external paper/PDF extraction where shell is a bad source route."""
     value = str(text or "")
     if re.search(r"(?:^|\s)(?:file://)?/workspace/[^\s`\"']+\.pdf\b", value, re.I):
         return False
     return bool(
-        re.search(r"https?://[^\s]+(?:\.pdf\b|/pdf/)", value, re.I)
+        _mentions_pdf_url(value)
         or re.search(
             r"\b(?:paper|report|study)\b[\s\S]{0,1200}?"
             r"\b(?:tables?|figures?|benchmarks?|scores?|metrics?)\b",
@@ -2507,7 +2525,7 @@ def setup_chat_routes(
             _explicit_web_intent = (
                 _explicit_url_target
                 or bool(re.search(
-                r"\b(search|look\s+(?:this|that|it|them|these|those)?\s*up|lookup|find\s*out|google|browse|web|online|latest|current|today|news|weather|forecast|rate|exchange\s+rate)\b",
+                r"\b(search|look\s+(?:(?:this|that|it|them|these|those)\s*)?up|lookup|find\s*out|google|browse|web|online|latest|current|today|news|weather|forecast|rate|exchange\s+rate)\b",
                 _msg_l,
                 ))
                 or requires_external_web_verification(message)

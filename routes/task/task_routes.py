@@ -1252,8 +1252,14 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             if not out.get("prompt"):
                 return {"success": False, "message": "Could not extract a task instruction"}
             return {"success": True, "draft": out}
+        except HTTPException as e:
+            # llm_core raises HTTPException with curated upstream text.
+            logger.error(f"parse_task failed: {e.detail}")
+            return {"success": False, "message": str(e.detail)}
         except Exception as e:
+            # Anything else (JSON/parse/runtime errors) can carry internals;
+            # log it and keep the client message generic.
             logger.error(f"parse_task failed: {e}")
-            return {"success": False, "message": str(e)}
+            return {"success": False, "message": f"Could not draft a task ({type(e).__name__})"}
 
     return router

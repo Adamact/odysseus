@@ -409,7 +409,7 @@ def parse_due_for_user(s: str) -> str:
     lower = s.lower().strip()
 
     def _parse_time(t):
-        t = _re.sub(r'\b([ap])\s*\.?\s*m\.?\b', r'\1m', t.strip(), flags=_re.IGNORECASE)
+        t = _re.sub(r'\b([ap])(?:\s*\.)?\s*m\.?\b', r'\1m', t.strip(), flags=_re.IGNORECASE)
         m = _re.match(r'^\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*$', t, _re.IGNORECASE)
         if not m: return None
         h = int(m.group(1)); mn = int(m.group(2) or 0); ampm = (m.group(3) or "").lower()
@@ -433,7 +433,7 @@ def parse_due_for_user(s: str) -> str:
             return base.replace(hour=t[0], minute=t[1]).isoformat()
 
     # Time-first: "3pm today", "11pm today", "9am tomorrow"
-    m = _re.match(r'^(.+?)\s+(today|tonight|tomorrow|tmrw|yesterday)$', lower)
+    m = _re.match(r'^(.*\S)\s+(today|tonight|tomorrow|tmrw|yesterday)$', lower)
     if m:
         time_part, word = m.group(1).strip(), m.group(2)
         base = today
@@ -530,7 +530,7 @@ def _parse_dt(s: str) -> datetime:
 
     def _parse_time(t: str):
         """Return (hour, minute) from '1pm', '1:30 PM', '13:00', etc., or None."""
-        t = _re.sub(r'\b([ap])\s*\.?\s*m\.?\b', r'\1m', t.strip(), flags=_re.IGNORECASE)
+        t = _re.sub(r'\b([ap])(?:\s*\.)?\s*m\.?\b', r'\1m', t.strip(), flags=_re.IGNORECASE)
         m = _re.match(r'^\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*$', t, _re.IGNORECASE)
         if not m:
             return None
@@ -562,7 +562,7 @@ def _parse_dt(s: str) -> datetime:
 
     # time-first: "3pm today", "9am tomorrow", "11pm tonight"
     # (parity with parse_due_for_user, which handles these via the same form)
-    m = _re.match(r'^(.+?)\s+(today|tonight|tomorrow|tmrw|yesterday)$', lower)
+    m = _re.match(r'^(.*\S)\s+(today|tonight|tomorrow|tmrw|yesterday)$', lower)
     if m:
         time_part, word = m.group(1).strip(), m.group(2)
         base = today

@@ -610,7 +610,9 @@ async def update_persona_memory(
         )
 
         updated = strip_think(str(raw or ""), prose=True, prompt_echo=True).strip()
-        updated = re.sub(r"^```(?:text|markdown)?\s*|\s*```$", "", updated, flags=re.I | re.S).strip()
+        # No leading `\s*` before the closing fence: .strip() drops that
+        # whitespace anyway, and scanning it from every offset was quadratic.
+        updated = re.sub(r"^```(?:text|markdown)?\s*|```$", "", updated, flags=re.I | re.S).strip()
         if len(updated) > 6000:
             updated = updated[:6000].rstrip()
         if updated == existing_memory:
@@ -694,8 +696,9 @@ async def audit_memories(
         # Parse the JSON list, tolerating reasoning-model noise: <think> blocks,
         # markdown fences, leading prose, and trailing commas.
         import re as _re
+        from src.text_helpers import strip_closed_think_blocks
         text = (raw or "").strip()
-        text = _re.sub(r'<think(?:ing)?>[\s\S]*?</think(?:ing)?>', '', text, flags=_re.I).strip()
+        text = strip_closed_think_blocks(text).strip()
 
         def _loads_list(s):
             if not s:
@@ -711,7 +714,9 @@ async def audit_memories(
 
         cleaned = _loads_list(text)
         if cleaned is None:
-            _m = _re.search(r'```(?:json)?\s*\n?([\s\S]*?)```', text)
+            # Possessive `\s*+`: handing fence whitespace back to the body on a
+            # missing closing fence only rescanned the same tail (ReDoS).
+            _m = _re.search(r'```(?:json)?\s*+\n?([\s\S]*?)```', text)
             if _m:
                 cleaned = _loads_list(_m.group(1).strip())
         if cleaned is None:

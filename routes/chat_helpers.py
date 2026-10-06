@@ -98,7 +98,9 @@ def clean_repeated_assistant_content(text: object) -> str:
         "",
         value,
     ).strip()
-    value = re.sub(r"(?is)\s*</\s*think\s*>\s*$", "", value).strip()
+    # No leading `\s*`: .strip() removes that whitespace anyway, and scanning
+    # it from every offset of a long whitespace run was quadratic (ReDoS).
+    value = re.sub(r"(?is)</\s*think\s*>\s*$", "", value).strip()
     return value
 
 _CASUAL_OPENING_RE = re.compile(
@@ -1324,13 +1326,17 @@ def _normalize_thinking(text: str) -> str:
 
     # Handle garbled <think> tags: reasoning text followed by <think> as separator
     # e.g. "The user said...I should respond.\n<think>Hey! What's up?"
+    # Linear form of `^([\s\S]+?)\n*<think>\s*([\s\S]*?)(?:</think>)?\s*$`:
+    # the lookbehind stops the lazy prefix re-scanning a newline run from every
+    # offset, and the optional trailing closer is dropped after the match
+    # instead of being retried at every body offset (both were quadratic).
     garbled = re.match(
-        r'^([\s\S]+?)\n*<think(?:ing)?>\s*([\s\S]*?)(?:</think(?:ing)?>)?\s*$',
+        r'^([\s\S]+?)(?<![\s\S]\n)\n*<think(?:ing)?>\s*([\s\S]*)$',
         text, re.IGNORECASE
     )
     if garbled:
         before = garbled.group(1).strip()
-        after = garbled.group(2).strip()
+        after = re.sub(r'</think(?:ing)?>$', '', garbled.group(2).rstrip(), flags=re.IGNORECASE).strip()
         # Only treat as garbled if the part before <think> looks like reasoning
         reasoning_starts = (
             'The user ', 'I need ', 'I should ', 'I will ',

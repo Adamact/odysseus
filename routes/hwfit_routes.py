@@ -5,8 +5,9 @@ import shlex
 import subprocess
 from copy import deepcopy
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from core.middleware import require_admin
 from core.platform_compat import run_ssh_command
 from routes._validators import validate_remote_host, validate_ssh_port
 
@@ -198,7 +199,11 @@ def _inspect_model_path(model_path: str, host: str = "", ssh_port: str = "") -> 
 
 
 def setup_hwfit_routes():
-    router = APIRouter(prefix="/api/hwfit", tags=["hwfit"])
+    # Admin-gated like the Cookbook routes this backs (/api/cookbook/gpus does
+    # the same SSH host probing): `host`/`ssh_port` make the server SSH out with
+    # its own key to any syntactically valid host, and `model_path` probes the
+    # host filesystem. Single-user mode and internal tool calls still pass.
+    router = APIRouter(prefix="/api/hwfit", tags=["hwfit"], dependencies=[Depends(require_admin)])
 
     @router.get("/system")
     def get_system(host: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False):

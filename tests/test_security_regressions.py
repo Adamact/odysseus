@@ -984,7 +984,7 @@ def test_attachment_extract_dir_stays_contained(folder, uid):
     """User-controlled folder/uid must never escape ATTACHMENTS_DIR — pins the
     fix for the attachment-extraction path traversal."""
     aed, base = _import_attachment_extract_dir()
-    target = aed(folder, uid)
+    target = aed(folder, uid, owner="../../owner", account_id="../acct")
     base_r = base.resolve()
     assert target == base_r or base_r in target.parents
     # exactly one extra path segment, and no `..` component survived
@@ -992,9 +992,11 @@ def test_attachment_extract_dir_stays_contained(folder, uid):
     assert ".." not in rel.parts
 
 
-def test_attachment_extract_dir_normal_inputs_unchanged():
+def test_attachment_extract_dir_is_stable_single_segment_per_scope():
     aed, base = _import_attachment_extract_dir()
-    assert aed("INBOX", "123") == base.resolve() / "INBOX_123"
+    target = aed("INBOX", "123", owner="alice", account_id="acct-1")
+    assert target == aed("INBOX", "123", owner="alice", account_id="acct-1")
+    assert target.parent == base.resolve()
 
 
 def test_diagnostics_routes_are_admin_gated():

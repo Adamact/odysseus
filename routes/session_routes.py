@@ -1601,7 +1601,13 @@ def setup_session_routes(
             raise HTTPException(404, "Session not found")
         skills = _context_info_skill_inventory(skills_manager, owner=owner)
         tools = _context_info_tool_inventory()
-        agents_md = _context_info_agents_md_inventory(cwd)
+        # `cwd` is caller-chosen. Walking it for AGENTS.md and reporting whether
+        # it exists confirms paths on the host, which /api/workspace/browse and
+        # /vet reserve for admins (or single-user mode); keep that boundary here.
+        from src.tool_security import owner_is_admin_or_single_user
+
+        _host_paths_visible = owner_is_admin_or_single_user(owner)
+        agents_md = _context_info_agents_md_inventory(cwd) if _host_paths_visible else []
         # Workspace visibility: lets the TUI answer "can the backend actually
         # see this directory?" (mounted vs bridge-only) without probing.
         from src.workspace_paths import backend_workspace_path, workspace_mount_pairs
@@ -1626,7 +1632,7 @@ def setup_session_routes(
         }
         _workspace = {
             "backend_path": _backend_cwd,
-            "exists_in_backend": bool(_backend_cwd) and Path(_backend_cwd).is_dir(),
+            "exists_in_backend": _host_paths_visible and bool(_backend_cwd) and Path(_backend_cwd).is_dir(),
             "mount_configured": bool(workspace_mount_pairs()),
             "via_mount": bool(_raw_cwd) and backend_workspace_path(_raw_cwd) != _raw_cwd,
         }
