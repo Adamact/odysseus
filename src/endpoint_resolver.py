@@ -281,19 +281,46 @@ def same_endpoint_base(left, right) -> bool:
         return False
 
 
+def _registered_endpoint_url_identity(value):
+    """Compare complete URL paths without collapsing caller-selected suffixes."""
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    try:
+        parsed = urlparse(value)
+        if (parsed.scheme not in {"http", "https"} or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None
+                or "?" in value or "#" in value or parsed.params):
+            return None
+        port = parsed.port
+        return (parsed.scheme, parsed.hostname.lower(),
+                port if port is not None else (443 if parsed.scheme == "https" else 80),
+                parsed.path.rstrip("/"))
+    except ValueError:
+        return None
+
+
 def resolve_owner_registered_endpoint(db, endpoint_url: str, owner: Optional[str] = None):
     """Authorize a caller URL against enabled, owner-visible endpoint rows.
 
+    Accept only the registered canonical base or its server-derived chat URL.
     Request credentials, query strings and fragments are never endpoint identity.
     Return the server-owned row so runtime credentials come from registration.
     """
     from src.auth_helpers import owner_filter
 
-    if not isinstance(endpoint_url, str) or not same_endpoint_base(endpoint_url, endpoint_url):
+    identity = _registered_endpoint_url_identity(endpoint_url)
+    if identity is None:
         raise ValueError("Invalid model endpoint URL")
     query = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled.is_(True))
     for endpoint in owner_filter(query, ModelEndpoint, owner).all():
-        if same_endpoint_base(endpoint_url, endpoint.base_url):
+        base = normalize_base(endpoint.base_url)
+        base_identity = _registered_endpoint_url_identity(base)
+        if base_identity is None:
+            continue
+        if identity == base_identity:
+            return endpoint
+        if identity == _registered_endpoint_url_identity(build_chat_url(base)):
             return endpoint
     raise ValueError("Model endpoint must be enabled and registered for the current owner")
 
