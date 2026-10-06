@@ -4562,7 +4562,9 @@ async def test_preview_provider_stream_error_is_terminal_not_empty_answer(monkey
         disabled_tools=set(), tool_policy=ToolPolicy(),
     )]
     assert raw[-1].startswith('event: error\ndata: ')
-    assert 'Qwen3_5MTPDraftModel' in raw[-1]
+    assert 'selected model provider failed' in raw[-1]
+    assert 'provider_stream_error' in raw[-1]
+    assert 'Qwen3_5MTPDraftModel' not in raw[-1]
     assert all('returned no answer' not in chunk for chunk in raw)
     assert all('"type": "metrics"' not in chunk for chunk in raw)
 

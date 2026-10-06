@@ -32,7 +32,12 @@ from src.tool_schemas import (
     normalized_native_function_argument_error,
 )
 from src.tool_types import ToolBlock
-from src.tool_parsing import parse_tool_blocks, strip_tool_blocks
+from src.tool_parsing import iter_email_addresses, parse_tool_blocks, strip_tool_blocks, strip_angle_tags
+from src.text_scanning import (
+    contains_detailed_sequence_request,
+    contains_search_engine_navigation,
+    iter_prefixed_token_matches,
+)
 from src.turn_contract import (
     _REQUEST_PREFIX,
     calendar_retiming_request,
@@ -53,6 +58,59 @@ MODE = COMPACT_PREVIEW_MODE
 
 class ProviderStreamError(Exception):
     """A provider reported failure inside an otherwise successful SSE response."""
+
+
+# Only these audited, fixed domain messages may cross the exception boundary.
+# Return the canonical constants rather than arbitrary exception text.
+_PUBLIC_PREVIEW_TOOL_ERRORS = {message: message for message in (
+    'An equivalent search already returned evidence. Change the angle, missing subtopic, source type, or corroboration target instead of only changing freshness wording.',
+    'Browser navigation already failed for this exact URL; use another source page.',
+    'Do not infer image content repeatedly from filenames; use inspect_media on representative files, then continue from visual evidence.',
+    'Equivalent search intent was repeated after a correction reminder; web_search is disabled for this turn.',
+    'Look up the target with list_sessions before changing a chat. Use its exact returned ID; never invent last-chat/latest aliases. If the target is ambiguous, ask using the candidate chat titles.',
+    'Resolve the named recipient with resolve_contact before drafting. Never invent an email address.',
+    'Selection-only edits cannot use replace_all. Use a unique contextual FIND inside the selected passage.',
+    'The bounded search-attempt budget is exhausted. Do not search again; answer from usable evidence already gathered, or clearly report what could not be verified and suggest a concrete next step.',
+    'The calendar read has not succeeded yet. Obtain the requested calendar evidence before creating the dependent email draft.',
+    'The latest note search returned no candidates, so this reference has no note to open. Do not reuse an older list item; report the empty result or ask which note was intended.',
+    'The latest research search returned no candidates, so this reference has no report to open. Do not reuse an unrelated older report.',
+    'The proposed expansion only adds placeholder/meta text. Write substantive content that continues the existing document’s subject, voice, and format; do not announce that a paragraph was added.',
+    'The recipient address is not supported by the contact lookup. Use an exact returned address for the requested person; if no match exists, explain the missing recipient instead of guessing.',
+    'The same artifact target was already rewritten three times; finish from the latest successful version instead of rewriting it again.',
+    'These suggestions collapse multiple different passages into the same much shorter replacement, violating the request to preserve meaning. Produce passage-specific revisions that retain each source passage’s claims and intent.',
+    'This exact call already failed twice and will not be executed again; change strategy or finish from existing evidence.',
+    'This exact failed call was repeated after a correction reminder; the tool is disabled for this turn. Finish from existing evidence.',
+    'This exact invalid call was repeated after two validation failures; the tool is disabled for this turn.',
+    'This exact successful call already returned evidence. Do not repeat it; change the arguments or tool to gather different evidence, or finish from the evidence already available.',
+    'This still image was already inspected and the same visual evidence is already in context. inspect_media is withheld for the next correction round; use that evidence, inspect a different file, or finish.',
+    'This operation is outside the preview safety policy. No change was made.',
+    'This replacement does not make its passage more concise. Shorten the wording while retaining its facts and meaning; a spelling-only change does not satisfy the requested action. Retry with shorter replacements.',
+    'Tool arguments could not be converted for execution.',
+    'Tool arguments must be a JSON object.',
+    'Tool execution budget exhausted; finish from existing evidence.',
+    'Tool is not offered or permitted.',
+    'Two equivalent searches already returned no evidence. Do not repeat this search wording; use a different offered tool or a materially different query.',
+    'Unresolved video target: this ID was not supplied by the user or observed in a successful tool result. Do not guess it from the title. Open/read the referenced browser link or call youtube_tool latest_channel_video for the observed channel, then use its returned ID.',
+    'inspect_media exports only extract video stills and require an explicit timestamp plus output_path for every item. First inspect the video to find the timestamp; use write_file or python to author a diagram or other new artifact.',
+    'web_fetch requires url or urls. query only filters a supplied page; it is not a search or writing request.',
+)}
+
+
+def _public_preview_tool_error(exc, *, execution_attempted=False):
+    """Keep useful domain guidance while withholding arbitrary diagnostics."""
+    if execution_attempted:
+        return 'The tool failed unexpectedly. Check the server log and retry.'
+    if isinstance(exc, json.JSONDecodeError):
+        return 'Tool arguments are not valid JSON. Correct the JSON object and retry.'
+    if isinstance(exc, jsonschema.ValidationError):
+        return 'Tool arguments do not match the required schema. Correct the call using the offered tool schema.'
+    detail = str(exc)
+    if detail.startswith('Artifact completion Python must reference the required '):
+        return 'Artifact completion Python must create non-empty output at the required artifact target.'
+    if detail.startswith('Shell access to credential variable '):
+        return 'Shell access to credentials is blocked. Use brokered native tools.'
+    return _PUBLIC_PREVIEW_TOOL_ERRORS.get(detail, 'The tool call could not be validated. Check its arguments and retry.')
+
 
 # Native unattended workspaces routinely require several inspections followed
 # by several artifact writes.  The interactive preview keeps its six-call
@@ -79,13 +137,6 @@ ARTIFACT_RESEARCH_TOOLS = frozenset({
     'web_search', 'web_fetch', 'private_browser', 'pdf_extract', 'youtube_tool',
     'inspect_media', 'extract_text', 'transcribe_media',
 })
-DETAILED_VIDEO_REQUEST = re.compile(
-    r"\b(?:how\s+many|count|sequence|in\s+order|chronological|"
-    r"timestamps?|what\s+time|at\s+what\s+time|when\s+.*(?:end|happen)|"
-    r"first\s+.*(?:save|attempt|event)|score(?:board)?s?)\b|"
-    r"(?:多少|几次|何时|什么时候|时间|顺序)",
-    re.IGNORECASE,
-)
 READ_TOOLS = frozenset({
     'manage_notes', 'manage_calendar', 'manage_memory', 'manage_skills', 'manage_tasks',
     'manage_documents', 'manage_research', 'manage_contact', 'list_sessions',
@@ -809,13 +860,95 @@ def malformed_write_handoff_target(arguments, required_artifacts=(), user_text='
     return target
 
 
+_PAGE_LISTING_WORDS = ("stories", "articles", "posts", "headlines", "pages")
+
+
+def _listing_allowed(char):
+    return char == " " or char in ".:/-" or char == "_" or char.isalnum()
+
+
+def _allowed_then_space(value):
+    """Whether value can be class+ followed by whitespace+, without retries."""
+    if len(value) < 2:
+        return False
+    first_disallowed = next((i for i, char in enumerate(value) if not _listing_allowed(char)), len(value))
+    if first_disallowed < len(value):
+        return first_disallowed > 0 and all(char.isspace() for char in value[first_disallowed:])
+    return value[-1].isspace()
+
+
+def _space_then_allowed(value):
+    """Whether value can be whitespace+ followed by the listing class+."""
+    if len(value) < 2:
+        return False
+    first_nonspace = next((i for i, char in enumerate(value) if not char.isspace()), len(value))
+    if first_nonspace < len(value):
+        return first_nonspace > 0 and all(_listing_allowed(char) for char in value[first_nonspace:])
+    trailing_spaces = len(value) - len(value.rstrip(" "))
+    return trailing_spaces > 0 and (len(value) > trailing_spaces or trailing_spaces >= 2)
+
+
+def _page_listing_request(user_text):
+    value = str(user_text or '').lstrip()
+    nonspace_end = len(value.rstrip())
+    if value[nonspace_end - 1:nonspace_end] in ("!", "?"):
+        value = value[:nonspace_end - 1]
+    lead = re.match(
+        r"(?:top|latest|recent|list(?: the)?|show(?: me)?(?: the)?)(?=\s)",
+        value, re.I,
+    )
+    if not lead:
+        return False
+    cursor = lead.end()
+    while cursor < len(value) and value[cursor].isspace():
+        cursor += 1
+    body = value[cursor:]
+    nonspace_end = len(body.rstrip())
+    terminal_end = nonspace_end
+    if body[terminal_end - 1:terminal_end] == ".":
+        terminal_end = len(body[:terminal_end - 1].rstrip())
+    first_disallowed = len(body)
+    last_disallowed = -1
+    first_nonspace_after_disallowed = len(body)
+    for index, char in enumerate(body):
+        if not _listing_allowed(char):
+            first_disallowed = min(first_disallowed, index)
+            if index < nonspace_end:
+                last_disallowed = index
+        if index >= first_disallowed and not char.isspace():
+            first_nonspace_after_disallowed = min(first_nonspace_after_disallowed, index)
+    last_literal_space = body.rfind(" ")
+    for word in _PAGE_LISTING_WORDS:
+        for candidate in re.finditer(word, body, re.I):
+            start = candidate.start()
+            prefix_allowed = start >= 2 and (
+                body[start - 1].isspace() if start <= first_disallowed
+                else first_disallowed > 0 and start <= first_nonspace_after_disallowed
+            )
+            if start == 0 or prefix_allowed:
+                after_start = candidate.end()
+                if after_start >= terminal_end:
+                    return True
+                on = after_start
+                while on < len(body) and body[on].isspace():
+                    on += 1
+                if on > after_start and body[on:on + 2].casefold() == "on":
+                    tail_start = on + 2
+                    tail_end = tail_start
+                    while tail_end < len(body) and body[tail_end].isspace():
+                        tail_end += 1
+                    if len(body) - tail_start >= 2 and tail_end > tail_start:
+                        if tail_end < len(body):
+                            if last_disallowed < tail_end:
+                                return True
+                        elif last_literal_space > tail_start:
+                            return True
+    return False
+
+
 def page_listing_response(entries, user_text, max_items=10):
     """Render simple page listings from observed titles/URLs, never synthesized rankings."""
-    if not re.fullmatch(
-        r'\s*(?:top|latest|recent|list(?: the)?|show(?: me)?(?: the)?)\s+'
-        r'(?:[\w .:/-]+\s+)?(?:stories|articles|posts|headlines|pages)'
-        r'(?:\s+on\s+[\w .:/-]+)?[.!?]?\s*', user_text, re.I,
-    ) or re.search(r'\b(?:and|compare|summarize|analyse|analyze|about|by|since|yesterday)\b', user_text, re.I):
+    if not _page_listing_request(user_text) or re.search(r'\b(?:and|compare|summarize|analyse|analyze|about|by|since|yesterday)\b', user_text, re.I):
         return ''
     from urllib.parse import quote, urlsplit
     from html import escape
@@ -1531,17 +1664,24 @@ def prior_workspace_path_answer(user_text, history):
     return ''
 
 
+def _prior_web_source_request(text):
+    text = str(text or '')
+    candidate = text.lstrip().rstrip()
+    candidate = candidate.rstrip(".!? ")
+    return bool(re.fullmatch(
+        r"(?:(?:where|what)\s+did\s+you\s+(?:get|find)\s+(?:that|this)\s+from[?., ]*"
+        r"(?:give|show|send)\s+me\s+(?:the\s+)?(?:source\s+)?link"
+        r"|(?:give|show|send)\s+me\s+(?:the\s+)?(?:source\s+)?link(?:\s+for\s+that)?"
+        r"|what(?:['’]?s|\s+is)\s+(?:the\s+)?source(?:\s+link)?)",
+        candidate,
+        re.I,
+    ))
+
+
 def prior_web_source_answer(user_text, history):
     """Return the latest source URL for an explicit source-only follow-up."""
     text = str(user_text or '')
-    if not re.fullmatch(
-        r"\s*(?:(?:where|what)\s+did\s+you\s+(?:get|find)\s+(?:that|this)\s+from[?., ]*"
-        r"(?:give|show|send)\s+me\s+(?:the\s+)?(?:source\s+)?link[.!? ]*"
-        r"|(?:give|show|send)\s+me\s+(?:the\s+)?(?:source\s+)?link(?:\s+for\s+that)?[.!? ]*"
-        r"|what(?:['’]?s|\s+is)\s+(?:the\s+)?source(?:\s+link)?[.!? ]*)\s*",
-        text,
-        re.I,
-    ):
+    if not _prior_web_source_request(text):
         return ''
     call_names = {}
     candidates = []
@@ -2822,12 +2962,11 @@ def draft_contact_evidence_error(name, args, *, dependencies=(), executions=(), 
                     and not e.get('blocked')]
     if not observations:
         return 'Resolve the named recipient with resolve_contact before drafting. Never invent an email address.'
-    address_pattern = r'[A-Za-z0-9.!#$%&\x27*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
     known = {address.casefold() for e in observations
-             for address in re.findall(address_pattern, str(e.get('output') or ''))}
-    known.update(address.casefold() for address in re.findall(address_pattern, user_text))
+             for address in iter_email_addresses(str(e.get('output') or ''), ascii_only=True)}
+    known.update(address.casefold() for address in iter_email_addresses(user_text, ascii_only=True))
     proposed = {address.casefold() for field in ('to', 'cc', 'bcc')
-                for address in re.findall(address_pattern, str(args.get(field) or ''))}
+                for address in iter_email_addresses(str(args.get(field) or ''), ascii_only=True)}
     if not proposed or not proposed <= known:
         return ('The recipient address is not supported by the contact lookup. Use an exact '
                 'returned address for the requested person; if no match exists, explain '
@@ -3945,7 +4084,7 @@ def active_document_revision_quality_error(name, args, *, active_document, user_
     if not incoming:
         return None
     addition = incoming[len(existing):].strip() if existing and incoming.startswith(existing) else ''
-    candidate = re.sub(r'<[^>]+>', ' ', addition).strip()
+    candidate = strip_angle_tags(addition, ' ').strip()
     candidate = re.sub(r'\s+', ' ', candidate)
     if not candidate or candidate.casefold() in str(user_text or '').casefold():
         return None
@@ -3970,8 +4109,8 @@ def document_suggestion_quality_error(name, args, *, user_text):
         for suggestion in suggestions:
             if not isinstance(suggestion, dict):
                 continue
-            source = re.sub(r'\s+', ' ', re.sub(r'<[^>]*>', ' ', str(suggestion.get('find') or ''))).strip()
-            result = re.sub(r'\s+', ' ', re.sub(r'<[^>]*>', ' ', str(suggestion.get('replace') or ''))).strip()
+            source = re.sub(r'\s+', ' ', strip_angle_tags(str(suggestion.get('find') or ''), ' ', allow_empty=True)).strip()
+            result = re.sub(r'\s+', ' ', strip_angle_tags(str(suggestion.get('replace') or ''), ' ', allow_empty=True)).strip()
             if not source or not result:
                 continue
             source_words = len(re.findall(r"\b[\w’'-]+\b", source))
@@ -4127,13 +4266,17 @@ _WORKSPACE_FILE_RE = re.compile(
     r"/workspace/[^\s,，、;；`\"'<>]+\.[A-Za-z0-9]{1,12}",
     re.I,
 )
+_WORKSPACE_PREFIX_RE = re.compile(r"/workspace/", re.I)
+_WORKSPACE_FILE_TOKEN_TAIL_RE = re.compile(r"[^\s,，、;；`\"'<>]*")
 
 
 def declared_workspace_artifacts(user_text):
     """Return explicit output paths, excluding paths used only as inputs."""
     text = str(user_text or '')
     paths = []
-    for match in _WORKSPACE_FILE_RE.finditer(text):
+    for match in iter_prefixed_token_matches(
+        text, _WORKSPACE_PREFIX_RE, _WORKSPACE_FILE_RE, _WORKSPACE_FILE_TOKEN_TAIL_RE
+    ):
         path = match.group(0).rstrip('.!?)）]}')
         if path.startswith('/workspace/fixtures/') or path in paths:
             continue
@@ -4253,17 +4396,61 @@ def evidence_tool_keeps_distinct_requests_available(name):
     }
 
 
+def _terminal_source_link_clause(text):
+    """Recognize the terminal short source/link clause from right to left."""
+    value = str(text or '')
+    def matches_at(end):
+        while end and value[end - 1] in ".!?":
+            end -= 1
+        while end and value[end - 1].isspace():
+            end -= 1
+        lowered = value[:end].casefold()
+        for courtesy in ("please", "pls"):
+            if lowered.endswith(courtesy):
+                boundary = end - len(courtesy)
+                end = boundary
+                while end and value[end - 1].isspace():
+                    end -= 1
+                lowered = value[:end].casefold()
+                break
+        token_match = re.search(r"(?:sources?|citations?|links?)$", lowered)
+        if token_match is None:
+            return False
+        prefix = value[:token_match.start()]
+        original_cursor = len(prefix)
+        courtesy_end = original_cursor
+        while courtesy_end and prefix[courtesy_end - 1].isspace():
+            courtesy_end -= 1
+        cursors = [original_cursor]
+        for courtesy in ("please", "pls"):
+            start = courtesy_end - len(courtesy)
+            if start >= 0 and prefix[start:courtesy_end].casefold() == courtesy:
+                if courtesy_end < original_cursor and (start == 0 or prefix[start - 1].isspace()):
+                    cursors.append(start)
+                break
+        for cursor in cursors:
+            while cursor and prefix[cursor - 1].isspace():
+                if prefix[cursor - 1] == "\n":
+                    return True
+                cursor -= 1
+            if cursor == 0 or prefix[cursor - 1] in ".!?;,":
+                return True
+        return False
+
+    return matches_at(len(value)) or (value.endswith("\n") and matches_at(len(value) - 1))
+
+
 def requested_web_source_links(user_text):
-    return bool(re.search(
+    text = str(user_text or '')
+    return _terminal_source_link_clause(text) or bool(re.search(
         r'\b(?:return|give|show|include|provide|cite|find)\b.{0,35}\b(?:source\s+)?links?\b'
-        r'|(?:^|[.!?;,\n])\s*(?:(?:pls|please)\s+)?(?:sources?|citations?|links?)\s*(?:pls|please)?\s*[.!?]*$'
         r'|\b(?:\d+|one|two|three|four|five)\s+(?:official\s+)?(?:source\s+)?links?\b'
         r'|\bofficial\s+source\b'
         r'|\b(?:with|include|provide|cite|show|give|find)\s+(?:the\s+)?(?:official\s+)?(?:sources|citations)\b'
         r'|\blink\s+(?:to\s+)?(?:the\s+|your\s+)?(?:original\s+|official\s+)?(?:instructions|sources|documentation|articles?|reports?|studies|manuals?|guides?)\b'
         r'|\b(?:find|locate|get|download)\b.{0,60}\bofficial\b.{0,60}\b(?:manual|guide|handbook|pdf|documentation)\b'
         r'|\b(?:find|locate|get|download)\b.{0,80}\b(?:manual|guide|handbook|pdf)\b.{0,40}\b(?:online|official)\b',
-        str(user_text or ''),
+        text,
         re.IGNORECASE,
     ))
 
@@ -4300,12 +4487,67 @@ def unbound_lookup_reference(user_text, history, *, supplied_context=False):
     ))
 
 
+def _web_source_rows(text):
+    """Extract numbered source title/URL rows with monotonic line scans."""
+    rows = []
+    position = 0
+    length = len(text)
+    while position < length:
+        if position and text[position - 1] != "\n":
+            newline = text.find("\n", position)
+            if newline < 0:
+                break
+            position = newline + 1
+            continue
+        cursor = position
+        if cursor >= length or text[cursor] != "[":
+            newline = text.find("\n", cursor)
+            if newline < 0:
+                break
+            position = newline + 1
+            continue
+        cursor += 1
+        digit_start = cursor
+        while cursor < length and text[cursor].isdigit():
+            cursor += 1
+        if cursor == digit_start or cursor >= length or text[cursor] != "]":
+            position += 1
+            continue
+        cursor += 1
+        if cursor >= length or not text[cursor].isspace():
+            position += 1
+            continue
+        while cursor < length and text[cursor].isspace():
+            cursor += 1
+        title_start = cursor
+        title_line_end = text.find("\n", title_start)
+        if title_line_end < 0:
+            break
+        title_end = title_line_end
+        while title_end > title_start and text[title_end - 1].isspace():
+            title_end -= 1
+        url_start = title_line_end + 1
+        while url_start < length and text[url_start].isspace():
+            url_start += 1
+        scheme_length = 7 if text.startswith("http://", url_start) else 8 if text.startswith("https://", url_start) else 0
+        if title_end > title_start and scheme_length:
+            url_end = url_start + scheme_length
+            while url_end < length and not text[url_end].isspace():
+                url_end += 1
+            rows.append((text[title_start:title_end], text[url_start:url_end]))
+            position = url_end
+            continue
+        newline = text.find("\n", position)
+        if newline < 0:
+            break
+        position = newline + 1
+    return rows
+
+
 def web_source_links(raw, *, max_items=1, prefer_official=False, query=''):
     """Extract stable title/URL pairs from the web tool's source preamble."""
     text = str(raw or '')
-    rows = re.findall(
-        r'^\[\d+\]\s+(.+?)\s*\n\s*(https?://\S+)', text, re.MULTILINE,
-    )
+    rows = _web_source_rows(text)
     query_tokens = set(re.findall(r'[a-z0-9]+', str(query or '').casefold())) - {
         'the', 'a', 'an', 'official', 'source', 'link', 'page', 'website',
         'site', 'guide', 'search', 'find', 'for', 'return',
@@ -5834,7 +6076,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             provider_error = payload['error']
                             if isinstance(provider_error, dict):
                                 provider_error = provider_error.get('message') or provider_error.get('detail')
-                            detail = str(provider_error or 'Unknown provider error').strip()[:300]
+                            detail = str(provider_error or 'Unknown provider error').strip()
                             raise ProviderStreamError(detail)
                         usage = payload.get('usage') or {}
                         if usage:
@@ -6353,7 +6595,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     if (
                         native_workspace_enabled
                         and content
-                        and DETAILED_VIDEO_REQUEST.search(direct_user_text)
+                        and contains_detailed_sequence_request(direct_user_text)
                         and successful_video_inspections == 1
                         and not media_detail_nudge_sent
                         and round_number < round_limit
@@ -7071,7 +7313,14 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         ):
                             artifact_body_handoff_attempts += 1
                             artifact_body_handoff_target = handoff_target
-                        result = {'error': str(exc).splitlines()[0][:300], 'exit_code': 1}
+                        logging.getLogger(__name__).warning(
+                            'Clean v3 tool call failed: %s', exc, exc_info=True,
+                        )
+                        result = {
+                            'error': _public_preview_tool_error(exc, execution_attempted=execution_attempted),
+                            'error_category': 'tool_execution_error' if execution_attempted else 'invalid_tool_arguments',
+                            'exit_code': 1,
+                        }
                     if (canonical(block.tool_type if block is not None else name) == 'youtube_tool'
                             and result.get('exit_code') not in (None, 0)):
                         round_recovery_messages.append(
@@ -7260,12 +7509,9 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         requested_browser_url = private_browser_open_url(args)
                         effective_browser_url = private_browser_effective_url(result)
                         browser_search_url = requested_browser_url or effective_browser_url
-                        is_search_engine_navigation = bool(re.search(
-                            r'https?://(?:[^/]+\.)?(?:google\.[^/]+|bing\.com|duckduckgo\.com)'
-                            r'/(?:search|sorry|html|lite|\?)',
-                            browser_search_url,
-                            re.I,
-                        )) or bool(re.search(
+                        is_search_engine_navigation = contains_search_engine_navigation(
+                            browser_search_url
+                        ) or bool(re.search(
                             r'https?://(?:[^/]+\.)?google\.[^/]+/sorry/',
                             effective_browser_url,
                             re.I,
@@ -7433,6 +7679,9 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                   'execution_attempted': execution_attempted,
                                   'blocked': policy_denied or schema is None,
                                   'desc': desc, 'round': round_number}
+                    for error_category in ('tool_execution_error', 'invalid_tool_arguments'):
+                        if result.get('error_category') == error_category:
+                            tool_event['error_category'] = error_category
                     reader_event = email_reader_event(direct_user_text, actual_tool, args, result, failed=failed)
                     if reader_event:
                         yield event(reader_event)
@@ -8005,9 +8254,9 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                 else:
                     yield event({'delta': '\nThe preview reached its round limit. Please narrow the request.'})
     except ProviderStreamError as exc:
-        detail = f'The selected model provider failed while generating: {exc}'
-        logging.getLogger(__name__).warning('Clean v3 provider stream failed: %s', exc)
-        yield f'event: error\ndata: {json.dumps({"status": 502, "error": detail})}\n\n'
+        detail = 'The selected model provider failed while generating. Retry or choose another model.'
+        logging.getLogger(__name__).warning('Clean v3 provider stream failed: %s', exc, exc_info=True)
+        yield f'event: error\ndata: {json.dumps({"status": 502, "error": detail, "error_category": "provider_stream_error"})}\n\n'
         return
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code

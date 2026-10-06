@@ -17,6 +17,7 @@ from typing import Iterable, Mapping
 
 from src.action_intents import classify_tool_intent
 from src.tool_policy import ToolPolicy
+from src.text_scanning import has_prefixed_token_match
 
 
 FAMILY_TOOLS = {
@@ -47,6 +48,62 @@ FAMILY_TOOLS = {
 CONTRACT_CORE_TOOLS = frozenset({
     "bash", "python", "read_file", "web_search", "web_fetch", "ask_user",
 })
+
+_WORKSPACE_PREFIX_RE = re.compile(r"/workspace/", re.I)
+_WORKSPACE_ARTIFACT_RE = re.compile(
+    r"/workspace/[^\s`\"']+\.(?:csv|html?|json|md|svg|txt)\b", re.I
+)
+_WORKSPACE_OUTPUT_PREFIX_RE = re.compile(r"/workspace/(?!input/)", re.I)
+_WORKSPACE_OUTPUT_RE = re.compile(
+    r"/workspace/(?!input/)[^\s`\"']+\."
+    r"(?:csv|html?|json|md|svg|txt|avif|bmp|gif|jpe?g|png|webp|pdf|mp4|webm)\b",
+    re.I,
+)
+_WORKSPACE_TOKEN_TAIL_RE = re.compile(r"[^\s`\"']*")
+
+
+def _mentions_workspace_artifact(text: str) -> bool:
+    return has_prefixed_token_match(
+        str(text or ""),
+        _WORKSPACE_PREFIX_RE,
+        _WORKSPACE_ARTIFACT_RE,
+        _WORKSPACE_TOKEN_TAIL_RE,
+    )
+
+
+def _mentions_workspace_output(text: str) -> bool:
+    return has_prefixed_token_match(
+        str(text or ""),
+        _WORKSPACE_OUTPUT_PREFIX_RE,
+        _WORKSPACE_OUTPUT_RE,
+        _WORKSPACE_TOKEN_TAIL_RE,
+    )
+
+
+def _mentions_under_budget(text: str) -> bool:
+    value = str(text or "")
+    for under in re.finditer(r"\bunder", value, re.I):
+        cursor = under.end()
+        if cursor >= len(value) or not value[cursor].isspace():
+            continue
+        while cursor < len(value) and value[cursor].isspace():
+            cursor += 1
+        if cursor < len(value) and value[cursor] in "¥$€£":
+            cursor += 1
+            while cursor < len(value) and value[cursor].isspace():
+                cursor += 1
+        digit_start = cursor
+        while cursor < len(value) and value[cursor].isdecimal():
+            cursor += 1
+        if cursor == digit_start:
+            continue
+        if cursor == len(value) or not (value[cursor].isalnum() or value[cursor] == "_"):
+            return True
+        if value[cursor:cursor + 3].casefold() == "yen":
+            cursor += 3
+            if cursor == len(value) or not (value[cursor].isalnum() or value[cursor] == "_"):
+                return True
+    return False
 _FAMILY_WORDS = {
     "calendar": r"\b(?:calendar|calender|events?|appointments?|meetings?|agenda)\b",
     "notes": r"\b(?:notes?|checklists?|groceries|remind\s+me)\b",
@@ -122,13 +179,7 @@ def _normalize_request_lead(value: str) -> str:
         text,
         flags=re.I,
     )
-    text = re.sub(
-        r"^(?:never\s*mind|scratch\s+that)\s*[,;:—–-]?\s*"
-        r"(?=(?:open|show|list|read|search|find|check|switch|go)\b)",
-        "",
-        text,
-        flags=re.I,
-    )
+    text = _strip_cancelled_request_lead(text)
     text = re.sub(r"^k(?:ay)?\s*[,!]?\s+(?=\S)", "", text, flags=re.I)
     text = re.sub(
         r"^(?:(?:great|nice|cool)\s*[,!.]|thanks?\s*[.!])\s+"
@@ -163,6 +214,21 @@ def _normalize_request_lead(value: str) -> str:
     text = re.sub(r"^((?:can|could|would|will)\s+)u\b", r"\1you", text, flags=re.I)
     text = re.sub(r"\boffical\b", "official", text, flags=re.I)
     return text
+
+
+def _strip_cancelled_request_lead(text: str) -> str:
+    lead = re.match(r"^(?:never\s*mind|scratch\s+that)", text, re.I)
+    if lead is None:
+        return text
+    cursor = lead.end()
+    while cursor < len(text) and text[cursor].isspace():
+        cursor += 1
+    if cursor < len(text) and text[cursor] in ",;:—–-":
+        cursor += 1
+    while cursor < len(text) and text[cursor].isspace():
+        cursor += 1
+    action = re.match(r"(?:open|show|list|read|search|find|check|switch|go)\b", text[cursor:], re.I)
+    return text[cursor:] if action is not None else text
 _MISSPELLED_RESEARCH_ACTION = re.compile(
     r"^\s*" + _REQUEST_PREFIX + r"(?:reserch|reasearch|reseach)\b",
     re.I,
@@ -195,6 +261,21 @@ _PURE_ACTION_PROHIBITION = re.compile(
     r"[^.;\n]*[.!?]*\s*$",
     re.I,
 )
+
+
+def _is_pure_action_prohibition(text: str) -> bool:
+    value = str(text or "").strip()
+    prefix = re.match(
+        r"(?:read[- ]only(?:\s+and)?\s+)?(?:do\s+not|don['’]?t|never)\s+"
+        r"(?:add|create|make|write|draft|edit|change|update|delete|remove|send|reply|"
+        r"run|execute|download|serve|open|save|schedule|transcribe|inspect)\b",
+        value,
+        re.I,
+    )
+    if prefix is None:
+        return False
+    tail = value[prefix.end():].rstrip(".!?")
+    return not any(char in ".;\n" for char in tail)
 _RETURN_TO_ACTION = re.compile(r"^\s*" + _REQUEST_PREFIX + r"return\s+to\b", re.I)
 _PANEL_NAVIGATION = re.compile(
     r"^\s*" + _REQUEST_PREFIX
@@ -447,6 +528,107 @@ _WARM_RECALL_WITH_FOLLOWUP = re.compile(
     r"(?P<followup>(?:what(?:['’]?s|\s+is)?|which|who|where|when|how|show|open|read|list|find|search)\b[\s\S]{0,180})$",
     re.I,
 )
+
+_WARM_TARGET_RE = re.compile(
+    r"calendar|emails?|inbox|notes?|tasks?|skills?|memories|memory|"
+    r"documents?|docs?|web|browser|cookbook|files?|shell",
+    re.I,
+)
+_WARM_FOLLOWUP_RE = re.compile(
+    r"(?:what(?:['’]?s|\s+is)?|which|who|where|when|how|show|open|read|list|find|search)"
+    r"\b[\s\S]{0,180}\Z",
+    re.I,
+)
+
+
+def _consume_space(value: str, cursor: int, *, required: bool = False) -> int | None:
+    start = cursor
+    while cursor < len(value) and value[cursor].isspace():
+        cursor += 1
+    return None if required and cursor == start else cursor
+
+
+def _phrase_end(value: str, cursor: int, phrase: str) -> int | None:
+    for index, word in enumerate(phrase.split(" ")):
+        if value[cursor:cursor + len(word)].casefold() != word:
+            return None
+        cursor += len(word)
+        if index + 1 < len(phrase.split(" ")):
+            cursor = _consume_space(value, cursor, required=True)
+            if cursor is None:
+                return None
+    return cursor
+
+
+def _warm_recall_parts(value: str, *, with_followup: bool = False) -> tuple[str, str] | None:
+    value = str(value or "")
+    cursor = _consume_space(value, 0) or 0
+    states = [cursor]
+    discourse = re.match(r"(?:ok(?:ay)?|and|then)", value[cursor:], re.I)
+    if discourse is not None:
+        after = _consume_space(value, cursor + discourse.end(), required=True)
+        if after is not None:
+            states.insert(0, after)
+
+    action_phrases = ("back to", "return to", "what about", "check", "show", "open")
+    action_states: list[int] = []
+    for state in states:
+        if not with_followup:
+            action_states.append(state)
+        for phrase in action_phrases:
+            end = _phrase_end(value, state, phrase)
+            if end is None:
+                continue
+            if with_followup:
+                end = _consume_space(value, end, required=True)
+                if end is None:
+                    continue
+            action_states.append(end)
+
+    for state in dict.fromkeys(action_states):
+        state = _consume_space(value, state) or 0
+        possessive_states = [state]
+        for possessive in ("my", "the"):
+            if value[state:state + len(possessive)].casefold() == possessive:
+                possessive_states.insert(0, state + len(possessive))
+        for target_state in possessive_states:
+            target_state = _consume_space(value, target_state) or 0
+            target = _WARM_TARGET_RE.match(value, target_state)
+            if target is None:
+                continue
+            target_text = target.group(0)
+            suffix = target.end()
+            if with_followup:
+                if suffix < len(value) and (value[suffix].isalnum() or value[suffix] == "_"):
+                    continue
+                separator_states = []
+                spaced = _consume_space(value, suffix) or 0
+                if spaced > suffix:
+                    separator_states.append(spaced)
+                if spaced < len(value) and value[spaced] in "-—,:;":
+                    separator_states.append(_consume_space(value, spaced + 1) or 0)
+                for conjunction in ("and", "then"):
+                    end = spaced + len(conjunction)
+                    if (value[spaced:end].casefold() == conjunction
+                            and (end == len(value) or not (value[end].isalnum() or value[end] == "_"))):
+                        separator_states.append(_consume_space(value, end) or 0)
+                for followup_start in dict.fromkeys(separator_states):
+                    followup = _WARM_FOLLOWUP_RE.match(value, followup_start)
+                    if followup is not None:
+                        return target_text, followup.group(0)
+                continue
+            suffix = _consume_space(value, suffix) or 0
+            suffix_states = [suffix]
+            for word in ("again", "now"):
+                if value[suffix:suffix + len(word)].casefold() == word:
+                    suffix_states.insert(0, suffix + len(word))
+            for end in suffix_states:
+                while end < len(value) and value[end] in ".!?":
+                    end += 1
+                end = _consume_space(value, end) or 0
+                if end == len(value):
+                    return target_text, ""
+    return None
 _REQUIRED_TOOLS = {
     "calendar": "manage_calendar", "notes": "manage_notes",
     "tasks": "manage_tasks", "skills": "manage_skills",
@@ -851,11 +1033,7 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
         tools = {"inspect_media"}
         if (
             re.search(r"\b(?:create|write|save|build|produce)\b", raw_text, re.I)
-            and re.search(
-                r"(?:file://)?/workspace/[^\s`\"']+\.(?:csv|html?|json|md|svg|txt)\b",
-                raw_text,
-                re.I,
-            )
+            and _mentions_workspace_artifact(raw_text)
         ):
             tools.update({"write_file", "read_file"})
         if re.search(r"\b(?:preview|render|open)\b[^.\n]{0,100}\b(?:page|html|browser)\b", raw_text, re.I):
@@ -2118,6 +2296,31 @@ _READ_PRESENTATION_SUFFIX = re.compile(
 )
 
 
+def _terminal_clause_match(text: str, core_pattern: str) -> re.Match[str] | None:
+    """Match a terminal clause after removing its ambiguous punctuation tail."""
+    end = len(text)
+    while end and text[end - 1].isspace():
+        end -= 1
+    while end and text[end - 1] in ".!?":
+        end -= 1
+    possessive = core_pattern.replace(r"\s+", r"\s++").replace(r"\s*", r"\s*+")
+    return re.search(possessive + r"$", text[:end], re.I)
+
+
+def _strip_terminal_but(text: str) -> str:
+    end = len(text)
+    while end and text[end - 1].isspace():
+        end -= 1
+    if end < 3 or text[end - 3:end].casefold() != "but":
+        return text
+    start = end - 3
+    if start == 0 or not text[start - 1].isspace():
+        return text
+    while start and text[start - 1].isspace():
+        start -= 1
+    return text[:start]
+
+
 def _read_request_and_limit(message: str) -> tuple[str, int | None]:
     """Strip only whole, known presentation/safety suffixes, never actions."""
     text = _normalize_request_lead(message)
@@ -2167,11 +2370,11 @@ def _read_request_and_limit(message: str) -> tuple[str, int | None]:
     if keep_few_suffix:
         maximum = 3
         text = text[:keep_few_suffix.start()].strip()
-    few_suffix = re.search(
+    few_suffix = _terminal_clause_match(
+        text,
         r"[,.;?]\s*(?:(?:only|just)\s+)?(?:(?:list|show)\s+(?:me\s+)?)?a\s+few"
         r"(?:\s+(?:task\s+)?(?:names?|items?|results?|entries?))?"
-        r"(?:\s+and\s+(?:whether|if)\s+[^.;\n]+)?[.!?]*\s*$",
-        text, re.I,
+        r"(?:\s+and\s+(?:whether|if)\s+[^.;\n]+)?",
     )
     if few_suffix:
         maximum = 3
@@ -2183,42 +2386,43 @@ def _read_request_and_limit(message: str) -> tuple[str, int | None]:
         text,
         flags=re.I,
     ).strip()
-    text = re.sub(
+    terminal_read_only = _terminal_clause_match(
+        text,
         r"[.;]\s*read[- ]only(?:\s+(?:please|pls|plz))?\s*,?\s*"
         r"(?:(?:and\s+)?(?:do\s+not|don['’]?t|dont)\s+"
-        r"(?:change|edit|modify)(?:\s+or\s+send)?\s+(?:anything|data))?"
-        r"[.!?]*\s*$",
-        "",
-        text,
-        flags=re.I,
-    ).strip()
+        r"(?:change|edit|modify)(?:\s+or\s+send)?\s+(?:anything|data))?",
+    )
+    if terminal_read_only:
+        text = text[:terminal_read_only.start()].strip()
     # Explanatory/safety tails do not alter a preceding exact read request.
-    text = re.sub(
+    safety_tail = _terminal_clause_match(
+        text,
         r"(?:(?:[,;]\s*(?:and\s+)?|\s+and\s+))?(?:do\s+not|don['’]?t|dont)\s+"
-        r"(?:touch|change|edit|modify)(?:\s+(?:anything|data|them))?(?:\s+yet)?[.!?]*\s*$",
-        "", text, flags=re.I,
-    ).strip()
+        r"(?:touch|change|edit|modify)(?:\s+(?:anything|data|them))?(?:\s+yet)?",
+    )
+    if safety_tail:
+        text = text[:safety_tail.start()].strip()
     text = re.sub(
         r"[.!?]\s*read[- ]only(?:\s+(?:please|pls|plz))?\s*,?\s*"
         r"(?:do\s+not|don['’]?t|dont)\s+(?:change|edit|modify)\s+"
         r"(?:or\s+send\s+)?anything[.!?]*\s*$",
         "", text, flags=re.I,
     ).strip()
-    text = re.sub(
-        r"(?:(?:[,;]\s*(?:and\s+)?|\s+and\s+))?no\s+changes?[.!?]*\s*$",
-        "", text, flags=re.I,
-    ).strip()
-    text = re.sub(
-        r"(?:(?:[,;]\s*(?:and\s+)?|\s+and\s+))?no\s+edits?[.!?]*\s*$",
-        "", text, flags=re.I,
-    ).strip()
+    for terminal_core in (
+        r"(?:(?:[,;]\s*(?:and\s+)?|\s+and\s+))?no\s+changes?",
+        r"(?:(?:[,;]\s*(?:and\s+)?|\s+and\s+))?no\s+edits?",
+    ):
+        terminal_match = _terminal_clause_match(text, terminal_core)
+        if terminal_match:
+            text = text[:terminal_match.start()].strip()
     text = re.sub(
         r"[,;]\s*no\s+edits?[.!?]*\s*$", "", text, flags=re.I,
     ).strip()
-    text = re.sub(
-        r"(?:(?:[,;]\s*(?:and\s+)?|\s+and\s+))?no\s+writes?[.!?]*\s*$",
-        "", text, flags=re.I,
-    ).strip()
+    terminal_no_write = _terminal_clause_match(
+        text, r"(?:(?:[,;]\s*(?:and\s+)?|\s+and\s+))?no\s+writes?"
+    )
+    if terminal_no_write:
+        text = text[:terminal_no_write.start()].strip()
     text = re.sub(
         r"[.!?]\s*(?:i['’]?m|i\s+am)\s+(?:just\s+)?checking\b[^\n]*$",
         "", text, flags=re.I,
@@ -2236,12 +2440,11 @@ def _read_request_and_limit(message: str) -> tuple[str, int | None]:
         text,
         flags=re.I,
     ).strip()
-    text = re.sub(
-        r"[,;]\s*(?:keep\s+(?:them|it)\s+)?short\s+lines?\s*,?[.!?]*\s*$",
-        "",
-        text,
-        flags=re.I,
-    ).strip()
+    short_lines = _terminal_clause_match(
+        text, r"[,;]\s*(?:keep\s+(?:them|it)\s+)?short\s+lines?\s*,?"
+    )
+    if short_lines:
+        text = text[:short_lines.start()].strip()
     text = re.sub(
         r"[,.;]\s*keep\s+(?:the\s+answer|it|them)\s+short[.!?]*\s*$",
         "",
@@ -2318,7 +2521,7 @@ def _read_request_and_limit(message: str) -> tuple[str, int | None]:
         value = int(raw) if raw.isdecimal() else _READ_COUNT_WORDS[raw.lower()]
         maximum = value if maximum is None else min(maximum, value)
         text = text[:conversational_limit.start()].rstrip(' ,.;?')
-        text = re.sub(r"\s+but\s*$", "", text, flags=re.I)
+        text = _strip_terminal_but(text)
     need_limit = re.search(
         r"[.!?]\s*(?:i\s+)?only\s+need\s+(" + _READ_COUNT + r")"
         r"(?:\s+(?:short\s+)?(?:titles?|items?|results?|entries?|names?|ones?))?"
@@ -3949,7 +4152,7 @@ def _families_for_tool(tool: str) -> frozenset[str]:
 def _clause_capabilities(text: str) -> set[str]:
     # A prohibition constrains authority; it must never grant the family named
     # only as the forbidden side effect (for example, "do not create a file").
-    if _PURE_ACTION_PROHIBITION.fullmatch(text):
+    if _is_pure_action_prohibition(text):
         return set()
     container_tool = creation_container_tool(text)
     if container_tool:
@@ -4610,12 +4813,7 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
                 raw_text,
                 re.I,
             )
-            and re.search(
-                r"(?:file://)?/workspace/(?!input/)[^\s`\"']+\."
-                r"(?:csv|html?|json|md|svg|txt|avif|bmp|gif|jpe?g|png|webp|pdf|mp4|webm)\b",
-                raw_text,
-                re.I,
-            )
+            and _mentions_workspace_output(raw_text)
         ):
             families.add("shell_files")
         if re.search(
@@ -5074,7 +5272,7 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
             and re.search(r"\b(?:ones?|top|apps?|services?|providers?)\b", text, re.I)
             and re.search(r"\b(?:price|cheap|under|dimensions?|quote|trustworthy|app)\b", text, re.I)
         )
-        or re.search(r"\bunder\s+[¥$€£]?\s*\d+(?:[.,]\d+)?(?:\s*yen)?\b", text, re.I)
+        or _mentions_under_budget(text)
     ):
         return frozenset({"search_browser"})
     if recent_family == ("search_browser",) and re.fullmatch(
@@ -6011,8 +6209,8 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
         elif (recent == ("search_browser",) and families == {"cookbook_admin"}
               and re.match(r"^\s*" + _REQUEST_PREFIX + r"(?:search|find)\s+(?:those|them|these)\b", text, re.I)):
             families = {"search_browser"}
-    if not families and (recall := _WARM_RECALL.fullmatch(text)):
-        target = recall["target"].lower()
+    if not families and (recall := _warm_recall_parts(text)):
+        target = recall[0].lower()
         family = {
             "email": "email", "emails": "email", "inbox": "email",
             "note": "notes", "notes": "notes", "task": "tasks", "tasks": "tasks",
@@ -6024,8 +6222,8 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
         }[target]
         if family in recently_executed_families(history):
             families.add(family)
-    if not families and (recall := _WARM_RECALL_WITH_FOLLOWUP.fullmatch(text)):
-        target = recall["target"].lower()
+    if not families and (recall := _warm_recall_parts(text, with_followup=True)):
+        target = recall[0].lower()
         family = {
             "email": "email", "emails": "email", "inbox": "email",
             "note": "notes", "notes": "notes", "task": "tasks", "tasks": "tasks",

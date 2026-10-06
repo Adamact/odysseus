@@ -82,6 +82,15 @@ from src.tool_approvals import (
     tool_approval_store,
 )
 from src.tool_types import ToolBlock
+from src.tool_parsing import iter_email_addresses, strip_angle_tags
+from src.text_scanning import (
+    contains_detailed_sequence_request,
+    has_prefixed_token_match,
+    first_tag_content,
+    iter_angle_contents,
+    iter_markdown_links,
+    replace_markdown_links_with_labels,
+)
 from src.turn_contract import selected_tools_for_request, with_turn_contract
 from src.agent_runtime.journal import propose_action, execute_action
 from src.agent_runtime.completion import with_completion_gate
@@ -1016,12 +1025,36 @@ def _looks_like_map_browser_request(text: str) -> bool:
 
 def _looks_like_youtube_tool_turn(text: str) -> bool:
     value = str(text or "").lower()
-    return bool(re.search(
+    if re.search(
         r"\b(?:youtube|youtu\.be|yt|video\s+comments?|comments?\s+on\s+(?:the\s+)?video|"
-        r"transcript\s+(?:of|for)|(?:latest|newest|recent)\s+(?:\d+\s+)?(?:videos?|uploads?)|"
-        r"official\s+.+\s+channel)\b",
+        r"transcript\s+(?:of|for)|(?:latest|newest|recent)\s+(?:\d+\s+)?(?:videos?|uploads?)"
+        r")\b",
         value,
-    ))
+    ):
+        return True
+    official_ends = iter(match.end() for match in re.finditer(r"\bofficial", value))
+    channel_starts = iter(match.start() for match in re.finditer(r"channel\b", value))
+    next_official_end = next(official_ends, -1)
+    next_channel_start = next(channel_starts, -1)
+    leading_space = False
+    body = False
+    trailing_space = False
+    for index, char in enumerate(value):
+        while next_channel_start >= 0 and next_channel_start < index:
+            next_channel_start = next(channel_starts, -1)
+        if trailing_space and next_channel_start == index:
+            return True
+        starts_after_official = next_official_end == index
+        if starts_after_official:
+            next_official_end = next(official_ends, -1)
+        is_space = char.isspace()
+        is_not_lf = char != "\n"
+        leading_space, body, trailing_space = (
+            (starts_after_official or leading_space) and is_space,
+            (leading_space or body) and is_not_lf,
+            (body or trailing_space) and is_space,
+        )
+    return False
 
 
 def _explicitly_named_personal_tools(text: str) -> Set[str]:
@@ -1108,7 +1141,7 @@ def _qwen38_router_tool_names(query: str) -> Set[str]:
             selected.update({"mcp__email__manage_email_state"})
         if re.search(r"\b(?:latest|newest|recent|most recent|inbox)\b", q):
             selected.add("mcp__email__list_emails")
-        if re.search(r"\b(?:send|email)\b", q) and re.search(r"[\w.+-]+@[\w.-]+\.\w+", q):
+        if re.search(r"\b(?:send|email)\b", q) and next(iter_email_addresses(q), None):
             selected.update({"send_email", "resolve_contact"})
         if re.search(r"\b(?:reply|respond|response)\b", q):
             selected.update({"mcp__email__list_emails", "mcp__email__read_email", "mcp__email__draft_email_reply"})
@@ -1524,8 +1557,20 @@ def _parse_explicit_open_panel_request(text: str) -> Optional[tuple[str, str]]:
     value = re.sub(r"^(?:(?:ok(?:ay)?|now|then|also|next)[,;:]?\s+)+", "", value)
     value = re.sub(r"^go\s+back\s+(?:and\s+)?(?:open|to)\s+", "open ", value)
     value = re.sub(r"^return\s+to\s+", "open ", value)
-    value = re.sub(r"\s+again[.!?]*$", "", value)
-    value = re.sub(r"[.!?]+$", "", value).strip()
+    trailing_punctuation = len(value)
+    while trailing_punctuation and value[trailing_punctuation - 1] in ".!?":
+        trailing_punctuation -= 1
+    without_punctuation = value[:trailing_punctuation]
+    if without_punctuation.endswith("again"):
+        whitespace_start = len(without_punctuation) - len("again")
+        while whitespace_start and without_punctuation[whitespace_start - 1].isspace():
+            whitespace_start -= 1
+        if whitespace_start < len(without_punctuation) - len("again"):
+            value = value[:whitespace_start]
+    trailing_punctuation = len(value)
+    while trailing_punctuation and value[trailing_punctuation - 1] in ".!?":
+        trailing_punctuation -= 1
+    value = value[:trailing_punctuation].strip()
     month_names = {
         "january": "01", "jan": "01",
         "february": "02", "feb": "02",
@@ -2104,26 +2149,34 @@ def _looks_like_agent_reasoning_preamble(text: str) -> bool:
     # e.g. a full comparison followed by "Now let me verify nothing started."
     # That whole round is progress text; retaining it duplicates the answer
     # once the tool-result round supplies the actual verification.
-    if re.search(
-        r"(?:^|\n+|[.!?]\s+)(?:but\s+)?(?:now\s+)?"
+    trailing_segment = re.split(r"(?:\n+|[.!?]\s+)", lowered)[-1]
+    if re.match(
+        r"(?:but\s+)?(?:now\s+)?"
         r"(?:let me|i(?:'ll| will)(?:\s+need\s+to)?|i\s+can(?:\s+now)?|i(?:'m| am)\s+(?:preparing|planning)\s+to)\s+"
         r"(?:(?:carefully|methodically|systematically|closely|further)\s+){0,2}"
         r"(?:continue|continuing|analy[sz]e|scan|check|verify|inspect|confirm|look up|fetch|open|list|search|refine|request|review|track|read|watch|(?:re-?)?examine|provide|give|state|report|answer|respond|summarize|conclude)\b"
         r"[^.!?]*[.!?]?\s*$",
-        lowered,
+        trailing_segment,
     ):
         return True
     # A process heading followed only by partial observation bullets is still
     # analysis, not a delivered answer. Keep this bounded to inspection verbs
     # so completed answer headings such as "Let me summarize:" remain valid.
-    if re.search(
-        r"(?:^|\n)\s*(?:now\s+)?(?:let me|i(?:'ll| will))\s+"
+    process_heading_re = re.compile(
+        r"\s*(?:now\s+)?(?:let me|i(?:'ll| will))\s+"
         r"(?:carefully\s+|methodically\s+|systematically\s+){0,2}"
         r"(?:track|trace|inspect|review|analy[sz]e|examine|check)\b[^\n]{0,140}:\s*\n"
-        r"(?:\s*[-*]\s+[^\n]{1,240}\n?){1,8}\s*$",
-        lowered,
-    ):
-        return True
+        r"(?:\s*[-*]\s+[^\n]{1,240}\n?){1,8}\s*$"
+    )
+    if any(marker in lowered for marker in ("let me", "i'll", "i will")):
+        line_start = 0
+        while line_start <= len(lowered):
+            if process_heading_re.match(lowered, line_start):
+                return True
+            newline = lowered.find("\n", line_start)
+            if newline < 0:
+                break
+            line_start = newline + 1
     first_line = lowered.splitlines()[0].strip()
     if re.search(
         r"\b(?:i need to|i should|let me|i'll(?:\s+need\s+to)?|i(?:'m| am)\s+(?:preparing|planning)\s+to)\s+"
@@ -2144,11 +2197,28 @@ def _looks_like_agent_reasoning_preamble(text: str) -> bool:
         lowered,
     ):
         return True
-    return bool(re.search(
-        r"(?:^|[。！？\n]\s*)(?:我需要|需要先|让我|先|接下来(?:我)?(?:会|要)?).{0,12}"
-        r"(?:查看|检查|读取|分析|继续|使用|调用)",
-        value,
-    ))
+    chinese_body = re.compile(
+        r"(?:我需要|需要先|让我|先|接下来(?:我)?(?:会|要)?).{0,12}"
+        r"(?:查看|检查|读取|分析|继续|使用|调用)"
+    )
+    if chinese_body.match(value):
+        return True
+    pos = 0
+    boundary_pattern = re.compile(r"[。！？\n]")
+    while boundary := boundary_pattern.search(value, pos):
+        candidate = boundary.end()
+        while candidate < len(value) and value[candidate].isspace():
+            candidate += 1
+        if chinese_body.match(value, candidate):
+            return True
+        pos = max(candidate, boundary.end())
+    return False
+
+
+def _strip_trailing_done(text: str) -> str:
+    """Remove a terminal Done. and adjacent whitespace with a linear scan."""
+    trimmed = text.rstrip()
+    return trimmed[:-5].rstrip() if trimmed.lower().endswith("done.") else text
 
 
 def _strip_trailing_answer_promise(text: str) -> str:
@@ -2405,6 +2475,21 @@ def _parse_qwen_explicit_note_delete(text: str) -> Optional[str]:
     return match.group(1).strip().strip("\"'`").rstrip(".") if match else None
 
 
+def _captures_after_first_prefix(
+    value: str,
+    prefix_pattern: str,
+    remainder_pattern: str,
+    *,
+    flags: int = re.IGNORECASE,
+) -> tuple[str | None, ...] | None:
+    """Match a suffix once after the first prefix that can own all later text."""
+    prefix = re.search(prefix_pattern, value, flags)
+    if prefix is None:
+        return None
+    remainder = re.match(remainder_pattern, value[prefix.end():], flags)
+    return remainder.groups() if remainder is not None else None
+
+
 def _parse_qwen_explicit_note_update(text: str) -> Optional[tuple[str, str]]:
     """Extract an exact note title and replacement content from a clear update."""
     value = str(text or "").strip()
@@ -2412,15 +2497,14 @@ def _parse_qwen_explicit_note_update(text: str) -> Optional[tuple[str, str]]:
         r"\bnote\b", value, re.IGNORECASE
     ):
         return None
-    match = re.search(
-        r"\bnote\s+titled\s+(.+?)\s+"
-        r"so\s+its\s+content\s+is\s+['\"]([^'\"]+)['\"]",
+    captures = _captures_after_first_prefix(
         value,
-        re.IGNORECASE,
+        r"\bnote\s+titled(?=\s)",
+        r"\s+(.+?)\s+so\s+its\s+content\s+is\s+['\"]([^'\"]+)['\"]",
     )
-    if not match:
+    if captures is None:
         return None
-    return match.group(1).strip().strip("\"'`").rstrip("."), match.group(2)
+    return captures[0].strip().strip("\"'`").rstrip("."), captures[1]
 
 
 def _parse_qwen_explicit_note_search(text: str) -> Optional[str]:
@@ -2515,19 +2599,30 @@ def _is_qwen_explicit_endpoint_list_request(text: str) -> bool:
     ))
 
 
-def _parse_explicit_pipeline_request(text: str) -> Optional[tuple[str, str]]:
-    value = str(text or "").strip()
-    match = re.search(
-        r"\bpipeline\s+using\s+([^\s,]+)\s+to\s+(.+?),\s*then\s+"
-        r"([^\s,]+)\s+to\s+(.+?)(?:[.!?]\s*)?$",
-        value,
+def _pipeline_request_parts(value: str) -> tuple[str, str, str, str] | None:
+    prefix = re.search(
+        r"\bpipeline\s+using\s+([^\s,]+)\s+to(?=\s)", value, re.IGNORECASE
+    )
+    if prefix is None:
+        return None
+    remainder = re.match(
+        r"\s+(.+?),\s*then\s+([^\s,]+)\s+to\s+(.+?)(?:[.!?]\s*)?$",
+        value[prefix.end():],
         re.IGNORECASE,
     )
-    if not match:
+    if remainder is None:
+        return None
+    return prefix.group(1), remainder.group(1), remainder.group(2), remainder.group(3)
+
+
+def _parse_explicit_pipeline_request(text: str) -> Optional[tuple[str, str]]:
+    value = str(text or "").strip()
+    parts = _pipeline_request_parts(value)
+    if parts is None:
         return None
     steps = [
-        {"model": match.group(1).strip(), "instruction": match.group(2).strip()},
-        {"model": match.group(3).strip(), "instruction": match.group(4).strip()},
+        {"model": parts[0].strip(), "instruction": parts[1].strip()},
+        {"model": parts[2].strip(), "instruction": parts[3].strip()},
     ]
     return "pipeline", json.dumps({"steps": steps})
 
@@ -2704,7 +2799,9 @@ def _recent_session_id_for_title(messages: List[Dict], title_query: str) -> str:
         if msg.get("role") != "assistant":
             continue
         content = str(msg.get("content") or "")
-        for label, sid in reversed(re.findall(r"\[([^\]]+)\]\(#session-([^)]+)\)", content)):
+        for _start, _end, label, sid in reversed(list(iter_markdown_links(
+            content, target_prefix="#session-"
+        ))):
             label_l = label.lower()
             if not query_terms or all(term in label_l for term in query_terms):
                 return sid.strip()
@@ -2789,7 +2886,7 @@ def _parse_qwen_explicit_session_action(text: str, messages: List[Dict]) -> Opti
     if rename_match:
         new_name = (rename_match.group(1) or "").strip(" \t\r\n\"'`.")
         new_name = re.split(
-            r"\s+(?:Use the tool directly|Keep this read-only|Report the result|Do not)\b",
+            r"(?<=\s)(?:Use the tool directly|Keep this read-only|Report the result|Do not)\b",
             new_name,
             maxsplit=1,
             flags=re.IGNORECASE,
@@ -2877,16 +2974,33 @@ def _parse_qwen_explicit_session_send(text: str, messages: List[Dict]) -> Option
     sid = _recent_session_id_for_title(messages, target_text)
     if not sid and re.search(r"\b(?:that|this)\b", target_text, re.IGNORECASE):
         for prior in reversed(messages or []):
-            links = re.findall(
-                r"\[[^\]]+\]\(#session-([A-Za-z0-9_-]+)\)",
-                str(prior.get("content") or ""),
-            )
+            links = [
+                target
+                for _start, _end, _label, target in iter_markdown_links(
+                    str(prior.get("content") or ""),
+                    target_prefix="#session-",
+                    target_re=re.compile(r"[A-Za-z0-9_-]+"),
+                )
+            ]
             if links:
                 sid = links[-1]
                 break
     if not sid or not relay_message:
         return None
     return "send_to_session", f"{sid}\n{relay_message}"
+
+
+def _session_find_query_capture(value: str) -> str | None:
+    action_prefix = re.search(r"\b(?:find|search|show)\b(?=\s)", value, re.IGNORECASE)
+    if action_prefix is None:
+        return None
+    optional_for = r"(?:\s+for)?" if action_prefix.group(0).casefold() == "search" else ""
+    remainder = re.match(
+        optional_for + r"\s+(?:the\s+)?(.+?)\s+(?:chat|session|conversation)\b",
+        value[action_prefix.end():],
+        re.IGNORECASE,
+    )
+    return remainder.group(1) if remainder is not None else None
 
 
 def _parse_qwen_explicit_session_find(text: str) -> Optional[tuple[str, str]]:
@@ -2910,14 +3024,10 @@ def _parse_qwen_explicit_session_find(text: str) -> Optional[tuple[str, str]]:
         re.IGNORECASE,
     ):
         return "list_sessions", ""
-    match = re.search(
-        r"\b(?:find|search(?:\s+for)?|show)\s+(?:the\s+)?(.+?)\s+(?:chat|session|conversation)\b",
-        value,
-        re.IGNORECASE,
-    )
-    if not match:
+    captured_query = _session_find_query_capture(value)
+    if captured_query is None:
         return None
-    query = (match.group(1) or "").strip(" \t\r\n\"'`.")
+    query = captured_query.strip(" \t\r\n\"'`.")
     query = re.sub(r"\bscratch\b", "", query, flags=re.IGNORECASE).strip()
     query = re.sub(r"\s+", " ", query).strip()
     return "list_sessions", query or value
@@ -3180,15 +3290,15 @@ def _parse_qwen_explicit_email_topic_bulk_action_request(text: str) -> Optional[
         return None
     if re.search(r"\bUIDs?\b", value, re.IGNORECASE):
         return None
-    match = re.search(
-        r"\b(?:delete|trash|remove|archive|mark(?:\s+as)?\s+(?:read|unread)|mark\s+(?:read|unread))\b"
-        r"\s+(?:all|every|the)?\s*(?:my\s+)?(.+?)\s+(?:emails?|mail|messages?)\b",
+    captures = _captures_after_first_prefix(
         value,
-        re.IGNORECASE,
+        r"\b(?:delete|trash|remove|archive|mark(?:\s+as)?\s+(?:read|unread)|mark\s+(?:read|unread))\b"
+        r"(?=\s)",
+        r"\s+(?:all|every|the)?\s*(?:my\s+)?(.+?)\s+(?:emails?|mail|messages?)\b",
     )
-    if not match:
+    if captures is None:
         return None
-    query = re.sub(r"\s+", " ", match.group(1)).strip(" .\"'")
+    query = re.sub(r"\s+", " ", captures[0]).strip(" .\"'")
     if not query or query.lower() in {"all", "the", "my"}:
         return None
     return {"action": action, "query": query, "folder": "INBOX", "max_results": 50}
@@ -3345,12 +3455,12 @@ def _parse_qwen_explicit_block_sender_request(text: str) -> Optional[dict[str, A
         return None
     if re.search(r"\b(?:should\s+i|should\s+we|would\s+you|can\s+i|do\s+you\s+think)\b", value, re.IGNORECASE):
         return None
-    match = re.search(r"[\w.+-]+@[\w.-]+\.\w+", value)
-    if not match:
+    address = next(iter_email_addresses(value), "")
+    if not address:
         return None
     move_existing = not re.search(r"\b(?:do\s+not|don't|dont)\s+(?:move|delete|trash|junk)\b|\bleave\s+existing\b", value, re.IGNORECASE)
     return {
-        "sender": match.group(0),
+        "sender": address,
         "folder": "INBOX",
         "move_existing": move_existing,
         "reason": "User explicitly requested sender block.",
@@ -3392,10 +3502,10 @@ def _parse_qwen_explicit_unblock_sender_request(text: str) -> Optional[dict[str,
     value = str(text or "").strip()
     if not value or not re.search(r"\b(?:unblock|allow|remove\s+from\s+block)\b", value, re.IGNORECASE):
         return None
-    match = re.search(r"[\w.+-]+@[\w.-]+\.\w+", value)
-    if not match:
+    address = next(iter_email_addresses(value), "")
+    if not address:
         return None
-    return {"sender": match.group(0)}
+    return {"sender": address}
 
 
 def _email_relative_date_range(text: str) -> Optional[dict[str, str]]:
@@ -4253,8 +4363,8 @@ def _note_title_id_pairs_from_tool_output(raw: str) -> list[tuple[str, str]]:
             pairs.append(key)
             seen.add(key)
 
-    for match in re.finditer(r"\[([^\]]+)\]\(#note-([^)]+)\)", raw):
-        add_pair(match.group(1), match.group(2))
+    for _start, _end, title, note_id in iter_markdown_links(raw, target_prefix="#note-"):
+        add_pair(title, note_id)
     for line in raw.splitlines():
         match = re.match(r"^\s*-\s+\[([^\]]+)\]\s+\*\*(.*?)\*\*", line)
         if match:
@@ -4326,7 +4436,7 @@ def _notes_expected_actions(user_text: str) -> set[str]:
 def _split_note_items(value: str) -> list[dict[str, Any]]:
     parts = [
         re.sub(r"\s+", " ", part).strip(" .")
-        for part in re.split(r"\s*,\s*|\s+\band\b\s+", str(value or ""))
+        for part in re.split(r",|(?<=\s)and(?=\s)", str(value or ""))
     ]
     return [{"text": part, "done": False} for part in parts if part]
 
@@ -4391,6 +4501,32 @@ def _is_personal_tool_definition_turn(text: str) -> bool:
     )
 
 
+def _remaining_checklist_name(value: str) -> str | None:
+    """Return the checklist name from the staged legacy question grammar."""
+    lead = re.search(r"\b(?:what(?:'s| is)?|show|tell\s+me)\b", value, re.IGNORECASE)
+    if lead is None:
+        return None
+    line_end = value.find("\n", lead.end())
+    if line_end < 0:
+        line_end = len(value)
+    remaining = re.compile(r"\b(?:left|remaining)\b", re.IGNORECASE).search(
+        value, lead.end(), line_end
+    )
+    if remaining is None:
+        return None
+    location = re.compile(r"\b(?:on|in)\b(?=\s)", re.IGNORECASE).search(
+        value, remaining.end(), line_end
+    )
+    if location is None:
+        return None
+    name = re.match(
+        r"\s+(?:the\s+)?(.+?)\s+checklist\b",
+        value[location.end():line_end],
+        re.IGNORECASE,
+    )
+    return name.group(1) if name is not None else None
+
+
 def _parse_simple_notes_tool_request(text: str) -> Optional[tuple[str, str]]:
     """Deterministic fallback for obvious notes commands when a model stalls."""
     value = str(text or "").strip()
@@ -4425,14 +4561,14 @@ def _parse_simple_notes_tool_request(text: str) -> Optional[tuple[str, str]]:
     else:
         label = ""
 
-    checklist_match = re.search(
-        r"\b(?:make|create|add)\s+(?:a\s+)?checklist\s+(?:called|titled|named)\s+(.+?)\s+with\s+(.+?)\s*$",
+    checklist_captures = _captures_after_first_prefix(
         value,
-        re.IGNORECASE,
+        r"\b(?:make|create|add)\s+(?:a\s+)?checklist\s+(?:called|titled|named)(?=\s)",
+        r"\s+(.+?)\s+with\s+(.+?)$",
     )
-    if checklist_match:
-        title = re.sub(r"\s+", " ", checklist_match.group(1)).strip(" .\"'")
-        items = _split_note_items(checklist_match.group(2))
+    if checklist_captures is not None:
+        title = re.sub(r"\s+", " ", checklist_captures[0]).strip(" .\"'")
+        items = _split_note_items(checklist_captures[1])
         if title and items:
             return "manage_notes", json.dumps({
                 "action": "add",
@@ -4457,13 +4593,9 @@ def _parse_simple_notes_tool_request(text: str) -> Optional[tuple[str, str]]:
                 args["label"] = label
             return "manage_notes", json.dumps(args)
 
-    remaining_match = re.search(
-        r"\b(?:what(?:'s| is)?|show|tell\s+me)\b.*?\b(?:left|remaining)\b.*?\b(?:on|in)\s+(?:the\s+)?(.+?)\s+checklist\b",
-        value,
-        re.IGNORECASE,
-    )
-    if remaining_match:
-        query = _clean_notes_search_query(remaining_match.group(1))
+    remaining_name = _remaining_checklist_name(value)
+    if remaining_name is not None:
+        query = _clean_notes_search_query(remaining_name)
         if query:
             return "manage_notes", json.dumps({"action": "search", "query": query})
 
@@ -4474,7 +4606,7 @@ def _parse_simple_notes_tool_request(text: str) -> Optional[tuple[str, str]]:
     )
     if note_saying_match:
         body = re.sub(
-            r"\s+(?:and\s+)?(?:tag|label)\s+(?:it\s+)?(?:as\s+)?#?[a-zA-Z0-9_-]{2,40}\s*$",
+            r"(?<=\s)(?:and\s+)?(?:tag|label)\s+(?:it\s+)?(?:as\s+)?#?[a-zA-Z0-9_-]{2,40}\s*$",
             "",
             note_saying_match.group(1),
             flags=re.IGNORECASE,
@@ -4741,6 +4873,38 @@ def _single_document_id_from_tool_output(raw: str) -> str:
     return next(iter(ids)) if len(ids) == 1 else ""
 
 
+def _session_link_from_row(row: str) -> str:
+    """Find the first session link in a newline-free listing row in O(n).
+
+    The legacy label grammar allows both an ordinary backslash and an escaped
+    closing bracket. Keep its greedy choice of the last reachable link closer,
+    without trying exponentially many ways to partition a backslash run.
+    An unescaped closing bracket ends a label; later openers can then be tried.
+    The id's closing-parenthesis search also advances monotonically.
+    """
+    start = row.find("[")
+    bracket = row.find("]", start + 1) if start >= 0 else -1
+    link_end = -1
+    id_end = -1
+    while bracket >= 0:
+        if bracket > start + 1 and row.startswith("(#session-", bracket + 1):
+            id_start = bracket + len("](#session-")
+            if id_end < id_start:
+                id_end = row.find(")", id_start)
+            if id_end < 0:
+                break
+            if id_end > id_start:
+                link_end = id_end + 1
+        if row[bracket - 1] != "\\":
+            if link_end >= 0:
+                break
+            start = row.find("[", bracket + 1)
+            if start < 0:
+                break
+        bracket = row.find("]", max(bracket + 1, start + 1))
+    return row[start:link_end] if link_end >= 0 else ""
+
+
 def _session_list_summary_from_tool_output(raw: str, max_items: int = 12) -> str:
     """Keep a broad session listing readable and terminal for small routers."""
     if not isinstance(raw, str) or not raw.strip():
@@ -4758,13 +4922,17 @@ def _session_list_summary_from_tool_output(raw: str, max_items: int = 12) -> str
         return "\n".join(lines[: max_items + 1])
     formatted_rows: list[str] = []
     for row in rows:
-        link_match = re.search(r"(\[(?:\\.|[^\]])+\]\(#session-[^)]+\))", row)
-        if link_match:
-            meta_match = re.search(r"\(([^()]*(?:last active|msgs|model|id:)[^()]*)\)", row)
-            meta = meta_match.group(1) if meta_match else ""
+        link = _session_link_from_row(row)
+        if link:
+            meta = next(
+                (match.group(1) for match in re.finditer(r"\(([^()]*)\)", row)
+                 if any(marker in match.group(1)
+                        for marker in ("last active", "msgs", "model", "id:"))),
+                "",
+            )
             active = re.search(r"last active [^)]+", meta)
             suffix = f" ({active.group(0)})" if active else ""
-            formatted_rows.append(f"- {link_match.group(1)}{suffix}")
+            formatted_rows.append(f"- {link}{suffix}")
         else:
             formatted_rows.append(row[:180].rstrip() + ("..." if len(row) > 180 else ""))
     shown = formatted_rows[:max_items]
@@ -4793,6 +4961,28 @@ def _registry_list_summary_from_tool_output(raw: str, max_items: int = 12) -> st
     return summary if len(summary) <= 3200 else summary[:3197].rstrip() + "..."
 
 
+def _research_listing_row(line: str) -> tuple[str, str, str] | None:
+    """Parse the legacy research markdown row without retrying label openers."""
+    if not line.startswith("-"):
+        return None
+    cursor = 1
+    if cursor >= len(line) or not line[cursor].isspace():
+        return None
+    while cursor < len(line) and line[cursor].isspace():
+        cursor += 1
+    if cursor >= len(line) or line[cursor] != "[":
+        return None
+    title_start = cursor + 1
+    marker = line.find("](#research-", title_start)
+    while marker >= 0:
+        identifier_start = marker + len("](#research-")
+        close = line.find(")", identifier_start)
+        if close > identifier_start:
+            return line[title_start:marker], line[identifier_start:close], line[close + 1:]
+        marker = line.find("](#research-", marker + 1)
+    return None
+
+
 def _research_list_summary_from_tool_output(raw: str, max_items: int = 6) -> str:
     """Keep saved research listings concise while preserving report anchors."""
     if not isinstance(raw, str) or not raw.strip():
@@ -4805,14 +4995,15 @@ def _research_list_summary_from_tool_output(raw: str, max_items: int = 6) -> str
         return lines[0]
     rows: list[str] = []
     for line in lines[1:]:
-        match = re.match(r"^-\s+\[(.*?)\]\(#research-([^)]+)\)(.*)$", line)
-        if not match:
+        parsed_row = _research_listing_row(line)
+        if parsed_row is None:
             continue
-        title = re.sub(r"\s+", " ", match.group(1)).strip()
+        raw_title, research_id, raw_suffix = parsed_row
+        title = re.sub(r"\s+", " ", raw_title).strip()
         if len(title) > 110:
             title = title[:107].rstrip() + "..."
-        suffix = re.sub(r"\s+", " ", match.group(3) or "").strip()
-        rows.append(f"- [{title}](#research-{match.group(2)}) {suffix}".rstrip())
+        suffix = re.sub(r"\s+", " ", raw_suffix).strip()
+        rows.append(f"- [{title}](#research-{research_id}) {suffix}".rstrip())
         if len(rows) >= max_items:
             break
     if not rows:
@@ -4822,6 +5013,54 @@ def _research_list_summary_from_tool_output(raw: str, max_items: int = 6) -> str
     if total > len(rows):
         rows.append(f"- ...and {total - len(rows)} more research reports")
     return "\n".join([lines[0], *rows])
+
+
+def _skill_listing_row(line: str) -> tuple[str, str | None, str | None, str | None] | None:
+    """Parse the legacy bold skill row with monotonic closer searches."""
+    if not line.startswith("-"):
+        return None
+    cursor = 1
+    if cursor >= len(line) or not line[cursor].isspace():
+        return None
+    while cursor < len(line) and line[cursor].isspace():
+        cursor += 1
+    if not line.startswith("**", cursor):
+        return None
+    name_start = cursor + 2
+    closer = line.find("**", name_start)
+    while closer >= 0:
+        rest = closer + 2
+        if rest == len(line):
+            return line[name_start:closer], None, None, None
+        if line[rest] == ":":
+            description = line[rest + 1:].lstrip()
+            return line[name_start:closer], None, None, description
+        if line[rest].isspace():
+            meta_start = rest
+            while meta_start < len(line) and line[meta_start].isspace():
+                meta_start += 1
+            if meta_start < len(line) and line[meta_start] == "(":
+                meta_end = line.find(")", meta_start + 1)
+                while meta_end >= 0:
+                    tail = meta_end + 1
+                    if tail == len(line):
+                        return line[name_start:closer], line[meta_start + 1:meta_end], None, None
+                    if line[tail] == ":":
+                        return (
+                            line[name_start:closer],
+                            line[meta_start + 1:meta_end],
+                            None,
+                            line[tail + 1:].lstrip(),
+                        )
+                    meta_end = line.find(")", meta_end + 1)
+            elif line.startswith("[draft]", meta_start):
+                tail = meta_start + len("[draft]")
+                if tail == len(line):
+                    return line[name_start:closer], None, "draft", None
+                if tail < len(line) and line[tail] == ":":
+                    return line[name_start:closer], None, "draft", line[tail + 1:].lstrip()
+        closer = line.find("**", closer + 1)
+    return None
 
 
 def _skills_list_summary_from_tool_output(raw: str, max_items: int = 8) -> str:
@@ -4845,10 +5084,11 @@ def _skills_list_summary_from_tool_output(raw: str, max_items: int = 8) -> str:
         label = section or "Skills"
         if label in totals:
             totals[label] += 1
-        match = re.match(r"^-\s+\*\*(.*?)\*\*(?:\s+\((.*?)\)|\s+\[(draft)\])?(?::\s*(.*))?$", line)
-        if match:
-            name = re.sub(r"\s+", " ", match.group(1)).strip()
-            meta = re.sub(r"\s+", " ", (match.group(2) or match.group(3) or label).strip())
+        parsed_row = _skill_listing_row(line)
+        if parsed_row is not None:
+            raw_name, parenthesized_meta, draft_meta, _description = parsed_row
+            name = re.sub(r"\s+", " ", raw_name).strip()
+            meta = re.sub(r"\s+", " ", (parenthesized_meta or draft_meta or label).strip())
             rows.append((label, f"- [{name}](#skill-{quote(name, safe='')}) ({meta})"))
         else:
             rows.append((label, line[:96].rstrip() + ("..." if len(line) > 96 else "")))
@@ -4896,6 +5136,45 @@ def _calendar_detail_requested(text: str) -> bool:
             t,
         )
     )
+
+
+def _calendar_listing_row(line: str) -> tuple[str, str, str, str] | None:
+    """Parse a calendar row while advancing through delimiters only once."""
+    cursor = 0
+    while cursor < len(line) and line[cursor].isspace():
+        cursor += 1
+    if cursor >= len(line) or line[cursor] != "-":
+        return None
+    cursor += 1
+    if cursor >= len(line) or not line[cursor].isspace():
+        return None
+    while cursor < len(line) and line[cursor].isspace():
+        cursor += 1
+    when_start = cursor
+    colon = line.find(":", when_start + 1)
+    marker_from = when_start
+    while colon >= 0:
+        spacing = colon + 1
+        if spacing < len(line) and line[spacing].isspace():
+            while spacing < len(line) and line[spacing].isspace():
+                spacing += 1
+            if spacing < len(line) and line[spacing] == "[":
+                title_start = spacing + 1
+                marker = line.find("](#event-", max(title_start, marker_from))
+                while marker >= 0:
+                    identifier_start = marker + len("](#event-")
+                    close = line.find(")", identifier_start)
+                    if close > identifier_start:
+                        return (
+                            line[when_start:colon],
+                            line[title_start:marker],
+                            line[identifier_start:close],
+                            line[close + 1:],
+                        )
+                    marker = line.find("](#event-", marker + 1)
+                marker_from = len(line)
+        colon = line.find(":", colon + 1)
+    return None
 
 
 def _calendar_list_summary_from_tool_output(
@@ -4951,17 +5230,18 @@ def _calendar_list_summary_from_tool_output(
     items: list[str] = []
     current_item_idx = -1
     for line in text.splitlines():
-        m = re.match(r"^\s*-\s+(.+?):\s+\[(.*?)\]\(#event-([^)]+)\)(.*)$", line)
-        if not m:
+        parsed_row = _calendar_listing_row(line)
+        if parsed_row is None:
             if include_details and current_item_idx >= 0:
                 detail = re.sub(r"\s+", " ", line).strip()
                 if detail and not detail.startswith("-"):
                     items[current_item_idx] = f"{items[current_item_idx]} — {detail}"
             continue
-        when = re.sub(r"\s+", " ", m.group(1)).strip()
-        title = re.sub(r"\s+", " ", m.group(2)).strip()
-        event_id = m.group(3).strip()
-        suffix = re.sub(r"\s+", " ", m.group(4) or "").strip()
+        raw_when, raw_title, raw_event_id, raw_suffix = parsed_row
+        when = re.sub(r"\s+", " ", raw_when).strip()
+        title = re.sub(r"\s+", " ", raw_title).strip()
+        event_id = raw_event_id.strip()
+        suffix = re.sub(r"\s+", " ", raw_suffix).strip()
         label = f"[{title}](#event-{event_id}) — {format_when(when)}"
         if suffix:
             label += f" {suffix}"
@@ -5278,18 +5558,18 @@ def _parse_simple_calendar_tool_request(
             args["query"] = "travel"
         return "manage_calendar", json.dumps(args, ensure_ascii=False)
 
-    tag_match = re.search(
-        r"\b(?:change|update|set|retag)\b\s+(?:the\s+)?(.+?)\s+tag\s+to\s+#?([a-z][a-z0-9_-]{1,30})\b",
+    tag_captures = _captures_after_first_prefix(
         value,
-        re.IGNORECASE,
+        r"\b(?:change|update|set|retag)\b(?=\s)",
+        r"\s+(?:the\s+)?(.+?)\s+tag\s+to\s+#?([a-z][a-z0-9_-]{1,30})\b",
     )
-    if tag_match and re.search(r"\b(?:calendar|event|trip|meeting|appointment)\b", q):
-        title = re.sub(r"\s+", " ", tag_match.group(1)).strip(" .")
+    if tag_captures is not None and re.search(r"\b(?:calendar|event|trip|meeting|appointment)\b", q):
+        title = re.sub(r"\s+", " ", tag_captures[0]).strip(" .")
         if title:
             return "manage_calendar", json.dumps({
                 "action": "update_event",
                 "summary": title,
-                "tag": tag_match.group(2).lower(),
+                "tag": tag_captures[1].lower(),
             }, ensure_ascii=False)
 
     return None
@@ -5873,8 +6153,8 @@ def _calendar_title_uid_pairs_from_tool_event(event: dict[str, Any]) -> list[tup
         add_pair(row.get("summary") or row.get("title"), row.get("uid") or row.get("id"))
 
     raw = str(event.get("output") or "")
-    for match in re.finditer(r"\[([^\]]+)\]\(#event-([^)]+)\)", raw):
-        add_pair(match.group(1), match.group(2))
+    for _start, _end, title, event_id in iter_markdown_links(raw, target_prefix="#event-"):
+        add_pair(title, event_id)
     return pairs
 
 
@@ -5978,12 +6258,34 @@ def _friendly_email_date(value: str) -> str:
             return text
 
 
+def _strip_terminal_delimited_value(
+    text: str,
+    opener: str,
+    closer: str,
+    *,
+    required: str = "",
+    allow_empty: bool = False,
+) -> str:
+    """Remove one flat terminal ``opener...closer`` region in O(n)."""
+    trimmed = text.rstrip()
+    if not trimmed.endswith(closer):
+        return text
+    previous_closer = trimmed.rfind(closer, 0, len(trimmed) - len(closer))
+    opener_at = trimmed.find(opener, previous_closer + len(closer))
+    if opener_at < 0:
+        return text
+    inner = trimmed[opener_at + len(opener):-len(closer)]
+    if (not allow_empty and not inner) or (required and required not in inner):
+        return text
+    return trimmed[:opener_at].rstrip()
+
+
 def _email_sender_name(value: str) -> str:
     text = re.sub(r"\s+", " ", str(value or "")).strip()
     if not text:
         return ""
-    text = re.sub(r"\s*\([^)]*@[^)]*\)\s*$", "", text).strip()
-    text = re.sub(r"\s*<[^>]*>\s*$", "", text).strip()
+    text = _strip_terminal_delimited_value(text, "(", ")", required="@").strip()
+    text = _strip_terminal_delimited_value(text, "<", ">", allow_empty=True).strip()
     return text or str(value or "").strip()
 
 
@@ -5991,7 +6293,7 @@ def _email_account_label(value: str) -> str:
     text = re.sub(r"\s+", " ", str(value or "")).strip()
     if not text:
         return ""
-    return re.sub(r"\s*<[^>]+>\s*$", "", text).strip() or text
+    return _strip_terminal_delimited_value(text, "<", ">").strip() or text
 
 
 def _format_email_attachment_summary_item(item: dict[str, str]) -> str:
@@ -6157,6 +6459,21 @@ def _email_read_summaries_from_tool_events(tool_events: list[dict[str, Any]]) ->
     return summaries
 
 
+def _strip_horizontal_space_before_lf(text: str) -> str:
+    """Remove spaces/tabs directly before LF without failed suffix retries."""
+    out = []
+    pos = 0
+    while (newline := text.find("\n", pos)) >= 0:
+        trim_at = newline
+        while trim_at > pos and text[trim_at - 1] in " \t":
+            trim_at -= 1
+        out.append(text[pos:trim_at])
+        out.append("\n")
+        pos = newline + 1
+    out.append(text[pos:])
+    return "".join(out)
+
+
 def _email_read_evidence_from_tool_output(raw: str, *, max_body_chars: int = 6000) -> str:
     """Return bounded, plain-text evidence for a final email lookup synthesis."""
     if not isinstance(raw, str) or not raw.strip():
@@ -6167,23 +6484,29 @@ def _email_read_evidence_from_tool_output(raw: str, *, max_body_chars: int = 600
     # model round.
     text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
     text = re.sub(r"</(?:p|div|li|tr|h[1-6])\s*>", "\n", text, flags=re.IGNORECASE)
-    text = re.sub(r"<[^>]+>", "", text)
+    text = strip_angle_tags(text)
     text = html.unescape(text)
-    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = _strip_horizontal_space_before_lf(text)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
     if len(text) > max_body_chars:
         text = text[:max_body_chars].rstrip() + "\n[...email truncated]"
     return text
 
 
+def _is_terse_email_lookup_followup(text: str) -> bool:
+    value = str(text or "").strip()
+    value = value.rstrip("?.!").rstrip()
+    return bool(re.fullmatch(
+        r"(?:and|so|well|still|then|okay|ok|did you find it(?: yet)?|what did you find)",
+        value,
+        re.IGNORECASE,
+    ))
+
+
 def _email_lookup_request_from_messages(messages: list[dict], last_user: str) -> str:
     """Recover the substantive request behind terse follow-ups such as 'and?'."""
-    terse = re.compile(
-        r"^\s*(?:and|so|well|still|then|okay|ok|did you find it(?: yet)?|what did you find)\s*[?.!]*\s*$",
-        re.IGNORECASE,
-    )
     current = str(last_user or "").strip()
-    if current and not terse.match(current):
+    if current and not _is_terse_email_lookup_followup(current):
         return current
     for message in reversed(messages or []):
         if not isinstance(message, dict) or message.get("role") != "user":
@@ -6192,7 +6515,7 @@ def _email_lookup_request_from_messages(messages: list[dict], last_user: str) ->
         if not isinstance(content, str):
             continue
         candidate = content.strip()
-        if candidate and not terse.match(candidate):
+        if candidate and not _is_terse_email_lookup_followup(candidate):
             return candidate
     return current
 
@@ -6792,6 +7115,31 @@ _COMPACT_EMAIL_UNSUBSCRIBE_TOOLS = {
     "unsubscribe_email",
 }
 
+_WORKSPACE_PREFIX_RE = re.compile(r"/workspace/", re.IGNORECASE)
+_WORKSPACE_SCRIPT_RE = re.compile(
+    r"/workspace/[^\s`\"']+\.(?:py|pyw|sh|bash|js|mjs|ts|rb|pl)\b",
+    re.IGNORECASE,
+)
+_WORKSPACE_QUOTED_TOKEN_TAIL_RE = re.compile(r"[^\s`\"']*")
+_HTTP_PREFIX_RE = re.compile(r"https?://", re.IGNORECASE)
+_PDF_URL_RE = re.compile(r"https?://\S+(?:\.pdf\b|/pdf/)", re.IGNORECASE)
+_NONSPACE_TOKEN_TAIL_RE = re.compile(r"\S*")
+
+
+def _mentions_workspace_script(text: str) -> bool:
+    return has_prefixed_token_match(
+        str(text or ""),
+        _WORKSPACE_PREFIX_RE,
+        _WORKSPACE_SCRIPT_RE,
+        _WORKSPACE_QUOTED_TOKEN_TAIL_RE,
+    )
+
+
+def _mentions_pdf_url(text: str) -> bool:
+    return has_prefixed_token_match(
+        str(text or ""), _HTTP_PREFIX_RE, _PDF_URL_RE, _NONSPACE_TOKEN_TAIL_RE
+    )
+
 
 def _blocked_network_recovery_tools(events: Sequence[Dict[str, Any]]) -> Set[str]:
     """Preserve native recovery tools named by our own network guard.
@@ -6873,11 +7221,7 @@ def _compact_native_route_tools(
     workspace_generator_request = bool(
         workspace_artifact_request
         and (
-            re.search(
-                r"/workspace/[^\s`\"']+\.(?:py|pyw|sh|bash|js|mjs|ts|rb|pl)\b",
-                text,
-                re.IGNORECASE,
-            )
+            _mentions_workspace_script(text)
             or (
                 # A multi-output data+visual deliverable is an execution
                 # workflow even when its generator is discovered after the
@@ -6895,7 +7239,7 @@ def _compact_native_route_tools(
         compact.update(WEB_TOOL_NAMES)
         if (
             "pdf_extract" in original
-            and re.search(r"https?://\S+(?:\.pdf\b|/pdf/)", text, re.IGNORECASE)
+            and _mentions_pdf_url(text)
         ):
             compact.add("pdf_extract")
         if _looks_like_youtube_tool_turn(text):
@@ -7220,7 +7564,7 @@ def _compact_native_artifact_tools(
         allowed.update(WEB_TOOL_NAMES)
         allowed.update({"web_fetch", "pdf_extract"})
     if (
-        re.search(r"/workspace/[^\s`\"']+\.(?:py|pyw|sh|bash|js|mjs|ts|rb|pl)\b", value, re.IGNORECASE)
+        _mentions_workspace_script(value)
         or (
             len(artifacts) >= 2
             and artifact_suffixes & {".csv", ".json", ".xlsx"}
@@ -10095,12 +10439,12 @@ def _is_terse_link_request(text: str) -> bool:
     """True for short links/sources fragments that need context to be actionable."""
     return bool(
         re.fullmatch(
-            r"\s*(?:(?:send|sned|share|give|show)?\s*(?:me\s+)?(?:the\s+)?"
+            r"(?:(?:send|sned|share|give|show)?\s*(?:me\s+)?(?:the\s+)?"
             r"(?:links?|urls?|sources?)"
             r"(?:\s+(?:for|to|from)\s+(?:those|that|them|these|it|this|the\s+(?:sites?|websites?|resources?|sources?)))?"
             r"|(?:for|to|from)\s+(?:those|that|them|these|it|this|the\s+(?:sites?|websites?|resources?|sources?)))"
-            r"\s*(?:please|pls)?[.!?]?\s*",
-            str(text or "").lower(),
+            r"\s*(?:please|pls)?[.!?]?",
+            str(text or "").lower().strip(),
         )
     )
 
@@ -10712,27 +11056,29 @@ def _parse_inspection_file_replacement(text: str) -> Optional[dict[str, str]]:
         value,
         re.IGNORECASE,
     )
+    action_values: tuple[str | None, str | None] | None = (
+        (action_match.group("old"), action_match.group("new"))
+        if action_match is not None
+        else None
+    )
     if action_match is None:
         # Locate the explicit mutation clause after stripping the inspection
         # language. Stop values before common trailing verification instructions.
-        action_match = re.search(
-        r"\b(?:chang(?:e|es|ed|ing)|updat(?:e|es|ed|ing))\s+"
-        r"(?P<old>.+?)\s+to\s+(?P<new>.+?)"
-        r"(?=\s+(?:in|and|then|before)\b|[.;]|$)",
-        value,
-        re.IGNORECASE,
-        )
-    if action_match is None:
-        action_match = re.search(
-            r"\breplace\s+(?P<old>.+?)\s+with\s+(?P<new>.+?)"
-            r"(?=\s+(?:in|and|then|before)\b|[.;]|$)",
+        action_values = _captures_after_first_prefix(
             value,
-            re.IGNORECASE,
+            r"\b(?:chang(?:e|es|ed|ing)|updat(?:e|es|ed|ing))(?=\s)",
+            r"\s+(.+?)\s+to\s+(.+?)(?=\s+(?:in|and|then|before)\b|[.;]|$)",
         )
-    if action_match is None:
+    if action_values is None:
+        action_values = _captures_after_first_prefix(
+            value,
+            r"\breplace(?=\s)",
+            r"\s+(.+?)\s+with\s+(.+?)(?=\s+(?:in|and|then|before)\b|[.;]|$)",
+        )
+    if action_values is None:
         return None
-    old = _clean_file_edit_value(action_match.group("old"))
-    new = _clean_file_edit_value(action_match.group("new"))
+    old = _clean_file_edit_value(action_values[0])
+    new = _clean_file_edit_value(action_values[1])
     if not old or not new or old == new:
         return None
     return {"path": path, "old_string": old, "new_string": new}
@@ -11295,6 +11641,24 @@ def _recent_mentioned_email_reference(messages: List[Dict]) -> dict[str, str]:
     return {}
 
 
+_ASSISTANT_PROMPT_RE = re.compile(
+    r"(?:Want me|Would you like|Should I)\b", re.IGNORECASE
+)
+
+
+def _split_before_assistant_prompt(text: str) -> str:
+    """Return text before the first prompt introduced on a later line."""
+    for match in _ASSISTANT_PROMPT_RE.finditer(text):
+        whitespace_start = match.start()
+        while whitespace_start and text[whitespace_start - 1].isspace():
+            whitespace_start -= 1
+        whitespace = text[whitespace_start:match.start()]
+        newline = whitespace.find("\n")
+        if newline >= 0:
+            return text[:whitespace_start + newline]
+    return text
+
+
 def _suggested_reply_from_recent_assistant(messages: List[Dict]) -> str:
     """Extract the most recent assistant-suggested email reply body."""
     for message in reversed(messages or []):
@@ -11308,7 +11672,7 @@ def _suggested_reply_from_recent_assistant(messages: List[Dict]) -> str:
         after = re.split(r"\*\*Suggested reply:\*\*|Suggested reply:", text, flags=re.IGNORECASE, maxsplit=1)
         if len(after) < 2:
             continue
-        body_section = re.split(r"\n\s*(?:Want me|Would you like|Should I)\b", after[1], flags=re.IGNORECASE, maxsplit=1)[0]
+        body_section = _split_before_assistant_prompt(after[1])
         lines: list[str] = []
         for raw_line in body_section.splitlines():
             line = re.sub(r"^\s*>\s?", "", raw_line).rstrip()
@@ -11343,9 +11707,9 @@ def _reply_draft_confirmation_block_from_recent_context(messages: List[Dict], te
 
 def _email_account_selector_from_label(label: str) -> str:
     value = str(label or "").strip()
-    match = re.search(r"<([^>]+)>", value)
+    match = next(iter_angle_contents(value), None)
     if match:
-        return match.group(1).strip()
+        return match[2].strip()
     return value
 
 
@@ -11665,8 +12029,8 @@ def _email_bulk_blocks_from_search_output(
             continue
         account = str(default_account or "").strip()
         if not account:
-            account_match = re.search(r"<([^>]+)>", str(row.get("account") or ""))
-            account = account_match.group(1).strip() if account_match else str(row.get("account") or "").strip()
+            account_match = next(iter_angle_contents(str(row.get("account") or "")), None)
+            account = account_match[2].strip() if account_match else str(row.get("account") or "").strip()
         by_account.setdefault(account, []).append(uid)
     blocks: list[ToolBlock] = []
     for account, uids in by_account.items():
@@ -11721,8 +12085,8 @@ def _named_email_row_from_recent_list_context(messages: List[Dict], text: str) -
                 uid = str(row.get("uid") or "").strip()
                 if not uid:
                     continue
-                account_match = re.search(r"<([^>]+)>", str(row.get("account") or ""))
-                account = account_match.group(1).strip() if account_match else str(row.get("account") or "").strip()
+                account_match = next(iter_angle_contents(str(row.get("account") or "")), None)
+                account = account_match[2].strip() if account_match else str(row.get("account") or "").strip()
                 ref = dict(row)
                 ref["uid"] = uid
                 ref["folder"] = "INBOX"
@@ -11822,8 +12186,8 @@ def _alternate_email_attachment_blocks_from_recent_context(messages: List[Dict])
             continue
         if sender not in downloaded_senders:
             continue
-        account_match = re.search(r"<([^>]+)>", str(row.get("account") or ""))
-        account = account_match.group(1).strip() if account_match else ""
+        account_match = next(iter_angle_contents(str(row.get("account") or "")), None)
+        account = account_match[2].strip() if account_match else ""
         blocks: list[ToolBlock] = []
         for index, _name in enumerate(attachments):
             args = {"uid": uid, "index": index}
@@ -12026,7 +12390,7 @@ def _recent_odysseus_anchor_refs(messages: List[Dict], history_session: Any = No
     refs: dict[str, str] = {}
     note_re = re.compile(r"#note-([0-9a-fA-F-]{8,64})")
     event_re = re.compile(r"#event-([0-9a-fA-F-]{8,64})")
-    event_link_re = re.compile(r"\[([^\]]+)\]\(#event-([0-9a-fA-F-]{8,64})\)")
+    event_link_target_re = re.compile(r"[0-9a-fA-F-]{8,64}")
     task_re = re.compile(r"(?:#task-|Created task '[^']+' \(id:\s*)([0-9a-fA-F-]{8,64})")
     document_re = re.compile(r"(?:#document-|doc_id['\"]?\s*[:=]\s*['\"]?)([0-9a-fA-F-]{8,64})")
     memory_re = re.compile(r"(?:memory_id['\"]?\s*[:=]\s*['\"]?|Memory id:\s*)([0-9a-fA-F-]{8,64})", re.IGNORECASE)
@@ -12068,10 +12432,12 @@ def _recent_odysseus_anchor_refs(messages: List[Dict], history_session: Any = No
             if note_match:
                 refs["note_id"] = note_match.group(1)
         if "event_uid" not in refs:
-            event_link_match = event_link_re.search(text)
+            event_link_match = next(iter_markdown_links(
+                text, target_prefix="#event-", target_re=event_link_target_re
+            ), None)
             if event_link_match:
-                refs["event_title"] = event_link_match.group(1).split(",", 1)[0].strip()
-                refs["event_uid"] = event_link_match.group(2)
+                refs["event_title"] = event_link_match[2].split(",", 1)[0].strip()
+                refs["event_uid"] = event_link_match[3]
                 continue
             event_match = event_re.search(text)
             if event_match:
@@ -12095,6 +12461,78 @@ def _recent_odysseus_anchor_refs(messages: List[Dict], history_session: Any = No
         if {"note_id", "event_uid", "task_id", "document_id", "memory_id"}.issubset(refs):
             break
     return refs
+
+
+def _numbered_row_parenthesized_ids(text: str) -> list[str]:
+    """Extract ``1. label (id) —`` identifiers with forward delimiters."""
+    found: list[str] = []
+    value = str(text or "")
+    line_start = 0
+    consumed_until = 0
+    while line_start <= len(value):
+        line_end = value.find("\n", line_start)
+        if line_end < 0:
+            line_end = len(value)
+        if line_start < consumed_until:
+            line_start = line_end + 1
+            continue
+        pos = line_start
+        while pos < line_end and value[pos].isspace():
+            pos += 1
+        digit_start = pos
+        while pos < line_end and value[pos].isdigit():
+            pos += 1
+        if pos == digit_start or pos >= line_end or value[pos] != ".":
+            line_start = line_end + 1
+            continue
+        pos += 1
+        space_start = pos
+        while pos < len(value) and value[pos].isspace():
+            pos += 1
+        if pos == space_start:
+            line_start = line_end + 1
+            continue
+        body_start = pos
+        body_end = value.find("\n", body_start)
+        if body_end < 0:
+            body_end = len(value)
+        whitespace_start = body_start + 1
+        while whitespace_start <= body_end:
+            while whitespace_start < body_end and not value[whitespace_start].isspace():
+                whitespace_start += 1
+            if whitespace_start == body_end and (
+                body_end >= len(value) or not value[body_end].isspace()
+            ):
+                break
+            whitespace_end = whitespace_start
+            while whitespace_end < len(value) and value[whitespace_end].isspace():
+                whitespace_end += 1
+            if whitespace_end >= len(value) or value[whitespace_end] != "(":
+                if whitespace_end > body_end:
+                    break
+                whitespace_start = whitespace_end
+                continue
+            opener = whitespace_end
+            capture_line_end = value.find("\n", opener + 1)
+            if capture_line_end < 0:
+                capture_line_end = len(value)
+            closer = value.find(")", opener + 1, capture_line_end)
+            if closer < 0:
+                break
+            if closer == opener + 1:
+                whitespace_start = closer + 1
+                continue
+            suffix = closer + 1
+            suffix_start = suffix
+            while suffix < len(value) and value[suffix].isspace():
+                suffix += 1
+            if suffix > suffix_start and suffix < len(value) and value[suffix] in "—-":
+                found.append(value[opener + 1:closer])
+                consumed_until = suffix + 1
+                break
+            whitespace_start = closer + 1
+        line_start = line_end + 1
+    return found
 
 
 def _ordinal_collection_mutation_target(
@@ -12164,14 +12602,7 @@ def _ordinal_collection_mutation_target(
                 continue
             output = str(event.get("output") or "")
             if family == "tasks":
-                identifiers = [
-                    found.strip()
-                    for found in re.findall(
-                        r"^\s*\d+\.\s+.+?\s+\(([^)\n]+)\)\s+[—-]",
-                        output,
-                        re.MULTILINE,
-                    )
-                ]
+                identifiers = [found.strip() for found in _numbered_row_parenthesized_ids(output)]
             else:
                 identifiers = re.findall(r"\]\(#event-([A-Za-z0-9_-]+)\)", output)
             if 1 <= index <= len(identifiers):
@@ -12471,6 +12902,28 @@ def _is_generic_email_reply_body(body: str) -> bool:
     }
 
 
+_SUMMARY_PREFIX_RE = re.compile(
+    r"\bsummary\s*(?:\*\*)?\s*:?\s*", re.IGNORECASE
+)
+
+
+def _contextual_summary_fragment(text: str) -> str:
+    """Preserve the legacy nonempty summary capture with bounded scans.
+
+    The legacy overescaped backslash alternative accepts an empty suffix,
+    so every newline terminates the capture. Bound the greedy prefix before
+    the last possible body character to preserve its whitespace backtracking.
+    """
+    last_newline = text.rfind("\n")
+    if last_newline < 1:
+        return ""
+    prefix = _SUMMARY_PREFIX_RE.search(text, 0, last_newline - 1)
+    if prefix is None:
+        return ""
+    newline = text.find("\n", prefix.end() + 1)
+    return text[prefix.end():newline] if newline >= 0 else ""
+
+
 def _contextual_reply_body_from_recent_email_context(messages: List[Dict]) -> str:
     """Build a bounded draft body from the latest assistant email summary.
 
@@ -12486,7 +12939,7 @@ def _contextual_reply_body_from_recent_email_context(messages: List[Dict]) -> st
         subject = ""
         summary = ""
         def _clean_fragment(raw: str) -> str:
-            cleaned = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", str(raw or ""))
+            cleaned = replace_markdown_links_with_labels(str(raw or ""))
             cleaned = re.sub(r"[*_`>#]+", "", cleaned)
             return re.sub(r"\s+", " ", cleaned).strip(" .[]\"'")
 
@@ -12501,13 +12954,9 @@ def _contextual_reply_body_from_recent_email_context(messages: List[Dict]) -> st
             )
             if subject_match:
                 subject = _clean_fragment(subject_match.group(1))
-        summary_match = re.search(
-            r"\bsummary\s*(?:\*\*)?\s*:?\s*(.+?)(?:\n\s*(?:-|\\*\\*|If you|Want me|This is|$))",
-            text,
-            re.IGNORECASE | re.DOTALL,
-        )
-        if summary_match:
-            summary = _clean_fragment(summary_match.group(1))
+        summary_fragment = _contextual_summary_fragment(text)
+        if summary_fragment:
+            summary = _clean_fragment(summary_fragment)
         if not subject and not summary:
             continue
         if subject:
@@ -12947,17 +13396,46 @@ def _normalize_ody_qwen_text_artifacts(text: str, *, strip_edges: bool = True) -
 
 _ODY_QWEN_LEAKED_TOOL_TEXT_RE = re.compile(
     r"(<\s*/?\s*(?:function|parameter|tool_call)\b"
-    r"|(?:^|\n)\s*(?:function|parameter)\s*="
     r"|\bmanage_(?:notes|calendar|memory|documents|contact)\s*\("
     r"|\"function\"\s*:\s*\"(?:manage_|mcp__)"
     r"|mcp__email__"
-    r"|(?:^|\n)\s*(?:web_search|web_fetch|private_browser)\s*:)",
+    r")",
+    re.IGNORECASE,
+)
+_ODY_QWEN_LINE_TOOL_TEXT_RE = re.compile(
+    r"(?:function|parameter)\s*=|(?:web_search|web_fetch|private_browser)\s*:",
     re.IGNORECASE,
 )
 
 
 def _looks_like_ody_qwen_leaked_tool_text(text: str) -> bool:
-    return bool(_ODY_QWEN_LEAKED_TOOL_TEXT_RE.search(text or ""))
+    value = str(text or "")
+    if _ODY_QWEN_LEAKED_TOOL_TEXT_RE.search(value):
+        return True
+    line_start = 0
+    while line_start <= len(value):
+        candidate = line_start
+        while candidate < len(value) and value[candidate].isspace():
+            candidate += 1
+        if _ODY_QWEN_LINE_TOOL_TEXT_RE.match(value, candidate):
+            return True
+        newline = value.find("\n", candidate)
+        if newline < 0:
+            return False
+        line_start = newline + 1
+    return False
+
+
+def _contains_email_draft_headers(text: str) -> bool:
+    """Recognize the legacy To/Subject/footer shape with ordered fixed scans."""
+    to_match = re.search(r"\bTo:", text, re.IGNORECASE)
+    if to_match is None:
+        return False
+    subject = re.search(r"\bSubject:", text[to_match.end() + 1:], re.IGNORECASE)
+    if subject is None:
+        return False
+    subject_end = to_match.end() + 1 + subject.end()
+    return text.find("\n---", subject_end + 1) >= 0
 
 
 def _ody_qwen_terminal_tool_summary(tool_event: dict[str, Any], user_text: str = "") -> str:
@@ -13003,7 +13481,7 @@ def _ody_qwen_terminal_tool_summary(tool_event: dict[str, Any], user_text: str =
     if tool_name in {"update_document", "edit_document"}:
         lowered = output.lower()
         if "document updated" in lowered or "edit applied" in lowered or "updated" in lowered:
-            if re.search(r"\bTo:\s*.+\bSubject:\s*.+\n---", command, re.IGNORECASE | re.DOTALL):
+            if _contains_email_draft_headers(command):
                 return "Updated the active email draft."
             return "Updated the active document."
         return output.removeprefix("AI: ").strip()
@@ -13224,9 +13702,11 @@ def _tui_coding_failure_summary(tool_events: list[dict[str, Any]]) -> str:
 
 
 _DESTRUCTIVE_REQUEST_RE = re.compile(
-    r"\b(delete|remove|archive|trash|send|reply|unsubscribe|mark\s+.*read)\b",
+    r"\b(delete|remove|archive|trash|send|reply|unsubscribe)\b",
     re.IGNORECASE,
 )
+_MARK_REQUEST_RE = re.compile(r"\bmark", re.IGNORECASE)
+_READ_WORD_RE = re.compile(r"read\b", re.IGNORECASE)
 
 _FAKE_SUCCESS_RE = re.compile(
     r"\b(done|removed|deleted|sent|archived|unsubscribed|marked)\b",
@@ -13235,7 +13715,25 @@ _FAKE_SUCCESS_RE = re.compile(
 
 
 def _looks_like_destructive_request(text: str) -> bool:
-    return bool(_DESTRUCTIVE_REQUEST_RE.search(text or ""))
+    value = str(text or "")
+    if _DESTRUCTIVE_REQUEST_RE.search(value):
+        return True
+    reads = list(_READ_WORD_RE.finditer(value))
+    read_index = 0
+    for mark in _MARK_REQUEST_RE.finditer(value):
+        cursor = mark.end()
+        if cursor >= len(value) or not value[cursor].isspace():
+            continue
+        while cursor < len(value) and value[cursor].isspace():
+            cursor += 1
+        while read_index < len(reads) and reads[read_index].start() < cursor:
+            read_index += 1
+        newline = value.find("\n", cursor)
+        if read_index < len(reads) and (
+            newline < 0 or reads[read_index].start() < newline
+        ):
+            return True
+    return False
 
 
 def _looks_like_success_claim(text: str) -> bool:
@@ -17272,13 +17770,19 @@ def _private_browser_product_query(user_text: str) -> str:
     text = re.sub(r"\s+", " ", str(user_text or "")).strip()
     match = re.search(
         r"\b(?:find|look\s+for|shop\s+for|search\s+for)\s+"
-        r"(?:me\s+)?(?:the\s+)?(?:best\s+)?(?P<query>.+?)\s*[?.!]*$",
+        r"(?:me\s+)?(?:the\s+)?(?:best\s+)?",
         text,
         re.IGNORECASE,
     )
-    if not match:
+    if not match or match.end() >= len(text):
         return ""
-    query = match.group("query").strip(" \t\r\n.,!?;:")
+    raw_query = text[match.end():]
+    query_end = len(raw_query)
+    while query_end and raw_query[query_end - 1] in "?.!":
+        query_end -= 1
+    if query_end == 0:
+        query_end = 1
+    query = raw_query[:query_end].strip(" \t\r\n.,!?;:")
     query = re.sub(
         r"\s+(?:on|at|from)\s+(?:the\s+)?[A-Za-z0-9&.' -]{1,60}$",
         "",
@@ -18927,7 +19431,7 @@ def _read_only_shell_command(content: str) -> bool:
         return False
     # Shell pipelines are allowed only when every stage is one of the common
     # inspection commands. This intentionally rejects unknown/mutating syntax.
-    segments = re.split(r"\s*(?:&&|\|\||;|\|)\s*", text)
+    segments = re.split(r"&&|\|\||;|\|", text)
     if not segments or any(not segment.strip() for segment in segments):
         return False
     allowed = re.compile(
@@ -23084,11 +23588,7 @@ async def stream_agent_loop(
             # Preserve that generic execution floor unless the task is
             # explicitly URL-backed (filtered below).
             if (
-                re.search(
-                    r"/workspace/[^\s`\"']+\.(?:py|pyw|sh|bash|js|mjs|ts|rb|pl)\b",
-                    _last_user,
-                    re.IGNORECASE,
-                )
+                _mentions_workspace_script(_last_user)
                 or (
                     len(_workspace_artifacts) >= 2
                     and any(Path(path).suffix.casefold() in {".csv", ".json", ".xlsx"} for path in _workspace_artifacts)
@@ -25826,10 +26326,11 @@ async def stream_agent_loop(
                         client_runtime_context=client_runtime_context,
                     )
                 except Exception as _preemptive_exc:
-                    logger.warning("Preemptive calendar lookup failed: %s", _preemptive_exc)
+                    logger.warning("Preemptive calendar lookup failed: %s", _preemptive_exc, exc_info=True)
                     _preemptive_desc = "manage_calendar: ERROR"
                     _preemptive_result = {
-                        "error": str(_preemptive_exc),
+                        "error": "The calendar lookup failed unexpectedly. Check the server log and retry.",
+                        "error_category": "tool_execution_error",
                         "exit_code": 1,
                         "output": "",
                     }
@@ -25856,6 +26357,8 @@ async def stream_agent_loop(
                 }
                 if isinstance(_preemptive_result, dict) and isinstance(_preemptive_result.get("events"), list):
                     _preemptive_tool_output["events"] = _preemptive_result.get("events")
+                if isinstance(_preemptive_result, dict) and _preemptive_result.get("error_category") == "tool_execution_error":
+                    _preemptive_tool_output["error_category"] = "tool_execution_error"
                 yield f"data: {json.dumps(_preemptive_tool_output)}\n\n"
                 _preemptive_tool_event = {
                     "round": round_num,
@@ -26023,10 +26526,11 @@ async def stream_agent_loop(
                         client_runtime_context=client_runtime_context,
                     )
                 except Exception as _preemptive_exc:
-                    logger.warning("Preemptive explicit tool failed: %s", _preemptive_exc)
+                    logger.warning("Preemptive explicit tool failed: %s", _preemptive_exc, exc_info=True)
                     _preemptive_desc = f"{_preemptive_tool}: ERROR"
                     _preemptive_result = {
-                        "error": str(_preemptive_exc),
+                        "error": "The requested tool failed unexpectedly. Check the server log and retry.",
+                        "error_category": "tool_execution_error",
                         "exit_code": 1,
                         "output": "",
                     }
@@ -26051,6 +26555,8 @@ async def stream_agent_loop(
                     ),
                     "fallback": "preemptive_explicit_admin_session",
                 }
+                if isinstance(_preemptive_result, dict) and _preemptive_result.get("error_category") == "tool_execution_error":
+                    _preemptive_tool_output["error_category"] = "tool_execution_error"
                 yield f"data: {json.dumps(_preemptive_tool_output)}\n\n"
                 _preemptive_tool_event = {
                     "round": round_num,
@@ -29261,15 +29767,12 @@ async def stream_agent_loop(
         ):
             _oversized_svg = _extract_oversized_svg(round_response)
         if _oversized_svg:
-            _svg_title_match = re.search(
-                r"<title(?:\s[^>]*)?>([\s\S]*?)</title>",
-                _oversized_svg,
-                re.IGNORECASE,
+            _svg_title_content = first_tag_content(
+                _oversized_svg, "title", allow_attributes=True
             )
-            _svg_title = re.sub(
-                r"<[^>]*>",
-                "",
-                _svg_title_match.group(1) if _svg_title_match else "Visual explanation",
+            _svg_title = strip_angle_tags(
+                _svg_title_content if _svg_title_content is not None else "Visual explanation",
+                allow_empty=True,
             ).strip()[:100] or "Visual explanation"
             full_response = _drop_rejected_round_response(full_response, round_response)
             round_response = ""
@@ -29647,12 +30150,7 @@ async def stream_agent_loop(
                 and _local_media_turn
                 and not _artifact_creation_requested
                 and not _local_media_detail_nudge_sent
-                and re.search(
-                    r"\b(?:how\s+many|count|break\s*points?|timestamps?|what\s+time|"
-                    r"when\s+.*(?:end|happen)|score(?:board)?s?)\b",
-                    _last_user,
-                    re.IGNORECASE,
-                )
+                and contains_detailed_sequence_request(_last_user, include_first=False)
             ):
                 _successful_media_inspections = sum(
                     1
@@ -30357,7 +30855,11 @@ async def stream_agent_loop(
                     _completion_requirements,
                 ).evaluate().can_complete
             )
-            _intent_match = _INTENT_RE.search(_intent_text) if _intent_text else None
+            # Whole-response intent matching is redundant: the helper below
+            # keeps short responses below 400 characters and long responses
+            # to their final 600-character window. Avoid an unbounded scan of
+            # model text before applying that existing policy boundary.
+            _intent_match = None
             # Inspect only the bounded tail of long answers. This catches
             # substantial multimodal analyses that end in "let me inspect..."
             # or a dangling answer lead-in while leaving completed answers
@@ -32032,9 +32534,7 @@ async def stream_agent_loop(
                     _document_args = None
                 if isinstance(_document_args, dict):
                     _raw_document_action = str(_document_args.get("action") or "").strip()
-                    _document_action = re.sub(
-                        r"<[^>]+>",
-                        "",
+                    _document_action = strip_angle_tags(
                         _raw_document_action.splitlines()[0] if _raw_document_action else "",
                     ).strip().lower()
                     if _raw_document_action and _document_action != _raw_document_action.lower():
@@ -36732,10 +37232,8 @@ async def stream_agent_loop(
     # prose. Local finetunes may emit those before the parser catches and
     # executes them; saved history should contain only the user-facing answer.
     full_response = _visible_response_text(full_response)
-    if re.match(r"^Done\b", full_response, re.IGNORECASE) and re.search(
-        r"\s*Done\.\s*$", full_response, re.IGNORECASE
-    ):
-        without_trailing_done = re.sub(r"\s*Done\.\s*$", "", full_response, flags=re.IGNORECASE).rstrip()
+    if re.match(r"^Done\b", full_response, re.IGNORECASE):
+        without_trailing_done = _strip_trailing_done(full_response)
         if without_trailing_done:
             full_response = without_trailing_done
     if _ody_qwen_finetune_model or _qwen38_tool_router:
