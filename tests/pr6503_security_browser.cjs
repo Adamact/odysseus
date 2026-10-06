@@ -1,4 +1,4 @@
-const { chromium } = require('playwright');
+const playwright = require('playwright');
 const { readFileSync } = require('node:fs');
 const { execFileSync } = require('node:child_process');
 const assert = require('node:assert/strict');
@@ -11,7 +11,9 @@ function documentFunction(name, text = source) {
 }
 
 (async () => {
-  const browser = await chromium.launch({ headless: true });
+  const engine = process.env.ODYSSEUS_SECURITY_BROWSER || 'chromium';
+  assert(['chromium', 'firefox', 'webkit'].includes(engine), engine);
+  const browser = await playwright[engine].launch({ headless: true });
   try {
     // Opt-in positive controls use an explicit vulnerable revision, so these
     // regressions also work after the fix is committed or in a shallow checkout.
@@ -249,6 +251,23 @@ function documentFunction(name, text = source) {
     assert.equal(email.executed, 0);
     assert.deepEqual(probes, []);
 
+    // The current payload must execute at an active DOM boundary. This makes
+    // the non-execution assertions above independent of old git revisions.
+    const activeEmailControl = await page.evaluate(async () => {
+      const active = document.createElement('div');
+      active.innerHTML = '<img src="data:,bad" onerror="window.executed++">';
+      document.body.appendChild(active);
+      const deadline = Date.now() + 2000;
+      while (!window.executed && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      active.remove();
+      const executed = window.executed;
+      window.executed = 0;
+      return executed;
+    });
+    assert(activeEmailControl > 0);
+
     const gallery = await page.evaluate(async functions => {
       const API_BASE = '';
       const _escHtml = eval('(' + functions._escHtml + ')');
@@ -288,7 +307,10 @@ function documentFunction(name, text = source) {
       const cleanPaste = eval('(' + functions._cleanRichTextPasteHtml + ')');
       const rejected = ['javascript:window.executed++', 'java\tscript:window.executed++',
         'data:text/html,<script>window.executed++</script>', 'vbscript:msgbox(1)',
-        'file:///etc/passwd', 'https://example.com/\njavascript:window.executed++'];
+        'file:///etc/passwd', 'https://example.com/\njavascript:window.executed++',
+        'blob:https://example.com/id', 'about:blank', 'ftp://example.com/path',
+        'JaVaScRiPt:window.executed++', 'java\rscript:window.executed++',
+        'https://', '//outside.example/path'];
       const rich = document.createElement('div');
       rich.contentEditable = 'true';
       // Literal markup in an existing selection must remain text after linking.
@@ -346,7 +368,7 @@ function documentFunction(name, text = source) {
       result.outside = insert(rich, internal);
       return result;
     }, functions);
-    assert.deepEqual(links.rejected, Array(6).fill(''));
+    assert.deepEqual(links.rejected, Array(13).fill(''));
     assert.equal(links.inserted, true);
     assert.equal(links.href, links.internal);
     assert.equal(links.text, links.literal);
@@ -368,8 +390,11 @@ function documentFunction(name, text = source) {
     assert.equal(links.outside, false);
 
     // Exercise the sanitizer itself, then the exact live HTML insertion path.
-    const markdown = await page.evaluate(async () => {
+    const markdown = await page.evaluate(async functions => {
       const mod = await import('/static/js/markdown.js');
+      const markdownModule = mod;
+      const _normalizeRichLinkUrl = eval('(' + functions._normalizeRichLinkUrl + ')');
+      const cleanPaste = eval('(' + functions._cleanRichTextPasteHtml + ')');
       const payloads = [
         '<script>window.executed++</script><img src="data:,bad" onerror="window.executed++">',
         '<a href="java&#x09;script:window.executed++" onclick="window.executed++">click</a>',
@@ -382,6 +407,14 @@ function documentFunction(name, text = source) {
         '<details><summary onmouseover="window.executed++">Nested</summary><p style="background:url(javascript:window.executed++)"><a href="javascript:window.executed++">bad</a></p></details>',
         '<iframe srcdoc="<script>parent.executed++</script>"></iframe><object data="data:text/html,bad"></object>',
         '<noscript><p title="</noscript><img src=x onerror=window.executed++>">',
+        '<a href="jav&#97;script:window.executed++" ONCLICK="window.executed++">entity</a>',
+        '<a href="&#x0d;&#x0a;JaVaScRiPt:window.executed++">controls</a>',
+        '<a href="vbscript:msgbox(1)">legacy</a><img src="data:image/svg+xml,bad">',
+        '<template><img src=x onerror="window.executed++"></template>',
+        '<details open ontoggle="window.executed++"><summary>Event</summary><p>Text</p></details>',
+        '<svg><a xlink:href="javascript:window.executed++"><text>SVG link</text></a></svg>',
+        '<math><annotation-xml encoding="text/html"><img src=x onerror="window.executed++"></annotation-xml></math>',
+        '<table><caption><details><summary onclick="window.executed++">Nested</summary><img src=x onerror="window.executed++"></details></caption></table>',
       ];
       const box = document.createElement('div');
       document.body.appendChild(box);
@@ -389,21 +422,25 @@ function documentFunction(name, text = source) {
       for (const payload of payloads) {
         const clean = mod.sanitizeAllowedHtml(payload);
         if (mod.sanitizeAllowedHtml(clean) !== clean) throw new Error('Sanitizer did not stabilize');
-        box.innerHTML = clean;
-        unsafe += box.querySelectorAll('script,svg,math,iframe,object,embed,style,base,meta,template,noscript').length;
-        for (const el of box.querySelectorAll('*')) for (const attr of el.attributes) {
-          const value = attr.value.replace(/[\u0000-\u0020\u007f-\u009f]+/g, '').toLowerCase();
-          if (attr.name.startsWith('on') || attr.name === 'srcdoc'
-              || (/^(href|src|srcset|style)$/.test(attr.name) && /javascript:|vbscript:|data:/.test(value))) unsafe++;
+        for (const html of [clean, cleanPaste(payload)]) {
+          // Include repeated serialize/reparse boundaries used by chat and paste.
+          box.innerHTML = html;
+          for (let pass = 0; pass < 3; pass++) box.innerHTML = box.innerHTML;
+          unsafe += box.querySelectorAll('script,svg,math,iframe,object,embed,style,base,meta,template,noscript').length;
+          for (const el of box.querySelectorAll('*')) for (const attr of el.attributes) {
+            const value = attr.value.replace(/[\u0000-\u0020\u007f-\u009f]+/g, '').toLowerCase();
+            if (attr.name.startsWith('on') || attr.name === 'srcdoc'
+                || (/^(href|src|srcset|style)$/.test(attr.name) && /javascript:|vbscript:|data:/.test(value))) unsafe++;
+          }
+          box.querySelectorAll('a').forEach(a => a.click());
         }
-        box.querySelectorAll('a').forEach(a => a.click());
       }
       box.innerHTML = mod.sanitizeAllowedHtml('<details><summary>Title</summary><b>Bold</b><a href="https://example.com/path">Link</a></details>');
       await new Promise(resolve => setTimeout(resolve, 100));
       return { count: payloads.length, unsafe, executed: window.executed, bold: box.querySelector('b')?.textContent,
         href: box.querySelector('a')?.href, details: !!box.querySelector('details') };
-    });
-    assert.equal(markdown.count, 11);
+    }, functions);
+    assert.equal(markdown.count, 19);
     assert.equal(markdown.unsafe, 0);
     assert.equal(markdown.executed, 0);
     assert.equal(markdown.bold, 'Bold');
@@ -464,12 +501,14 @@ function documentFunction(name, text = source) {
     // property. Rendering and re-rendering must keep that markdown as text.
     const skillPayload = '<img src=x onerror="window.executed++"><svg onload="window.executed++"></svg>';
     await page.route('**/api/skills', route => route.fulfill({ json: { skills: [
-      { name: 'user-fixture', source: 'user', status: 'published', confidence: 1 },
-      { name: 'builtin-fixture', source: 'builtin', status: 'published', confidence: 1 },
+      { name: 'user-fixture', source: 'user', status: 'published', confidence: 1,
+        description: skillPayload, tags: [skillPayload] },
+      { name: 'builtin-fixture', source: 'builtin', status: 'published', confidence: 1,
+        description: skillPayload, tags: [skillPayload] },
     ] } }));
     await page.route('**/static/js/skills-pr6503-harness.js', route => route.fulfill({
       contentType: 'application/javascript',
-      body: readFileSync('static/js/skills.js', 'utf8') + '\nexport { _mdCache, _expandSkillCard };\n',
+      body: readFileSync('static/js/skills.js', 'utf8') + '\nexport { _mdCache, _expandSkillCard, _toggleSkillEdit, _saveSkillEdit };\n',
     }));
     const skills = await page.evaluate(async payload => {
       document.body.insertAdjacentHTML('beforeend', '<div id="toast"></div><div id="skills-list"></div>');
@@ -486,14 +525,97 @@ function documentFunction(name, text = source) {
       return { sections: cards.map(card => card.dataset.skillSection).sort(),
         text: cards.map(card => card.querySelector('.skill-md-pre').textContent),
         stored: cards.map(card => card._md),
+        descriptions: cards.map(card => card.querySelector('.skill-card-desc').textContent),
+        tags: cards.map(card => card.querySelector('.skill-tag-pill').textContent),
         unsafe: document.querySelectorAll('#skills-list img, #skills-list script, #skills-list [onerror], #skills-list [onload]').length,
         executed: window.executed };
     }, skillPayload);
     assert.deepEqual(skills.sections, ['builtin', 'user']);
     assert.deepEqual(skills.text, [skillPayload, skillPayload]);
     assert.deepEqual(skills.stored, [skillPayload, skillPayload]);
+    assert.deepEqual(skills.descriptions, [skillPayload, skillPayload]);
+    assert.deepEqual(skills.tags, [skillPayload, skillPayload]);
     assert.equal(skills.unsafe, 0);
     assert.equal(skills.executed, 0);
+
+    // Also trace the real API -> cache -> textContent path with a cold cache;
+    // the seeded fixtures above exercise the preserved-card rerender path.
+    const fetchedSkills = new Set();
+    let postedSkillMarkdown;
+    await page.route('**/api/skills/*/markdown', route => {
+      if (route.request().method() === 'POST') {
+        postedSkillMarkdown = route.request().postDataJSON().markdown;
+        return route.fulfill({ json: {} });
+      }
+      fetchedSkills.add(decodeURIComponent(new URL(route.request().url()).pathname.split('/')[3]));
+      return route.fulfill({ json: { markdown: skillPayload } });
+    });
+    const coldSkills = await page.evaluate(async () => {
+      const mod = await import('/static/js/skills-pr6503-harness.js');
+      mod._mdCache.clear();
+      document.querySelectorAll('#skills-list .skill-card').forEach(card => card.remove());
+      await mod.loadSkills();
+      const cards = [...document.querySelectorAll('#skills-list .skill-card')];
+      for (const card of cards) await mod._expandSkillCard(card, card.dataset.skillName);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      return { text: cards.map(card => card.querySelector('.skill-md-pre').textContent),
+        stored: cards.map(card => card._md),
+        unsafe: document.querySelectorAll('#skills-list img, #skills-list script, #skills-list [onerror], #skills-list [onload]').length,
+        executed: window.executed };
+    });
+    assert.deepEqual([...fetchedSkills].sort(), ['builtin-fixture', 'user-fixture']);
+    assert.deepEqual(coldSkills.text, [skillPayload, skillPayload]);
+    assert.deepEqual(coldSkills.stored, [skillPayload, skillPayload]);
+    assert.equal(coldSkills.unsafe, 0);
+    assert.equal(coldSkills.executed, 0);
+
+    // The alert's actual source is the edit textarea at skills.js:1312.
+    const editedPayload = '" & <script>window.executed++</script>' + skillPayload;
+    const editedSkill = await page.evaluate(async payload => {
+      const mod = await import('/static/js/skills-pr6503-harness.js');
+      const card = document.querySelector('[data-skill-name="user-fixture"]');
+      if (!card.classList.contains('doclib-card-expanded')) await mod._expandSkillCard(card, 'user-fixture');
+      mod._toggleSkillEdit(card, 'user-fixture');
+      card.querySelector('.skill-md-editor').value = payload;
+      await mod._saveSkillEdit(card, 'user-fixture');
+      const restored = document.querySelector('[data-skill-name="user-fixture"]');
+      await mod._expandSkillCard(restored, 'user-fixture');
+      await new Promise(resolve => setTimeout(resolve, 100));
+      return { text: restored.querySelector('.skill-md-pre').textContent, stored: restored._md,
+        unsafe: restored.querySelectorAll('img,script,[onerror],[onload]').length, executed: window.executed };
+    }, editedPayload);
+    assert.equal(postedSkillMarkdown, editedPayload);
+    assert.equal(editedSkill.text, editedPayload);
+    assert.equal(editedSkill.stored, editedPayload);
+    assert.equal(editedSkill.unsafe, 0);
+    assert.equal(editedSkill.executed, 0);
+
+    // #767 reparses the instruction read from a rendered message's textContent.
+    // Exercise the real addMessage path in every selected browser too.
+    const chat = await page.evaluate(async () => {
+      document.body.insertAdjacentHTML('beforeend',
+        '<div id="sidebar"></div><div id="chat-container"></div><div id="chat-history"></div>');
+      const { addMessage } = await import('/static/js/chatRenderer.js');
+      const payloads = [
+        '<img src=x onerror="window.executed++">',
+        '<details><summary>Nested</summary><a href="java&#x09;script:window.executed++">bad</a><img src=x onerror="window.executed++"></details>',
+        '<math><mtext><img src=x onerror="window.executed++"></mtext></math>',
+        '<think><svg onload="window.executed++"></svg></think>**Valid** instruction',
+      ];
+      const refs = [];
+      let unsafe = 0;
+      for (const payload of payloads) {
+        const message = addMessage('user', 'In the document, edit this specific text (lines 1–2):\n```\nselected\n```\n\nInstruction: ' + payload);
+        if (!message) throw new Error('addMessage failed');
+        refs.push(message.querySelector('.doc-edit-tag')?.dataset.docEditRef);
+        unsafe += message.querySelector('.body').querySelectorAll('script,math,svg[onload],[onerror],[onload],a[href^="javascript:"]').length;
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
+      return { refs, unsafe, executed: window.executed };
+    });
+    assert.deepEqual(chat.refs, Array(4).fill('lines 1–2'));
+    assert.equal(chat.unsafe, 0);
+    assert.equal(chat.executed, 0);
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({ ledger: true, email: true, gallery: true, links: true, skills: true,
       sanitizer: true, print: true }));
