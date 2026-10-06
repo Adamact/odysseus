@@ -624,7 +624,8 @@ def test_bridge_post_targets_endpoint_paths():
     posted = {}
 
     class FakeClient:
-        def __init__(self, timeout=None):
+        def __init__(self, timeout=None, *, trust_env=True):
+            assert trust_env is False
             posted["timeout"] = timeout
 
         async def __aenter__(self):
@@ -695,8 +696,8 @@ def test_bridge_post_treats_empty_or_error_payload_as_failure():
     payloads = iter(({}, {"error": "token rejected"}))
 
     class FakeClient:
-        def __init__(self, timeout=None):
-            pass
+        def __init__(self, timeout=None, *, trust_env=True):
+            assert trust_env is False
 
         async def __aenter__(self):
             return self
@@ -734,8 +735,8 @@ def test_bridge_post_http_or_payload_error_overrides_false_success_code():
     ))
 
     class FakeClient:
-        def __init__(self, timeout=None):
-            pass
+        def __init__(self, timeout=None, *, trust_env=True):
+            assert trust_env is False
 
         async def __aenter__(self):
             return self
@@ -769,8 +770,8 @@ def test_bridge_post_rejects_malformed_exit_code():
             return {"output": "looks successful", "exit_code": "zero"}
 
     class FakeClient:
-        def __init__(self, timeout=None):
-            pass
+        def __init__(self, timeout=None, *, trust_env=True):
+            assert trust_env is False
 
         async def __aenter__(self):
             return self
@@ -804,8 +805,8 @@ def test_bridge_post_reports_empty_invalid_json_response():
             raise ValueError("not JSON")
 
     class FakeClient:
-        def __init__(self, timeout=None):
-            pass
+        def __init__(self, timeout=None, *, trust_env=True):
+            assert trust_env is False
 
         async def __aenter__(self):
             return self
@@ -833,8 +834,8 @@ def test_bridge_post_reports_empty_invalid_json_response():
 def test_bridge_post_cancellation_schedules_host_operation_cancel():
 
     class FakeClient:
-        def __init__(self, timeout=None):
-            pass
+        def __init__(self, timeout=None, *, trust_env=True):
+            assert trust_env is False
 
         async def __aenter__(self):
             return self

@@ -11,7 +11,7 @@ import sys
 import time
 import json
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 import httpx
 
@@ -76,12 +76,14 @@ def _resolve_fontfile_for_text(text: str) -> str:
 async def _cancel_host_shell_bridge_request(
     url: str, token: str, request_id: str,
 ) -> None:
-    base = url.rsplit("/", 1)[0]
+    if not token or not is_host_shell_bridge_url_allowed(url):
+        return
+    target = host_shell_bridge_endpoint_url(url, "/cancel")
     try:
         timeout = httpx.Timeout(5.0, connect=2.0, write=2.0, pool=2.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
             await client.post(
-                f"{base}/cancel",
+                target,
                 json={"request_id": request_id},
                 headers={"X-Odysseus-TUI-Bridge-Token": token},
             )
@@ -214,6 +216,12 @@ def is_host_shell_bridge_url_allowed(url: str) -> bool:
     if parsed.query or parsed.fragment:
         return False
     return True
+
+
+def host_shell_bridge_endpoint_url(url: str, path: str) -> str:
+    """Replace a validated bridge URL's path without changing its authority."""
+    parsed = urlsplit(url)
+    return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
 
 
 def _replace_workspace_alias(content: str, cwd: str) -> str:
@@ -682,6 +690,7 @@ class HostShellTool:
             return {"error": "host_shell: invalid bridge URL", "exit_code": 1}
         if not token:
             return {"error": "host_shell: bridge token missing", "exit_code": 1}
+        run_url = host_shell_bridge_endpoint_url(url, "/run")
 
         job_id = str(args.get("job_id") or "").strip()
         if not command and not job_id:
@@ -716,9 +725,9 @@ class HostShellTool:
                 request_body["request_id"] = request_id
 
         try:
-            async with httpx.AsyncClient(timeout=timeout + 5) as client:
+            async with httpx.AsyncClient(timeout=timeout + 5, trust_env=False) as client:
                 resp = await client.post(
-                    url,
+                    run_url,
                     json=request_body,
                     headers={"X-Odysseus-TUI-Bridge-Token": token},
                 )
@@ -746,7 +755,7 @@ class HostShellTool:
                     while time.monotonic() < deadline:
                         await asyncio.sleep(0.25)
                         poll = await client.post(
-                            url,
+                            run_url,
                             json={"job_id": auto_job_id},
                             headers={"X-Odysseus-TUI-Bridge-Token": token},
                         )
