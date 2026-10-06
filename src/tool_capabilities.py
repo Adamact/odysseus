@@ -501,6 +501,43 @@ def capabilities_for_action(tool_name: Any, content: Any) -> ToolCapabilities:
     if not isinstance(tool_name, str):
         return base
 
+    if tool_name in {"web_fetch", "pdf_extract"}:
+        payload = content
+        raw = content.strip() if isinstance(content, str) else ""
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(raw) if raw.startswith("{") else {}
+            except (TypeError, ValueError):
+                payload = {}
+        if not isinstance(payload, Mapping):
+            payload = {}
+        if tool_name == "web_fetch" and "urls" in payload:
+            urls = payload["urls"]
+            sources = []
+            if isinstance(urls, list):
+                for item in urls:
+                    source = item.get("url") if isinstance(item, Mapping) else item
+                    sources.append(str(source or "").strip())
+        else:
+            source = payload.get("url") or (payload.get("path") if tool_name == "pdf_extract" else "")
+            sources = [str(source or "").strip() or raw.split("\n", 1)[0].strip()]
+        # Match the native readers' local selectors without resolving or
+        # opening files. A mixed batch retains its network effects as well.
+        if tool_name == "web_fetch":
+            local = [source.startswith("/workspace/") or source.lower().startswith("file:///workspace/")
+                     for source in sources]
+        else:
+            local = [os.path.isabs(source) or source.lower().startswith("file://") for source in sources]
+        if any(local):
+            effects = {ToolEffect.READ_WORKSPACE}
+            if not all(local):
+                effects.update(base.effects)
+            return ToolCapabilities(
+                frozenset(effects),
+                ResultIntegrity.WORKSPACE_UNTRUSTED if all(local) else base.result_integrity,
+                known=base.known,
+            )
+
     if tool_name == "extract_text":
         payload = content
         if isinstance(payload, str):
@@ -710,12 +747,16 @@ def messages_contain_external_untrusted_context(messages: Iterable[dict]) -> boo
     return False
 
 
-def delegated_tool_is_blocked(tool_name: Any) -> bool:
+def delegated_tool_is_blocked(tool_name: Any, content: Any = None) -> bool:
+    """Filter tool names for discovery and concrete workspace reads at dispatch."""
     # The bridge exposes these spellings for the same filesystem surfaces.
     if isinstance(tool_name, str):
         tool_name = tool_name.strip()
         tool_name = {"list_dir": "ls", "find_files": "glob"}.get(tool_name, tool_name)
-    return is_public_blocked_tool(tool_name)
+    return is_public_blocked_tool(tool_name) or (
+        content is not None
+        and ToolEffect.READ_WORKSPACE in capabilities_for_action(tool_name, content).effects
+    )
 
 
 @dataclass
@@ -774,7 +815,7 @@ class ToolRunSecurityContext:
         # Checked before the bypasses below, because neither may lift it, and
         # kept independent of external_untrusted_context_seen so it holds on a
         # run where that gate never arms and raises no prompt to bypass.
-        if self.delegated_credential and delegated_tool_is_blocked(tool_name):
+        if self.delegated_credential and delegated_tool_is_blocked(tool_name, content):
             return ToolGateDecision(
                 False,
                 (

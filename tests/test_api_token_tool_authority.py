@@ -11,6 +11,7 @@ privileged tools:
 """
 
 from types import SimpleNamespace
+import json
 
 import pytest
 from fastapi import HTTPException
@@ -18,6 +19,202 @@ from fastapi import HTTPException
 from core.models import ChatMessage, Session
 from src.tool_approval_scopes import CHAT_SESSION_APPROVAL_CONTEXT_MARKER
 from src.tool_capabilities import ToolRunSecurityContext
+
+
+async def _dispatch_workspace_tool(tmp_path, tool, content, context, **kwargs):
+    from src.agent_runtime.authority import OperationGrant, RequestAuthority
+    from src.tool_execution import execute_tool_block
+    from src.tool_types import ToolBlock
+
+    authority = RequestAuthority(
+        "delegated-workspace-test", "admin", "s", str(tmp_path),
+        (OperationGrant(tool),),
+    )
+    return await execute_tool_block(
+        ToolBlock(tool, content), owner="admin", session_id="s",
+        workspace=str(tmp_path), request_authority=authority,
+        security_context=context, **kwargs,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["/workspace/secret.txt", "file:///workspace/secret.txt"])
+@pytest.mark.parametrize("structured", [False, True])
+async def test_delegated_web_fetch_cannot_read_workspace(tmp_path, monkeypatch, source, structured):
+    monkeypatch.setattr("src.tool_execution._owner_is_admin", lambda owner: True)
+    (tmp_path / "secret.txt").write_text("workspace-only fixture content")
+    context = ToolRunSecurityContext(delegated_credential=True)
+    _, direct = await _dispatch_workspace_tool(
+        tmp_path, "read_file", "/workspace/secret.txt", context,
+    )
+    assert direct["blocked"] and "API-token" in direct["error"]
+    content = json.dumps({"url": source}) if structured else source
+    _, fetched = await _dispatch_workspace_tool(tmp_path, "web_fetch", content, context)
+    assert fetched.get("blocked") and "API-token" in fetched["error"]
+    assert "workspace-only fixture content" not in str(fetched)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", ["extract_text", "pdf_extract", "inspect_media", "transcribe_media"])
+async def test_delegated_adjacent_tools_cannot_read_workspace(tmp_path, monkeypatch, tool):
+    from pathlib import Path
+    from PIL import Image
+    from src.agent_tools import media_tools, ocr_engine
+    from src.agent_tools.web_tools import PdfExtractTool
+
+    monkeypatch.setattr("src.tool_execution._owner_is_admin", lambda owner: True)
+    Image.new("RGB", (20, 20), "red").save(tmp_path / "secret.png")
+    (tmp_path / "secret.pdf").write_text("workspace-only PDF fixture")
+    (tmp_path / "secret.wav").write_text("workspace-only audio fixture")
+
+    # Optional decoders are doubles; dispatch, path resolution and file reads
+    # remain real so the test exercises the credential boundary independently.
+    def ocr(path, **kwargs):
+        return {"lines": [{"t": Path(path).read_bytes().hex()}]}
+
+    def pdf(path, query):
+        return path.read_text()
+
+    class Whisper:
+        def transcribe(self, path, **kwargs):
+            text = Path(path).read_text()
+            return iter([SimpleNamespace(start=0, end=1, text=text)]), SimpleNamespace(language="en")
+
+    monkeypatch.setattr(ocr_engine, "extract_image_text", ocr)
+    monkeypatch.setattr(PdfExtractTool, "_positioned_table_evidence", staticmethod(lambda *args: ""))
+    monkeypatch.setattr(PdfExtractTool, "_local_text_evidence", staticmethod(pdf))
+    monkeypatch.setitem(media_tools._WHISPER_MODELS, "tiny", Whisper())
+    args = {"path": "/workspace/secret.png"}
+    if tool == "pdf_extract":
+        args = {"url": "/workspace/secret.pdf", "query": "fixture"}
+    elif tool == "transcribe_media":
+        args = {"path": "/workspace/secret.wav", "model": "tiny"}
+    content = json.dumps(args)
+    _, authorized = await _dispatch_workspace_tool(
+        tmp_path, tool, content, ToolRunSecurityContext(),
+    )
+    assert authorized["exit_code"] == 0, authorized
+    _, delegated = await _dispatch_workspace_tool(
+        tmp_path, tool, content, ToolRunSecurityContext(delegated_credential=True),
+    )
+    assert delegated.get("blocked") and "API-token" in delegated["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["/workspace/secret.txt", "file:///workspace/secret.txt"])
+@pytest.mark.parametrize("object_item", [False, True])
+async def test_delegated_local_batch_denied_before_approval_or_bridge(tmp_path, monkeypatch, source, object_item):
+    from src import tool_execution as execution
+    from src.tool_types import ToolBlock
+
+    monkeypatch.setattr("src.tool_capabilities.TOOL_APPROVAL_GATE_ENABLED", False)
+    (tmp_path / "secret.txt").write_text("workspace-only fixture content")
+
+    class ApprovalGuard:
+        @property
+        def pending(self):
+            raise AssertionError("workspace credential denial inspected approval")
+
+        def matches(self, **kwargs):
+            raise AssertionError("workspace credential denial inspected approval")
+
+        def claim(self, **kwargs):
+            raise AssertionError("workspace credential denial consumed approval")
+
+    async def forbidden(*args):
+        raise AssertionError("workspace credential denial reached bridge")
+
+    item = {"url": source} if object_item else source
+    content = json.dumps({"urls": ["https://example.com", item]})
+    context = ToolRunSecurityContext(
+        delegated_credential=True, approval_gate_bypassed=True,
+        unattended_tools=frozenset({"web_fetch"}),
+    )
+    with execution.bind_execution_bridge(execution.AgentExecutionBridge(
+        forbidden, frozenset({"web_fetch"}), "delegated-web-test",
+    )):
+        _, result = await execution.execute_tool_block(
+            ToolBlock("web_fetch", content), security_context=context,
+            exact_approval=ApprovalGuard(),
+        )
+    assert result["blocked"] and "API-token" in result["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["raw", "json", "batch"])
+@pytest.mark.parametrize("scheme", ["http", "https"])
+@pytest.mark.parametrize("tainted", [False, True])
+async def test_delegated_http_fetch_retains_existing_policy(tmp_path, monkeypatch, shape, scheme, tainted):
+    seen = []
+    url = f"{scheme}://example.com/public"
+
+    def fetch(source, **kwargs):
+        seen.append(source)
+        return {"content": "public fixture content", "title": "Public"}
+
+    monkeypatch.setattr("src.search.content.fetch_webpage_content", fetch)
+    content = url if shape == "raw" else json.dumps({"url": url} if shape == "json" else {"urls": [url]})
+    context = ToolRunSecurityContext(delegated_credential=True, external_untrusted_context_seen=tainted)
+    _, result = await _dispatch_workspace_tool(tmp_path, "web_fetch", content, context)
+    if tainted:
+        assert result["blocked"] and "network_egress" in result["error"]
+        assert seen == []
+    else:
+        assert result["exit_code"] == 0 and "public fixture content" in result["output"]
+        assert seen == [url]
+        assert context.external_untrusted_context_seen
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["/workspace/secret.txt", "file:///workspace/secret.txt"])
+@pytest.mark.parametrize("shape", ["raw", "json", "batch"])
+async def test_authorized_local_web_fetch_remains_available(tmp_path, monkeypatch, source, shape):
+    monkeypatch.setattr("src.tool_execution._owner_is_admin", lambda owner: True)
+    (tmp_path / "secret.txt").write_text("workspace-only fixture content")
+    content = source if shape == "raw" else json.dumps({"url": source} if shape == "json" else {"urls": [source]})
+    context = ToolRunSecurityContext()
+    _, result = await _dispatch_workspace_tool(tmp_path, "web_fetch", content, context)
+    assert result["exit_code"] == 0 and "workspace-only fixture content" in result["output"]
+    assert context.external_untrusted_context_seen
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["open", "snapshot", "read"])
+async def test_delegated_private_browser_local_page_stays_unavailable(tmp_path, monkeypatch, action):
+    import src.agent_tools as agent_tools
+
+    async def forbidden(*args):
+        raise AssertionError("unsupported browser page operation reached handler")
+
+    monkeypatch.setitem(agent_tools.TOOL_HANDLERS, "private_browser", forbidden)
+    _, result = await _dispatch_workspace_tool(
+        tmp_path, "private_browser", json.dumps({"action": action, "url": "file:///workspace/secret.txt"}),
+        ToolRunSecurityContext(delegated_credential=True),
+    )
+    assert result["exit_code"] == 1
+    assert result["executed"] is False
+    assert result["failure_kind"] == "browser_page_authority_unavailable"
+
+
+@pytest.mark.parametrize("content", [
+    "/workspace/secret.pdf\nfixture",
+    "file:///workspace/secret.pdf\nfixture",
+    {"url": "file://localhost/workspace/secret.pdf", "query": "fixture"},
+    {"path": "/workspace/secret.pdf", "query": "fixture"},
+    {"path": "/tmp/secret.pdf", "query": "fixture"},
+])
+def test_delegated_pdf_local_selectors_use_workspace_authority(monkeypatch, content):
+    monkeypatch.setattr("src.tool_capabilities.TOOL_APPROVAL_GATE_ENABLED", False)
+    context = ToolRunSecurityContext(delegated_credential=True, approval_gate_bypassed=True)
+    assert not context.decision_for("pdf_extract", content).allowed
+    if isinstance(content, dict):
+        assert not context.decision_for("pdf_extract", json.dumps(content)).allowed
+
+
+def test_delegated_owned_attachment_and_remote_pdf_keep_existing_policy():
+    context = ToolRunSecurityContext(delegated_credential=True)
+    assert context.decision_for("extract_text", {"path": "odysseus://attachment/owned.png"}).allowed
+    assert context.decision_for("pdf_extract", {"url": "https://example.com/public.pdf", "query": "fixture"}).allowed
 
 
 @pytest.mark.parametrize("tool", ["bash", "python", "write_file", "host_shell", "send_email", "mcp__private__read", "list_dir", "find_files", " write_file "])

@@ -1651,7 +1651,7 @@ async def execute_tool_block(
     if (isinstance(security_context, ToolRunSecurityContext)
             and security_context.delegated_credential):
         from src.tool_capabilities import delegated_tool_is_blocked
-        if delegated_tool_is_blocked(getattr(block, "tool_type", None)):
+        if delegated_tool_is_blocked(getattr(block, "tool_type", None), getattr(block, "content", None)):
             decision = security_context.decision_for(block.tool_type, block.content)
             return blocked_tool_result(block.tool_type, decision.reason)
 

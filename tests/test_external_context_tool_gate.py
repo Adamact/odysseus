@@ -112,6 +112,27 @@ def test_all_native_schema_tools_have_explicit_capabilities():
     assert schema_names <= KNOWN_CAPABILITY_TOOLS
 
 
+@pytest.mark.parametrize("tool,content,effects,integrity", [
+    ("web_fetch", "/workspace/a.txt", {ToolEffect.READ_WORKSPACE}, ResultIntegrity.WORKSPACE_UNTRUSTED),
+    ("web_fetch", {"url": "FILE:///workspace/a.txt"}, {ToolEffect.READ_WORKSPACE}, ResultIntegrity.WORKSPACE_UNTRUSTED),
+    ("web_fetch", {"urls": ["/workspace/a.txt", {"url": "file:///workspace/b.txt"}]},
+     {ToolEffect.READ_WORKSPACE}, ResultIntegrity.WORKSPACE_UNTRUSTED),
+    ("web_fetch", {"urls": ["https://example.com", {"url": "/workspace/a.txt"}]},
+     {ToolEffect.READ_WORKSPACE, ToolEffect.BROKERED_NETWORK_READ, ToolEffect.NETWORK_EGRESS}, ResultIntegrity.EXTERNAL_UNTRUSTED),
+    ("web_fetch", {"url": "https://example.com/workspace/a.txt"},
+     {ToolEffect.BROKERED_NETWORK_READ, ToolEffect.NETWORK_EGRESS}, ResultIntegrity.EXTERNAL_UNTRUSTED),
+    ("pdf_extract", {"path": "/workspace/a.pdf"}, {ToolEffect.READ_WORKSPACE}, ResultIntegrity.WORKSPACE_UNTRUSTED),
+    ("pdf_extract", {"url": "https://example.com/a.pdf"},
+     {ToolEffect.BROKERED_NETWORK_READ}, ResultIntegrity.EXTERNAL_UNTRUSTED),
+])
+def test_web_reader_capabilities_follow_concrete_sources(tool, content, effects, integrity):
+    capability = capabilities_for_action(tool, content)
+    assert capability.effects == frozenset(effects)
+    assert capability.result_integrity == integrity
+    if isinstance(content, dict):
+        assert capabilities_for_action(tool, json.dumps(content)) == capability
+
+
 def test_external_web_result_blocks_later_code_execution():
     context = ToolRunSecurityContext()
 
